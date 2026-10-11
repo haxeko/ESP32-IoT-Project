@@ -6,8 +6,33 @@ if(NOT DEFINED ENV{ESP_MATTER_PATH})
     message(FATAL_ERROR "Please set ESP_MATTER_PATH to the path of esp-matter repo")
 endif(NOT DEFINED ENV{ESP_MATTER_PATH})
 
-set(PROJECT_VER "1.0")
-set(PROJECT_VER_NUMBER 1)
+# Firmware version, shown by controllers as "Firmware" (SoftwareVersionString).
+# The last number is the git commit count, so every new commit gets a new,
+# increasing version; PROJECT_VER_NUMBER (SoftwareVersion, used for OTA) is the
+# same count. Bump FIRMWARE_VERSION_BASE for a major/minor release.
+set(FIRMWARE_VERSION_BASE "1.0")
+execute_process(COMMAND git rev-list --count HEAD
+                WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+                OUTPUT_VARIABLE FIRMWARE_BUILD_NUMBER
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                RESULT_VARIABLE git_result
+                ERROR_QUIET)
+if(NOT git_result EQUAL 0 OR FIRMWARE_BUILD_NUMBER STREQUAL "")
+    message(WARNING "Not a git checkout, firmware build number set to 0")
+    set(FIRMWARE_BUILD_NUMBER 0)
+else()
+    # Re-run CMake (and pick up the new version) after every commit or checkout.
+    execute_process(COMMAND git rev-parse --absolute-git-dir
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+                    OUTPUT_VARIABLE git_dir
+                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(EXISTS "${git_dir}/logs/HEAD")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${git_dir}/logs/HEAD")
+    endif()
+endif()
+set(PROJECT_VER "${FIRMWARE_VERSION_BASE}.${FIRMWARE_BUILD_NUMBER}")
+set(PROJECT_VER_NUMBER ${FIRMWARE_BUILD_NUMBER})
+message(STATUS "Firmware version ${PROJECT_VER} (${PROJECT_VER_NUMBER})")
 
 set(ESP_MATTER_PATH $ENV{ESP_MATTER_PATH})
 set(MATTER_SDK_PATH ${ESP_MATTER_PATH}/connectedhomeip/connectedhomeip)

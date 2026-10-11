@@ -12,6 +12,7 @@
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
+#include <esp_app_desc.h>
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_matter.h>
@@ -25,6 +26,7 @@
 #include <math.h>
 
 // drivers implemented by this example
+#include <device_info.h>
 #include <drivers/pm_sensor.h>
 #include <local_ui.h>
 
@@ -247,6 +249,9 @@ extern "C" void app_main()
     esp_err_t err = local_ui_init();
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start local UI, err:%d", err));
 
+    /* Manufacturer / Model shown by controllers */
+    device_info_init();
+
     /* Create a Matter node and add the mandatory Root Node device type on endpoint 0 */
     node::config_t node_config;
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
@@ -256,6 +261,8 @@ extern "C" void app_main()
     ABORT_APP_ON_FAILURE(air_quality_ep != nullptr, ESP_LOGE(TAG, "Failed to create air_quality_sensor endpoint"));
     uint16_t air_quality_endpoint_id = endpoint::get_id(air_quality_ep);
     ESP_LOGI(TAG, "Air quality sensor created with endpoint_id %d", air_quality_endpoint_id);
+    ESP_LOGI(TAG, "%s %s, firmware %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME,
+             esp_app_get_description()->version);
 
     /* Matter start */
     err = esp_matter::start(app_event_cb);

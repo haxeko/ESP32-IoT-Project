@@ -115,6 +115,21 @@ idf.py -p /dev/ttyACM0 flash monitor
 | Giữ màn hình sáng sau khi người rời đi | 60 s |
 | Bỏ qua dữ liệu radar cũ hơn | 30 s |
 
+### Thông tin thiết bị và phiên bản firmware
+
+Ứng dụng nhà thông minh hiển thị các thông tin sau:
+
+| Mục | Giá trị | Sửa ở đâu |
+|---|---|---|
+| Nhà sản xuất (Manufacturer) | `Haxeko` | `menuconfig` → *Device Information* |
+| Kiểu máy (Model) | `PM5003` | `menuconfig` → *Device Information* |
+| Firmware | `1.0.<số commit>`, ví dụ `1.0.8` | Tự động |
+
+Phiên bản firmware **tự tăng sau mỗi commit**. Số cuối là số commit của repo (`git rev-list --count HEAD`), và cũng được dùng làm số phiên bản Matter (SoftwareVersion) cho OTA. Khi ra bản lớn, sửa `FIRMWARE_VERSION_BASE` trong `CMakeLists.txt`, ví dụ từ `1.0` thành `1.1`.
+
+- Clone repo đầy đủ, **không dùng `--depth`**. Với clone nông, số commit sẽ sai.
+- Nếu build từ thư mục không có git (ví dụ tải file zip), phiên bản sẽ là `1.0.0`.
+
 ## Thêm vào Apple Home
 
 1. Mở log (`idf.py monitor`); khi thiết bị chạy lần đầu sẽ in ra link QR code, ví dụ:
@@ -174,6 +189,7 @@ matter-pm25-sensor/
 ├── sdkconfig.defaults
 ├── main/
 │   ├── app_main.cpp          # Matter node, endpoint Air Quality Sensor, factory reset
+│   ├── device_info.cpp       # Manufacturer / Model (Basic Information)
 │   ├── local_ui.cpp          # Logic màn hình / LED / radar chạy tại chỗ
 │   ├── Kconfig.projbuild     # Cấu hình chân và tham số
 │   ├── idf_component.yml

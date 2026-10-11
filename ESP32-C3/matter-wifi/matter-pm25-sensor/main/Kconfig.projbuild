@@ -1,3 +1,15 @@
+menu "Device Information"
+
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName)"
+        default "PM5003"
+
+endmenu
+
 menu "PM2.5 Sensor Configuration"
 
     choice PM_SENSOR_MODEL
