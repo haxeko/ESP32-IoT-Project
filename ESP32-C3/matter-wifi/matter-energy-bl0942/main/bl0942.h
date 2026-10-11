@@ -1,40 +1,35 @@
-/*
- * BL0942 - IC đo điện năng 1 pha, giao tiếp UART.
- */
 #pragma once
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <esp_err.h>
-#include <driver/uart.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/** One reading of the BL0942 */
 typedef struct {
-    uart_port_t uart_port;
-    int rx_gpio;          /* ESP32 RX <- TX của BL0942 */
-    int tx_gpio;          /* ESP32 TX -> RX của BL0942 */
-    int baud_rate;        /* 4800 (mặc định) hoặc 9600 */
-    uint8_t address;      /* A1/A2: 0..3 */
-} bl0942_config_t;
+    bool valid;              /* false when the BL0942 did not answer (wiring / baud problem) */
+    float power_w;           /* active power, W */
+    float voltage_v;         /* RMS voltage, V */
+    float current_a;         /* RMS current, A */
+    float frequency_hz;      /* mains frequency, Hz */
+    uint64_t energy_mwh;     /* cumulative imported energy since first boot, mWh */
+} bl0942_reading_t;
 
-/* Giá trị thô đọc từ thanh ghi (gói "full electrical parameter", 23 byte) */
-typedef struct {
-    uint32_t i_rms;       /* 24-bit unsigned */
-    uint32_t v_rms;       /* 24-bit unsigned */
-    uint32_t i_fast_rms;  /* 24-bit unsigned */
-    int32_t  watt;        /* 24-bit signed */
-    uint32_t cf_cnt;      /* 24-bit unsigned, đếm xung năng lượng */
-    uint16_t freq;        /* chu kỳ điện lưới, f = 1e6 / freq */
-    uint32_t status;
-} bl0942_raw_t;
+/**
+ * Configure the UART (CONFIG_BL0942_*) used to talk to the BL0942.
+ *
+ * @param energy_base_mwh energy restored from NVS, added to the energy counted by CF_CNT.
+ */
+esp_err_t bl0942_init(uint64_t energy_base_mwh);
 
-esp_err_t bl0942_init(const bl0942_config_t *config);
-
-/* Gửi lệnh đọc toàn bộ thông số và chờ gói trả về (kiểm tra checksum). */
-esp_err_t bl0942_read_raw(bl0942_raw_t *out, uint32_t timeout_ms);
+/**
+ * Read the full parameter packet from the BL0942 and convert it to physical units.
+ * Call periodically (every CONFIG_BL0942_UPDATE_INTERVAL_MS).
+ */
+void bl0942_update(bl0942_reading_t *out);
 
 #ifdef __cplusplus
 }

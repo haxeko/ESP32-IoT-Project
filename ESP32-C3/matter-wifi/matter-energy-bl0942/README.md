@@ -1,172 +1,139 @@
-# Matter Smart Plug có đo điện: ESP32-C3 + BL0942
+# ESP32-C3 Matter over Wi-Fi: ổ cắm Relay + đo công suất BL0942
 
-**Ổ cắm thông minh chuẩn Matter over Wi-Fi** có đo công suất, viết bằng **ESP-IDF + esp-matter**. Chip dùng là **ESP32-C3 Mini** (SuperMini, DevKitM...), IC đo là **BL0942** giao tiếp UART.
+Firmware ESP-IDF + [esp-matter](https://github.com/espressif/esp-matter) cho ESP32-C3 Mini. Thiết bị là một **ổ cắm Matter** (On/Off Plug-in Unit): điều khiển relay, đo công suất bằng **BL0942** qua UART, kết nối qua **Wi-Fi**, commissioning qua **BLE**.
 
-Thiết bị khai báo theo cấu trúc chuẩn Matter 1.3 cho ổ cắm có đo điện: **một endpoint** vừa là **On/Off Plug-in Unit** vừa là **Electrical Sensor**, gồm các cluster On/Off, Power Topology, Electrical Power Measurement và Electrical Energy Measurement. Đây cũng là cấu trúc của các ổ cắm Matter 1.3 thương mại có đo điện.
+Cấu trúc Matter giống hệt bản BL0937 ([haxeko/ESP32-C3-Matter](https://github.com/haxeko/ESP32-C3-Matter)), là bản đã hiện được công suất trên Apple Home. Chỉ khác driver đọc cảm biến.
 
-Các giá trị đo được (đều trên endpoint 1):
+| Chức năng | Chân |
+|---|---|
+| Relay (active-high mặc định) | GPIO5 |
+| Nút BOOT, nhấn ngắn: bật/tắt relay | GPIO9 |
+| Nút BOOT, giữ 5 s rồi thả: factory reset | GPIO9 |
+| BL0942 **TX** → ESP32 RX (UART1) | **GPIO0** |
+| BL0942 **RX** ← ESP32 TX (UART1) | **GPIO1** |
 
-| Đại lượng | Matter cluster / attribute | Đơn vị Matter |
+Trạng thái relay được lưu NVS và khôi phục sau khi mất điện.
+
+## Đo công suất (BL0942)
+
+Cùng endpoint với relay (endpoint 1), firmware thêm device type **Electrical Sensor**:
+
+| Cluster | Thuộc tính | Đơn vị |
 |---|---|---|
-| Điện áp | Electrical Power Measurement: `Voltage`, `RMSVoltage` | mV |
-| Dòng điện | Electrical Power Measurement: `ActiveCurrent`, `RMSCurrent` | mA |
-| Công suất tác dụng | Electrical Power Measurement: `ActivePower` | mW |
-| Công suất biểu kiến | Electrical Power Measurement: `ApparentPower` | mVA |
-| Tần số | Electrical Power Measurement: `Frequency` | mHz |
-| Hệ số công suất | Electrical Power Measurement: `PowerFactor` | ×10000 |
-| Điện năng tiêu thụ | Electrical Energy Measurement: `CumulativeEnergyImported` (và event `CumulativeEnergyMeasured`) | mWh |
-| Bật/tắt ổ cắm | On/Off | |
+| Power Topology | Node Topology | |
+| Electrical Power Measurement | ActivePower | mW |
+| | Voltage | mV |
+| | ActiveCurrent | mA |
+| Electrical Energy Measurement | CumulativeEnergyImported | mWh (lưu NVS mỗi 10 phút) |
 
-## 1. Phần cứng
+- Đọc gói đầy đủ của BL0942 (lệnh `0x58 0xAA`, 23 byte, có kiểm tra checksum) mỗi 2 s (`BL0942_UPDATE_INTERVAL_MS`).
+- Điện năng tính từ bộ đếm xung phần cứng `CF_CNT`, có xử lý tràn 24 bit và trường hợp BL0942 bị reset.
+- Nếu BL0942 không trả lời 3 lần liên tiếp, công suất/áp/dòng báo `null` (không rõ) thay vì giữ giá trị cũ.
 
-### Sơ đồ nối dây
-
-```
- BL0942 module              ESP32-C3 Mini
- ┌───────────┐              ┌──────────────┐
- │       VCC ├──────────────┤ 3V3          │
- │       GND ├──────────────┤ GND          │
- │        TX ├──────────────┤ GPIO0 (RX)   │
- │        RX ├──────────────┤ GPIO1 (TX)   │
- └───────────┘              │              │
-                            │ GPIO3 ───────┼──→ IN của module relay
-                            │ GPIO8 = LED  │ ← sáng khi ổ cắm bật (LED xanh trên SuperMini)
-                            │ GPIO9 = BOOT │ ← nhấn: bật/tắt, giữ 5 s: factory reset
-                            └──────────────┘
-```
-
-* Relay mặc định ở **GPIO3**, mức cao là đóng. Đổi chân, mức kích, hoặc tắt relay (`-1`) trong menuconfig → **Plug (relay / button / LED)**.
-* Sau khi mất điện, ổ cắm khôi phục trạng thái bật/tắt trước đó.
-
-* UART1, **4800 baud**, 8N1 (mặc định khi chân `SCLK_BPS` của BL0942 nối GND; nối VDD thì đổi sang 9600 trong menuconfig).
-* Địa chỉ chip (A1/A2) mặc định là 0.
-* Có thể đổi chân, baud, địa chỉ trong `idf.py menuconfig` → **Matter Smart Plug (BL0942)**.
-
-> ⚠️ **AN TOÀN ĐIỆN:** Hầu hết module BL0942 **không cách ly**, nghĩa là GND của module nối thẳng vào dây pha hoặc dây trung tính 220 V. Khi module đang cắm điện lưới, toàn bộ ESP32-C3 cũng mang điện thế lưới.
-> **Không cắm cáp USB vào máy tính khi module đang nối điện lưới.** Nạp firmware và xem log khi đã ngắt điện lưới, hoặc dùng module/bộ cách ly (isolated UART + nguồn cách ly). Lắp trong hộp kín, có cầu chì.
-
-### Lưu ý về GPIO0/GPIO1 trên ESP32-C3
-
-GPIO0/GPIO1 cũng là chân XTAL_32K. Mặc định IDF không bật thạch anh 32 kHz ngoài, nên dùng làm UART bình thường. Đây không phải chân strapping.
-
-## 2. Cài môi trường
-
-Dự án dùng **esp-matter `release/v1.5`** và **ESP-IDF v5.5.x** (bản esp-matter v1.5 khuyến nghị).
+**Hiển thị trên app:** dữ liệu theo chuẩn Matter 1.3+. Home Assistant, SmartThings, Google Home đều đọc được. Apple Home hiển thị công suất tuỳ phiên bản iOS. Nếu không thấy trong Apple Home thì dữ liệu vẫn có trên Matter, đọc được qua Home Assistant hoặc chip-tool:
 
 ```bash
-# ESP-IDF
-git clone -b v5.5.5 --recursive https://github.com/espressif/esp-idf.git
-cd esp-idf && ./install.sh esp32c3 && . ./export.sh && cd ..
-
-# esp-matter
-git clone -b release/v1.5 --depth 1 https://github.com/espressif/esp-matter.git
-cd esp-matter
-git submodule update --init --depth 1
-cd connectedhomeip/connectedhomeip
-./scripts/checkout_submodules.py --platform esp32 linux --shallow
-cd ../..
-./install.sh
-cd ..
+chip-tool electricalpowermeasurement read active-power 0x7283 1
+chip-tool electricalenergymeasurement read cumulative-energy-imported 0x7283 1
 ```
 
-Mỗi lần mở terminal mới:
+### Hiệu chuẩn
+
+`idf.py menuconfig` → **BL0942 Power Meter**:
+
+| Tuỳ chọn | Mặc định | Ý nghĩa |
+|---|---|---|
+| `BL0942_UART_BAUD` | 4800 | 4800 khi chân `SCLK_BPS` nối GND (phổ biến), 9600 khi nối VDD |
+| `BL0942_ADDRESS` | 0 | địa chỉ chip theo chân A1/A2 |
+| `BL0942_VOLTAGE_REF` | 15873.35944 | LSB/V, module phổ biến (phân áp 5 × 390 kΩ + 510 Ω) |
+| `BL0942_CURRENT_REF` | 251213.46469 | LSB/A, shunt 1 mΩ |
+| `BL0942_POWER_REF` | 596 | LSB/W |
+| `BL0942_ENERGY_REF` | 0 | xung CF/kWh; 0 = tự tính từ `POWER_REF` |
+| `BL0942_*_CAL_PERMILLE` | 1000 | hệ số hiệu chỉnh ‰ cho công suất (kèm điện năng) / áp / dòng |
+
+Cách hiệu chỉnh: cắm tải thuần trở đã biết (bóng sợi đốt / ấm đun 1000 W), so với đồng hồ chuẩn, rồi đặt `CAL = 1000 × giá_trị_chuẩn / giá_trị_đọc`. Ví dụ đọc 1050 W, thực tế 1000 W thì đặt `POWER_CAL_PERMILLE=952`.
+
+### Lưu ý phần cứng
+
+- BL0942 thường nối GND về dây pha/trung tính của lưới điện, nên **mạch không cách ly**. Không cắm USB vào máy tính khi mạch đang cấp 220 V.
+- Cấp BL0942 bằng **3.3 V** để mức UART tương thích ESP32-C3.
+- GPIO0/GPIO1 trên ESP32-C3 là chân XTAL_32K, nhưng mặc định không dùng thạch anh ngoài, nên dùng làm UART bình thường.
+
+## Cấu hình
+
+`idf.py menuconfig` → **Relay Configuration**:
+
+- `RELAY_GPIO` (mặc định 5)
+- `RELAY_ACTIVE_LEVEL` (1 = active-high, 0 = active-low; module relay opto rẻ tiền thường là active-low)
+
+Hoặc sửa trực tiếp `sdkconfig.defaults.esp32c3` rồi xoá `sdkconfig` để áp dụng lại.
+
+## Build
+
+Yêu cầu: ESP-IDF v6.0.2 + esp-matter release/v1.6 (đã `export.sh` cả hai). Cách nhanh nhất là dùng Docker:
 
 ```bash
-. ./esp-idf/export.sh
-. ./esp-matter/export.sh
+docker run --rm -it -v $PWD:/project \
+  espressif/esp-matter:release-v1.6.1_idf_v6.0.2 \
+  bash -c "cd /project && idf.py set-target esp32c3 && idf.py build"
 ```
 
-## 3. Build và nạp
+Hoặc cài local:
 
 ```bash
-cd ESP32-C3/matter-wifi/matter-energy-bl0942
+. ~/esp/esp-idf/export.sh
+. ~/esp/esp-matter/export.sh
 idf.py set-target esp32c3
 idf.py build
 idf.py -p /dev/ttyACM0 erase-flash flash monitor
 ```
 
-> Lần nạp đầu nên `erase-flash` để xoá dữ liệu Matter cũ.
+GitHub Actions (`.github/workflows/matter-energy-bl0942.yml` ở gốc repo) tự build và upload file `.bin`, trong đó có `matter_plug_bl0942_merged.bin` để nạp một lần ở địa chỉ `0x0`. Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 
-## 4. Kết nối vào Apple Home (HomeKit)
+## Commissioning
 
-Firmware dùng chứng chỉ test của Matter (VID `0xFFF1`, PID `0x8000`).
+Firmware dùng chứng chỉ test (DAC test) của esp-matter, mã ghép nối mặc định:
 
-* Mã QR in ra trong log khi khởi động (dòng `SetupQRCode`), hoặc dùng mã thủ công mặc định: **`34970112332`**.
-* Trên iPhone: **Nhà (Home) → + → Thêm phụ kiện**, quét QR. Khi app báo "Phụ kiện chưa được chứng nhận", chọn **Vẫn thêm**.
-* Cần có Home Hub (Apple TV / HomePod) và iPhone ở cùng mạng Wi-Fi 2.4 GHz.
+- Manual code: **34970112332**
+- QR: `MT:Y.K9042C00KA0648G00`
+- Discriminator 3840, passcode 20202021
 
-### Xem công suất trên Apple Home
-
-Thiết bị hiện trong ứng dụng Nhà là một **ổ cắm**. Công suất (W) và điện năng (kWh) được báo qua các cluster chuẩn Electrical Power/Energy Measurement trên chính endpoint ổ cắm, cùng cấu trúc với các ổ cắm Matter 1.3 thương mại.
-
-Apple không công bố tài liệu chính thức về việc ứng dụng Nhà hiển thị dữ liệu này. Theo các báo cáo cộng đồng, ứng dụng Nhà trên iOS 27 hiển thị công suất cho ổ cắm Matter có cấu trúc như trên (trong chi tiết phụ kiện và tab Năng lượng). Các bản iOS cũ hơn có thể chỉ hiện nút bật/tắt. Nên cập nhật iPhone và Home Hub (Apple TV/HomePod) lên bản mới nhất.
-
-Home Assistant, SmartThings và `chip-tool` cũng đọc được đầy đủ điện áp, dòng điện, công suất và kWh (Matter multi-admin, dùng song song với Apple Home).
+Mở Apple Home / Google Home / SmartThings / Home Assistant → *Add Matter device* → quét QR hoặc nhập mã ở trên. Với chip-tool:
 
 ```bash
-# Ví dụ dùng chip-tool (node id 1, endpoint 1)
-chip-tool onoff toggle 1 1
-chip-tool electricalpowermeasurement read active-power 1 1
-chip-tool electricalpowermeasurement read voltage 1 1
-chip-tool electricalenergymeasurement read cumulative-energy-imported 1 1
+chip-tool pairing ble-wifi 0x7283 <SSID> <PASSWORD> 20202021 3840
+chip-tool onoff toggle 0x7283 1
 ```
 
-## 5. Hiệu chuẩn
+Vì là thiết bị dùng chứng chỉ test, app sẽ cảnh báo "Uncertified accessory". Chọn tiếp tục.
 
-Công thức:
+> Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại để Home đọc đúng cấu trúc mới.
 
-```
-U (V)   = V_RMS  / VOLTAGE_REF
-I (A)   = I_RMS  / CURRENT_REF
-P (W)   = WATT   / POWER_REF
-E (kWh) = CF_CNT / ENERGY_REF      (ENERGY_REF = 0 → tự tính = POWER_REF * 3600000 / 419430.4)
-```
-
-Giá trị mặc định đúng cho module phổ biến (shunt 1 mΩ, phân áp 5 × 390 kΩ / 510 Ω). Nếu module của bạn khác hoặc cần chính xác hơn:
-
-1. Cắm một tải thuần trở đã biết (ví dụ bóng sợi đốt / ấm đun 1000 W) và một đồng hồ chuẩn.
-2. Bật log debug cho tag `energy_meter` (`esp_log_level_set("energy_meter", ESP_LOG_DEBUG)` hoặc menuconfig) để xem `U= I= P=`.
-3. Tính lại: `REF_mới = REF_cũ × (giá trị đo được / giá trị chuẩn)`.
-4. Nhập vào `idf.py menuconfig` → **Matter Smart Plug (BL0942) → Calibration**.
-
-Ngưỡng nhiễu (mặc định 15 mA và 0.5 W) dùng để hiển thị 0 khi không có tải.
-
-## 6. Điện năng tích luỹ
-
-* Tính từ bộ đếm xung phần cứng `CF_CNT` của BL0942 (24 bit, tự xử lý tràn và trường hợp BL0942 bị reset).
-* Tổng điện năng được **lưu vào NVS** mỗi khi tăng thêm `CONFIG_ENERGY_NVS_SAVE_DELTA_WH` (mặc định 10 Wh), nên mất điện chỉ mất tối đa phần chưa lưu.
-* Factory reset (giữ nút BOOT 5 giây rồi thả) xoá cấu hình Matter. Tổng điện năng nằm ở namespace NVS `energy_meter`, muốn xoá thì `idf.py erase-flash`.
-
-## 7. Cấu trúc mã nguồn
+## Cấu trúc
 
 ```
-matter-energy-bl0942/
-├── CMakeLists.txt
-├── partitions.csv              # OTA 2 x 1.875 MB, flash 4 MB
-├── sdkconfig.defaults          # Bật BLE commissioning, tắt các cluster không dùng
-├── sdkconfig.defaults.esp32c3
-└── main/
-    ├── app_main.cpp            # Matter node, endpoint ổ cắm, relay, LED, nút bấm
-    ├── energy_meter.cpp/.h     # Cluster đo điện + delegate + task đọc BL0942
-    ├── bl0942.c/.h             # Driver UART BL0942
-    ├── Kconfig.projbuild       # Cấu hình chân, hiệu chuẩn, chu kỳ đọc
-    └── idf_component.yml
+CMakeLists.txt             project esp-matter (esp32c3)
+sdkconfig.defaults         cấu hình chung Matter/Wi-Fi/BLE, bật cluster đo điện
+sdkconfig.defaults.esp32c3 chân nút, relay, UART BL0942
+partitions.csv             4 MB, 2 phân vùng OTA
+main/app_main.cpp          tạo node + endpoint On/Off Plug-in Unit
+main/app_driver.cpp        điều khiển GPIO relay + nút
+main/bl0942.c              driver BL0942 (UART, checksum, CF_CNT -> điện năng)
+main/power_meter.cpp       Electrical Sensor: đưa công suất / áp / dòng / điện năng lên Matter
+main/Kconfig.projbuild     tuỳ chọn relay, UART, hiệu chuẩn BL0942
 ```
 
-Mô hình dữ liệu Matter:
+## Sơ đồ đấu nối
 
-| Endpoint | Device type | Cluster chính |
-|---|---|---|
-| 0 | Root Node | Basic Information, Network Commissioning, ... |
-| 1 | On/Off Plug-in Unit (0x010A) + Electrical Sensor (0x0510) | Identify, Groups, Scenes, On/Off, Power Topology (Node), Electrical Power Measurement (AC), Electrical Energy Measurement (Imported + Cumulative) |
+```
+BL0942 VCC ◄── 3V3      ESP32-C3
+BL0942 GND ◄── GND
+BL0942 TX  ──► GPIO0 (RX)
+BL0942 RX  ◄── GPIO1 (TX)
 
-## 8. Xử lý sự cố
+ESP32-C3 GPIO5 ──► IN  (module relay 3.3V hoặc qua transistor)
+ESP32-C3 3V3   ──► VCC (module relay 5V: cấp 5V, IN vẫn dùng mức 3.3V)
+ESP32-C3 GND   ──► GND
+```
 
-| Hiện tượng | Nguyên nhân / cách xử lý |
-|---|---|
-| Log `BL0942 not responding` / `Timeout` | Kiểm tra TX↔RX có bị đảo không, VCC 3.3 V, baud (4800/9600), địa chỉ A1/A2 |
-| `Checksum mismatch` thỉnh thoảng | Nhiễu đường UART: dây ngắn lại, thêm GND chung |
-| Giá trị sai tỷ lệ | Hiệu chuẩn lại (mục 5) |
-| Apple Home chỉ hiện nút bật/tắt, không có W | Cập nhật iOS và Home Hub; xoá phụ kiện rồi thêm lại để Home đọc lại cấu trúc thiết bị |
-| Relay không chạy / chạy ngược | Kiểm tra `RELAY_GPIO` và `RELAY_ACTIVE_HIGH` trong menuconfig |
-| Apple Home không tìm thấy | Wi-Fi phải là 2.4 GHz; giữ BOOT 5 s để reset rồi thêm lại |
+⚠️ Phía tải dùng điện 220 V: cách ly và đi dây an toàn.

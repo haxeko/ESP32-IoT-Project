@@ -1,9 +1,17 @@
-# Matter Smart Plug - ESP32-C3 + BL0942
+# ESP32-C3 Matter over Wi-Fi smart plug (On/Off Plug-in Unit) + BL0942 power meter
 cmake_minimum_required(VERSION 3.5)
 
 if(NOT DEFINED ENV{ESP_MATTER_PATH})
     message(FATAL_ERROR "Please set ESP_MATTER_PATH to the path of esp-matter repo")
 endif(NOT DEFINED ENV{ESP_MATTER_PATH})
+
+if(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
+    if("${IDF_TARGET}" STREQUAL "esp32c3" OR "${IDF_TARGET}" STREQUAL "")
+        set(ENV{ESP_MATTER_DEVICE_PATH} $ENV{ESP_MATTER_PATH}/device_hal/device/esp32c3_devkit_m)
+    else()
+        message(FATAL_ERROR "This project targets esp32c3 only")
+    endif()
+endif(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
 
 set(PROJECT_VER "1.0")
 set(PROJECT_VER_NUMBER 1)
@@ -13,16 +21,17 @@ set(MATTER_SDK_PATH ${ESP_MATTER_PATH}/connectedhomeip/connectedhomeip)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 include(${ESP_MATTER_PATH}/examples/common/cmake_common/components_include.cmake)
+include($ENV{ESP_MATTER_DEVICE_PATH}/esp_matter_device.cmake)
 
 set(EXTRA_COMPONENT_DIRS
     "${ESP_MATTER_PATH}/examples/common"
     "${MATTER_SDK_PATH}/config/esp32/components"
-    "${ESP_MATTER_PATH}/components")
+    "${ESP_MATTER_PATH}/components"
+    "${ESP_MATTER_PATH}/device_hal/device"
+    ${extra_components_dirs_append})
 
-project(matter_energy_bl0942)
+project(matter_plug_bl0942)
 
 idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-Os;-DCHIP_HAVE_CONFIG_H;-Wno-overloaded-virtual" APPEND)
 idf_build_set_property(C_COMPILE_OPTIONS "-Os" APPEND)
-# For RISCV chips, project_include.cmake sets -Wno-format, but does not clear various
-# flags that depend on -Wformat
 idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-security" APPEND)

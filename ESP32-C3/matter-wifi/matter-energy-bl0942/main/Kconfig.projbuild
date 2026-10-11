@@ -1,114 +1,112 @@
-menu "Matter Smart Plug (BL0942)"
+menu "Relay Configuration"
 
-    menu "BL0942 UART"
-        config BL0942_UART_PORT
-            int "UART port"
-            range 0 1
-            default 1
-            help
-                UART dùng để giao tiếp với BL0942. UART0 thường dành cho log/console.
+    config RELAY_GPIO
+        int "Relay GPIO number"
+        range 0 21
+        default 5
+        help
+            GPIO that drives the relay module.
 
-        config BL0942_UART_RX_GPIO
-            int "ESP32 RX GPIO (nối vào chân TX của BL0942)"
-            default 0
+    config RELAY_ACTIVE_LEVEL
+        int "Relay active level (1 = active-high, 0 = active-low)"
+        range 0 1
+        default 1
+        help
+            Level written to the relay GPIO to turn the relay ON.
+            Many cheap optocoupled relay boards are active-low: set 0 for those.
 
-        config BL0942_UART_TX_GPIO
-            int "ESP32 TX GPIO (nối vào chân RX của BL0942)"
-            default 1
+endmenu
 
-        config BL0942_UART_BAUD
-            int "Baud rate"
-            default 4800
-            help
-                BL0942 mặc định 4800 baud (chân SCLK_BPS = GND). Nếu SCLK_BPS = VDD thì dùng 9600.
+menu "BL0942 Power Meter"
 
-        config BL0942_ADDRESS
-            int "Địa chỉ thiết bị (chân A1/A2)"
-            range 0 3
-            default 0
-    endmenu
+    config BL0942_ENABLE
+        bool "Enable BL0942 power metering"
+        default y
+        help
+            Read active power / voltage / current / energy from a BL0942 (UART) and
+            expose them over Matter (Electrical Power + Energy Measurement).
 
-    menu "Calibration"
-        config BL0942_VOLTAGE_REF
-            string "Voltage reference (LSB / V)"
-            default "15873.35944"
-            help
-                V = V_RMS_reg / VOLTAGE_REF. Giá trị mặc định cho module phổ biến
-                (điện trở phân áp 5 x 390k + 510R, shunt 1 mOhm).
+    config BL0942_UART_PORT
+        int "UART port"
+        depends on BL0942_ENABLE
+        range 0 1
+        default 1
+        help
+            UART0 is normally used for the log console.
 
-        config BL0942_CURRENT_REF
-            string "Current reference (LSB / A)"
-            default "251213.46469"
-            help
-                I = I_RMS_reg / CURRENT_REF.
+    config BL0942_UART_RX_GPIO
+        int "ESP32 RX GPIO (connect to BL0942 TX)"
+        depends on BL0942_ENABLE
+        range 0 21
+        default 0
 
-        config BL0942_POWER_REF
-            string "Power reference (LSB / W)"
-            default "596"
-            help
-                P = WATT_reg / POWER_REF.
+    config BL0942_UART_TX_GPIO
+        int "ESP32 TX GPIO (connect to BL0942 RX)"
+        depends on BL0942_ENABLE
+        range 0 21
+        default 1
 
-        config BL0942_ENERGY_REF
-            string "Energy reference (CF pulse / kWh), 0 = tự tính từ POWER_REF"
-            default "0"
-            help
-                E(kWh) = CF_CNT / ENERGY_REF. Để "0" thì tự tính
-                ENERGY_REF = POWER_REF * 3600000 / 419430.4.
+    config BL0942_UART_BAUD
+        int "Baud rate"
+        depends on BL0942_ENABLE
+        default 4800
+        help
+            4800 when the BL0942 SCLK_BPS pin is tied low (default on most modules), 9600 when high.
 
-        config BL0942_CURRENT_NOISE_MA
-            int "Ngưỡng nhiễu dòng điện (mA), dưới ngưỡng coi là 0"
-            default 15
+    config BL0942_ADDRESS
+        int "Device address (A1/A2 pins)"
+        depends on BL0942_ENABLE
+        range 0 3
+        default 0
 
-        config BL0942_POWER_NOISE_MW
-            int "Ngưỡng nhiễu công suất (mW), dưới ngưỡng coi là 0"
-            default 500
-    endmenu
+    config BL0942_VOLTAGE_REF
+        string "Voltage reference (LSB per V)"
+        depends on BL0942_ENABLE
+        default "15873.35944"
+        help
+            V = V_RMS / VOLTAGE_REF. Default matches the common module
+            (5 x 390k + 510R divider, 1 mOhm shunt).
 
-    config BL0942_READ_INTERVAL_MS
-        int "Chu kỳ đọc BL0942 (ms)"
-        range 400 60000
+    config BL0942_CURRENT_REF
+        string "Current reference (LSB per A)"
+        depends on BL0942_ENABLE
+        default "251213.46469"
+        help
+            I = I_RMS / CURRENT_REF.
+
+    config BL0942_POWER_REF
+        string "Power reference (LSB per W)"
+        depends on BL0942_ENABLE
+        default "596"
+        help
+            P = WATT / POWER_REF.
+
+    config BL0942_ENERGY_REF
+        string "Energy reference (CF pulses per kWh), 0 = derive from POWER_REF"
+        depends on BL0942_ENABLE
+        default "0"
+        help
+            E(kWh) = CF_CNT / ENERGY_REF. "0" uses POWER_REF * 3600000 / 419430.4.
+
+    config BL0942_POWER_CAL_PERMILLE
+        int "Power calibration factor (per mille, 1000 = x1.000)"
+        depends on BL0942_ENABLE
         default 1000
 
-    config ENERGY_NVS_SAVE_DELTA_WH
-        int "Lưu tổng điện năng vào NVS khi tăng thêm (Wh)"
-        range 1 1000
-        default 10
-        help
-            Tổng điện năng được lưu vào flash để không mất khi mất điện.
-            Giá trị nhỏ = chính xác hơn khi mất điện nhưng ghi flash nhiều hơn.
+    config BL0942_VOLTAGE_CAL_PERMILLE
+        int "Voltage calibration factor (per mille)"
+        depends on BL0942_ENABLE
+        default 1000
 
-    config ENERGY_EVENT_INTERVAL_S
-        int "Chu kỳ gửi event CumulativeEnergyMeasured (giây)"
-        range 10 3600
-        default 300
+    config BL0942_CURRENT_CAL_PERMILLE
+        int "Current calibration factor (per mille)"
+        depends on BL0942_ENABLE
+        default 1000
 
-    menu "Plug (relay / button / LED)"
-        config RELAY_GPIO
-            int "GPIO điều khiển relay (-1 = không có relay)"
-            range -1 21
-            default 3
-
-        config RELAY_ACTIVE_HIGH
-            bool "Relay đóng khi GPIO mức cao"
-            default y
-
-        config BUTTON_GPIO
-            int "GPIO nút bấm (nhấn: bật/tắt ổ cắm, giữ 5 s: factory reset)"
-            range 0 21
-            default 9
-            help
-                ESP32-C3 SuperMini/DevKitM: nút BOOT nằm ở GPIO9.
-
-        config LED_GPIO
-            int "GPIO LED trạng thái ổ cắm (-1 = không dùng)"
-            range -1 21
-            default 8
-            help
-                ESP32-C3 SuperMini: LED xanh trên board ở GPIO8 (sáng khi mức thấp).
-
-        config LED_ACTIVE_HIGH
-            bool "LED sáng khi GPIO mức cao"
-            default n
-    endmenu
+    config BL0942_UPDATE_INTERVAL_MS
+        int "Update interval (ms)"
+        depends on BL0942_ENABLE
+        range 500 10000
+        default 2000
 
 endmenu
