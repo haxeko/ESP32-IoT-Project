@@ -16,6 +16,15 @@
 #include <driver/gpio.h>
 #include <driver/uart.h>
 #include <esp_log.h>
+#include <esp_rom_gpio.h>
+#include <esp_timer.h>
+#if __has_include(<hal/uart_periph.h>)
+#include <hal/uart_periph.h>
+#define BL0942_UART_RX_SIGNAL(port) UART_PERIPH_SIGNAL(port, SOC_UART_PERIPH_SIGNAL_RX)
+#else
+#include <soc/uart_periph.h>
+#define BL0942_UART_RX_SIGNAL(port) UART_PERIPH_SIGNAL(port, SOC_UART_RX_PIN_IDX)
+#endif
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -149,6 +158,65 @@ static void log_line_check(void)
              s_rx_gpio, rx, s_tx_gpio, tx);
 }
 
+/* Send two bytes that the BL0942 ignores (not a read/write frame ID) and return how many come back */
+static int uart_echo(void)
+{
+    const uint8_t probe[2] = { 0x33, 0xCC };
+    uint8_t buf[8] = { 0 };
+    uart_flush_input(s_uart);
+    uart_write_bytes(s_uart, probe, sizeof(probe));
+    uart_wait_tx_done(s_uart, pdMS_TO_TICKS(50));
+    int n = uart_read_bytes(s_uart, buf, sizeof(buf), pdMS_TO_TICKS(30));
+    if (n < 0) {
+        n = 0;
+    }
+    return (n >= 2 && buf[0] == probe[0] && buf[1] == probe[1]) ? n : -n;
+}
+
+/* Diagnose the UART link step by step, logging one line:
+ *  1. internal loopback: UART peripheral + driver work
+ *  2. TX pad loopback (TX GPIO looped to UART RX inside the chip): bytes really leave on the TX pin
+ *  3. after a real read command, count level changes on the RX pin: the BL0942 answers electrically */
+static void self_test(void)
+{
+    uart_set_loop_back(s_uart, true);
+    const int internal = uart_echo();
+    uart_set_loop_back(s_uart, false);
+
+    gpio_input_enable((gpio_num_t)s_tx_gpio);
+    esp_rom_gpio_connect_in_signal(s_tx_gpio, BL0942_UART_RX_SIGNAL(s_uart), false);
+    const int pad = uart_echo();
+    uart_set_pin(s_uart, s_tx_gpio, s_rx_gpio, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+
+    const uint8_t cmd[2] = { (uint8_t)(BL0942_READ_CMD | s_address), BL0942_FULL_PACKET };
+    uart_flush_input(s_uart);
+    uart_write_bytes(s_uart, cmd, sizeof(cmd));
+    uart_wait_tx_done(s_uart, pdMS_TO_TICKS(50));
+    int last = gpio_get_level((gpio_num_t)s_rx_gpio);
+    int edges = 0;
+    const int64_t end = esp_timer_get_time() + 80000; /* 23 bytes at 4800 baud take 48 ms */
+    while (esp_timer_get_time() < end) {
+        const int level = gpio_get_level((gpio_num_t)s_rx_gpio);
+        if (level != last) {
+            edges++;
+            last = level;
+        }
+    }
+    uint8_t buf[BL0942_PACKET_LEN];
+    int got = uart_read_bytes(s_uart, buf, sizeof(buf), 0);
+    if (got < 0) {
+        got = 0;
+    }
+
+    ESP_LOGW(TAG, "Self-test (RX=GPIO%d TX=GPIO%d %d baud addr %d): internal loopback %s, TX pin loopback %s, "
+             "RX pin edges after read command: %d, UART bytes: %d",
+             s_rx_gpio, s_tx_gpio, s_baud, s_address, internal > 0 ? "OK" : "FAIL", pad > 0 ? "OK" : "FAIL", edges,
+             got);
+    if (got > 0) {
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, buf, got, ESP_LOG_WARN);
+    }
+}
+
 esp_err_t bl0942_init(uint64_t energy_base_mwh)
 {
     s_energy_base_mwh = energy_base_mwh;
@@ -186,6 +254,7 @@ esp_err_t bl0942_init(uint64_t energy_base_mwh)
     }
 
     log_line_check();
+    self_test();
 
     ESP_LOGI(TAG, "UART%d RX=GPIO%d TX=GPIO%d %d baud, Vref=%.2f Iref=%.2f Pref=%.3f Eref=%.2f pulse/kWh", s_uart,
              s_rx_gpio, s_tx_gpio, s_baud, s_voltage_ref,
@@ -218,6 +287,7 @@ void bl0942_update(bl0942_reading_t *out)
             uart_set_baudrate(s_uart, s_baud);
             ESP_LOGW(TAG, "Trying ESP RX=GPIO%d, TX=GPIO%d, %d baud, address %d", s_rx_gpio, s_tx_gpio, s_baud,
                      s_address);
+            self_test();
         }
         *out = s_last;
         if (s_fail_count >= 3) {
