@@ -26,7 +26,7 @@
 
 static const char *TAG = "local_ui";
 
-#define UI_TASK_STACK               4096
+#define UI_TASK_STACK               3072
 #define UI_TASK_PRIO                4
 #define UI_TICK_MS                  500
 #define UI_REDRAW_MS                1000

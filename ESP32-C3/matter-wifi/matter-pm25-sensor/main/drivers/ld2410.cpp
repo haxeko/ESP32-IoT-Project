@@ -25,8 +25,8 @@ static const char *TAG = "ld2410";
 // UART0 is free because the console runs on USB-Serial-JTAG; UART1 is used by the PM sensor.
 #define LD2410_UART_NUM         UART_NUM_0
 #define LD2410_BAUD_RATE        256000
-#define LD2410_RX_BUF_SIZE      512
-#define LD2410_TASK_STACK       3072
+#define LD2410_RX_BUF_SIZE      256
+#define LD2410_TASK_STACK       2560
 #define LD2410_TASK_PRIO        5
 #define LD2410_MAX_PAYLOAD      64
 
