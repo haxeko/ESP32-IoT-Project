@@ -1,0 +1,99 @@
+menu "BL0942 Energy Meter"
+
+    menu "BL0942 UART"
+        config BL0942_UART_PORT
+            int "UART port"
+            range 0 1
+            default 1
+            help
+                UART dùng để giao tiếp với BL0942. UART0 thường dành cho log/console.
+
+        config BL0942_UART_RX_GPIO
+            int "ESP32 RX GPIO (nối vào chân TX của BL0942)"
+            default 0
+
+        config BL0942_UART_TX_GPIO
+            int "ESP32 TX GPIO (nối vào chân RX của BL0942)"
+            default 1
+
+        config BL0942_UART_BAUD
+            int "Baud rate"
+            default 4800
+            help
+                BL0942 mặc định 4800 baud (chân SCLK_BPS = GND). Nếu SCLK_BPS = VDD thì dùng 9600.
+
+        config BL0942_ADDRESS
+            int "Địa chỉ thiết bị (chân A1/A2)"
+            range 0 3
+            default 0
+    endmenu
+
+    menu "Calibration"
+        config BL0942_VOLTAGE_REF
+            string "Voltage reference (LSB / V)"
+            default "15873.35944"
+            help
+                V = V_RMS_reg / VOLTAGE_REF. Giá trị mặc định cho module phổ biến
+                (điện trở phân áp 5 x 390k + 510R, shunt 1 mOhm).
+
+        config BL0942_CURRENT_REF
+            string "Current reference (LSB / A)"
+            default "251213.46469"
+            help
+                I = I_RMS_reg / CURRENT_REF.
+
+        config BL0942_POWER_REF
+            string "Power reference (LSB / W)"
+            default "596"
+            help
+                P = WATT_reg / POWER_REF.
+
+        config BL0942_ENERGY_REF
+            string "Energy reference (CF pulse / kWh), 0 = tự tính từ POWER_REF"
+            default "0"
+            help
+                E(kWh) = CF_CNT / ENERGY_REF. Để "0" thì tự tính
+                ENERGY_REF = POWER_REF * 3600000 / 419430.4.
+
+        config BL0942_CURRENT_NOISE_MA
+            int "Ngưỡng nhiễu dòng điện (mA), dưới ngưỡng coi là 0"
+            default 15
+
+        config BL0942_POWER_NOISE_MW
+            int "Ngưỡng nhiễu công suất (mW), dưới ngưỡng coi là 0"
+            default 500
+    endmenu
+
+    config BL0942_READ_INTERVAL_MS
+        int "Chu kỳ đọc BL0942 (ms)"
+        range 400 60000
+        default 1000
+
+    config ENERGY_NVS_SAVE_DELTA_WH
+        int "Lưu tổng điện năng vào NVS khi tăng thêm (Wh)"
+        range 1 1000
+        default 10
+        help
+            Tổng điện năng được lưu vào flash để không mất khi mất điện.
+            Giá trị nhỏ = chính xác hơn khi mất điện nhưng ghi flash nhiều hơn.
+
+    config ENERGY_EVENT_INTERVAL_S
+        int "Chu kỳ gửi event CumulativeEnergyMeasured (giây)"
+        range 10 3600
+        default 300
+
+    config HOMEKIT_POWER_AS_LIGHT_SENSOR
+        bool "Thêm endpoint Light Sensor hiển thị công suất (W = lux) cho Apple Home"
+        default y
+        help
+            Apple Home có thể chưa hiển thị cluster Electrical Power Measurement.
+            Bật tuỳ chọn này để thêm 1 Light Sensor có giá trị lux = công suất (W),
+            nhờ đó xem được công suất ngay trong ứng dụng Nhà (Home) trên iPhone.
+
+    config RESET_BUTTON_GPIO
+        int "GPIO nút factory reset (giữ 5 giây)"
+        default 9
+        help
+            ESP32-C3 SuperMini/DevKitM: nút BOOT nằm ở GPIO9.
+
+endmenu
