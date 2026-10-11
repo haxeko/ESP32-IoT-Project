@@ -52,8 +52,8 @@ menu "BL0942 Power Meter"
         default 9600
         help
             Initial baud rate: 4800 when the BL0942 SCLK_BPS pin is tied low, 9600 when high.
-            If the BL0942 does not answer, the driver tries 4800/9600 and swapped
-            RX/TX pins until a valid packet is received.
+            If the BL0942 does not answer, the driver alternates 9600/4800 and
+            re-runs the BL0942 setup (soft reset + MODE) until a valid packet is received.
 
     config BL0942_ADDRESS
         int "Device address (A1/A2 pins)"
