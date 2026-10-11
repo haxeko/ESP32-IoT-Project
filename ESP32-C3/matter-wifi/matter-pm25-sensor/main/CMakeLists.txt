@@ -1,4 +1,4 @@
-idf_component_register(SRC_DIRS          "." "drivers"
+idf_component_register(SRC_DIRS          "." "drivers" "ui"
                        PRIV_INCLUDE_DIRS "." "drivers" "${ESP_MATTER_PATH}/examples/common/utils")
 
 set_property(TARGET ${COMPONENT_LIB} PROPERTY CXX_STANDARD 17)

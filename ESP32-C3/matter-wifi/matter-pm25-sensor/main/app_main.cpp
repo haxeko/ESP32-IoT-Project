@@ -6,25 +6,27 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-// Matter Air Quality Sensor (device type 0x002C) with PM1.0 / PM2.5 / PM10
-// concentration measurement clusters, fed by a UART PM sensor.
+// Matter Air Quality Sensor (device type 0x002C) with a PM2.5 concentration
+// measurement cluster, fed by a UART PM sensor. The OLED, WS2812 indicator and
+// LD2410 radar are handled locally (local_ui.cpp) and are not exposed to Matter.
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
-#include <bsp/esp-bsp.h>
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_matter.h>
 #include <esp_matter_ota.h>
+#include <esp_timer.h>
+#include <nvs.h>
 #include <nvs_flash.h>
 
-#include <app_reset.h>
 #include <common_macros.h>
 
 #include <math.h>
 
 // drivers implemented by this example
 #include <drivers/pm_sensor.h>
+#include <local_ui.h>
 
 static const char *TAG = "app_main";
 
@@ -35,6 +37,14 @@ using namespace chip::app::Clusters;
 
 // Upper limit of the PMS5003 / SDS011 measuring range, in µg/m³.
 static constexpr float kPmMaxMeasuredValue = 1000.0f;
+
+// GPIO9 (BOOT button) is the OLED SCL line, so factory reset is done by
+// powering the device on kFactoryResetBootCount times in a row, each time for
+// less than kFactoryResetWindowUs.
+static constexpr uint8_t kFactoryResetBootCount = 5;
+static constexpr uint64_t kFactoryResetWindowUs = 10 * 1000 * 1000;
+static constexpr char kNvsNamespace[] = "app";
+static constexpr char kNvsBootCountKey[] = "boot_count";
 
 // Maps PM2.5 (µg/m³) to the Matter AirQuality enum using the US EPA 2024 AQI
 // breakpoints. Apple Home shows the AirQuality value as the sensor state.
@@ -67,22 +77,16 @@ static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data
     uint16_t endpoint_id = static_cast<uint16_t>(reinterpret_cast<uintptr_t>(user_data));
     pm_sensor_data_t d = *data;
 
+    if (d.valid) {
+        local_ui_set_pm25(d.pm2_5);
+    }
+
     // schedule the attribute update so that we can report it from matter thread
     chip::DeviceLayer::SystemLayer().ScheduleLambda([endpoint_id, d]() {
-        float pm1_0 = d.valid ? d.pm1_0 : NAN;
         float pm2_5 = d.valid ? d.pm2_5 : NAN;
-        float pm10 = d.valid ? d.pm10 : NAN;
 
         update_measured_value(endpoint_id, Pm25ConcentrationMeasurement::Id,
                               Pm25ConcentrationMeasurement::Attributes::MeasuredValue::Id, pm2_5);
-        update_measured_value(endpoint_id, Pm10ConcentrationMeasurement::Id,
-                              Pm10ConcentrationMeasurement::Attributes::MeasuredValue::Id, pm10);
-#if CONFIG_PM_SENSOR_MODEL_PMS
-        update_measured_value(endpoint_id, Pm1ConcentrationMeasurement::Id,
-                              Pm1ConcentrationMeasurement::Attributes::MeasuredValue::Id, pm1_0);
-#else
-        (void)pm1_0;
-#endif
 
         AirQuality::AirQualityEnum air_quality = d.valid ? pm25_to_air_quality(pm2_5)
                                                          : AirQuality::AirQualityEnum::kUnknown;
@@ -125,7 +129,7 @@ static endpoint_t *create_air_quality_sensor(node_t *node)
                                chip::to_underlying(AirQuality::Feature::kExtremelyPoor);
     attribute::set_val(feature_map, &feature_map_val);
 
-    // Concentration measurement clusters, measurement medium defaults to Air.
+    // PM2.5 concentration measurement, measurement medium defaults to Air.
     cluster::pm25_concentration_measurement::config_t pm25_config;
     cluster_t *pm25_cluster = cluster::pm25_concentration_measurement::create(endpoint, &pm25_config,
                                                                               CLUSTER_FLAG_SERVER);
@@ -133,31 +137,46 @@ static endpoint_t *create_air_quality_sensor(node_t *node)
                         cluster::pm25_concentration_measurement::feature::numeric_measurement::add) == ESP_OK,
                         nullptr);
 
-    cluster::pm10_concentration_measurement::config_t pm10_config;
-    cluster_t *pm10_cluster = cluster::pm10_concentration_measurement::create(endpoint, &pm10_config,
-                                                                              CLUSTER_FLAG_SERVER);
-    VerifyOrReturnValue(add_numeric_measurement(pm10_cluster,
-                        cluster::pm10_concentration_measurement::feature::numeric_measurement::add) == ESP_OK,
-                        nullptr);
-
-#if CONFIG_PM_SENSOR_MODEL_PMS
-    cluster::pm1_concentration_measurement::config_t pm1_config;
-    cluster_t *pm1_cluster = cluster::pm1_concentration_measurement::create(endpoint, &pm1_config,
-                                                                            CLUSTER_FLAG_SERVER);
-    VerifyOrReturnValue(add_numeric_measurement(pm1_cluster,
-                        cluster::pm1_concentration_measurement::feature::numeric_measurement::add) == ESP_OK,
-                        nullptr);
-#endif
-
     return endpoint;
 }
 
-static esp_err_t factory_reset_button_register()
+static void save_boot_count(uint8_t count)
 {
-    button_handle_t push_button;
-    esp_err_t err = bsp_iot_button_create(&push_button, NULL, BSP_BUTTON_NUM);
-    VerifyOrReturnError(err == ESP_OK, err);
-    return app_reset_button_register(push_button);
+    nvs_handle_t handle;
+    if (nvs_open(kNvsNamespace, NVS_READWRITE, &handle) == ESP_OK) {
+        nvs_set_u8(handle, kNvsBootCountKey, count);
+        nvs_commit(handle);
+        nvs_close(handle);
+    }
+}
+
+// Counts quick power cycles. Returns true when a factory reset was requested.
+static bool check_factory_reset_boot_count()
+{
+    uint8_t count = 0;
+    nvs_handle_t handle;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) == ESP_OK) {
+        nvs_get_u8(handle, kNvsBootCountKey, &count);
+        nvs_close(handle);
+    }
+    count++;
+    ESP_LOGI(TAG, "Quick power cycle %u/%u", count, kFactoryResetBootCount);
+    if (count >= kFactoryResetBootCount) {
+        save_boot_count(0);
+        return true;
+    }
+    save_boot_count(count);
+
+    // Staying powered on long enough clears the counter.
+    static esp_timer_handle_t timer;
+    const esp_timer_create_args_t args = {
+        .callback = [](void *) { save_boot_count(0); },
+        .name = "boot_count",
+    };
+    if (esp_timer_create(&args, &timer) == ESP_OK) {
+        esp_timer_start_once(timer, kFactoryResetWindowUs);
+    }
+    return false;
 }
 
 static void open_commissioning_window_if_necessary()
@@ -222,9 +241,11 @@ extern "C" void app_main()
     /* Initialize the ESP NVS layer */
     nvs_flash_init();
 
-    /* Initialize push button on the dev-kit to reset the device */
-    esp_err_t err = factory_reset_button_register();
-    ABORT_APP_ON_FAILURE(ESP_OK == err, ESP_LOGE(TAG, "Failed to initialize reset button, err:%d", err));
+    const bool factory_reset_requested = check_factory_reset_boot_count();
+
+    /* OLED, WS2812 and LD2410 work locally, independent of Matter */
+    esp_err_t err = local_ui_init();
+    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start local UI, err:%d", err));
 
     /* Create a Matter node and add the mandatory Root Node device type on endpoint 0 */
     node::config_t node_config;
@@ -239,6 +260,12 @@ extern "C" void app_main()
     /* Matter start */
     err = esp_matter::start(app_event_cb);
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
+
+    if (factory_reset_requested) {
+        ESP_LOGW(TAG, "Factory reset requested by %u quick power cycles", kFactoryResetBootCount);
+        esp_matter::factory_reset();
+        return;
+    }
 
     /* Start reading the PM sensor once the Matter stack is running */
     pm_sensor_config_t pm_config = {

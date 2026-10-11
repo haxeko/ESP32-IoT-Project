@@ -1,7 +1,5 @@
 dependencies:
-  esp_bsp_generic:
-    version: "^3"
-  # led_strip 3.1.0 (pulled in by esp_bsp_generic) calls rmt_tx_switch_gpio(),
-  # which is not available in ESP-IDF v5.4. Keep the 3.0.x series.
+  # WS2812 air quality indicator. led_strip 3.1.0 calls rmt_tx_switch_gpio(),
+  # which is not available in ESP-IDF v5.4, so keep the 3.0.x series.
   espressif/led_strip:
     version: "~3.0.3"

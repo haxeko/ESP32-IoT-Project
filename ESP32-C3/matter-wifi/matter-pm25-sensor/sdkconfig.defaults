@@ -20,10 +20,6 @@ CONFIG_PARTITION_TABLE_OFFSET=0xC000
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
 CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
 
-# Button
-CONFIG_BUTTON_PERIOD_TIME_MS=20
-CONFIG_BUTTON_LONG_PRESS_TIME_MS=5000
-
 # disable softap by default
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
@@ -39,14 +35,9 @@ CONFIG_LWIP_IPV6_NUM_ADDRESSES=6
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
 
-# BOOT button (GPIO9) on ESP32-C3 boards: hold 5 s to factory reset
-CONFIG_BSP_BUTTONS_NUM=1
-CONFIG_BSP_BUTTON_1_TYPE_GPIO=y
-CONFIG_BSP_BUTTON_1_GPIO=9
-CONFIG_BSP_BUTTON_1_LEVEL=0
-
 # GPIO20/GPIO21 are the default UART0 console pins on ESP32-C3. They are used
-# for the PM sensor here, so move the log console to the built-in USB-Serial-JTAG.
+# for the PM sensor here (UART1) and UART0 drives the LD2410, so move the log
+# console to the built-in USB-Serial-JTAG.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 

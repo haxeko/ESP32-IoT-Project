@@ -36,6 +36,16 @@ static const char *TAG = "pm_sensor";
 // Sensor sends a frame every 0.2-2.3 s.
 #define DATA_TIMEOUT_MS         30000
 
+#if CONFIG_PM_SENSOR_PMS_PERIOD_SEC > 0
+// Duty cycle: wake up, warm up, sample for a few seconds, then put the sensor
+// to sleep (fan and laser off) until the next period. Extends sensor life.
+#define DUTY_CYCLE              1
+#define DUTY_SAMPLE_MS          5000
+#define DUTY_PERIOD_MS          ((CONFIG_PM_SENSOR_PMS_PERIOD_SEC < 60 ? 60 : CONFIG_PM_SENSOR_PMS_PERIOD_SEC) * 1000)
+#else
+#define DUTY_CYCLE              0
+#endif
+
 static const uint8_t k_frame_header[] = { 0x42, 0x4D };
 
 static void send_command(uint8_t cmd, uint16_t data)
@@ -56,6 +66,13 @@ static void sensor_setup()
     vTaskDelay(pdMS_TO_TICKS(100));
     send_command(0xE1, 0x0001);     // active (streaming) mode
 }
+
+#if DUTY_CYCLE
+static void sensor_sleep()
+{
+    send_command(0xE4, 0x0000);
+}
+#endif
 
 static bool parse_frame(const uint8_t *f, pm_sensor_data_t *out)
 {
@@ -83,6 +100,7 @@ static bool parse_frame(const uint8_t *f, pm_sensor_data_t *out)
 #define FRAME_LEN               10
 #define WARMUP_MS               0
 #define DATA_TIMEOUT_MS         ((CONFIG_PM_SENSOR_SDS011_WORK_PERIOD_MIN * 60 + 60) * 1000)
+#define DUTY_CYCLE              0
 
 static const uint8_t k_frame_header[] = { 0xAA, 0xC0 };
 
@@ -139,19 +157,50 @@ static float round1(float v)
     return roundf(v * 10.0f) / 10.0f;
 }
 
+// Running average of the samples received since the last report.
+typedef struct {
+    float pm1_0;
+    float pm2_5;
+    float pm10;
+    uint32_t count;
+} pm_accumulator_t;
+
+static void report_average(pm_accumulator_t *acc)
+{
+    pm_sensor_data_t data = {
+        .valid = true,
+        .pm1_0 = round1(acc->pm1_0 / acc->count),
+        .pm2_5 = round1(acc->pm2_5 / acc->count),
+        .pm10 = round1(acc->pm10 / acc->count),
+    };
+    memset(acc, 0, sizeof(*acc));
+    ESP_LOGI(TAG, "PM1.0=%.1f PM2.5=%.1f PM10=%.1f ug/m3", data.pm1_0, data.pm2_5, data.pm10);
+    s_config.cb(&data, s_config.user_data);
+}
+
+static void report_invalid()
+{
+    ESP_LOGW(TAG, "No data from sensor, check wiring (RX=GPIO%d, TX=GPIO%d)", s_config.rx_pin, s_config.tx_pin);
+    pm_sensor_data_t data = { .valid = false, .pm1_0 = NAN, .pm2_5 = NAN, .pm10 = NAN };
+    s_config.cb(&data, s_config.user_data);
+}
+
 static void pm_sensor_task(void *arg)
 {
     uint8_t rx[64];
     uint8_t frame[FRAME_LEN];
     size_t frame_pos = 0;
+    pm_accumulator_t acc = {};
 
-    float sum_pm1 = 0, sum_pm25 = 0, sum_pm10 = 0;
-    uint32_t samples = 0;
-
-    const int64_t start_ms = esp_timer_get_time() / 1000;
-    int64_t last_report_ms = start_ms;
-    int64_t last_sample_ms = start_ms;
+    // Start of the current measurement (power-up, or wake-up in duty cycle mode).
+    int64_t cycle_start_ms = esp_timer_get_time() / 1000;
+#if DUTY_CYCLE
+    bool sleeping = false;
+#else
+    int64_t last_report_ms = cycle_start_ms;
+    int64_t last_sample_ms = cycle_start_ms;
     bool reported_invalid = false;
+#endif
 
     sensor_setup();
 
@@ -180,43 +229,53 @@ static void pm_sensor_task(void *arg)
                 ESP_LOGD(TAG, "Invalid frame");
                 continue;
             }
+#if DUTY_CYCLE
+            if (sleeping) {
+                continue;
+            }
+#else
             last_sample_ms = now_ms;
-            if (now_ms - start_ms < WARMUP_MS) {
+#endif
+            if (now_ms - cycle_start_ms < WARMUP_MS) {
                 continue;
             }
             ESP_LOGD(TAG, "PM1.0=%.1f PM2.5=%.1f PM10=%.1f", sample.pm1_0, sample.pm2_5, sample.pm10);
-            sum_pm1 += sample.pm1_0;
-            sum_pm25 += sample.pm2_5;
-            sum_pm10 += sample.pm10;
-            samples++;
+            acc.pm1_0 += sample.pm1_0;
+            acc.pm2_5 += sample.pm2_5;
+            acc.pm10 += sample.pm10;
+            acc.count++;
         }
 
+#if DUTY_CYCLE
+        if (!sleeping && now_ms - cycle_start_ms >= WARMUP_MS + DUTY_SAMPLE_MS) {
+            if (acc.count > 0) {
+                report_average(&acc);
+            } else {
+                report_invalid();
+            }
+            sensor_sleep();
+            sleeping = true;
+        } else if (sleeping && now_ms - cycle_start_ms >= DUTY_PERIOD_MS) {
+            cycle_start_ms = now_ms;
+            sleeping = false;
+            sensor_setup();
+        }
+#else
         if (now_ms - last_report_ms < s_config.report_interval_ms) {
             continue;
         }
         last_report_ms = now_ms;
 
-        if (samples > 0) {
-            pm_sensor_data_t data = {
-                .valid = true,
-                .pm1_0 = round1(sum_pm1 / samples),
-                .pm2_5 = round1(sum_pm25 / samples),
-                .pm10 = round1(sum_pm10 / samples),
-            };
-            sum_pm1 = sum_pm25 = sum_pm10 = 0;
-            samples = 0;
+        if (acc.count > 0) {
             reported_invalid = false;
-            ESP_LOGI(TAG, "PM1.0=%.1f PM2.5=%.1f PM10=%.1f ug/m3", data.pm1_0, data.pm2_5, data.pm10);
-            s_config.cb(&data, s_config.user_data);
+            report_average(&acc);
         } else if (!reported_invalid && now_ms - last_sample_ms > DATA_TIMEOUT_MS) {
-            ESP_LOGW(TAG, "No data from sensor, check wiring (RX=GPIO%d, TX=GPIO%d)",
-                     s_config.rx_pin, s_config.tx_pin);
-            pm_sensor_data_t data = { .valid = false, .pm1_0 = NAN, .pm2_5 = NAN, .pm10 = NAN };
             reported_invalid = true;
-            s_config.cb(&data, s_config.user_data);
+            report_invalid();
             // The sensor may have been unplugged or reset; send setup commands again.
             sensor_setup();
         }
+#endif
     }
 }
 
