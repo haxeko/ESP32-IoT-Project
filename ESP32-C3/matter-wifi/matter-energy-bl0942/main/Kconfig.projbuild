@@ -49,9 +49,11 @@ menu "BL0942 Power Meter"
     config BL0942_UART_BAUD
         int "Baud rate"
         depends on BL0942_ENABLE
-        default 4800
+        default 9600
         help
-            4800 when the BL0942 SCLK_BPS pin is tied low (default on most modules), 9600 when high.
+            Initial baud rate: 4800 when the BL0942 SCLK_BPS pin is tied low, 9600 when high.
+            If the BL0942 does not answer, the driver alternates between 4800 and 9600
+            until a valid packet is received.
 
     config BL0942_ADDRESS
         int "Device address (A1/A2 pins)"

@@ -43,6 +43,8 @@ static uint64_t s_energy_base_mwh;
 static double s_energy_counted_mwh;
 static int32_t s_last_cf = -1;
 static int s_fail_count;
+static int s_baud = CONFIG_BL0942_UART_BAUD;
+static bool s_baud_confirmed;
 static bl0942_reading_t s_last;
 
 typedef struct {
@@ -128,7 +130,7 @@ esp_err_t bl0942_init(uint64_t energy_base_mwh)
     s_max_pulses = (uint32_t)(energy_ref * 20.0f * CONFIG_BL0942_UPDATE_INTERVAL_MS / 3600000.0f) + 10;
 
     const uart_config_t uart_cfg = {
-        .baud_rate = CONFIG_BL0942_UART_BAUD,
+        .baud_rate = s_baud,
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
@@ -150,7 +152,7 @@ esp_err_t bl0942_init(uint64_t energy_base_mwh)
     }
 
     ESP_LOGI(TAG, "UART%d RX=GPIO%d TX=GPIO%d %d baud, Vref=%.2f Iref=%.2f Pref=%.3f Eref=%.2f pulse/kWh", s_uart,
-             CONFIG_BL0942_UART_RX_GPIO, CONFIG_BL0942_UART_TX_GPIO, CONFIG_BL0942_UART_BAUD, s_voltage_ref,
+             CONFIG_BL0942_UART_RX_GPIO, CONFIG_BL0942_UART_TX_GPIO, s_baud, s_voltage_ref,
              s_current_ref, s_power_ref, energy_ref);
     return ESP_OK;
 }
@@ -160,9 +162,17 @@ void bl0942_update(bl0942_reading_t *out)
     bl0942_raw_t raw;
     if (bl0942_read_raw(&raw) != ESP_OK) {
         /* Keep the last values for a few misses, then report the meter as unavailable */
-        if (++s_fail_count == 3) {
+        ++s_fail_count;
+        if (s_fail_count == 3) {
             ESP_LOGE(TAG, "BL0942 not responding: check TX->GPIO%d, RX->GPIO%d, baud %d", CONFIG_BL0942_UART_RX_GPIO,
-                     CONFIG_BL0942_UART_TX_GPIO, CONFIG_BL0942_UART_BAUD);
+                     CONFIG_BL0942_UART_TX_GPIO, s_baud);
+        }
+        /* The BL0942 baud rate is set by its SCLK_BPS pin (low: 4800, high: 9600).
+         * Until a valid packet has been received, alternate between the two. */
+        if (!s_baud_confirmed && s_fail_count % 3 == 0) {
+            s_baud = (s_baud == 4800) ? 9600 : 4800;
+            uart_set_baudrate(s_uart, s_baud);
+            ESP_LOGW(TAG, "Trying %d baud", s_baud);
         }
         *out = s_last;
         if (s_fail_count >= 3) {
@@ -172,6 +182,10 @@ void bl0942_update(bl0942_reading_t *out)
         return;
     }
     s_fail_count = 0;
+    if (!s_baud_confirmed) {
+        s_baud_confirmed = true;
+        ESP_LOGI(TAG, "BL0942 answering at %d baud", s_baud);
+    }
 
     /* Energy from the 24-bit CF pulse counter */
     const uint32_t cf = raw.cf_cnt & 0xFFFFFF;

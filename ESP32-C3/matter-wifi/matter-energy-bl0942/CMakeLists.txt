@@ -13,8 +13,16 @@ if(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
     endif()
 endif(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
 
-set(PROJECT_VER "1.0")
-set(PROJECT_VER_NUMBER 1)
+# Firmware version, shown as "Firmware" in Apple Home (Basic Information SoftwareVersionString).
+# Every build gets a new version: <major>.<minor>.<UTC build time yyMMddHHmm>.
+# PROJECT_VER_NUMBER (Matter SoftwareVersion, used by OTA) is the same timestamp, so it always increases.
+# The timestamp is taken when CMake configures: run "idf.py fullclean" (or build in a fresh tree, as CI does)
+# to get a new version on a local rebuild.
+set(FW_VERSION_MAJOR_MINOR "1.1")
+string(TIMESTAMP FW_BUILD_TIME "%y%m%d%H%M" UTC)
+set(PROJECT_VER "${FW_VERSION_MAJOR_MINOR}.${FW_BUILD_TIME}")
+set(PROJECT_VER_NUMBER ${FW_BUILD_TIME})
+message(STATUS "Firmware version: ${PROJECT_VER} (${PROJECT_VER_NUMBER})")
 
 set(ESP_MATTER_PATH $ENV{ESP_MATTER_PATH})
 set(MATTER_SDK_PATH ${ESP_MATTER_PATH}/connectedhomeip/connectedhomeip)

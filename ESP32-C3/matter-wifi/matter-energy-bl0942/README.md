@@ -26,6 +26,7 @@ Cùng endpoint với relay (endpoint 1), firmware thêm device type **Electrical
 | | ActiveCurrent | mA |
 | Electrical Energy Measurement | CumulativeEnergyImported | mWh (lưu NVS mỗi 10 phút) |
 
+- Khi khởi động, log in `BL0942 answering at 9600 baud` (hoặc 4800) nếu đọc được BL0942.
 - Đọc gói đầy đủ của BL0942 (lệnh `0x58 0xAA`, 23 byte, có kiểm tra checksum) mỗi 2 s (`BL0942_UPDATE_INTERVAL_MS`).
 - Điện năng tính từ bộ đếm xung phần cứng `CF_CNT`, có xử lý tràn 24 bit và trường hợp BL0942 bị reset.
 - Nếu BL0942 không trả lời 3 lần liên tiếp, công suất/áp/dòng báo `null` (không rõ) thay vì giữ giá trị cũ.
@@ -43,7 +44,7 @@ chip-tool electricalenergymeasurement read cumulative-energy-imported 0x7283 1
 
 | Tuỳ chọn | Mặc định | Ý nghĩa |
 |---|---|---|
-| `BL0942_UART_BAUD` | 4800 | 4800 khi chân `SCLK_BPS` nối GND (phổ biến), 9600 khi nối VDD |
+| `BL0942_UART_BAUD` | 9600 | baud khởi đầu: 9600 khi chân `SCLK_BPS` nối VDD, 4800 khi nối GND. Nếu BL0942 không trả lời, driver tự đổi qua lại 9600/4800 |
 | `BL0942_ADDRESS` | 0 | địa chỉ chip theo chân A1/A2 |
 | `BL0942_VOLTAGE_REF` | 15873.35944 | LSB/V, module phổ biến (phân áp 5 × 390 kΩ + 510 Ω) |
 | `BL0942_CURRENT_REF` | 251213.46469 | LSB/A, shunt 1 mΩ |
@@ -89,6 +90,15 @@ idf.py -p /dev/ttyACM0 erase-flash flash monitor
 ```
 
 GitHub Actions (`.github/workflows/matter-energy-bl0942.yml` ở gốc repo) tự build và upload file `.bin`, trong đó có `matter_plug_bl0942_merged.bin` để nạp một lần ở địa chỉ `0x0`. Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
+
+## Phiên bản firmware
+
+Mỗi lần build, firmware tự có phiên bản mới dạng `1.1.<yyMMddHHmm>` (giờ build theo UTC). Ví dụ `1.1.2610110915` là bản build lúc 09:15 UTC ngày 11/10/2026. Xem phiên bản ở:
+
+- **Apple Home**: mở phụ kiện → cài đặt → kéo xuống mục **Firmware**.
+- **Log khi khởi động**: dòng `App version: 1.1.xxxxxxxxxx`.
+
+Khi build local, phiên bản lấy theo lúc CMake cấu hình. Muốn có số mới thì chạy `idf.py fullclean` trước khi build. GitHub Actions luôn build từ đầu nên mỗi lần chạy đều có số mới. Đổi `FW_VERSION_MAJOR_MINOR` trong `CMakeLists.txt` khi muốn tăng số chính.
 
 ## Commissioning
 
