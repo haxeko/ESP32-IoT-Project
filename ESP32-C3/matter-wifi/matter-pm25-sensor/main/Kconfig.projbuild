@@ -1,0 +1,42 @@
+menu "PM2.5 Sensor Configuration"
+
+    choice PM_SENSOR_MODEL
+        prompt "PM sensor model"
+        default PM_SENSOR_MODEL_PMS
+        help
+            UART particulate matter sensor connected to the ESP32-C3.
+
+        config PM_SENSOR_MODEL_PMS
+            bool "Plantower PMS5003 / PMS7003 / PMSA003"
+
+        config PM_SENSOR_MODEL_SDS011
+            bool "Nova Fitness SDS011 / SDS021"
+    endchoice
+
+    config PM_SENSOR_UART_RX_PIN
+        int "UART RX pin (connect to sensor TX)"
+        default 20
+
+    config PM_SENSOR_UART_TX_PIN
+        int "UART TX pin (connect to sensor RX)"
+        default 21
+
+    config PM_SENSOR_REPORT_INTERVAL_SEC
+        int "Report interval (seconds)"
+        range 1 3600
+        default 10
+        help
+            Samples received from the sensor are averaged over this interval
+            and then published to the Matter attributes.
+
+    config PM_SENSOR_SDS011_WORK_PERIOD_MIN
+        int "SDS011 working period (minutes, 0 = continuous)"
+        depends on PM_SENSOR_MODEL_SDS011
+        range 0 30
+        default 0
+        help
+            In periodic mode the SDS011 sleeps and wakes up every N minutes,
+            runs the fan for 30 seconds and sends one measurement. This
+            greatly extends the life of the laser and fan.
+
+endmenu

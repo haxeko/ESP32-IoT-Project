@@ -1,0 +1,3 @@
+dependencies:
+  esp_bsp_generic:
+    version: "^3"
