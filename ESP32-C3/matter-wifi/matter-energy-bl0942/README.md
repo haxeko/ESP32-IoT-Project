@@ -27,10 +27,9 @@ Cùng endpoint với relay (endpoint 1), firmware thêm device type **Electrical
 | Electrical Energy Measurement | CumulativeEnergyImported | mWh (lưu NVS mỗi 10 phút) |
 
 - Khi khởi động, driver làm giống ESPHome: soft reset BL0942, ghi thanh ghi MODE rồi đọc lại để kiểm tra (log `BL0942 setup OK at 9600 baud`). Nếu BL0942 không trả lời, driver tự đổi 9600/4800 baud và khởi tạo lại.
-- Khi chưa đọc được BL0942, log in `No data from BL0942` và công suất báo "không rõ" (null) trên Matter.
+- Khi chưa đọc được BL0942, log in `No data from BL0942 (reporting 0 W)` và gửi 0 W lên Matter (giống bản BL0937). Apple Home ẩn ô công suất nếu giá trị là null, nên firmware luôn gửi số.
 - Đọc gói đầy đủ của BL0942 (lệnh `0x58 0xAA`, 23 byte, có kiểm tra checksum) mỗi 2 s (`BL0942_UPDATE_INTERVAL_MS`).
 - Điện năng tính từ bộ đếm xung phần cứng `CF_CNT`, có xử lý tràn 24 bit và trường hợp BL0942 bị reset.
-- Nếu BL0942 không trả lời 3 lần liên tiếp, công suất/áp/dòng báo `null` (không rõ) thay vì giữ giá trị cũ.
 
 **Hiển thị trên app:** dữ liệu theo chuẩn Matter 1.3+. Home Assistant, SmartThings, Google Home đều đọc được. Apple Home hiển thị công suất tuỳ phiên bản iOS. Nếu không thấy trong Apple Home thì dữ liệu vẫn có trên Matter, đọc được qua Home Assistant hoặc chip-tool:
 

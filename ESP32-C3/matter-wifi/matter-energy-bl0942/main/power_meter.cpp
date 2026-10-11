@@ -232,7 +232,7 @@ void meter_task(void *arg)
             ESP_LOGI(TAG, "P=%.1f W U=%.1f V I=%.3f A E=%llu mWh", r.power_w, r.voltage_v, r.current_a,
                      (unsigned long long)r.energy_mwh);
         } else {
-            ESP_LOGW(TAG, "No data from BL0942 (power reported as unknown)");
+            ESP_LOGW(TAG, "No data from BL0942 (reporting 0 W)");
         }
 
         {
@@ -240,16 +240,16 @@ void meter_task(void *arg)
             if (!accuracy_set) {
                 accuracy_set = set_energy_accuracy();
             }
-            if (r.valid) {
-                s_power_delegate.SetActivePower(DataModel::MakeNullable(power_mw));
-                s_power_delegate.SetActiveCurrent(DataModel::MakeNullable(current_ma));
-                s_power_delegate.SetVoltage(DataModel::MakeNullable(voltage_mv));
-            } else {
-                /* BL0942 not answering: report "unknown" instead of stale values */
-                s_power_delegate.SetActivePower(DataModel::NullNullable);
-                s_power_delegate.SetActiveCurrent(DataModel::NullNullable);
-                s_power_delegate.SetVoltage(DataModel::NullNullable);
+            /* Always publish numbers, like the BL0937 build: Apple Home hides the power reading of an outlet
+             * whose ActivePower is null. Without a reply from the BL0942, report 0. */
+            if (!r.valid) {
+                power_mw = 0;
+                current_ma = 0;
+                voltage_mv = 0;
             }
+            s_power_delegate.SetActivePower(DataModel::MakeNullable(power_mw));
+            s_power_delegate.SetActiveCurrent(DataModel::MakeNullable(current_ma));
+            s_power_delegate.SetVoltage(DataModel::MakeNullable(voltage_mv));
             if (r.energy_mwh != reported_energy && now - last_energy_report >= k_energy_report_interval_us &&
                 report_energy(r.energy_mwh)) {
                 reported_energy = r.energy_mwh;
