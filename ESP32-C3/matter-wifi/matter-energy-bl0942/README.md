@@ -9,10 +9,12 @@ Cấu trúc Matter giống hệt bản BL0937 ([haxeko/ESP32-C3-Matter](https://
 | Relay (active-high mặc định) | GPIO5 |
 | Nút BOOT, nhấn ngắn: bật/tắt relay | GPIO9 |
 | Nút BOOT, giữ 5 s rồi thả: factory reset | GPIO9 |
-| BL0942 **TX** → ESP32 RX (UART1) | **GPIO0** |
-| BL0942 **RX** ← ESP32 TX (UART1) | **GPIO1** |
+| BL0942 **TX** → ESP32 RX (UART0) | **GPIO0** |
+| BL0942 **RX** ← ESP32 TX (UART0) | **GPIO1** |
 
 Trạng thái relay được lưu NVS và khôi phục sau khi mất điện.
+
+BL0942 dùng **UART0** giống ESPHome (`logger: baud_rate: 0`). Console log chuyển sang UART1 trên đúng chân cũ (TX GPIO21, RX GPIO20), cộng với USB-Serial-JTAG, nên cách xem log không đổi.
 
 ## Đo công suất (BL0942)
 
