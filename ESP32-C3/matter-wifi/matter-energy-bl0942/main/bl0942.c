@@ -248,6 +248,37 @@ static int uart_echo(void)
     return (n >= 2 && buf[0] == probe[0] && buf[1] == probe[1]) ? n : -n;
 }
 
+/* Measure the real bit time on the TX pin: send 0x55 (alternating bits) and time the edges on the pad.
+ * At 9600 baud a bit lasts 104 us, at 4800 baud 208 us. Returns the average bit time in us, or -1. */
+static int measure_tx_bit_time_us(void)
+{
+    const uint8_t probe[4] = { 0x55, 0x55, 0x55, 0x55 };
+    gpio_input_enable((gpio_num_t)s_tx_gpio);
+    uart_wait_tx_done(s_uart, pdMS_TO_TICKS(50));
+
+    int64_t first = 0, last_edge = 0;
+    int edges = 0;
+    int level = gpio_get_level((gpio_num_t)s_tx_gpio);
+    uart_write_bytes(s_uart, probe, sizeof(probe));
+    const int64_t end = esp_timer_get_time() + 20000; /* 4 bytes at 4800 baud take 8.3 ms */
+    while (esp_timer_get_time() < end) {
+        const int l = gpio_get_level((gpio_num_t)s_tx_gpio);
+        if (l != level) {
+            const int64_t now = esp_timer_get_time();
+            if (edges == 0) {
+                first = now;
+            }
+            last_edge = now;
+            edges++;
+            level = l;
+        }
+    }
+    uart_wait_tx_done(s_uart, pdMS_TO_TICKS(50));
+    uart_flush_input(s_uart);
+    /* 0x55 framed 8N1 is 0101010101: every bit toggles, so edges - 1 intervals of one bit each */
+    return edges > 1 ? (int)((last_edge - first) / (edges - 1)) : -1;
+}
+
 /* Diagnose the UART link step by step, logging one line:
  *  1. internal loopback: UART peripheral + driver work
  *  2. TX pad loopback (TX GPIO looped to UART RX inside the chip): bytes really leave on the TX pin
@@ -283,10 +314,12 @@ static void self_test(void)
         got = 0;
     }
 
+    const int bit_us = measure_tx_bit_time_us();
+
     ESP_LOGI(TAG, "Self-test (RX=GPIO%d TX=GPIO%d %d baud addr %d): internal loopback %s, TX pin loopback %s, "
-             "RX pin edges after read command: %d, UART bytes: %d",
+             "RX pin edges after read command: %d, UART bytes: %d, TX bit time %d us (expected %d us)",
              s_rx_gpio, s_tx_gpio, s_baud, s_address, internal > 0 ? "OK" : "FAIL", pad > 0 ? "OK" : "FAIL", edges,
-             got);
+             got, bit_us, 1000000 / s_baud);
     if (got > 0) {
         ESP_LOG_BUFFER_HEX_LEVEL(TAG, buf, got, ESP_LOG_INFO);
     }
@@ -350,6 +383,7 @@ void bl0942_update(bl0942_reading_t *out)
                 uart_set_baudrate(s_uart, s_baud);
             }
             resync_and_setup();
+            self_test();
         }
         *out = s_last;
         if (s_fail_count >= 3) {
