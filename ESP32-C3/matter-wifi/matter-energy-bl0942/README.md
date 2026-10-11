@@ -26,7 +26,8 @@ Cùng endpoint với relay (endpoint 1), firmware thêm device type **Electrical
 | | ActiveCurrent | mA |
 | Electrical Energy Measurement | CumulativeEnergyImported | mWh (lưu NVS mỗi 10 phút) |
 
-- Khi khởi động, log in `BL0942 answering at 9600 baud` (hoặc 4800) nếu đọc được BL0942.
+- Nếu BL0942 không trả lời, driver tự thử lần lượt 9600/4800 baud và đảo chân RX/TX (GPIO0 ↔ GPIO1). Khi đọc được, log in tổ hợp đúng, ví dụ `BL0942 answering: ESP RX=GPIO1 (BL0942 TX), ESP TX=GPIO0 (BL0942 RX), 9600 baud`. Nên ghi lại các giá trị này vào menuconfig.
+- Khi chưa đọc được BL0942, log in `No data from BL0942` và công suất báo "không rõ" (null) trên Matter.
 - Đọc gói đầy đủ của BL0942 (lệnh `0x58 0xAA`, 23 byte, có kiểm tra checksum) mỗi 2 s (`BL0942_UPDATE_INTERVAL_MS`).
 - Điện năng tính từ bộ đếm xung phần cứng `CF_CNT`, có xử lý tràn 24 bit và trường hợp BL0942 bị reset.
 - Nếu BL0942 không trả lời 3 lần liên tiếp, công suất/áp/dòng báo `null` (không rõ) thay vì giữ giá trị cũ.

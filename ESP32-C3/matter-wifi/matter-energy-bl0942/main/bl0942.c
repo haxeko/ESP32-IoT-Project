@@ -44,7 +44,11 @@ static double s_energy_counted_mwh;
 static int32_t s_last_cf = -1;
 static int s_fail_count;
 static int s_baud = CONFIG_BL0942_UART_BAUD;
-static bool s_baud_confirmed;
+static int s_rx_gpio = CONFIG_BL0942_UART_RX_GPIO;
+static int s_tx_gpio = CONFIG_BL0942_UART_TX_GPIO;
+static bool s_link_confirmed;
+static int s_link_attempt;
+static int s_last_rx_len;
 static bl0942_reading_t s_last;
 
 typedef struct {
@@ -87,12 +91,17 @@ static esp_err_t bl0942_read_raw(bl0942_raw_t *out)
 
     uint8_t buf[BL0942_PACKET_LEN];
     int len = uart_read_bytes(s_uart, buf, sizeof(buf), pdMS_TO_TICKS(BL0942_READ_TIMEOUT_MS));
+    s_last_rx_len = len < 0 ? 0 : len;
     if (len != BL0942_PACKET_LEN) {
-        ESP_LOGD(TAG, "Timeout: received %d/%d bytes", len < 0 ? 0 : len, BL0942_PACKET_LEN);
+        if (len > 0) {
+            ESP_LOGW(TAG, "Short reply: %d/%d bytes", len, BL0942_PACKET_LEN);
+            ESP_LOG_BUFFER_HEX_LEVEL(TAG, buf, len, ESP_LOG_WARN);
+        }
         return ESP_ERR_TIMEOUT;
     }
     if (buf[0] != BL0942_PACKET_HEADER) {
         ESP_LOGW(TAG, "Bad header 0x%02x", buf[0]);
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, buf, len, ESP_LOG_WARN);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -143,8 +152,7 @@ esp_err_t bl0942_init(uint64_t energy_base_mwh)
     }
     err = uart_param_config(s_uart, &uart_cfg);
     if (err == ESP_OK) {
-        err = uart_set_pin(s_uart, CONFIG_BL0942_UART_TX_GPIO, CONFIG_BL0942_UART_RX_GPIO, UART_PIN_NO_CHANGE,
-                           UART_PIN_NO_CHANGE);
+        err = uart_set_pin(s_uart, s_tx_gpio, s_rx_gpio, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     }
     if (err != ESP_OK) {
         uart_driver_delete(s_uart);
@@ -152,7 +160,7 @@ esp_err_t bl0942_init(uint64_t energy_base_mwh)
     }
 
     ESP_LOGI(TAG, "UART%d RX=GPIO%d TX=GPIO%d %d baud, Vref=%.2f Iref=%.2f Pref=%.3f Eref=%.2f pulse/kWh", s_uart,
-             CONFIG_BL0942_UART_RX_GPIO, CONFIG_BL0942_UART_TX_GPIO, s_baud, s_voltage_ref,
+             s_rx_gpio, s_tx_gpio, s_baud, s_voltage_ref,
              s_current_ref, s_power_ref, energy_ref);
     return ESP_OK;
 }
@@ -163,16 +171,20 @@ void bl0942_update(bl0942_reading_t *out)
     if (bl0942_read_raw(&raw) != ESP_OK) {
         /* Keep the last values for a few misses, then report the meter as unavailable */
         ++s_fail_count;
-        if (s_fail_count == 3) {
-            ESP_LOGE(TAG, "BL0942 not responding: check TX->GPIO%d, RX->GPIO%d, baud %d", CONFIG_BL0942_UART_RX_GPIO,
-                     CONFIG_BL0942_UART_TX_GPIO, s_baud);
-        }
-        /* The BL0942 baud rate is set by its SCLK_BPS pin (low: 4800, high: 9600).
-         * Until a valid packet has been received, alternate between the two. */
-        if (!s_baud_confirmed && s_fail_count % 3 == 0) {
-            s_baud = (s_baud == 4800) ? 9600 : 4800;
+        /* Until a valid packet has been received, cycle through the 4 possible links:
+         * baud 9600/4800 (set by the BL0942 SCLK_BPS pin) x RX/TX pins as configured / swapped. */
+        if (!s_link_confirmed && s_fail_count % 3 == 0) {
+            ESP_LOGW(TAG, "No valid reply (ESP RX=GPIO%d, TX=GPIO%d, %d baud, %d bytes received)", s_rx_gpio,
+                     s_tx_gpio, s_baud, s_last_rx_len);
+            s_link_attempt = (s_link_attempt + 1) % 4;
+            const bool swapped = s_link_attempt >= 2;
+            const bool alt_baud = s_link_attempt % 2;
+            s_rx_gpio = swapped ? CONFIG_BL0942_UART_TX_GPIO : CONFIG_BL0942_UART_RX_GPIO;
+            s_tx_gpio = swapped ? CONFIG_BL0942_UART_RX_GPIO : CONFIG_BL0942_UART_TX_GPIO;
+            s_baud = alt_baud ? (CONFIG_BL0942_UART_BAUD == 4800 ? 9600 : 4800) : CONFIG_BL0942_UART_BAUD;
+            uart_set_pin(s_uart, s_tx_gpio, s_rx_gpio, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
             uart_set_baudrate(s_uart, s_baud);
-            ESP_LOGW(TAG, "Trying %d baud", s_baud);
+            ESP_LOGW(TAG, "Trying ESP RX=GPIO%d, TX=GPIO%d, %d baud", s_rx_gpio, s_tx_gpio, s_baud);
         }
         *out = s_last;
         if (s_fail_count >= 3) {
@@ -182,9 +194,10 @@ void bl0942_update(bl0942_reading_t *out)
         return;
     }
     s_fail_count = 0;
-    if (!s_baud_confirmed) {
-        s_baud_confirmed = true;
-        ESP_LOGI(TAG, "BL0942 answering at %d baud", s_baud);
+    if (!s_link_confirmed) {
+        s_link_confirmed = true;
+        ESP_LOGI(TAG, "BL0942 answering: ESP RX=GPIO%d (BL0942 TX), ESP TX=GPIO%d (BL0942 RX), %d baud", s_rx_gpio,
+                 s_tx_gpio, s_baud);
     }
 
     /* Energy from the 24-bit CF pulse counter */
