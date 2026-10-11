@@ -1,4 +1,4 @@
-menu "BL0942 Energy Meter"
+menu "Matter Smart Plug (BL0942)"
 
     menu "BL0942 UART"
         config BL0942_UART_PORT
@@ -82,18 +82,33 @@ menu "BL0942 Energy Meter"
         range 10 3600
         default 300
 
-    config HOMEKIT_POWER_AS_LIGHT_SENSOR
-        bool "Thêm endpoint Light Sensor hiển thị công suất (W = lux) cho Apple Home"
-        default y
-        help
-            Apple Home có thể chưa hiển thị cluster Electrical Power Measurement.
-            Bật tuỳ chọn này để thêm 1 Light Sensor có giá trị lux = công suất (W),
-            nhờ đó xem được công suất ngay trong ứng dụng Nhà (Home) trên iPhone.
+    menu "Plug (relay / button / LED)"
+        config RELAY_GPIO
+            int "GPIO điều khiển relay (-1 = không có relay)"
+            range -1 21
+            default 3
 
-    config RESET_BUTTON_GPIO
-        int "GPIO nút factory reset (giữ 5 giây)"
-        default 9
-        help
-            ESP32-C3 SuperMini/DevKitM: nút BOOT nằm ở GPIO9.
+        config RELAY_ACTIVE_HIGH
+            bool "Relay đóng khi GPIO mức cao"
+            default y
+
+        config BUTTON_GPIO
+            int "GPIO nút bấm (nhấn: bật/tắt ổ cắm, giữ 5 s: factory reset)"
+            range 0 21
+            default 9
+            help
+                ESP32-C3 SuperMini/DevKitM: nút BOOT nằm ở GPIO9.
+
+        config LED_GPIO
+            int "GPIO LED trạng thái ổ cắm (-1 = không dùng)"
+            range -1 21
+            default 8
+            help
+                ESP32-C3 SuperMini: LED xanh trên board ở GPIO8 (sáng khi mức thấp).
+
+        config LED_ACTIVE_HIGH
+            bool "LED sáng khi GPIO mức cao"
+            default n
+    endmenu
 
 endmenu

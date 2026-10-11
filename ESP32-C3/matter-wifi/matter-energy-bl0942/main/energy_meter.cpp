@@ -1,5 +1,5 @@
 /*
- * Matter Energy Meter - tích hợp BL0942 với các cluster đo điện của Matter.
+ * Đo điện bằng BL0942 và cập nhật các cluster đo điện Matter trên endpoint ổ cắm.
  */
 #include "energy_meter.h"
 #include "bl0942.h"
@@ -48,9 +48,6 @@ static portMUX_TYPE s_values_lock = portMUX_INITIALIZER_UNLOCKED;
 static meter_values_t s_values;
 
 static uint16_t s_sensor_endpoint_id;
-#if CONFIG_HOMEKIT_POWER_AS_LIGHT_SENSOR
-static uint16_t s_light_endpoint_id;
-#endif
 
 /* ------------------------------------------------------------------------- */
 /* Electrical Power Measurement delegate                                      */
@@ -282,23 +279,6 @@ static void matter_update_work(intptr_t)
         }
     }
 
-#if CONFIG_HOMEKIT_POWER_AS_LIGHT_SENSOR
-    /* Illuminance MeasuredValue = 10000 * log10(lux) + 1; ở đây lux = công suất (W).
-     * Giá trị 0 nghĩa là "quá thấp để đo" -> dùng khi công suất < 1 W. */
-    nullable<uint16_t> measured;
-    if (v.valid) {
-        const double watts = v.power_mw / 1000.0;
-        uint16_t raw = 0;
-        if (watts >= 1.0) {
-            double x = 10000.0 * log10(watts) + 1.0;
-            raw = x > 0xFFFE ? 0xFFFE : static_cast<uint16_t>(lround(x));
-        }
-        measured = raw;
-    }
-    esp_matter_attr_val_t val = esp_matter_nullable_uint16(measured);
-    attribute::update(s_light_endpoint_id, IlluminanceMeasurement::Id,
-                      IlluminanceMeasurement::Attributes::MeasuredValue::Id, &val);
-#endif
 }
 
 static void energy_cluster_init_work(intptr_t)
@@ -435,10 +415,10 @@ static void meter_task(void *)
 /* API                                                                        */
 /* ------------------------------------------------------------------------- */
 
-esp_err_t energy_meter_create_endpoints(node_t *node)
+esp_err_t energy_meter_add_to_endpoint(endpoint_t *ep)
 {
-    /* Endpoint 1: Electrical Sensor (0x0510)
-     *   - Power Topology (Node)
+    /* Thêm device type Electrical Sensor (0x0510) vào cùng endpoint với ổ cắm:
+     *   - Power Topology (Node): phép đo áp dụng cho chính thiết bị này
      *   - Electrical Power Measurement (AC)
      *   - Electrical Energy Measurement (Imported + Cumulative)
      */
@@ -447,10 +427,10 @@ esp_err_t energy_meter_create_endpoints(node_t *node)
         cluster::electrical_power_measurement::feature::alternating_current::get_id();
     sensor_config.electrical_power_measurement.delegate = &s_power_delegate;
 
-    endpoint_t *ep = endpoint::electrical_sensor::create(node, &sensor_config, ENDPOINT_FLAG_NONE, nullptr);
-    if (!ep) {
-        ESP_LOGE(TAG, "Failed to create electrical sensor endpoint");
-        return ESP_FAIL;
+    esp_err_t err = endpoint::electrical_sensor::add(ep, &sensor_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add electrical sensor device type");
+        return err;
     }
     s_sensor_endpoint_id = endpoint::get_id(ep);
 
@@ -471,23 +451,7 @@ esp_err_t energy_meter_create_endpoints(node_t *node)
         ESP_LOGE(TAG, "Failed to create electrical energy measurement cluster");
         return ESP_FAIL;
     }
-    ESP_LOGI(TAG, "Electrical sensor created with endpoint_id %d", s_sensor_endpoint_id);
-
-#if CONFIG_HOMEKIT_POWER_AS_LIGHT_SENSOR
-    /* Endpoint 2: Light Sensor - lux = công suất (W), để Apple Home hiển thị được */
-    endpoint::light_sensor::config_t light_config;
-    light_config.illuminance_measurement.measured_value = nullable<uint16_t>();
-    light_config.illuminance_measurement.min_measured_value = 1;
-    light_config.illuminance_measurement.max_measured_value = 0xFFFE;
-    endpoint_t *light_ep = endpoint::light_sensor::create(node, &light_config, ENDPOINT_FLAG_NONE, nullptr);
-    if (!light_ep) {
-        ESP_LOGE(TAG, "Failed to create light sensor endpoint");
-        return ESP_FAIL;
-    }
-    s_light_endpoint_id = endpoint::get_id(light_ep);
-    ESP_LOGI(TAG, "Power light sensor (W as lux) created with endpoint_id %d", s_light_endpoint_id);
-#endif
-
+    ESP_LOGI(TAG, "Power/energy measurement added to endpoint %d", s_sensor_endpoint_id);
     return ESP_OK;
 }
 

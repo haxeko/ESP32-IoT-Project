@@ -1,4 +1,4 @@
-# sdkconfig mặc định cho Matter Energy Meter (BL0942) - ESP32-C3
+# sdkconfig mặc định cho Matter Smart Plug (BL0942) - ESP32-C3
 # Dựa trên esp-matter examples/light (release/v1.5)
 
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y

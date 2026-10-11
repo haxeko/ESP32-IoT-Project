@@ -1,4 +1,4 @@
-# Matter Energy Meter - ESP32-C3 + BL0942
+# Matter Smart Plug - ESP32-C3 + BL0942
 cmake_minimum_required(VERSION 3.5)
 
 if(NOT DEFINED ENV{ESP_MATTER_PATH})
