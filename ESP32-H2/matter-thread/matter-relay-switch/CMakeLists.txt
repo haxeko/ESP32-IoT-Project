@@ -14,13 +14,46 @@ if(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
 endif(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
 
 # Firmware version, shown as "Firmware" in Apple Home (Basic Information SoftwareVersionString).
-# Every build gets a new version: <major>.<minor>.<UTC build time yyMMddHHmm>.
-# PROJECT_VER_NUMBER (Matter SoftwareVersion, used by OTA) is the same timestamp, so it always increases.
-# The timestamp is taken when CMake configures: run "idf.py fullclean" (or build in a fresh tree, as CI does)
-# to get a new version on a local rebuild.
+# Every build gets a new version: <major>.<minor>.<UTC build time yyMMddHHmm>-<git commit>[-dirty].
+# "-dirty" marks a build with uncommitted changes in this project directory.
+# PROJECT_VER_NUMBER (Matter SoftwareVersion, used by OTA) is the timestamp alone, so it always increases.
+# The version is taken when CMake configures. A new commit or checkout re-runs CMake on the next build;
+# otherwise run "idf.py fullclean" (or build in a fresh tree, as CI does) to get a new version.
 set(FW_VERSION_MAJOR_MINOR "1.0")
 string(TIMESTAMP FW_BUILD_TIME "%y%m%d%H%M" UTC)
-set(PROJECT_VER "${FW_VERSION_MAJOR_MINOR}.${FW_BUILD_TIME}")
+
+set(FW_GIT_COMMIT "nogit")
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short=7 HEAD
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                    OUTPUT_VARIABLE FW_GIT_HEAD OUTPUT_STRIP_TRAILING_WHITESPACE
+                    RESULT_VARIABLE FW_GIT_RESULT ERROR_QUIET)
+    if(FW_GIT_RESULT EQUAL 0)
+        set(FW_GIT_COMMIT ${FW_GIT_HEAD})
+        execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no -- .
+                        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                        OUTPUT_VARIABLE FW_GIT_STATUS OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(NOT "${FW_GIT_STATUS}" STREQUAL "")
+            set(FW_GIT_COMMIT "${FW_GIT_COMMIT}-dirty")
+        endif()
+
+        # Re-run CMake (and so refresh the version) whenever HEAD moves to another commit
+        execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --absolute-git-dir
+                        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                        OUTPUT_VARIABLE FW_GIT_DIR OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        execute_process(COMMAND ${GIT_EXECUTABLE} symbolic-ref -q HEAD
+                        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                        OUTPUT_VARIABLE FW_GIT_REF OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${FW_GIT_DIR}/HEAD")
+        if(FW_GIT_REF AND EXISTS "${FW_GIT_DIR}/${FW_GIT_REF}")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${FW_GIT_DIR}/${FW_GIT_REF}")
+        endif()
+    endif()
+endif()
+
+# esp_app_desc_t.version holds at most 31 characters: "1.0.2610121430-abcdef1-dirty" is 28
+set(PROJECT_VER "${FW_VERSION_MAJOR_MINOR}.${FW_BUILD_TIME}-${FW_GIT_COMMIT}")
 set(PROJECT_VER_NUMBER ${FW_BUILD_TIME})
 message(STATUS "Firmware version: ${PROJECT_VER} (${PROJECT_VER_NUMBER})")
 

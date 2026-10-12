@@ -73,7 +73,12 @@ Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 
 ## Phiên bản firmware
 
-Mỗi lần build, firmware tự có phiên bản mới dạng `1.0.<yyMMddHHmm>` (giờ build theo UTC). Xem ở Apple Home (phụ kiện → cài đặt → **Firmware**) hoặc dòng `App version:` trong log khởi động. Build local: chạy `idf.py fullclean` để lấy số mới.
+Mỗi lần build, firmware tự có phiên bản mới dạng `1.0.<yyMMddHHmm>-<commit>` (giờ build theo UTC + 7 ký tự đầu mã commit git). Ví dụ `1.0.2610121430-6a81e10` là bản build lúc 14:30 UTC ngày 12/10/2026 từ commit `6a81e10`. Xem ở Apple Home (phụ kiện → cài đặt → **Firmware**) hoặc dòng `App version:` trong log khởi động.
+
+- Hậu tố `-dirty` (ví dụ `1.0.2610121430-6a81e10-dirty`) nghĩa là lúc build thư mục dự án có thay đổi chưa commit.
+- `nogit` nghĩa là build ngoài repo git (ví dụ thư mục đã copy ra ngoài).
+- Số phiên bản Matter dùng cho OTA (`SoftwareVersion`) chỉ là phần thời gian `yyMMddHHmm`, nên luôn tăng.
+- Build local: commit mới (hoặc checkout) sẽ tự cấu hình lại và lấy phiên bản mới ở lần build sau. Ngoài ra chạy `idf.py fullclean` để lấy số mới.
 
 ## Commissioning
 
