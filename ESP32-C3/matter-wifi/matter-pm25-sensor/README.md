@@ -148,30 +148,19 @@ Nên dùng iOS bản mới và có Home hub (HomePod mini/HomePod/Apple TV 4K) �
 
 ## Cách tính mức chất lượng không khí
 
-Air Quality được tính từ PM2.5 (trung bình theo report interval), dùng các ngưỡng AQI của US EPA (2024):
+Thiết bị chia chất lượng không khí thành 5 bậc theo PM2.5 (ngưỡng AQI của US EPA 2024). Mức gửi qua Matter được tính từ chính 5 bậc này, để Apple Home luôn hiển thị cùng đánh giá với màn hình:
 
-| PM2.5 (µg/m³) | US AQI | Matter `AirQualityEnum` |
-|---|---|---|
-| 0 – 9.0 | 0 – 50 | Good |
-| 9.1 – 35.4 | 51 – 100 | Fair |
-| 35.5 – 55.4 | 101 – 150 | Moderate |
-| 55.5 – 125.4 | 151 – 200 | Poor |
-| 125.5 – 225.4 | 201 – 300 | VeryPoor |
-| > 225.4 | 301+ | ExtremelyPoor |
+| PM2.5 (µg/m³) | Màn hình | LED | Matter gửi đi | Apple Home |
+|---|---|---|---|---|
+| 0 – 9,0 | RẤT TỐT | Xanh dương | Good | Good (Tốt) |
+| 9,1 – 35,4 | TỐT | Xanh lá | Good | Good (Tốt) |
+| 35,5 – 55,4 | TRUNG BÌNH | Vàng | Fair | Fair (Trung bình) |
+| 55,5 – 125,4 | KÉM | Cam | Poor | Poor |
+| > 125,4 | XẤU | Đỏ | VeryPoor | Poor |
 
-Apple Home tự quy đổi giá trị này sang thang chất lượng không khí của HomeKit (5 mức, từ Excellent đến Poor).
+Với cảm biến Matter, Apple Home chỉ có 3 mức. Kết quả đo bằng chế độ thử (`menuconfig` → *Testing*): Good → Good; Fair và Moderate → Fair; Poor, VeryPoor và ExtremelyPoor → Poor. Vì vậy bậc RẤT TỐT/TỐT và bậc KÉM/XẤU bị gộp lại trên Apple Home. Home Assistant hiển thị đúng giá trị Matter, nên vẫn phân biệt được Poor và VeryPoor.
 
-Trên thiết bị (LED và OLED), mức được chia 5 bậc giống bản ESPHome:
-
-| PM2.5 (µg/m³) | Màn hình | LED |
-|---|---|---|
-| 0 – 9.0 | RẤT TỐT | Xanh dương |
-| 9.1 – 35.4 | TỐT | Xanh lá |
-| 35.5 – 55.4 | TRUNG BÌNH | Vàng |
-| 55.5 – 125.4 | KÉM | Cam |
-| > 125.4 | XẤU | Đỏ |
-
-Muốn đổi ngưỡng thì sửa hàm `pm25_to_air_quality()` trong `main/app_main.cpp` (cho Matter) và `pm25_to_level()` trong `main/local_ui.cpp` (cho LED và màn hình).
+Muốn đổi ngưỡng thì sửa `local_ui_pm25_level()` trong `main/local_ui.cpp`. Muốn đổi mức gửi qua Matter thì sửa bảng `k_level_to_matter` trong `main/app_main.cpp`.
 
 Nếu cảm biến không gửi dữ liệu (lỏng dây, mất nguồn), Matter báo PM2.5 là `null` và Air Quality là `Unknown`. Màn hình và LED giữ giá trị cuối cùng, giống bản ESPHome. Khi có lại dữ liệu, thiết bị tự cập nhật bình thường.
 

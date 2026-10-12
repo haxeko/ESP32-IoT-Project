@@ -14,6 +14,10 @@
 // indicator and the LD2410 presence radar that wakes the OLED.
 esp_err_t local_ui_init(void);
 
+// Air quality level shown on the OLED and LEDs, from PM2.5 in µg/m³ (US EPA
+// 2024 AQI): 0 RẤT TỐT, 1 TỐT, 2 TRUNG BÌNH, 3 KÉM, 4 XẤU.
+int local_ui_pm25_level(float pm25);
+
 // New PM2.5 value in µg/m³. Can be called from any task.
 void local_ui_set_pm25(float pm25);
 

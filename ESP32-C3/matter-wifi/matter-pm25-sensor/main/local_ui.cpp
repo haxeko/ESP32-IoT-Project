@@ -90,7 +90,7 @@ static int64_t now_ms()
 }
 
 // PM2.5 thresholds of the US EPA 2024 AQI.
-static int pm25_to_level(float pm25)
+int local_ui_pm25_level(float pm25)
 {
     return pm25 <= 9.0f   ? 0 :
            pm25 <= 35.4f  ? 1 :
@@ -105,7 +105,7 @@ void local_ui_set_pm25(float pm25)
     }
     taskENTER_CRITICAL(&s_lock);
     s_pm25 = pm25;
-    s_aq_level = pm25_to_level(pm25);
+    s_aq_level = local_ui_pm25_level(pm25);
     taskEXIT_CRITICAL(&s_lock);
 }
 

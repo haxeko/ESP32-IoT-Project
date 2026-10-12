@@ -51,22 +51,24 @@ static constexpr uint64_t kFactoryResetWindowUs = 10 * 1000 * 1000;
 static constexpr char kNvsNamespace[] = "app";
 static constexpr char kNvsBootCountKey[] = "boot_count";
 
-// Maps PM2.5 (µg/m³) to the Matter AirQuality enum using the US EPA 2024 AQI
-// breakpoints. Apple Home shows the AirQuality value as the sensor state.
+// Matter AirQuality value sent for each level of the OLED/LEDs, so that
+// controllers show the same rating as the device. Apple Home only has three
+// ratings for Matter air quality sensors (measured: Good -> Good,
+// Fair/Moderate -> Fair, Poor/VeryPoor/ExtremelyPoor -> Poor), so:
+//   RẤT TỐT, TỐT -> Good   (Apple Home: Good)
+//   TRUNG BÌNH   -> Fair   (Apple Home: Fair)
+//   KÉM          -> Poor   (Apple Home: Poor)
+//   XẤU          -> VeryPoor (Apple Home: Poor; Home Assistant: Very poor)
 static AirQuality::AirQualityEnum pm25_to_air_quality(float pm25)
 {
-    if (pm25 <= 9.0f) {
-        return AirQuality::AirQualityEnum::kGood;           // AQI 0-50
-    } else if (pm25 <= 35.4f) {
-        return AirQuality::AirQualityEnum::kFair;           // AQI 51-100
-    } else if (pm25 <= 55.4f) {
-        return AirQuality::AirQualityEnum::kModerate;       // AQI 101-150
-    } else if (pm25 <= 125.4f) {
-        return AirQuality::AirQualityEnum::kPoor;           // AQI 151-200
-    } else if (pm25 <= 225.4f) {
-        return AirQuality::AirQualityEnum::kVeryPoor;       // AQI 201-300
-    }
-    return AirQuality::AirQualityEnum::kExtremelyPoor;      // AQI 301+
+    static const AirQuality::AirQualityEnum k_level_to_matter[] = {
+        AirQuality::AirQualityEnum::kGood,
+        AirQuality::AirQualityEnum::kGood,
+        AirQuality::AirQualityEnum::kFair,
+        AirQuality::AirQualityEnum::kPoor,
+        AirQuality::AirQualityEnum::kVeryPoor,
+    };
+    return k_level_to_matter[local_ui_pm25_level(pm25)];
 }
 
 // Must be called from the Matter thread.
