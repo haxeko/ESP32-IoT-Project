@@ -28,6 +28,8 @@ Màn hình OLED, đèn LED WS2812 và radar LD2410 chạy **tại chỗ trên th
 
 Các phần OLED, LED và LD2410 đều không bắt buộc. Thiếu phần nào thì firmware ghi lỗi vào log rồi chạy tiếp, cảm biến PM2.5 và Matter vẫn hoạt động.
 
+Thiết bị **chạy độc lập với Matter**: cảm biến, màn hình, LED và radar khởi động trước Matter. Chúng vẫn hoạt động khi thiết bị chưa được ghép nối, khi mất Wi-Fi, hoặc khi Matter không khởi động được. Mỗi 30 giây, log in một dòng `local_ui: status: ...` cho biết trạng thái của màn hình, radar và LED.
+
 ### Sơ đồ nối dây
 
 | Thiết bị | Chân | ESP32-C3 |

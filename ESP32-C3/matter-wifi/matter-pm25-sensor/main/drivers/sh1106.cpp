@@ -90,7 +90,8 @@ esp_err_t sh1106_init(int sda_pin, int scl_pin, uint8_t address, bool rotate_180
         0xA8, 0x3F,                     // multiplex ratio: 64
         0xD3, 0x00,                     // display offset
         0x40,                           // start line 0
-        0xAD, 0x8B,                     // DC-DC converter on
+        0x8D, 0x14,                     // charge pump on, as ESPHome does: needed by SSD1306-based
+                                        // "SH1106" modules, ignored by a real SH1106 (its DC-DC is on at reset)
         (uint8_t)(rotate_180 ? 0xA0 : 0xA1),    // segment remap
         (uint8_t)(rotate_180 ? 0xC0 : 0xC8),    // COM scan direction
         0xDA, 0x12,                     // COM pins configuration

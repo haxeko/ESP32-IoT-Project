@@ -22,8 +22,8 @@
 #include <nvs.h>
 #include <nvs_flash.h>
 
-#include <common_macros.h>
 
+#include <atomic>
 #include <math.h>
 
 // drivers implemented by this example
@@ -75,14 +75,22 @@ static void update_measured_value(uint16_t endpoint_id, uint32_t cluster_id, uin
     attribute::update(endpoint_id, cluster_id, attribute_id, &val);
 }
 
+// Set once the Matter stack is running. Until then (or if Matter fails to
+// start) the sensor, OLED, LEDs and radar keep working locally.
+static std::atomic<bool> s_matter_started{false};
+static uint16_t s_air_quality_endpoint_id;
+
 static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data)
 {
-    uint16_t endpoint_id = static_cast<uint16_t>(reinterpret_cast<uintptr_t>(user_data));
     pm_sensor_data_t d = *data;
 
     if (d.valid) {
         local_ui_set_pm25(d.pm2_5);
     }
+    if (!s_matter_started) {
+        return;
+    }
+    const uint16_t endpoint_id = s_air_quality_endpoint_id;
 
     // schedule the attribute update so that we can report it from matter thread
     chip::DeviceLayer::SystemLayer().ScheduleLambda([endpoint_id, d]() {
@@ -245,50 +253,64 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
     return ESP_OK;
 }
 
-extern "C" void app_main()
+static esp_err_t start_matter()
 {
-    /* Initialize the ESP NVS layer */
-    nvs_flash_init();
-
-    const bool factory_reset_requested = check_factory_reset_boot_count();
-
-    /* OLED, WS2812 and LD2410 work locally, independent of Matter */
-    esp_err_t err = local_ui_init();
-    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start local UI, err:%d", err));
-
     /* Manufacturer / Model shown by controllers */
     device_info_init();
 
     /* Create a Matter node and add the mandatory Root Node device type on endpoint 0 */
     node::config_t node_config;
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
-    ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
+    VerifyOrReturnError(node != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create Matter node"));
 
     endpoint_t *air_quality_ep = create_air_quality_sensor(node);
-    ABORT_APP_ON_FAILURE(air_quality_ep != nullptr, ESP_LOGE(TAG, "Failed to create air_quality_sensor endpoint"));
-    uint16_t air_quality_endpoint_id = endpoint::get_id(air_quality_ep);
-    ESP_LOGI(TAG, "Air quality sensor created with endpoint_id %d", air_quality_endpoint_id);
+    VerifyOrReturnError(air_quality_ep != nullptr, ESP_FAIL,
+                        ESP_LOGE(TAG, "Failed to create air_quality_sensor endpoint"));
+    s_air_quality_endpoint_id = endpoint::get_id(air_quality_ep);
+    ESP_LOGI(TAG, "Air quality sensor created with endpoint_id %d", s_air_quality_endpoint_id);
+
+    esp_err_t err = esp_matter::start(app_event_cb);
+    VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
+    s_matter_started = true;
+    return ESP_OK;
+}
+
+extern "C" void app_main()
+{
+    /* Initialize the ESP NVS layer */
+    nvs_flash_init();
+
     ESP_LOGI(TAG, "%s %s, firmware %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME,
              esp_app_get_description()->version);
 
-    /* Matter start */
-    err = esp_matter::start(app_event_cb);
-    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
+    const bool factory_reset_requested = check_factory_reset_boot_count();
 
-    if (factory_reset_requested) {
-        ESP_LOGW(TAG, "Factory reset requested by %u quick power cycles", kFactoryResetBootCount);
-        esp_matter::factory_reset();
-        return;
+    /* The sensor, OLED, WS2812 and LD2410 work locally, before and without Matter */
+    esp_err_t err = local_ui_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start local UI, err:%d", err);
     }
 
-    /* Start reading the PM sensor once the Matter stack is running */
     pm_sensor_config_t pm_config = {
         .rx_pin = CONFIG_PM_SENSOR_UART_RX_PIN,
         .tx_pin = CONFIG_PM_SENSOR_UART_TX_PIN,
         .report_interval_ms = CONFIG_PM_SENSOR_REPORT_INTERVAL_SEC * 1000,
         .cb = pm_sensor_notification,
-        .user_data = reinterpret_cast<void *>(static_cast<uintptr_t>(air_quality_endpoint_id)),
+        .user_data = NULL,
     };
     err = pm_sensor_init(&pm_config);
-    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to initialize PM sensor driver, err:%d", err));
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize PM sensor driver, err:%d", err);
+    }
+
+    /* Matter is optional for the local functions: on failure, keep running without it */
+    if (start_matter() != ESP_OK) {
+        ESP_LOGE(TAG, "Matter is not running; the device keeps working locally");
+        return;
+    }
+
+    if (factory_reset_requested) {
+        ESP_LOGW(TAG, "Factory reset requested by %u quick power cycles", kFactoryResetBootCount);
+        esp_matter::factory_reset();
+    }
 }

@@ -32,6 +32,8 @@ static const char *TAG = "local_ui";
 #define UI_REDRAW_MS                1000
 // Retry the OLED init this often while it does not answer.
 #define OLED_RETRY_MS               5000
+// Status line in the log, also useful when the monitor is attached late.
+#define STATUS_LOG_MS               30000
 // Start-up: keep the screen on until the first PM2.5 value (at most this long)...
 #define STARTUP_WAIT_MS             120000
 // ...and then for this long so the first result can be read.
@@ -145,6 +147,7 @@ static void local_ui_task(void *arg)
     bool oled_on = s_oled_ok;
     int64_t last_redraw_ms = 0;
     int64_t last_oled_retry_ms = boot_ms;
+    int64_t last_status_ms = boot_ms;
     int led_level = -1;
 
     while (true) {
@@ -201,6 +204,20 @@ static void local_ui_task(void *arg)
             } else if (oled_on && now - last_redraw_ms >= UI_REDRAW_MS) {
                 draw_screen(pm25, level);
                 last_redraw_ms = now;
+            }
+        }
+
+        if (now - last_status_ms >= STATUS_LOG_MS) {
+            last_status_ms = now;
+            ld2410_target_t t;
+            const bool radar_seen = s_radar_ok && ld2410_get_target(&t);
+            ESP_LOGI(TAG, "status: oled=%s screen=%s startup=%d presence=%d radar=%s led_level=%d pm25=%d",
+                     s_oled_ok ? "ok" : "missing", oled_on ? "on" : "off", startup, presence,
+                     radar_seen ? (t.moving || t.still ? "target" : "no-target") : "no-data",
+                     led_level, isnan(pm25) ? -1 : (int)lroundf(pm25));
+            if (radar_seen) {
+                ESP_LOGI(TAG, "radar: moving=%d %ucm still=%d %ucm, %lld ms ago", t.moving, t.moving_cm, t.still,
+                         t.still_cm, (long long)(now - t.timestamp_ms));
             }
         }
 
