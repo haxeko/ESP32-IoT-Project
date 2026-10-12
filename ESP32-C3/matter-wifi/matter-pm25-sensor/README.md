@@ -12,7 +12,8 @@ Thiết bị dùng device type **Air Quality Sensor (0x002C)** và chỉ gửi q
 Màn hình OLED, đèn LED WS2812 và radar LD2410 chạy **tại chỗ trên thiết bị**, không gửi qua Matter (giống bản ESPHome trước đó):
 
 - **LED WS2812** đổi màu theo mức chất lượng không khí, theo bảng màu của Apple Home: xanh lá, xanh vàng, vàng, đỏ, tím.
-- **Màn hình OLED** hiện PM2.5 và mức chất lượng không khí. Khi đã kết nối Matter, giữa dòng tiêu đề có thêm biểu tượng ngôi nhà:
+- **Màn hình OLED** hiện PM2.5 và mức chất lượng không khí. Giữa dòng tiêu đề có biểu tượng ngôi nhà khi thiết bị có Wi-Fi **và** có ít nhất một ứng dụng (Apple Home, Home Assistant...) đang kết nối. Khi không còn ứng dụng nào kết nối, biểu tượng tự mất, chậm nhất sau khoảng thời gian báo cáo tối đa mà ứng dụng chọn (thường tới 10 phút).
+  Màn hình sáng/tắt như sau:
   - Luôn sáng khi khởi động cho tới khi có kết quả đo đầu tiên, sau đó sáng thêm 5 giây. Nếu cảm biến PM lỗi thì tối đa 120 giây.
   - Sau đó chỉ sáng khi **radar LD2410 thấy người trong khoảng 120 cm**, và tắt sau 60 giây khi không còn ai.
 
@@ -126,6 +127,7 @@ idf.py -p /dev/ttyACM0 flash monitor
 | Nhà sản xuất (Manufacturer) | `Haxeko` | `menuconfig` → *Device Information* |
 | Kiểu máy (Model) | `PM5003` | `menuconfig` → *Device Information* |
 | Tên thiết bị khi ghép nối | `Air Quality Sensor` | `menuconfig` → *Device Information* |
+| Số serial | `PM5003-<MAC Wi-Fi>`, ví dụ `PM5003-8ED0B2A8594B` | Tự động, riêng cho từng chip |
 | Tên Bluetooth khi chờ ghép nối | `AirQuality-3840` | `CONFIG_BLE_DEVICE_NAME_PREFIX` trong `sdkconfig.defaults` |
 | Firmware | `1.0.<số commit>`, ví dụ `1.0.8` | Tự động |
 

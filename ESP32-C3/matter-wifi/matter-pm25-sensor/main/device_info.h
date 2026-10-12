@@ -14,7 +14,11 @@
 // Manufacturer and Model by controllers). Must be called before esp_matter::start().
 void device_info_init(void);
 
-// Sets the default device name (NodeLabel) in the node config and adds the
-// ProductLabel attribute, so controllers propose that name when pairing.
+// Sets the default device name (NodeLabel) in the node config.
 void device_info_set_name(esp_matter::node::config_t *node_config);
-void device_info_add_product_label(esp_matter::node_t *node);
+
+// Adds the ProductLabel and SerialNumber attributes to Basic Information.
+void device_info_add_attributes(esp_matter::node_t *node);
+
+// Serial number "<Model>-<Wi-Fi MAC>", e.g. "PM5003-8ED0B2A8594B".
+void device_info_get_serial(char *buf, size_t size);

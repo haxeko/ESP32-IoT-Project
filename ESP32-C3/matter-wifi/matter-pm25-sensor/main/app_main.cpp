@@ -11,6 +11,7 @@
 // LD2410 radar are handled locally (local_ui.cpp) and are not exposed to Matter.
 
 #include <app/server/CommissioningWindowManager.h>
+#include <app/InteractionModelEngine.h>
 #include <app/server/Server.h>
 #include <esp_app_desc.h>
 #include <esp_err.h>
@@ -216,13 +217,23 @@ static void open_commissioning_window_if_necessary()
     }
 }
 
-// "Connected" = commissioned to at least one fabric and online on Wi-Fi.
-// Runs on the Matter thread, from the device event callback.
+// "Connected" = online on Wi-Fi with at least one controller (Apple Home,
+// Home Assistant...) subscribed to the device. Controllers keep a
+// subscription open while they are reachable; when the last one goes away
+// its subscription is dropped (at the latest after the negotiated max
+// interval) and the icon disappears. Runs on the Matter thread.
 static void update_matter_status()
 {
-    const bool commissioned = chip::Server::GetInstance().GetFabricTable().FabricCount() > 0;
     const bool online = chip::DeviceLayer::ConnectivityMgr().IsWiFiStationConnected();
-    local_ui_set_matter_connected(commissioned && online);
+    const uint32_t subscriptions = chip::app::InteractionModelEngine::GetInstance()->GetNumActiveReadHandlers(
+        chip::app::ReadHandler::InteractionType::Subscribe);
+    local_ui_set_matter_connected(online && subscriptions > 0);
+}
+
+// Subscriptions start and end without a device event, so also poll.
+static void matter_status_timer_cb(void *arg)
+{
+    chip::DeviceLayer::SystemLayer().ScheduleLambda([]() { update_matter_status(); });
 }
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
@@ -278,7 +289,7 @@ static esp_err_t start_matter()
     device_info_set_name(&node_config);
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
     VerifyOrReturnError(node != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create Matter node"));
-    device_info_add_product_label(node);
+    device_info_add_attributes(node);
 
     endpoint_t *air_quality_ep = create_air_quality_sensor(node);
     VerifyOrReturnError(air_quality_ep != nullptr, ESP_FAIL,
@@ -289,6 +300,15 @@ static esp_err_t start_matter()
     esp_err_t err = esp_matter::start(app_event_cb);
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
+
+    static esp_timer_handle_t s_status_timer;
+    const esp_timer_create_args_t timer_args = {
+        .callback = matter_status_timer_cb,
+        .name = "matter_status",
+    };
+    if (esp_timer_create(&timer_args, &s_status_timer) == ESP_OK) {
+        esp_timer_start_periodic(s_status_timer, 5 * 1000 * 1000);
+    }
     return ESP_OK;
 }
 
