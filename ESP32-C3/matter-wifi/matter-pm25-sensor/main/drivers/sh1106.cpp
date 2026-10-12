@@ -152,6 +152,18 @@ void sh1106_draw_hline(int x0, int x1, int y)
     }
 }
 
+void sh1106_draw_bitmap(int x, int y, int width, int height, const uint8_t *data)
+{
+    const int bytes_per_row = (width + 7) / 8;
+    for (int row = 0; row < height; row++) {
+        for (int col = 0; col < width; col++) {
+            if (data[row * bytes_per_row + col / 8] & (0x80 >> (col % 8))) {
+                sh1106_draw_pixel(x + col, y + row);
+            }
+        }
+    }
+}
+
 esp_err_t sh1106_flush(void)
 {
     uint8_t buf[1 + SH1106_WIDTH];

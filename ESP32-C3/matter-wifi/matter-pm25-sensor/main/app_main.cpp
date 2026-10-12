@@ -213,6 +213,15 @@ static void open_commissioning_window_if_necessary()
     }
 }
 
+// "Connected" = commissioned to at least one fabric and online on Wi-Fi.
+// Runs on the Matter thread, from the device event callback.
+static void update_matter_status()
+{
+    const bool commissioned = chip::Server::GetInstance().GetFabricTable().FabricCount() > 0;
+    const bool online = chip::DeviceLayer::ConnectivityMgr().IsWiFiStationConnected();
+    local_ui_set_matter_connected(commissioned && online);
+}
+
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
     switch (event->Type) {
@@ -236,6 +245,9 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     default:
         break;
     }
+
+    // Wi-Fi up/down, commissioning, fabric removal... all may change it.
+    update_matter_status();
 }
 
 // This callback is invoked when clients interact with the Identify Cluster.

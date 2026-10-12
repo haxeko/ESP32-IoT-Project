@@ -16,3 +16,7 @@ esp_err_t local_ui_init(void);
 
 // New PM2.5 value in µg/m³. Can be called from any task.
 void local_ui_set_pm25(float pm25);
+
+// Shows a small icon in the corner of the OLED while the device is
+// commissioned and online. Can be called from any task.
+void local_ui_set_matter_connected(bool connected);

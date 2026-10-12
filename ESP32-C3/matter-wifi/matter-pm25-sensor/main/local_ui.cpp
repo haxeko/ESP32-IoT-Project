@@ -61,9 +61,24 @@ static const float k_level_colors[AQ_LEVEL_COUNT][3] = {
     { 1.0f, 0.0f, 0.0f },
 };
 
+// 9x9 "home" icon shown in the top-left corner while connected to Matter.
+#define MATTER_ICON_SIZE            9
+static const uint8_t k_matter_icon[MATTER_ICON_SIZE * 2] = {
+    0x08, 0x00,     // ....#....
+    0x14, 0x00,     // ...#.#...
+    0x22, 0x00,     // ..#...#..
+    0x41, 0x00,     // .#.....#.
+    0xC1, 0x80,     // ##.....##
+    0x41, 0x00,     // .#.....#.
+    0x5D, 0x00,     // .#.###.#.
+    0x55, 0x00,     // .#.#.#.#.
+    0x7F, 0x00,     // .#######.
+};
+
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static float s_pm25 = NAN;
 static int s_aq_level = -1;     // -1 = no data yet
+static bool s_matter_connected;
 static bool s_oled_ok;
 static bool s_led_ok;
 static bool s_radar_ok;
@@ -93,6 +108,17 @@ void local_ui_set_pm25(float pm25)
     taskEXIT_CRITICAL(&s_lock);
 }
 
+void local_ui_set_matter_connected(bool connected)
+{
+    taskENTER_CRITICAL(&s_lock);
+    const bool changed = (s_matter_connected != connected);
+    s_matter_connected = connected;
+    taskEXIT_CRITICAL(&s_lock);
+    if (changed) {
+        ESP_LOGI(TAG, "Matter %s", connected ? "connected" : "not connected");
+    }
+}
+
 // Someone is within CONFIG_PRESENCE_DISTANCE_CM of the radar, and the radar is
 // still sending data. The "detection distance" field is not used because the
 // LD2410 often reports 0 cm for it while a target is present.
@@ -115,16 +141,20 @@ static bool presence_raw(int64_t now)
     return distance <= CONFIG_PRESENCE_DISTANCE_CM;
 }
 
-static void draw_screen(float pm25, int level)
+static void draw_screen(float pm25, int level, bool matter_connected)
 {
     sh1106_clear();
+    if (matter_connected) {
+        sh1106_draw_bitmap(0, 1, MATTER_ICON_SIZE, MATTER_ICON_SIZE, k_matter_icon);
+    }
     if (level < 0) {
         sh1106_draw_text(64, 18, &font_medium, TEXT_ALIGN_CENTER, "PMS5003");
         sh1106_draw_text(64, 42, &font_small, TEXT_ALIGN_CENTER, "Đang đo...");
     } else {
         char value[8];
         snprintf(value, sizeof(value), "%d", (int)lroundf(pm25));
-        sh1106_draw_text(0, 0, &font_small, TEXT_ALIGN_TOP_LEFT, " PM2.5");
+        // Leave room for the Matter icon in the top-left corner.
+        sh1106_draw_text(MATTER_ICON_SIZE + 3, 0, &font_small, TEXT_ALIGN_TOP_LEFT, "PM2.5");
         sh1106_draw_text(127, 0, &font_small, TEXT_ALIGN_TOP_RIGHT, "ug/m3 ");
         sh1106_draw_text(64, 16, &font_large, TEXT_ALIGN_TOP_CENTER, value);
         sh1106_draw_hline(8, 119, 47);
@@ -156,6 +186,7 @@ static void local_ui_task(void *arg)
         taskENTER_CRITICAL(&s_lock);
         const float pm25 = s_pm25;
         const int level = s_aq_level;
+        const bool matter_connected = s_matter_connected;
         taskEXIT_CRITICAL(&s_lock);
 
         // Start-up phase: wait for the first value (or the timeout), then hold.
@@ -197,12 +228,12 @@ static void local_ui_task(void *arg)
                 oled_on = should_be_on;
                 ESP_LOGI(TAG, "Display %s", oled_on ? "ON" : "OFF");
                 if (oled_on) {
-                    draw_screen(pm25, level);   // draw a fresh frame before turning on
+                    draw_screen(pm25, level, matter_connected);     // fresh frame before turning on
                     last_redraw_ms = now;
                 }
                 sh1106_set_power(oled_on);
             } else if (oled_on && now - last_redraw_ms >= UI_REDRAW_MS) {
-                draw_screen(pm25, level);
+                draw_screen(pm25, level, matter_connected);
                 last_redraw_ms = now;
             }
         }
@@ -211,10 +242,10 @@ static void local_ui_task(void *arg)
             last_status_ms = now;
             ld2410_target_t t;
             const bool radar_seen = s_radar_ok && ld2410_get_target(&t);
-            ESP_LOGI(TAG, "status: oled=%s screen=%s startup=%d presence=%d radar=%s led_level=%d pm25=%d",
+            ESP_LOGI(TAG, "status: oled=%s screen=%s startup=%d presence=%d radar=%s led_level=%d pm25=%d matter=%d",
                      s_oled_ok ? "ok" : "missing", oled_on ? "on" : "off", startup, presence,
                      radar_seen ? (t.moving || t.still ? "target" : "no-target") : "no-data",
-                     led_level, isnan(pm25) ? -1 : (int)lroundf(pm25));
+                     led_level, isnan(pm25) ? -1 : (int)lroundf(pm25), matter_connected);
             if (radar_seen) {
                 ESP_LOGI(TAG, "radar: moving=%d %ucm still=%d %ucm, %lld ms ago", t.moving, t.moving_cm, t.still,
                          t.still_cm, (long long)(now - t.timestamp_ms));
@@ -241,7 +272,7 @@ esp_err_t local_ui_init(void)
     // Each part is optional: a missing OLED or radar must not stop the sensor.
     s_oled_ok = init_oled();
     if (s_oled_ok) {
-        draw_screen(NAN, -1);
+        draw_screen(NAN, -1, false);
         sh1106_set_power(true);
     }
 
