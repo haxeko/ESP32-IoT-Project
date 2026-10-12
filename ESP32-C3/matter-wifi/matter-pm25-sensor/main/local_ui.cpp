@@ -26,10 +26,12 @@
 
 static const char *TAG = "local_ui";
 
-#define UI_TASK_STACK               3072
+#define UI_TASK_STACK               4096
 #define UI_TASK_PRIO                4
 #define UI_TICK_MS                  500
 #define UI_REDRAW_MS                1000
+// Retry the OLED init this often while it does not answer.
+#define OLED_RETRY_MS               5000
 // Start-up: keep the screen on until the first PM2.5 value (at most this long)...
 #define STARTUP_WAIT_MS             120000
 // ...and then for this long so the first result can be read.
@@ -119,7 +121,7 @@ static void draw_screen(float pm25, int level)
         sh1106_draw_text(64, 42, &font_small, TEXT_ALIGN_CENTER, "Đang đo...");
     } else {
         char value[8];
-        snprintf(value, sizeof(value), "%.0f", pm25);
+        snprintf(value, sizeof(value), "%d", (int)lroundf(pm25));
         sh1106_draw_text(0, 0, &font_small, TEXT_ALIGN_TOP_LEFT, " PM2.5");
         sh1106_draw_text(127, 0, &font_small, TEXT_ALIGN_TOP_RIGHT, "ug/m3 ");
         sh1106_draw_text(64, 16, &font_large, TEXT_ALIGN_TOP_CENTER, value);
@@ -131,6 +133,8 @@ static void draw_screen(float pm25, int level)
     }
 }
 
+static bool init_oled();
+
 static void local_ui_task(void *arg)
 {
     const int64_t boot_ms = now_ms();
@@ -138,8 +142,9 @@ static void local_ui_task(void *arg)
     int64_t startup_hold_from = -1;     // set when the start-up hold period begins
     bool presence = false;
     int64_t last_presence_ms = 0;
-    bool oled_on = true;
+    bool oled_on = s_oled_ok;
     int64_t last_redraw_ms = 0;
+    int64_t last_oled_retry_ms = boot_ms;
     int led_level = -1;
 
     while (true) {
@@ -175,6 +180,13 @@ static void local_ui_task(void *arg)
                            LED_BRIGHTNESS);
         }
 
+        // The OLED did not answer at boot: keep retrying (late power-up, loose wire...).
+        if (!s_oled_ok && now - last_oled_retry_ms >= OLED_RETRY_MS) {
+            last_oled_retry_ms = now;
+            s_oled_ok = init_oled();
+            oled_on = false;    // turned on below if it should be
+        }
+
         // OLED: on during start-up or while someone is close.
         if (s_oled_ok) {
             const bool should_be_on = startup || presence;
@@ -196,18 +208,27 @@ static void local_ui_task(void *arg)
     }
 }
 
+static bool init_oled()
+{
+    esp_err_t err = sh1106_init(CONFIG_OLED_SDA_PIN, CONFIG_OLED_SCL_PIN, CONFIG_OLED_I2C_ADDRESS,
+                                OLED_ROTATE_180);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "OLED init failed: %s, retrying every %d s", esp_err_to_name(err), OLED_RETRY_MS / 1000);
+        return false;
+    }
+    return true;
+}
+
 esp_err_t local_ui_init(void)
 {
     // Each part is optional: a missing OLED or radar must not stop the sensor.
-    esp_err_t err = sh1106_init(CONFIG_OLED_SDA_PIN, CONFIG_OLED_SCL_PIN, CONFIG_OLED_I2C_ADDRESS,
-                                OLED_ROTATE_180);
-    s_oled_ok = (err == ESP_OK);
+    s_oled_ok = init_oled();
     if (s_oled_ok) {
         draw_screen(NAN, -1);
         sh1106_set_power(true);
-    } else {
-        ESP_LOGE(TAG, "OLED init failed: %s", esp_err_to_name(err));
     }
+
+    esp_err_t err;
 
     err = status_led_init(CONFIG_STATUS_LED_GPIO, CONFIG_STATUS_LED_COUNT);
     s_led_ok = (err == ESP_OK);

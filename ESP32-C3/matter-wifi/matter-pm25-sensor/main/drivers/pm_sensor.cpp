@@ -24,7 +24,7 @@ static const char *TAG = "pm_sensor";
 #define PM_SENSOR_UART_NUM      UART_NUM_1
 #define PM_SENSOR_BAUD_RATE     9600
 #define PM_SENSOR_RX_BUF_SIZE   256
-#define PM_SENSOR_TASK_STACK    3072
+#define PM_SENSOR_TASK_STACK    4096
 #define PM_SENSOR_TASK_PRIO     5
 
 #if CONFIG_PM_SENSOR_MODEL_PMS

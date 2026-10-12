@@ -25,6 +25,7 @@ typedef enum {
     TEXT_ALIGN_CENTER,
 } text_align_t;
 
+// Can be called again after a failure to retry (e.g. the panel powered up late).
 esp_err_t sh1106_init(int sda_pin, int scl_pin, uint8_t address, bool rotate_180);
 
 // Panel on/off (display sleep). The frame buffer is kept.

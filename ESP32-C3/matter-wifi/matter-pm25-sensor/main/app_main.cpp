@@ -17,6 +17,7 @@
 #include <esp_log.h>
 #include <esp_matter.h>
 #include <esp_matter_ota.h>
+#include <esp_system.h>
 #include <esp_timer.h>
 #include <nvs.h>
 #include <nvs_flash.h>
@@ -153,8 +154,14 @@ static void save_boot_count(uint8_t count)
 }
 
 // Counts quick power cycles. Returns true when a factory reset was requested.
+// Only real power-on resets count, so crashes, OTA updates or flashing never
+// trigger a factory reset.
 static bool check_factory_reset_boot_count()
 {
+    if (esp_reset_reason() != ESP_RST_POWERON) {
+        save_boot_count(0);
+        return false;
+    }
     uint8_t count = 0;
     nvs_handle_t handle;
     if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) == ESP_OK) {

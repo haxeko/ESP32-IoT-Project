@@ -10,6 +10,8 @@
 
 #include <driver/i2c_master.h>
 #include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <string.h>
 
 #include "sh1106.h"
@@ -38,27 +40,48 @@ static esp_err_t send_commands(const uint8_t *cmds, size_t len)
     return i2c_master_transmit(s_dev, buf, len + 1, SH1106_I2C_TIMEOUT_MS);
 }
 
+// The panel may need some time after power-up before it answers on I2C.
+#define SH1106_INIT_ATTEMPTS    5
+#define SH1106_INIT_RETRY_MS    100
+
+static void log_bus_scan(int sda_pin, int scl_pin)
+{
+    bool found = false;
+    for (uint16_t addr = 0x08; addr < 0x78; addr++) {
+        if (i2c_master_probe(s_bus, addr, 20) == ESP_OK) {
+            ESP_LOGW(TAG, "I2C device found at 0x%02X", addr);
+            found = true;
+        }
+    }
+    if (!found) {
+        ESP_LOGW(TAG, "No I2C device answers on SDA=GPIO%d SCL=GPIO%d: check wiring and power", sda_pin, scl_pin);
+    }
+}
+
 esp_err_t sh1106_init(int sda_pin, int scl_pin, uint8_t address, bool rotate_180)
 {
-    i2c_master_bus_config_t bus_config = {};
-    bus_config.i2c_port = -1;
-    bus_config.sda_io_num = (gpio_num_t)sda_pin;
-    bus_config.scl_io_num = (gpio_num_t)scl_pin;
-    bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
-    bus_config.glitch_ignore_cnt = 7;
-    bus_config.flags.enable_internal_pullup = true;
-    esp_err_t err = i2c_new_master_bus(&bus_config, &s_bus);
-    if (err != ESP_OK) {
-        return err;
-    }
+    esp_err_t err;
+    if (s_bus == NULL) {
+        i2c_master_bus_config_t bus_config = {};
+        bus_config.i2c_port = -1;
+        bus_config.sda_io_num = (gpio_num_t)sda_pin;
+        bus_config.scl_io_num = (gpio_num_t)scl_pin;
+        bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
+        bus_config.glitch_ignore_cnt = 7;
+        bus_config.flags.enable_internal_pullup = true;
+        err = i2c_new_master_bus(&bus_config, &s_bus);
+        if (err != ESP_OK) {
+            return err;
+        }
 
-    i2c_device_config_t dev_config = {};
-    dev_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-    dev_config.device_address = address;
-    dev_config.scl_speed_hz = SH1106_I2C_FREQ_HZ;
-    err = i2c_master_bus_add_device(s_bus, &dev_config, &s_dev);
-    if (err != ESP_OK) {
-        return err;
+        i2c_device_config_t dev_config = {};
+        dev_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+        dev_config.device_address = address;
+        dev_config.scl_speed_hz = SH1106_I2C_FREQ_HZ;
+        err = i2c_master_bus_add_device(s_bus, &dev_config, &s_dev);
+        if (err != ESP_OK) {
+            return err;
+        }
     }
 
     const uint8_t init_cmds[] = {
@@ -77,13 +100,29 @@ esp_err_t sh1106_init(int sda_pin, int scl_pin, uint8_t address, bool rotate_180
         0xA4,                           // display follows RAM
         0xA6,                           // normal (not inverted)
     };
-    err = send_commands(init_cmds, sizeof(init_cmds));
+    for (int attempt = 1; attempt <= SH1106_INIT_ATTEMPTS; attempt++) {
+        err = send_commands(init_cmds, sizeof(init_cmds));
+        if (err == ESP_OK) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(SH1106_INIT_RETRY_MS));
+    }
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "No response from OLED at 0x%02X (SDA=GPIO%d SCL=GPIO%d)", address, sda_pin, scl_pin);
+        ESP_LOGE(TAG, "No response from OLED at 0x%02X (SDA=GPIO%d SCL=GPIO%d): %s", address, sda_pin, scl_pin,
+                 esp_err_to_name(err));
+        static bool s_scanned;
+        if (!s_scanned) {   // only once, the UI keeps retrying the init
+            s_scanned = true;
+            log_bus_scan(sda_pin, scl_pin);
+        }
         return err;
     }
     sh1106_clear();
-    return sh1106_flush();
+    err = sh1106_flush();
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "OLED ready at 0x%02X (SDA=GPIO%d SCL=GPIO%d)", address, sda_pin, scl_pin);
+    }
+    return err;
 }
 
 esp_err_t sh1106_set_power(bool on)
