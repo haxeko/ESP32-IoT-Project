@@ -51,22 +51,21 @@ static constexpr uint64_t kFactoryResetWindowUs = 10 * 1000 * 1000;
 static constexpr char kNvsNamespace[] = "app";
 static constexpr char kNvsBootCountKey[] = "boot_count";
 
-// Matter AirQuality value sent for each level of the OLED/LEDs, so that
-// controllers show the same rating as the device. Apple Home only has three
-// ratings for Matter air quality sensors (measured: Good -> Good,
-// Fair/Moderate -> Fair, Poor/VeryPoor/ExtremelyPoor -> Poor), so:
-//   RẤT TỐT, TỐT -> Good   (Apple Home: Good)
-//   TRUNG BÌNH   -> Fair   (Apple Home: Fair)
-//   KÉM          -> Poor   (Apple Home: Poor)
-//   XẤU          -> VeryPoor (Apple Home: Poor; Home Assistant: Very poor)
+// Matter AirQuality value sent for each level of the OLED/LEDs, and how
+// Apple Home shows it:
+//   TỐT         -> Good          (HomeKit: Good)
+//   KHÁ         -> Fair          (HomeKit: Fair)
+//   KHÔNG TỐT   -> Moderate      (HomeKit: Inferior)
+//   KÉM         -> Poor          (HomeKit: Poor)
+//   CỰC KỲ KÉM  -> ExtremelyPoor (HomeKit: Poor)
 static AirQuality::AirQualityEnum pm25_to_air_quality(float pm25)
 {
     static const AirQuality::AirQualityEnum k_level_to_matter[] = {
         AirQuality::AirQualityEnum::kGood,
-        AirQuality::AirQualityEnum::kGood,
         AirQuality::AirQualityEnum::kFair,
+        AirQuality::AirQualityEnum::kModerate,
         AirQuality::AirQualityEnum::kPoor,
-        AirQuality::AirQualityEnum::kVeryPoor,
+        AirQuality::AirQualityEnum::kExtremelyPoor,
     };
     return k_level_to_matter[local_ui_pm25_level(pm25)];
 }
@@ -103,12 +102,10 @@ static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data
         update_measured_value(endpoint_id, Pm25ConcentrationMeasurement::Id,
                               Pm25ConcentrationMeasurement::Attributes::MeasuredValue::Id, pm2_5);
 
-#if !CONFIG_AIR_QUALITY_TEST_MODE
         AirQuality::AirQualityEnum air_quality = d.valid ? pm25_to_air_quality(pm2_5)
                                                          : AirQuality::AirQualityEnum::kUnknown;
         esp_matter_attr_val_t val = esp_matter_enum8(chip::to_underlying(air_quality));
         attribute::update(endpoint_id, AirQuality::Id, AirQuality::Attributes::AirQuality::Id, &val);
-#endif
     });
 }
 
@@ -271,29 +268,6 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
     return ESP_OK;
 }
 
-#if CONFIG_AIR_QUALITY_TEST_MODE
-// Sends every AirQuality value for 60 s in turn and shows it on the OLED, to
-// see how a controller labels each level.
-static void air_quality_test_task(void *arg)
-{
-    static const char *const k_names[] = {
-        "TEST 1: Good", "TEST 2: Fair", "TEST 3: Moderate", "TEST 4: Poor", "TEST 5: VeryPoor", "TEST 6: ExtPoor",
-    };
-    while (true) {
-        for (uint8_t value = 1; value <= 6; value++) {
-            ESP_LOGW(TAG, "Air Quality test: sending %s", k_names[value - 1]);
-            local_ui_set_test_label(k_names[value - 1]);
-            chip::DeviceLayer::SystemLayer().ScheduleLambda([value]() {
-                esp_matter_attr_val_t val = esp_matter_enum8(value);
-                attribute::update(s_air_quality_endpoint_id, AirQuality::Id, AirQuality::Attributes::AirQuality::Id,
-                                  &val);
-            });
-            vTaskDelay(pdMS_TO_TICKS(60 * 1000));
-        }
-    }
-}
-#endif
-
 static esp_err_t start_matter()
 {
     /* Manufacturer / Model shown by controllers */
@@ -315,9 +289,6 @@ static esp_err_t start_matter()
     esp_err_t err = esp_matter::start(app_event_cb);
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
-#if CONFIG_AIR_QUALITY_TEST_MODE
-    xTaskCreate(air_quality_test_task, "aq_test", 3072, NULL, 4, NULL);
-#endif
     return ESP_OK;
 }
 

@@ -148,17 +148,17 @@ Nên dùng iOS bản mới và có Home hub (HomePod mini/HomePod/Apple TV 4K) �
 
 ## Cách tính mức chất lượng không khí
 
-Thiết bị chia chất lượng không khí thành 5 bậc theo PM2.5 (ngưỡng AQI của US EPA 2024). Mức gửi qua Matter được tính từ chính 5 bậc này, để Apple Home luôn hiển thị cùng đánh giá với màn hình:
+Thiết bị chia chất lượng không khí thành 5 bậc theo PM2.5. Mỗi bậc gửi một mức Matter tương ứng, để Apple Home hiển thị cùng đánh giá với màn hình:
 
-| PM2.5 (µg/m³) | Màn hình | LED | Matter gửi đi | Apple Home |
+| PM2.5 (µg/m³) | Màn hình | LED | Matter gửi đi | HomeKit |
 |---|---|---|---|---|
-| 0 – 9,0 | RẤT TỐT | Xanh dương | Good | Good (Tốt) |
-| 9,1 – 35,4 | TỐT | Xanh lá | Good | Good (Tốt) |
-| 35,5 – 55,4 | TRUNG BÌNH | Vàng | Fair | Fair (Trung bình) |
-| 55,5 – 125,4 | KÉM | Cam | Poor | Poor |
-| > 125,4 | XẤU | Đỏ | VeryPoor | Poor |
+| ≤ 12 | TỐT | Xanh dương | 1 Good | Good |
+| 12 – 35,4 | KHÁ | Xanh lá | 2 Fair | Fair |
+| 35,4 – 55,4 | KHÔNG TỐT | Vàng | 3 Moderate | Inferior |
+| 55,4 – 125,4 | KÉM | Cam | 4 Poor | Poor |
+| > 125,4 | CỰC KỲ KÉM | Đỏ | 6 ExtremelyPoor | Poor |
 
-Với cảm biến Matter, Apple Home chỉ có 3 mức. Kết quả đo bằng chế độ thử (`menuconfig` → *Testing*): Good → Good; Fair và Moderate → Fair; Poor, VeryPoor và ExtremelyPoor → Poor. Vì vậy bậc RẤT TỐT/TỐT và bậc KÉM/XẤU bị gộp lại trên Apple Home. Home Assistant hiển thị đúng giá trị Matter, nên vẫn phân biệt được Poor và VeryPoor.
+HomeKit có 5 mức (Excellent, Good, Fair, Inferior, Poor). Hai bậc cuối cùng hiện "Poor" trên Apple Home, còn Home Assistant vẫn phân biệt được Poor và Extremely poor.
 
 Muốn đổi ngưỡng thì sửa `local_ui_pm25_level()` trong `main/local_ui.cpp`. Muốn đổi mức gửi qua Matter thì sửa bảng `k_level_to_matter` trong `main/app_main.cpp`.
 
