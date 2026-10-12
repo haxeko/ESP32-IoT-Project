@@ -5,7 +5,8 @@ CONFIG_OPENTHREAD_ENABLED=y
 CONFIG_OPENTHREAD_SRP_CLIENT=y
 CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
 CONFIG_OPENTHREAD_LOG_LEVEL_NOTE=y
-CONFIG_OPENTHREAD_CLI=n
+# OpenThread CLI on the serial console for network diagnostics: "matter esp ot_cli <command>"
+CONFIG_OPENTHREAD_CLI=y
 # Mains-powered relay: Full Thread Device, can become a Thread router and extend the mesh
 CONFIG_OPENTHREAD_FTD=y
 

@@ -102,6 +102,36 @@ Sau khi bật nguồn, thiết bị quảng bá BLE nhanh trong 30 s rồi chuy�
 
 > Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại.
 
+## Xử lý sự cố: điện thoại không tìm thấy thiết bị
+
+Ghép nối Matter over Thread có 2 giai đoạn:
+
+1. **Qua BLE:** điện thoại tìm thấy thiết bị, kiểm tra chứng chỉ, gửi thông tin mạng Thread. Log: `Role detached -> child`, `advertising srp service: ...._matter._tcp`.
+2. **Qua mạng IP:** điện thoại tìm dịch vụ `_matter._tcp` của thiết bị thông qua Border Router (Wi-Fi/LAN → Thread) rồi mở phiên bảo mật CASE. Log thành công: `Commissioning complete`.
+
+Nếu giai đoạn 1 xong mà app báo không tìm thấy thiết bị, thường là do mạng nhà, không phải do firmware:
+
+- Điện thoại và Border Router phải cùng một mạng Wi-Fi/LAN (không dùng mạng khách, tắt VPN trên điện thoại).
+- Router Wi-Fi phải bật **IPv6** và không chặn **mDNS/multicast**; tắt "AP/client isolation".
+- Border Router phải là của hệ đang dùng (Apple Home → HomePod/Apple TV làm Home hub; Google Home → Nest Hub/Nest Wifi; Home Assistant → OTBR add-on). Thử khởi động lại Border Router.
+- Mỗi lần thử lại: `erase-flash` hoặc factory reset (giữ nút BOOT 5 s) để xoá thông tin mạng Thread cũ.
+
+### Kiểm tra từ thiết bị (OpenThread CLI)
+
+Firmware bật sẵn OpenThread CLI trên cổng serial (`idf.py monitor`). Gõ lệnh **trong lúc điện thoại vẫn đang ghép nối**, vì khi hết thời gian chờ (`fail safe timer expired`) thiết bị sẽ rời mạng Thread:
+
+| Lệnh | Kết quả mong đợi |
+|---|---|
+| `matter esp ot_cli state` | `router` hoặc `child` |
+| `matter esp ot_cli ipaddr` | ngoài `fe80::...` và địa chỉ mesh-local (cùng tiền tố `fdxx:...` của dòng `detected server`), phải có thêm **một địa chỉ có tiền tố khác** (địa chỉ OMR do Border Router cấp). Không có địa chỉ này thì điện thoại không thể tới được thiết bị |
+| `matter esp ot_cli netdata show` | mục `Prefixes:` có ít nhất 1 prefix (OMR), mục `Services:` có SRP server |
+| `matter esp ot_cli srp client host` | `state:Registered` |
+| `matter esp ot_cli srp client service` | `_matter._tcp ... state:Registered` |
+| `matter esp ot_cli ping <địa chỉ>` | ping được Border Router / máy trong LAN |
+
+- Không có địa chỉ OMR / `netdata` không có prefix: Border Router chưa định tuyến được giữa Wi-Fi và Thread (lỗi phía Border Router hoặc router Wi-Fi).
+- SRP `state:Registered` và có địa chỉ OMR mà điện thoại vẫn không thấy: Border Router không quảng bá dịch vụ lên LAN, hoặc mạng Wi-Fi chặn mDNS.
+
 ## Cấu trúc
 
 ```
