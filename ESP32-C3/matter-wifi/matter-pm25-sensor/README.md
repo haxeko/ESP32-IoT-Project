@@ -11,8 +11,8 @@ Thiết bị dùng device type **Air Quality Sensor (0x002C)** và chỉ gửi q
 
 Màn hình OLED, đèn LED WS2812 và radar LD2410 chạy **tại chỗ trên thiết bị**, không gửi qua Matter (giống bản ESPHome trước đó):
 
-- **LED WS2812** đổi màu theo mức chất lượng không khí: xanh dương, xanh lá, vàng, cam, đỏ.
-- **Màn hình OLED** hiện PM2.5 và mức chất lượng không khí:
+- **LED WS2812** đổi màu theo mức chất lượng không khí, theo bảng màu của Apple Home: xanh lá, xanh vàng, vàng, đỏ, tím.
+- **Màn hình OLED** hiện PM2.5 và mức chất lượng không khí. Khi đã kết nối Matter, giữa dòng tiêu đề có thêm biểu tượng ngôi nhà:
   - Luôn sáng khi khởi động cho tới khi có kết quả đo đầu tiên, sau đó sáng thêm 5 giây. Nếu cảm biến PM lỗi thì tối đa 120 giây.
   - Sau đó chỉ sáng khi **radar LD2410 thấy người trong khoảng 120 cm**, và tắt sau 60 giây khi không còn ai.
 
@@ -152,11 +152,11 @@ Thiết bị chia chất lượng không khí thành 5 bậc theo PM2.5. Mỗi b
 
 | PM2.5 (µg/m³) | Màn hình | LED | Matter gửi đi | HomeKit |
 |---|---|---|---|---|
-| ≤ 12 | TỐT | Xanh dương | 1 Good | Good |
-| 12 – 35,4 | KHÁ | Xanh lá | 2 Fair | Fair |
+| ≤ 12 | TỐT | Xanh lá | 1 Good | Good |
+| 12 – 35,4 | KHÁ | Xanh vàng | 2 Fair | Fair |
 | 35,4 – 55,4 | KHÔNG TỐT | Vàng | 3 Moderate | Inferior |
-| 55,4 – 125,4 | KÉM | Cam | 4 Poor | Poor |
-| > 125,4 | CỰC KỲ KÉM | Đỏ | 6 ExtremelyPoor | Poor |
+| 55,4 – 125,4 | KÉM | Đỏ | 4 Poor | Poor |
+| > 125,4 | CỰC KỲ KÉM | Tím | 6 ExtremelyPoor | Poor |
 
 HomeKit có 5 mức (Excellent, Good, Fair, Inferior, Poor). Hai bậc cuối cùng hiện "Poor" trên Apple Home, còn Home Assistant vẫn phân biệt được Poor và Extremely poor.
 

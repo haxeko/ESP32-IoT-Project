@@ -52,16 +52,17 @@ static const char *const k_level_labels[AQ_LEVEL_COUNT] = {
     "TỐT", "KHÁ", "KHÔNG TỐT", "KÉM", "CỰC KỲ KÉM"
 };
 
-// Blue, green, yellow, orange, red.
+// Same palette as the Apple Home air quality scale: green, yellow-green,
+// yellow, red, purple.
 static const float k_level_colors[AQ_LEVEL_COUNT][3] = {
-    { 0.0f, 0.0f, 1.0f },
-    { 0.0f, 1.0f, 0.0f },
-    { 1.0f, 1.0f, 0.0f },
-    { 1.0f, 0.35f, 0.0f },
+    { 0.0f, 1.0f, 0.2f },
+    { 0.55f, 1.0f, 0.0f },
+    { 1.0f, 0.8f, 0.0f },
     { 1.0f, 0.0f, 0.0f },
+    { 0.6f, 0.0f, 1.0f },
 };
 
-// 9x9 "home" icon shown in the top-left corner while connected to Matter.
+// 9x9 "home" icon shown at the top center while connected to Matter.
 #define MATTER_ICON_SIZE            9
 static const uint8_t k_matter_icon[MATTER_ICON_SIZE * 2] = {
     0x08, 0x00,     // ....#....
@@ -145,19 +146,19 @@ static void draw_screen(float pm25, int level, bool matter_connected)
 {
     sh1106_clear();
     if (matter_connected) {
-        // Bottom on the baseline of the "PM2.5" header (drawn at y = 0), so the
-        // icon spans exactly the height of its capital letters.
-        sh1106_draw_bitmap(1, font_small.ascent - MATTER_ICON_SIZE, MATTER_ICON_SIZE, MATTER_ICON_SIZE,
-                           k_matter_icon);
+        // Centered horizontally, bottom on the baseline of the "PM2.5" header
+        // (drawn at y = 0), so the icon spans exactly the height of its capitals.
+        sh1106_draw_bitmap((SH1106_WIDTH - MATTER_ICON_SIZE) / 2, font_small.ascent - MATTER_ICON_SIZE,
+                           MATTER_ICON_SIZE, MATTER_ICON_SIZE, k_matter_icon);
     }
     if (level < 0) {
-        sh1106_draw_text(64, 18, &font_medium, TEXT_ALIGN_CENTER, "PMS5003");
-        sh1106_draw_text(64, 42, &font_small, TEXT_ALIGN_CENTER, "Đang đo...");
+        // Below the Matter icon row.
+        sh1106_draw_text(64, 24, &font_medium, TEXT_ALIGN_CENTER, "PMS5003");
+        sh1106_draw_text(64, 47, &font_small, TEXT_ALIGN_CENTER, "Đang đo...");
     } else {
         char value[8];
         snprintf(value, sizeof(value), "%d", (int)lroundf(pm25));
-        // Leave room for the Matter icon in the top-left corner.
-        sh1106_draw_text(MATTER_ICON_SIZE + 3, 0, &font_small, TEXT_ALIGN_TOP_LEFT, "PM2.5");
+        sh1106_draw_text(0, 0, &font_small, TEXT_ALIGN_TOP_LEFT, " PM2.5");
         sh1106_draw_text(127, 0, &font_small, TEXT_ALIGN_TOP_RIGHT, "ug/m3 ");
         sh1106_draw_text(64, 16, &font_large, TEXT_ALIGN_TOP_CENTER, value);
         sh1106_draw_hline(8, 119, 47);
