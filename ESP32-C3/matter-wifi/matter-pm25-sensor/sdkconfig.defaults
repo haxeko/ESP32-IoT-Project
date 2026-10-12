@@ -63,3 +63,9 @@ CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 # Bluetooth name while waiting for commissioning: "AirQuality-<discriminator>"
 # (at most 16 characters in total)
 CONFIG_BLE_DEVICE_NAME_PREFIX="AirQuality-"
+
+# Name and device type in commissionable discovery (DNS-SD "DN" and "DT"),
+# shown by controllers before pairing. 44 = 0x002C Air Quality Sensor.
+CONFIG_CHIP_PROJECT_CONFIG="main/chip_project_config.h"
+CONFIG_ENABLE_COMMISSIONABLE_DEVICE_TYPE=y
+CONFIG_DEVICE_TYPE=44
