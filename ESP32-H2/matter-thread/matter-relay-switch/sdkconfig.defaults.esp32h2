@@ -1,0 +1,30 @@
+CONFIG_IDF_TARGET="esp32h2"
+
+# Matter over Thread: 802.15.4 radio, commissioning over BLE
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_SRP_CLIENT=y
+CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
+CONFIG_OPENTHREAD_LOG_LEVEL_NOTE=y
+CONFIG_OPENTHREAD_CLI=n
+# Mains-powered relay: Full Thread Device, can become a Thread router and extend the mesh
+CONFIG_OPENTHREAD_FTD=y
+
+# Disable lwip ipv6 autoconfig (Thread assigns the addresses)
+CONFIG_LWIP_IPV6_AUTOCONFIG=n
+
+# LwIP config for OpenThread
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=8
+CONFIG_LWIP_MULTICAST_PING=y
+
+# MDNS platform: SRP over Thread instead of mDNS
+CONFIG_USE_MINIMAL_MDNS=n
+
+# No Wi-Fi on ESP32-H2
+CONFIG_ENABLE_WIFI_STATION=n
+
+# Relay on GPIO4, active-high
+CONFIG_RELAY_GPIO=4
+CONFIG_RELAY_ACTIVE_LEVEL=1
+
+# On-board WS2812 LED (GPIO8) mirrors the relay state
+CONFIG_STATUS_LED_ENABLE=y

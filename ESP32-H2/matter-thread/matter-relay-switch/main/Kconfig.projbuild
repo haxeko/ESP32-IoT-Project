@@ -1,0 +1,26 @@
+menu "Relay Configuration"
+
+    config RELAY_GPIO
+        int "Relay GPIO number"
+        range 0 27
+        default 4
+        help
+            GPIO that drives the relay module. Avoid the ESP32-H2 strapping pins
+            (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25) and the flash pins (GPIO15-GPIO21).
+
+    config RELAY_ACTIVE_LEVEL
+        int "Relay active level (1 = active-high, 0 = active-low)"
+        range 0 1
+        default 1
+        help
+            Level written to the relay GPIO to turn the relay ON.
+            Many cheap optocoupled relay boards are active-low: set 0 for those.
+
+    config STATUS_LED_ENABLE
+        bool "Mirror relay state on the on-board WS2812 LED (GPIO8)"
+        default y
+        help
+            ESP32-H2-DevKitM-1 has an addressable RGB LED on GPIO8.
+            Disable on custom boards without it.
+
+endmenu
