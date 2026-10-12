@@ -127,7 +127,7 @@ idf.py -p /dev/ttyACM0 flash monitor
 | Nhà sản xuất (Manufacturer) | `Haxeko` | `menuconfig` → *Device Information* |
 | Kiểu máy (Model) | `PM5003` | `menuconfig` → *Device Information* |
 | Tên thiết bị khi ghép nối | `Air Quality Sensor` | `menuconfig` → *Device Information* |
-| Số serial | `PM5003-<MAC Wi-Fi>`, ví dụ `PM5003-8ED0B2A8594B` | Tự động, riêng cho từng chip |
+| Số serial | `<MAC Wi-Fi>`, ví dụ `8ED0B2A8594B` | Tự động, riêng cho từng chip |
 | Tên Bluetooth khi chờ ghép nối | `AirQuality-3840` | `CONFIG_BLE_DEVICE_NAME_PREFIX` trong `sdkconfig.defaults` |
 | Tên và loại thiết bị khi dò tìm trong mạng (DNS-SD `DN`, `DT`) | `Air Quality Sensor`, loại 0x002C | `main/chip_project_config.h`, `CONFIG_DEVICE_TYPE` |
 | Firmware | `1.0.<số commit>`, ví dụ `1.0.8` | Tự động |
