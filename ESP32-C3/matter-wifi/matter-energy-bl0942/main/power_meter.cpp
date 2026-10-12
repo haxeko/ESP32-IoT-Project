@@ -228,12 +228,8 @@ void meter_task(void *arg)
         int64_t voltage_mv = llround(r.voltage_v * 10.0f) * 100;
         int64_t current_ma = llround(r.current_a * 1000.0f);
 
-        if (r.valid) {
-            ESP_LOGI(TAG, "P=%.1f W U=%.1f V I=%.3f A E=%llu mWh", r.power_w, r.voltage_v, r.current_a,
-                     (unsigned long long)r.energy_mwh);
-        } else {
-            ESP_LOGW(TAG, "No data from BL0942 (reporting 0 W)");
-        }
+        ESP_LOGD(TAG, "P=%.1f W U=%.1f V I=%.3f A E=%llu mWh", r.power_w, r.voltage_v, r.current_a,
+                 (unsigned long long)r.energy_mwh);
 
         {
             esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);

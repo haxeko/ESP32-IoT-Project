@@ -28,8 +28,8 @@ Cùng endpoint với relay (endpoint 1), firmware thêm device type **Electrical
 | | ActiveCurrent | mA |
 | Electrical Energy Measurement | CumulativeEnergyImported | mWh (lưu NVS mỗi 10 phút) |
 
-- Khi khởi động, driver làm giống ESPHome: soft reset BL0942, ghi thanh ghi MODE rồi đọc lại để kiểm tra (log `BL0942 setup OK at 9600 baud`). Nếu BL0942 không trả lời, driver tự đổi 9600/4800 baud và khởi tạo lại.
-- Khi chưa đọc được BL0942, log in `No data from BL0942 (reporting 0 W)` và gửi 0 W lên Matter (giống bản BL0937). Apple Home ẩn ô công suất nếu giá trị là null, nên firmware luôn gửi số.
+- Khi khởi động, driver cấu hình BL0942 giống ESPHome (mở khoá ghi, ghi thanh ghi MODE, khoá lại). Log in `BL0942 answering` khi đọc được chip, `BL0942 not responding` nếu chip không trả lời (driver tự cấu hình lại định kỳ).
+- Khi chưa đọc được BL0942, firmware gửi 0 W lên Matter (giống bản BL0937). Apple Home ẩn ô công suất nếu giá trị là null, nên firmware luôn gửi số.
 - Đọc gói đầy đủ của BL0942 (lệnh `0x58 0xAA`, 23 byte, có kiểm tra checksum) mỗi 2 s (`BL0942_UPDATE_INTERVAL_MS`).
 - Điện năng tính từ bộ đếm xung phần cứng `CF_CNT`, có xử lý tràn 24 bit và trường hợp BL0942 bị reset.
 
@@ -46,7 +46,7 @@ chip-tool electricalenergymeasurement read cumulative-energy-imported 0x7283 1
 
 | Tuỳ chọn | Mặc định | Ý nghĩa |
 |---|---|---|
-| `BL0942_UART_BAUD` | 9600 | baud khởi đầu: 9600 khi chân `SCLK_BPS` nối VDD, 4800 khi nối GND. Nếu BL0942 không trả lời, driver tự đổi qua lại 9600/4800 |
+| `BL0942_UART_BAUD` | 9600 | 9600 khi chân `SCLK_BPS` nối VDD, 4800 khi nối GND |
 | `BL0942_ADDRESS` | 0 | địa chỉ chip theo chân A1/A2 |
 | `BL0942_VOLTAGE_REF` | 15873.35944 | LSB/V, module phổ biến (phân áp 5 × 390 kΩ + 510 Ω) |
 | `BL0942_CURRENT_REF` | 251213.46469 | LSB/A, shunt 1 mΩ |
