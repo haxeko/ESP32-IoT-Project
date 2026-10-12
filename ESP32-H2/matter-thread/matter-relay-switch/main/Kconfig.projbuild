@@ -24,3 +24,14 @@ menu "Relay Configuration"
             Disable on custom boards without it.
 
 endmenu
+
+menu "Device Identity"
+
+    config SERIAL_NUMBER_PREFIX
+        string "Serial number prefix"
+        default ""
+        help
+            Matter SerialNumber = prefix + factory MAC address (12 uppercase hex digits),
+            e.g. prefix "RLY-" gives "RLY-744DBDA1B2C3". Total length must stay within 32 characters.
+
+endmenu

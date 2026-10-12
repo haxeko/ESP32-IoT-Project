@@ -10,6 +10,7 @@
 
 #include <app_priv.h>
 #include <app_reset.h>
+#include <serial_number.h>
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <platform/ESP32/OpenthreadLauncher.h>
 #endif
@@ -123,6 +124,10 @@ extern "C" void app_main()
 
     relay_endpoint_id = endpoint::get_id(endpoint);
     ESP_LOGI(TAG, "Relay plug-in unit created with endpoint_id %d", relay_endpoint_id);
+
+    /* Basic Information SerialNumber = MAC address */
+    err = serial_number_provider_init();
+    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to set serial number provider, err:%d", err));
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     /* OpenThread on the ESP32-H2 native 802.15.4 radio */

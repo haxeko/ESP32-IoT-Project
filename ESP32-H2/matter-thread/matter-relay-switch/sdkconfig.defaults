@@ -34,6 +34,9 @@ CONFIG_BUTTON_LONG_PRESS_TIME_MS=5000
 # disable softap by default
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
+# Serial number from the MAC address (main/serial_number.cpp)
+CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
+
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
 

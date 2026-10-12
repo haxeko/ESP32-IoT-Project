@@ -13,6 +13,7 @@ Cấu trúc Matter giống bản ESP32-C3 Wi-Fi trong repo này (`ESP32-C3/matte
 
 - Trạng thái relay được lưu NVS và khôi phục sau khi mất điện.
 - Khi khởi động, GPIO4 được đặt mức OFF *trước* khi chuyển sang output, và không bật pull-up, nên relay không bị nhảy lúc boot.
+- **Số serial** (Basic Information → SerialNumber) lấy từ địa chỉ MAC gốc trong eFuse, 12 ký tự hex in hoa, ví dụ `744DBDA1B2C3`. Mỗi chip một số khác nhau, không đổi sau `erase-flash`. Xem trong Apple Home (phụ kiện → cài đặt → **Số sê-ri**) hoặc dòng log `serial_number: Serial number: ...` khi khởi động.
 - Thiết bị chạy dạng **FTD** (Full Thread Device): cấp nguồn lưới nên có thể làm Thread Router, giúp mở rộng mạng mesh.
 
 ## Yêu cầu mạng
@@ -35,6 +36,7 @@ Matter over Thread cần một **Thread Border Router** trong nhà, ví dụ:
 |---|---|---|
 | `RELAY_GPIO` | 4 | chân điều khiển relay |
 | `RELAY_ACTIVE_LEVEL` | 1 | 1 = active-high, 0 = active-low (module relay opto rẻ tiền thường là active-low) |
+| `SERIAL_NUMBER_PREFIX` | (trống) | tiền tố số serial, ví dụ `RLY-` → `RLY-744DBDA1B2C3` (*Device Identity*) |
 | `STATUS_LED_ENABLE` | y | LED WS2812 GPIO8 hiển thị trạng thái relay; tắt nếu board tự làm không có LED này |
 
 Hoặc sửa trực tiếp `sdkconfig.defaults.esp32h2` rồi xoá `sdkconfig` để áp dụng lại.
@@ -91,6 +93,8 @@ chip-tool onoff toggle 0x7283 1
 chip-tool onoff read on-off 0x7283 1
 ```
 
+Sau khi bật nguồn, thiết bị quảng bá BLE nhanh trong 30 s rồi chuyển sang chậm (log `bleAdv Timeout : Start slow advertisement`, chu kỳ 500 ms). Đây là bình thường: thiết bị vẫn chờ ghép nối, cứ quét QR như bình thường. Cửa sổ ghép nối mở 15 phút; hết thời gian thì rút điện cắm lại.
+
 > Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại.
 
 ## Cấu trúc
@@ -102,6 +106,7 @@ sdkconfig.defaults.esp32h2 OpenThread (FTD, SRP client), relay GPIO4, LED trạn
 partitions.csv             4 MB, 2 phân vùng OTA
 main/app_main.cpp          tạo node + endpoint On/Off Plug-in Unit, cấu hình OpenThread
 main/app_driver.cpp        điều khiển GPIO relay + nút + LED
+main/serial_number.cpp     SerialNumber = MAC (custom Device Instance Info provider)
 main/Kconfig.projbuild     tuỳ chọn relay, LED
 ```
 
