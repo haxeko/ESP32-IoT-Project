@@ -25,6 +25,19 @@ menu "Relay Configuration"
 
 endmenu
 
+menu "Thread Diagnostics"
+
+    config THREAD_DIAG_LOG
+        bool "Log Thread addresses and SRP state until commissioned"
+        default y
+        help
+            Every 10 s, until commissioning completes, log the Thread role, IPv6 addresses
+            (link-local / mesh-local / OMR), on-mesh prefixes from the Border Router and
+            the SRP host/service registration state. Helps find why a phone cannot reach
+            the device after BLE provisioning. Stops once the device is commissioned.
+
+endmenu
+
 menu "Device Identity"
 
     config SERIAL_NUMBER_PREFIX

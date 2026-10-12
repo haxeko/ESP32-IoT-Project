@@ -116,9 +116,26 @@ Nếu giai đoạn 1 xong mà app báo không tìm thấy thiết bị, thườn
 - Border Router phải là của hệ đang dùng (Apple Home → HomePod/Apple TV làm Home hub; Google Home → Nest Hub/Nest Wifi; Home Assistant → OTBR add-on). Thử khởi động lại Border Router.
 - Mỗi lần thử lại: `erase-flash` hoặc factory reset (giữ nút BOOT 5 s) để xoá thông tin mạng Thread cũ.
 
-### Kiểm tra từ thiết bị (OpenThread CLI)
+### Log chẩn đoán tự động
 
-Firmware bật sẵn OpenThread CLI trên cổng serial (`idf.py monitor`). Gõ lệnh **trong lúc điện thoại vẫn đang ghép nối**, vì khi hết thời gian chờ (`fail safe timer expired`) thiết bị sẽ rời mạng Thread:
+Khi chưa được ghép nối, cứ 10 s firmware tự in khối `thread_diag` ra log (tắt bằng `THREAD_DIAG_LOG`, tự dừng khi ghép nối xong):
+
+```
+I thread_diag: ===== Thread diagnostics =====
+I thread_diag: Role: router, RLOC16: 0x7c00
+I thread_diag: Address: fd61:c2f3:2668:ad22:0:ff:fe00:7c00  [mesh-local RLOC]
+I thread_diag: Address: fd12:3456:789a:1:abcd:...  [OMR (reachable from Wi-Fi/LAN)]
+I thread_diag: On-mesh prefix: fd12:3456:789a:1::/64 (border router RLOC16 0x2c00, SLAAC)
+I thread_diag: SRP host: 744DBDA1B2C3..., state: Registered
+I thread_diag: SRP service: 2AB1...-....._matter._tcp, state: Registered
+I thread_diag: Summary: OMR address YES, on-mesh prefixes 1, SRP host Registered, SRP service Registered
+```
+
+Chỉ cần xem log, không phải gõ lệnh. `OMR address NO` hoặc SRP không `Registered` nghĩa là lỗi phía Border Router / mạng LAN.
+
+### Gõ lệnh OpenThread CLI (tuỳ chọn)
+
+Gõ lệnh trên serial monitor ở **115200 baud**, qua cổng USB-C **UART** của DevKit (chip USB-UART, hiện là `COMx` / `/dev/ttyUSB0`). Cổng USB-C còn lại (USB gốc của ESP32-H2) chỉ xuất log, **không nhận lệnh gõ**. Gõ `matter help` để thử. Gõ trong lúc điện thoại vẫn đang ghép nối:
 
 | Lệnh | Kết quả mong đợi |
 |---|---|
@@ -142,6 +159,7 @@ partitions.csv             4 MB, 2 phân vùng OTA
 main/app_main.cpp          tạo node + endpoint On/Off Plug-in Unit, cấu hình OpenThread
 main/app_driver.cpp        điều khiển GPIO relay + nút + LED
 main/serial_number.cpp     SerialNumber = MAC (custom Device Instance Info provider)
+main/thread_diag.cpp       log chẩn đoán Thread/SRP khi chưa ghép nối
 main/Kconfig.projbuild     tuỳ chọn relay, LED
 ```
 

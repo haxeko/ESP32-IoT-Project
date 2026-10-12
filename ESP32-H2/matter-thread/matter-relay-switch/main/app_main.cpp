@@ -11,6 +11,7 @@
 #include <app_priv.h>
 #include <app_reset.h>
 #include <serial_number.h>
+#include <thread_diag.h>
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <platform/ESP32/OpenthreadLauncher.h>
 #endif
@@ -41,6 +42,14 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete");
+        thread_diag_stop();
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kServerReady:
+        /* Already commissioned: no need for the periodic Thread diagnostics */
+        if (chip::Server::GetInstance().GetFabricTable().FabricCount() > 0) {
+            thread_diag_stop();
+        }
         break;
 
     case chip::DeviceLayer::DeviceEventType::kFailSafeTimerExpired:
@@ -141,6 +150,9 @@ extern "C" void app_main()
 
     err = esp_matter::start(app_event_cb);
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
+
+    /* Log Thread addresses / SRP state until commissioned (see README, troubleshooting) */
+    thread_diag_start();
 
     /* Restore the last relay state persisted in NVS */
     app_driver_relay_set_defaults(relay_endpoint_id);
