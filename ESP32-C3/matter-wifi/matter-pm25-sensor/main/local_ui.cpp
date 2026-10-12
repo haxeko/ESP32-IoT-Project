@@ -145,7 +145,10 @@ static void draw_screen(float pm25, int level, bool matter_connected)
 {
     sh1106_clear();
     if (matter_connected) {
-        sh1106_draw_bitmap(1, 2, MATTER_ICON_SIZE, MATTER_ICON_SIZE, k_matter_icon);
+        // Bottom on the baseline of the "PM2.5" header (drawn at y = 0), so the
+        // icon spans exactly the height of its capital letters.
+        sh1106_draw_bitmap(1, font_small.ascent - MATTER_ICON_SIZE, MATTER_ICON_SIZE, MATTER_ICON_SIZE,
+                           k_matter_icon);
     }
     if (level < 0) {
         sh1106_draw_text(64, 18, &font_medium, TEXT_ALIGN_CENTER, "PMS5003");
