@@ -71,6 +71,19 @@ menu "PM2.5 Sensor Configuration"
 
 endmenu
 
+menu "Testing"
+
+    config AIR_QUALITY_TEST_MODE
+        bool "Air Quality test mode: cycle through all levels"
+        default n
+        help
+            Ignores the sensor for the Air Quality attribute and sends each
+            Matter AirQuality value (Good ... ExtremelyPoor) for 60 seconds in
+            turn, showing the value on the OLED. Used to see how a controller
+            (e.g. Apple Home) labels each level. Keep disabled in normal use.
+
+endmenu
+
 menu "Local Display and Indicators"
 
     config OLED_SDA_PIN

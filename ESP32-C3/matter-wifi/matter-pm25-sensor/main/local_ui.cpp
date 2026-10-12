@@ -79,6 +79,7 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static float s_pm25 = NAN;
 static int s_aq_level = -1;     // -1 = no data yet
 static bool s_matter_connected;
+static const char *s_test_label;
 static bool s_oled_ok;
 static bool s_led_ok;
 static bool s_radar_ok;
@@ -119,6 +120,13 @@ void local_ui_set_matter_connected(bool connected)
     }
 }
 
+void local_ui_set_test_label(const char *label)
+{
+    taskENTER_CRITICAL(&s_lock);
+    s_test_label = label;
+    taskEXIT_CRITICAL(&s_lock);
+}
+
 // Someone is within CONFIG_PRESENCE_DISTANCE_CM of the radar, and the radar is
 // still sending data. The "detection distance" field is not used because the
 // LD2410 often reports 0 cm for it while a target is present.
@@ -141,7 +149,7 @@ static bool presence_raw(int64_t now)
     return distance <= CONFIG_PRESENCE_DISTANCE_CM;
 }
 
-static void draw_screen(float pm25, int level, bool matter_connected)
+static void draw_screen(float pm25, int level, bool matter_connected, const char *test_label = NULL)
 {
     sh1106_clear();
     if (matter_connected) {
@@ -161,7 +169,7 @@ static void draw_screen(float pm25, int level, bool matter_connected)
         sh1106_draw_text(127, 0, &font_small, TEXT_ALIGN_TOP_RIGHT, "ug/m3 ");
         sh1106_draw_text(64, 16, &font_large, TEXT_ALIGN_TOP_CENTER, value);
         sh1106_draw_hline(8, 119, 47);
-        sh1106_draw_text(64, 50, &font_small, TEXT_ALIGN_TOP_CENTER, k_level_labels[level]);
+        sh1106_draw_text(64, 50, &font_small, TEXT_ALIGN_TOP_CENTER, test_label ? test_label : k_level_labels[level]);
     }
     if (sh1106_flush() != ESP_OK) {
         ESP_LOGW(TAG, "OLED write failed");
@@ -190,6 +198,7 @@ static void local_ui_task(void *arg)
         const float pm25 = s_pm25;
         const int level = s_aq_level;
         const bool matter_connected = s_matter_connected;
+        const char *test_label = s_test_label;
         taskEXIT_CRITICAL(&s_lock);
 
         // Start-up phase: wait for the first value (or the timeout), then hold.
@@ -226,17 +235,17 @@ static void local_ui_task(void *arg)
 
         // OLED: on during start-up or while someone is close.
         if (s_oled_ok) {
-            const bool should_be_on = startup || presence;
+            const bool should_be_on = startup || presence || test_label != NULL;
             if (should_be_on != oled_on) {
                 oled_on = should_be_on;
                 ESP_LOGI(TAG, "Display %s", oled_on ? "ON" : "OFF");
                 if (oled_on) {
-                    draw_screen(pm25, level, matter_connected);     // fresh frame before turning on
+                    draw_screen(pm25, level, matter_connected, test_label);     // fresh frame before turning on
                     last_redraw_ms = now;
                 }
                 sh1106_set_power(oled_on);
             } else if (oled_on && now - last_redraw_ms >= UI_REDRAW_MS) {
-                draw_screen(pm25, level, matter_connected);
+                draw_screen(pm25, level, matter_connected, test_label);
                 last_redraw_ms = now;
             }
         }
