@@ -59,3 +59,7 @@ CONFIG_ESP_WIFI_RX_IRAM_OPT=n
 
 # Manufacturer / Model come from main/device_info.cpp
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
+
+# Bluetooth name while waiting for commissioning: "AirQuality-<discriminator>"
+# (at most 16 characters in total)
+CONFIG_BLE_DEVICE_NAME_PREFIX="AirQuality-"

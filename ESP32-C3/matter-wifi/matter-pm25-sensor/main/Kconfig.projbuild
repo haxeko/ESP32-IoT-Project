@@ -8,6 +8,13 @@ menu "Device Information"
         string "Model (Basic Information ProductName)"
         default "PM5003"
 
+    config DEVICE_DISPLAY_NAME
+        string "Device name (Basic Information NodeLabel / ProductLabel)"
+        default "Air Quality Sensor"
+        help
+            Default name that controllers show when the device is added.
+            Max 32 characters. It can be renamed later in the app.
+
 endmenu
 
 menu "PM2.5 Sensor Configuration"

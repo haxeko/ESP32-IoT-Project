@@ -125,6 +125,8 @@ idf.py -p /dev/ttyACM0 flash monitor
 |---|---|---|
 | Nhà sản xuất (Manufacturer) | `Haxeko` | `menuconfig` → *Device Information* |
 | Kiểu máy (Model) | `PM5003` | `menuconfig` → *Device Information* |
+| Tên thiết bị khi ghép nối | `Air Quality Sensor` | `menuconfig` → *Device Information* |
+| Tên Bluetooth khi chờ ghép nối | `AirQuality-3840` | `CONFIG_BLE_DEVICE_NAME_PREFIX` trong `sdkconfig.defaults` |
 | Firmware | `1.0.<số commit>`, ví dụ `1.0.8` | Tự động |
 
 Phiên bản firmware **tự tăng sau mỗi commit**. Số cuối là số commit của repo (`git rev-list --count HEAD`), và cũng được dùng làm số phiên bản Matter (SoftwareVersion) cho OTA. Khi ra bản lớn, sửa `FIRMWARE_VERSION_BASE` trong `CMakeLists.txt`, ví dụ từ `1.0` thành `1.1`.

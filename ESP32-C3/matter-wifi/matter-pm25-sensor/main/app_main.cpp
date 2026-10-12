@@ -272,8 +272,10 @@ static esp_err_t start_matter()
 
     /* Create a Matter node and add the mandatory Root Node device type on endpoint 0 */
     node::config_t node_config;
+    device_info_set_name(&node_config);
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
     VerifyOrReturnError(node != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create Matter node"));
+    device_info_add_product_label(node);
 
     endpoint_t *air_quality_ep = create_air_quality_sensor(node);
     VerifyOrReturnError(air_quality_ep != nullptr, ESP_FAIL,
