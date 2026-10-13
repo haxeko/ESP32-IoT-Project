@@ -26,3 +26,14 @@ void local_ui_set_pm25(float pm25);
 // Shows a small icon at the top center of the OLED while the device is online
 // and at least one controller is subscribed. Can be called from any task.
 void local_ui_set_matter_connected(bool connected);
+
+// Factory reset feedback. Unless it is LOCAL_UI_RESET_NONE, the OLED turns on
+// and shows it instead of the measurement. Can be called from any task.
+typedef enum {
+    LOCAL_UI_RESET_NONE,        // normal screen
+    LOCAL_UI_RESET_HOLD,        // button held: seconds_left until releasing it resets
+    LOCAL_UI_RESET_RELEASE,     // held long enough: releasing the button resets
+    LOCAL_UI_RESET_RUNNING,     // factory reset in progress, the device restarts
+} local_ui_reset_t;
+
+void local_ui_set_reset(local_ui_reset_t reset, int seconds_left);

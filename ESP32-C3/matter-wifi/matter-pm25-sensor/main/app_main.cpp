@@ -28,6 +28,7 @@
 
 // drivers implemented by this example
 #include <device_info.h>
+#include <drivers/button.h>
 #include <drivers/pm_sensor.h>
 #include <local_ui.h>
 
@@ -43,11 +44,36 @@ static constexpr float kPmMaxMeasuredValue = 1000.0f;
 
 // GPIO9 (BOOT button) is the OLED SCL line, so factory reset is done by
 // powering the device on kFactoryResetBootCount times in a row, each time for
-// less than kFactoryResetWindowUs.
+// less than kFactoryResetWindowUs...
 static constexpr uint8_t kFactoryResetBootCount = 5;
 static constexpr uint64_t kFactoryResetWindowUs = 10 * 1000 * 1000;
 static constexpr char kNvsNamespace[] = "app";
 static constexpr char kNvsBootCountKey[] = "boot_count";
+
+// ...or with a button on CONFIG_FACTORY_RESET_BUTTON_GPIO: hold it for
+// kResetButtonHoldMs, then release it. The OLED counts down from
+// kResetButtonShowMs on, so a short press shows nothing; releasing the button
+// before the end cancels, and a button stuck down never resets.
+static constexpr uint32_t kResetButtonShowMs = 1000;
+static constexpr uint32_t kResetButtonHoldMs = 5000;
+
+#if CONFIG_FACTORY_RESET_BUTTON_GPIO >= 0
+static_assert(CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_RX_PIN &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_TX_PIN &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_OLED_SDA_PIN &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_OLED_SCL_PIN &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_STATUS_LED_GPIO &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_RX_PIN &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_TX_PIN,
+              "The factory reset button GPIO is already used");
+#if CONFIG_IDF_TARGET_ESP32C3
+// Pressed during a reset, a strapping pin changes the boot mode.
+static_assert(CONFIG_FACTORY_RESET_BUTTON_GPIO != 2 && CONFIG_FACTORY_RESET_BUTTON_GPIO != 8 &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != 9 &&
+              (CONFIG_FACTORY_RESET_BUTTON_GPIO < 11 || CONFIG_FACTORY_RESET_BUTTON_GPIO > 19),
+              "Factory reset button: GPIO2/8/9 are strapping pins, GPIO11-17 flash, GPIO18-19 USB");
+#endif
+#endif
 
 // Matter AirQuality value sent for each level of the OLED/LEDs, and how
 // Apple Home shows it:
@@ -85,6 +111,48 @@ static void update_measured_value(uint16_t endpoint_id, uint32_t cluster_id, uin
 // start) the sensor, OLED, LEDs and radar keep working locally.
 static std::atomic<bool> s_matter_started{false};
 static uint16_t s_air_quality_endpoint_id;
+static std::atomic<bool> s_factory_reset_started{false};
+
+// Erases the Wi-Fi credentials and the Matter fabrics, then restarts. Can be
+// called from any task; only the first call does something.
+static void start_factory_reset(const char *reason)
+{
+    if (s_factory_reset_started.exchange(true)) {
+        return;
+    }
+    ESP_LOGW(TAG, "Factory reset requested by %s", reason);
+    local_ui_set_reset(LOCAL_UI_RESET_RUNNING, 0);
+    if (s_matter_started) {
+        esp_matter::factory_reset();    // restarts the device when done
+        return;
+    }
+    // esp_matter::factory_reset() needs a running Matter stack, and a broken
+    // Matter storage may be why it is not running: erase it directly.
+    ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_flash_erase());
+    esp_restart();
+}
+
+#if CONFIG_FACTORY_RESET_BUTTON_GPIO >= 0
+// Runs in the esp_timer task.
+static void reset_button_cb(uint32_t held_ms, bool released, void *user_data)
+{
+    if (s_factory_reset_started) {
+        return;
+    }
+    if (released) {
+        if (held_ms >= kResetButtonHoldMs) {
+            start_factory_reset("the button");
+        } else {
+            local_ui_set_reset(LOCAL_UI_RESET_NONE, 0);    // released too early: cancelled
+        }
+    } else if (held_ms >= kResetButtonHoldMs) {
+        local_ui_set_reset(LOCAL_UI_RESET_RELEASE, 0);
+    } else if (held_ms >= kResetButtonShowMs) {
+        // Whole seconds left, rounded up: 4, 3, 2, 1.
+        local_ui_set_reset(LOCAL_UI_RESET_HOLD, (int)((kResetButtonHoldMs - held_ms + 999) / 1000));
+    }
+}
+#endif
 
 static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data)
 {
@@ -365,19 +433,17 @@ extern "C" void app_main()
 
     /* Matter is optional for the local functions: on failure, keep running without it */
     if (start_matter() != ESP_OK) {
-        if (factory_reset_requested) {
-            // esp_matter::factory_reset() needs a running Matter stack, and a
-            // broken Matter storage may be why it failed: erase it directly.
-            ESP_LOGW(TAG, "Factory reset requested while Matter is not running: erasing NVS");
-            ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_flash_erase());
-            esp_restart();
-        }
         ESP_LOGE(TAG, "Matter is not running; the device keeps working locally");
-        return;
     }
 
+    /* Factory reset, once Matter has started or failed to */
     if (factory_reset_requested) {
-        ESP_LOGW(TAG, "Factory reset requested by %u quick power cycles", kFactoryResetBootCount);
-        esp_matter::factory_reset();
+        start_factory_reset("quick power cycles");
     }
+#if CONFIG_FACTORY_RESET_BUTTON_GPIO >= 0
+    err = button_init(CONFIG_FACTORY_RESET_BUTTON_GPIO, reset_button_cb, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize the factory reset button: %s", esp_err_to_name(err));
+    }
+#endif
 }

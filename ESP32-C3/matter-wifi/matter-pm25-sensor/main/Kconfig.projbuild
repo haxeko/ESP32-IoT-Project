@@ -127,3 +127,22 @@ menu "Local Display and Indicators"
         default 30
 
 endmenu
+
+menu "Factory Reset Button"
+
+    config FACTORY_RESET_BUTTON_GPIO
+        int "Button GPIO (-1 = no button)"
+        range -1 21
+        default 7
+        help
+            Push button between this GPIO and GND (the internal pull-up is
+            used). Hold it for 5 seconds, until the OLED says to release it,
+            then release it: the device erases its Wi-Fi and Matter pairing
+            and restarts, ready to be paired again. Releasing it earlier
+            cancels.
+
+            Free on an ESP32-C3 with this wiring: GPIO0, 1, 5, 6, 7. Do not
+            use a strapping pin (GPIO2, 8, 9), the flash pins (GPIO11 to 17)
+            or the USB pins (GPIO18, 19).
+
+endmenu

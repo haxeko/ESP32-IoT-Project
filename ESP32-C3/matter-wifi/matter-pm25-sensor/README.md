@@ -26,6 +26,7 @@ Màn hình OLED, đèn LED WS2812 và radar LD2410 chạy **tại chỗ trên th
 - Màn hình OLED **SH1106 128x64** (I2C, địa chỉ 0x3C)
 - Dải LED **WS2812**, 6 bóng
 - Radar hiện diện **HLK-LD2410**
+- Một nút nhấn bất kỳ để factory reset (không bắt buộc)
 
 Các phần OLED, LED và LD2410 đều không bắt buộc. Thiếu phần nào thì firmware ghi lỗi vào log rồi chạy tiếp, cảm biến PM2.5 và Matter vẫn hoạt động. Màn hình không trả lời (chưa cắm, lỏng dây, mất nguồn giữa chừng) thì firmware thử khởi tạo lại mỗi 5 giây và tự sáng lại khi màn hình trả lời.
 
@@ -46,6 +47,7 @@ Thiết bị **chạy độc lập với Matter**: cảm biến, màn hình, LED
 | OLED SH1106 | VCC / GND | 3.3V / GND |
 | WS2812 | DIN | **GPIO10** |
 | WS2812 | VCC / GND | 5V / GND |
+| Nút factory reset | Chân 1 / chân 2 | **GPIO7** / GND |
 
 Quạt PMS5003 và radar LD2410 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng vào ESP32-C3 được. Chân SET/RESET của PMS (nếu có) để hở hoặc nối 3.3V.
 
@@ -53,11 +55,17 @@ Việc phân chia UART giống bản ESPHome: PMS5003 dùng UART1, LD2410 dùng 
 
 ### Factory reset
 
-GPIO9 (nút BOOT) đang làm chân SCL của màn hình, nên không dùng nút BOOT để reset được. Thay vào đó:
+Factory reset xóa Wi-Fi và thông tin ghép nối Matter, rồi thiết bị khởi động lại và chờ ghép nối lại. GPIO9 (nút BOOT) đang làm chân SCL của màn hình nên không dùng được nút BOOT. Có hai cách:
 
-- **Cắm rồi rút nguồn 5 lần liên tiếp**, mỗi lần giữ điện dưới 10 giây. Ở lần cắm thứ 5, thiết bị xóa Wi-Fi và thông tin ghép nối Matter, rồi chờ ghép nối lại.
+- **Nút factory reset trên GPIO7** (nối giữa GPIO7 và GND, firmware tự bật điện trở kéo lên):
+  1. Giữ nút. Sau 1 giây màn hình sáng, hiện **ĐẶT LẠI THIẾT BỊ** và đếm ngược 4, 3, 2, 1.
+  2. Khi màn hình hiện **0 / Buông nút là đặt lại**, buông nút. Màn hình hiện *Đang đặt lại...* rồi thiết bị khởi động lại.
+  3. Buông nút trước khi đếm xong là hủy (màn hình ghi *Buông nút là dừng*). Nút bị kẹt (giữ mãi không buông) cũng không reset.
+
+  Đổi chân trong `menuconfig` → *Factory Reset Button*, đặt `-1` nếu không lắp nút. Firmware báo lỗi khi build nếu chọn trùng chân đang dùng, chân strapping (GPIO2/8/9), chân flash (GPIO11–17) hay chân USB (GPIO18/19). Chân còn trống: GPIO0, 1, 5, 6, 7.
+- **Cắm rồi rút nguồn 5 lần liên tiếp**, mỗi lần giữ điện dưới 10 giây. Ở lần cắm thứ 5, thiết bị factory reset. Cách này dùng được cả khi không lắp nút.
 - Nếu bạn xóa thiết bị khỏi tất cả ứng dụng (Apple Home, Home Assistant...), thiết bị tự mở lại chế độ ghép nối, không cần reset.
-- Cách reset này vẫn chạy khi Matter không khởi động được: khi đó firmware xóa thẳng phân vùng NVS rồi khởi động lại.
+- Cả hai cách vẫn chạy khi Matter không khởi động được: khi đó firmware xóa thẳng phân vùng NVS rồi khởi động lại.
 - Nếu phân vùng NVS không dùng được (hết trang trống, hoặc do bản ESP-IDF mới hơn ghi), firmware tự xóa nó khi khởi động. Kết quả giống factory reset: phải ghép nối lại.
 
 > **Lưu ý về GPIO20/GPIO21:** đây là chân UART0 (console) mặc định của ESP32-C3. Firmware này chuyển log sang **USB-Serial-JTAG** có sẵn trên chip (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`). Vì vậy:
@@ -95,6 +103,17 @@ idf.py menuconfig          # (tùy chọn) PM2.5 Sensor Configuration
 idf.py -p /dev/ttyACM0 flash monitor
 ```
 
+Mỗi lần build xong, thư mục `build/firmware/` chỉ chứa file của đúng phiên bản vừa build (xem [Phiên bản firmware](#phiên-bản-firmware)):
+
+| File | Nội dung | Nạp ở địa chỉ |
+|---|---|---|
+| `haxeko_pm5003_v1.0.49_esp32c3_merged.bin` | bootloader + bảng phân vùng + firmware | `0x0` (máy mới, ESP Web Flasher...) |
+| `haxeko_pm5003_v1.0.49_esp32c3_app.bin` | chỉ firmware | `0x20000` |
+
+```bash
+esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x0 build/firmware/haxeko_pm5003_v1.0.49_esp32c3_merged.bin
+```
+
 ### Cấu hình (`idf.py menuconfig`)
 
 *PM2.5 Sensor Configuration*:
@@ -120,6 +139,12 @@ idf.py -p /dev/ttyACM0 flash monitor
 | Giữ màn hình sáng sau khi người rời đi | 60 s |
 | Bỏ qua dữ liệu radar cũ hơn | 30 s |
 
+*Factory Reset Button*:
+
+| Tùy chọn | Mặc định | Ý nghĩa |
+|---|---|---|
+| Button GPIO | 7 | Chân nối nút factory reset (nút nối xuống GND). `-1` = không có nút |
+
 ### Thông tin thiết bị và phiên bản firmware
 
 Ứng dụng nhà thông minh hiển thị các thông tin sau:
@@ -132,12 +157,27 @@ idf.py -p /dev/ttyACM0 flash monitor
 | Số serial | `<MAC Wi-Fi>`, ví dụ `8ED0B2A8594B` | Tự động, riêng cho từng chip |
 | Tên Bluetooth khi chờ ghép nối | `AirQuality-3840` | `CONFIG_BLE_DEVICE_NAME_PREFIX` trong `sdkconfig.defaults` |
 | Tên và loại thiết bị khi dò tìm trong mạng (DNS-SD `DN`, `DT`) | `Air Quality Sensor`, loại 0x002C | `main/chip_project_config.h`, `CONFIG_DEVICE_TYPE` |
-| Firmware | `1.0.<số commit>`, ví dụ `1.0.8` | Tự động |
+| Firmware | `1.0.<số commit>`, ví dụ `1.0.49` | Tự động, xem bên dưới |
 
-Phiên bản firmware **tự tăng sau mỗi commit**. Số cuối là số commit của repo (`git rev-list --count HEAD`), và cũng được dùng làm số phiên bản Matter (SoftwareVersion) cho OTA. Khi ra bản lớn, sửa `FIRMWARE_VERSION_BASE` trong `CMakeLists.txt`, ví dụ từ `1.0` thành `1.1`.
+### Phiên bản firmware
 
-- Clone repo đầy đủ, **không dùng `--depth`**. Với clone nông, số commit sẽ sai.
+Phiên bản có dạng **`<major>.<minor>.<build>`**, ví dụ `1.0.49`, và chỉ được tính ở **một chỗ** (`tools/firmware_version.cmake`). Cùng một số đó xuất hiện ở:
+
+| Nơi | Ví dụ |
+|---|---|
+| Apple Home / Home Assistant, mục Firmware (`SoftwareVersionString`) | `1.0.49` |
+| Tên file nạp trong `build/firmware/` | `haxeko_pm5003_v1.0.49_esp32c3_merged.bin` |
+| Log khi khởi động | `Haxeko PM5003, firmware 1.0.49` |
+| Số phiên bản Matter dùng cho OTA (`SoftwareVersion`) | `49` |
+
+- `<build>` là số commit của repo (`git rev-list --count HEAD`): cùng một commit luôn ra cùng phiên bản, commit mới hơn luôn ra số lớn hơn, nên OTA không bao giờ coi bản mới là bản cũ. Số này đếm commit của cả repo, nên commit ở dự án khác trong repo cũng làm nó tăng.
+- `<major>.<minor>`: sửa `FIRMWARE_VERSION_BASE` trong `CMakeLists.txt` khi ra bản lớn, ví dụ `1.0` thành `1.1`.
+- Build khi còn sửa đổi chưa commit trong `main/`, `CMakeLists.txt`, `sdkconfig.defaults` hay `partitions.csv` thì phiên bản có đuôi **`-dev`**, ví dụ `1.0.49-dev`, ở cả ứng dụng lẫn tên file. Bản phát hành là bản build từ commit đã đẩy lên git, không có `-dev`.
+- Phiên bản được tính khi CMake cấu hình dự án (sau mỗi commit hoặc checkout). Nếu sửa code sau đó mà chưa commit, bước build in cảnh báo; chạy `idf.py reconfigure` để bản build mang đuôi `-dev`.
+- Clone repo đầy đủ, **không dùng `--depth`**. Với clone nông, số commit sẽ sai (bước build cũng cảnh báo).
 - Nếu build từ thư mục không có git (ví dụ tải file zip), phiên bản sẽ là `1.0.0`.
+
+Sau khi nạp bản mới qua USB, ứng dụng có thể vẫn hiện số phiên bản đã đọc trước đó một thời gian. Log khởi động luôn in số của bản đang chạy.
 
 ## Thêm vào Apple Home
 
@@ -196,9 +236,12 @@ matter-pm25-sensor/
 │   │   ├── pm_sensor.cpp     # PMS5003/7003/A003 và SDS011 (UART1)
 │   │   ├── ld2410.cpp        # Radar LD2410 (UART0)
 │   │   ├── sh1106.cpp        # OLED SH1106 I2C + vẽ chữ
-│   │   └── status_led.cpp    # WS2812
+│   │   ├── status_led.cpp    # WS2812
+│   │   └── button.cpp        # Nút factory reset
 │   └── ui/
 │       └── fonts.c           # Font bitmap Roboto (sinh bởi tools/gen_fonts.py)
 └── tools/
+    ├── firmware_version.cmake # Tính phiên bản firmware
+    ├── firmware_files.cmake   # Tạo file nạp mang số phiên bản sau mỗi lần build
     └── gen_fonts.py
 ```

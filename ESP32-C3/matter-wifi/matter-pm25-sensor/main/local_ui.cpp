@@ -39,6 +39,8 @@ static const char *TAG = "local_ui";
 // ...and then for this long so the first result can be read.
 #define STARTUP_HOLD_MS             5000
 #define LED_BRIGHTNESS              (CONFIG_STATUS_LED_BRIGHTNESS / 100.0f)
+// Top of the factory reset title: its accents rise above the font ascent.
+#define RESET_TITLE_Y               2
 
 #if CONFIG_OLED_ROTATE_180
 #define OLED_ROTATE_180             true
@@ -82,10 +84,20 @@ static const uint8_t k_matter_icon[MATTER_ICON_SIZE * 2] = {
     0x7F, 0x00,     // .#######.
 };
 
+// What the OLED shows. s_screen is written from any task under s_lock; the UI
+// task draws a copy taken under the lock.
+typedef struct {
+    float pm25;
+    int level;                  // -1 = no data yet
+    bool matter_connected;
+    local_ui_reset_t reset;
+    int reset_seconds;
+} screen_t;
+
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
-static float s_pm25 = NAN;
-static int s_aq_level = -1;     // -1 = no data yet
-static bool s_matter_connected;
+static screen_t s_screen = { .pm25 = NAN, .level = -1, .matter_connected = false,
+                             .reset = LOCAL_UI_RESET_NONE, .reset_seconds = 0 };
+static TaskHandle_t s_task;
 static bool s_oled_ok;
 static bool s_led_ok;
 static bool s_radar_ok;
@@ -114,19 +126,31 @@ void local_ui_set_pm25(float pm25)
         return;     // no value: keep showing the last one, as the ESPHome version did
     }
     taskENTER_CRITICAL(&s_lock);
-    s_pm25 = pm25;
-    s_aq_level = level;
+    s_screen.pm25 = pm25;
+    s_screen.level = level;
     taskEXIT_CRITICAL(&s_lock);
 }
 
 void local_ui_set_matter_connected(bool connected)
 {
     taskENTER_CRITICAL(&s_lock);
-    const bool changed = (s_matter_connected != connected);
-    s_matter_connected = connected;
+    const bool changed = (s_screen.matter_connected != connected);
+    s_screen.matter_connected = connected;
     taskEXIT_CRITICAL(&s_lock);
     if (changed) {
         ESP_LOGI(TAG, "Matter %s", connected ? "connected" : "not connected");
+    }
+}
+
+void local_ui_set_reset(local_ui_reset_t reset, int seconds_left)
+{
+    taskENTER_CRITICAL(&s_lock);
+    const bool changed = s_screen.reset != reset || s_screen.reset_seconds != seconds_left;
+    s_screen.reset = reset;
+    s_screen.reset_seconds = seconds_left;
+    taskEXIT_CRITICAL(&s_lock);
+    if (changed && s_task != NULL) {
+        xTaskNotifyGive(s_task);    // redraw now rather than at the next tick
     }
 }
 
@@ -152,11 +176,34 @@ static bool presence_raw(int64_t now)
     return distance <= CONFIG_PRESENCE_DISTANCE_CM;
 }
 
-// Fails when the OLED does not acknowledge the frame.
-static esp_err_t draw_screen(float pm25, int level, bool matter_connected)
+// Factory reset: count down while the button is held, then ask to release it.
+// The texts avoid the hỏi/ngã tone marks, which look like sắc at 12 px.
+static void draw_reset(local_ui_reset_t reset, int seconds_left)
 {
+    sh1106_draw_text(64, RESET_TITLE_Y, &font_small, TEXT_ALIGN_TOP_CENTER, "ĐẶT LẠI THIẾT BỊ");
+    if (reset == LOCAL_UI_RESET_RUNNING) {
+        sh1106_draw_text(64, 36, &font_small, TEXT_ALIGN_CENTER, "Đang đặt lại...");
+        return;
+    }
+    char value[8];
+    snprintf(value, sizeof(value), "%d", reset == LOCAL_UI_RESET_HOLD ? seconds_left : 0);
+    sh1106_draw_text(64, 16, &font_large, TEXT_ALIGN_TOP_CENTER, value);
+    sh1106_draw_hline(8, 119, 47);
+    sh1106_draw_text(64, 50, &font_small, TEXT_ALIGN_TOP_CENTER,
+                     reset == LOCAL_UI_RESET_HOLD ? "Buông nút là dừng" : "Buông nút là đặt lại");
+}
+
+// Fails when the OLED does not acknowledge the frame.
+static esp_err_t draw_screen(const screen_t &screen)
+{
+    const float pm25 = screen.pm25;
+    const int level = screen.level;
     sh1106_clear();
-    if (matter_connected) {
+    if (screen.reset != LOCAL_UI_RESET_NONE) {
+        draw_reset(screen.reset, screen.reset_seconds);
+        return sh1106_flush();
+    }
+    if (screen.matter_connected) {
         // Centered horizontally, bottom on the baseline of the "PM2.5" header
         // (drawn at y = 0), so the icon spans exactly the height of its capitals.
         sh1106_draw_bitmap((SH1106_WIDTH - MATTER_ICON_SIZE) / 2, font_small.ascent - MATTER_ICON_SIZE,
@@ -192,15 +239,18 @@ static void local_ui_task(void *arg)
     int64_t last_oled_retry_ms = boot_ms;
     int64_t last_status_ms = boot_ms;
     int led_level = -1;
+    screen_t drawn = {};    // last frame sent, to redraw at once when the reset state changes
 
     while (true) {
         const int64_t now = now_ms();
 
         taskENTER_CRITICAL(&s_lock);
-        const float pm25 = s_pm25;
-        const int level = s_aq_level;
-        const bool matter_connected = s_matter_connected;
+        const screen_t screen = s_screen;
         taskEXIT_CRITICAL(&s_lock);
+        const float pm25 = screen.pm25;
+        const int level = screen.level;
+        const bool resetting = screen.reset != LOCAL_UI_RESET_NONE;
+        const bool reset_changed = screen.reset != drawn.reset || screen.reset_seconds != drawn.reset_seconds;
 
         // Start-up phase: wait for the first value (or the timeout), then hold.
         if (startup) {
@@ -234,22 +284,24 @@ static void local_ui_task(void *arg)
             oled_on = false;    // turned on below if it should be
         }
 
-        // OLED: on during start-up or while someone is close.
+        // OLED: on during start-up, while someone is close, or during a factory reset.
         if (s_oled_ok) {
-            const bool should_be_on = startup || presence;
+            const bool should_be_on = startup || presence || resetting;
             esp_err_t err = ESP_OK;
             if (should_be_on != oled_on) {
                 oled_on = should_be_on;
                 ESP_LOGI(TAG, "Display %s", oled_on ? "ON" : "OFF");
                 if (oled_on) {
-                    err = draw_screen(pm25, level, matter_connected);   // fresh frame before turning on
+                    err = draw_screen(screen);      // fresh frame before turning on
+                    drawn = screen;
                     last_redraw_ms = now;
                 }
                 if (err == ESP_OK) {
                     err = sh1106_set_power(oled_on);
                 }
-            } else if (oled_on && now - last_redraw_ms >= UI_REDRAW_MS) {
-                err = draw_screen(pm25, level, matter_connected);
+            } else if (oled_on && (reset_changed || now - last_redraw_ms >= UI_REDRAW_MS)) {
+                err = draw_screen(screen);
+                drawn = screen;
                 last_redraw_ms = now;
             }
             if (err != ESP_OK) {
@@ -268,14 +320,15 @@ static void local_ui_task(void *arg)
             ESP_LOGI(TAG, "status: oled=%s screen=%s startup=%d presence=%d radar=%s led_level=%d pm25=%d matter=%d",
                      s_oled_ok ? "ok" : "missing", oled_on ? "on" : "off", startup, presence,
                      radar_seen ? (t.moving || t.still ? "target" : "no-target") : "no-data",
-                     led_level, isnan(pm25) ? -1 : (int)lroundf(pm25), matter_connected);
+                     led_level, isnan(pm25) ? -1 : (int)lroundf(pm25), screen.matter_connected);
             if (radar_seen) {
                 ESP_LOGI(TAG, "radar: moving=%d %ucm still=%d %ucm, %lld ms ago", t.moving, t.moving_cm, t.still,
                          t.still_cm, (long long)(now - t.timestamp_ms));
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(UI_TICK_MS));
+        // Woken up early by local_ui_set_reset().
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(UI_TICK_MS));
     }
 }
 
@@ -293,7 +346,7 @@ static bool init_oled()
 esp_err_t local_ui_init(void)
 {
     // Each part is optional: a missing OLED or radar must not stop the sensor.
-    s_oled_ok = init_oled() && draw_screen(NAN, -1, false) == ESP_OK && sh1106_set_power(true) == ESP_OK;
+    s_oled_ok = init_oled() && draw_screen(s_screen) == ESP_OK && sh1106_set_power(true) == ESP_OK;
 
     esp_err_t err;
 
@@ -309,7 +362,7 @@ esp_err_t local_ui_init(void)
         ESP_LOGE(TAG, "LD2410 init failed: %s", esp_err_to_name(err));
     }
 
-    if (xTaskCreate(local_ui_task, "local_ui", UI_TASK_STACK, NULL, UI_TASK_PRIO, NULL) != pdPASS) {
+    if (xTaskCreate(local_ui_task, "local_ui", UI_TASK_STACK, NULL, UI_TASK_PRIO, &s_task) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
