@@ -1,0 +1,42 @@
+menu "WS2812 RGB Light"
+
+    config LED_GPIO
+        int "WS2812 data GPIO"
+        range 0 46
+        default 8
+        help
+            GPIO connected to DIN of the first WS2812.
+
+    config LED_COUNT
+        int "Number of WS2812 LEDs"
+        range 1 1024
+        default 64
+
+    config LED_FIXED_BRIGHTNESS_PERCENT
+        int "Fixed intensity of every lit LED (%)"
+        range 1 100
+        default 30
+        help
+            Each lit LED always shines at this intensity. The brightness set from
+            Matter (0-100 %) does not dim the LEDs: it chooses how many LEDs are lit
+            (100 % = all LEDs, 50 % = half of them, ...).
+
+    config LED_FILL_REVERSE
+        bool "Light LEDs from the end of the strip"
+        default n
+        help
+            By default LEDs are lit starting at the first LED (next to DIN).
+
+endmenu
+
+menu "Button"
+
+    config APP_BUTTON_GPIO
+        int "Button GPIO (active low)"
+        range -1 46
+        default 0
+        help
+            Short press: toggle the light. Hold 5 s: factory reset.
+            GPIO0 is the BOOT button on most ESP32-S2 boards. -1 disables the button.
+
+endmenu
