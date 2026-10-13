@@ -29,6 +29,16 @@ else()
     if(EXISTS "${git_dir}/logs/HEAD")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${git_dir}/logs/HEAD")
     endif()
+    # A shallow clone (e.g. CI with fetch-depth 1) only counts the fetched commits.
+    execute_process(COMMAND git rev-parse --is-shallow-repository
+                    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+                    OUTPUT_VARIABLE git_shallow
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+    if(git_shallow STREQUAL "true")
+        message(WARNING "Shallow git clone: build number ${FIRMWARE_BUILD_NUMBER} is too low, devices would "
+                        "refuse this firmware as an OTA update. Run 'git fetch --unshallow' first.")
+    endif()
 endif()
 set(PROJECT_VER "${FIRMWARE_VERSION_BASE}.${FIRMWARE_BUILD_NUMBER}")
 set(PROJECT_VER_NUMBER ${FIRMWARE_BUILD_NUMBER})

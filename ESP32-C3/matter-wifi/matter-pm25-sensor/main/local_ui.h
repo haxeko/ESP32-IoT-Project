@@ -16,12 +16,13 @@ esp_err_t local_ui_init(void);
 
 // Air quality level shown on the OLED and LEDs, from PM2.5 in µg/m³:
 // 0 TỐT (<= 12), 1 KHÁ (<= 35.4), 2 KHÔNG TỐT (<= 55.4), 3 KÉM (<= 125.4),
-// 4 CỰC KỲ KÉM.
+// 4 CỰC KỲ KÉM. Returns -1 when there is no value (NAN or negative).
 int local_ui_pm25_level(float pm25);
 
-// New PM2.5 value in µg/m³. Can be called from any task.
+// New PM2.5 value in µg/m³. Can be called from any task. A missing value
+// (NAN) is ignored: the last value stays on the OLED and LEDs.
 void local_ui_set_pm25(float pm25);
 
-// Shows a small icon in the corner of the OLED while the device is
-// commissioned and online. Can be called from any task.
+// Shows a small icon at the top center of the OLED while the device is online
+// and at least one controller is subscribed. Can be called from any task.
 void local_ui_set_matter_connected(bool connected);

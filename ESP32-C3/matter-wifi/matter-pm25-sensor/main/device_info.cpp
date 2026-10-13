@@ -25,6 +25,8 @@
 using namespace chip;
 using namespace chip::DeviceLayer;
 
+static const char *TAG = "device_info";
+
 namespace {
 
 class DeviceInstanceInfo : public Internal::GenericDeviceInstanceInfoProvider<Internal::ESP32Config>
@@ -47,7 +49,7 @@ public:
 private:
     static CHIP_ERROR CopyString(char * buf, size_t bufSize, const char * value)
     {
-        ReturnErrorCodeIf(bufSize <= strlen(value), CHIP_ERROR_BUFFER_TOO_SMALL);
+        VerifyOrReturnError(bufSize > strlen(value), CHIP_ERROR_BUFFER_TOO_SMALL);
         strcpy(buf, value);
         return CHIP_NO_ERROR;
     }
@@ -61,7 +63,9 @@ void device_info_get_serial(char *buf, size_t size)
 {
     // Wi-Fi MAC, e.g. "8ED0B2A8594B": unique per chip.
     uint8_t mac[6] = {};
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read the Wi-Fi MAC, the serial number is not unique");
+    }
     snprintf(buf, size, "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
@@ -72,7 +76,7 @@ void device_info_init(void)
 
     char serial[ConfigurationManager::kMaxSerialNumberLength + 1];
     device_info_get_serial(serial, sizeof(serial));
-    ESP_LOGI("device_info", "Serial number: %s", serial);
+    ESP_LOGI(TAG, "Serial number: %s", serial);
 }
 
 void device_info_set_name(esp_matter::node::config_t *node_config)

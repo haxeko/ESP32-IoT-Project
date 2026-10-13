@@ -73,7 +73,9 @@ esp_err_t sh1106_init(int sda_pin, int scl_pin, uint8_t address, bool rotate_180
         if (err != ESP_OK) {
             return err;
         }
-
+    }
+    // Separate from the bus, so that a retry also recovers from a failure here.
+    if (s_dev == NULL) {
         i2c_device_config_t dev_config = {};
         dev_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
         dev_config.device_address = address;
@@ -252,15 +254,8 @@ static int text_width(const font_t *font, const char *utf8)
 
 static void draw_glyph(int pen_x, int baseline, const font_t *font, const font_glyph_t *g)
 {
-    const uint8_t *data = &font->bitmap[g->offset];
-    const int bytes_per_row = (g->width + 7) / 8;
-    for (int row = 0; row < g->height; row++) {
-        for (int col = 0; col < g->width; col++) {
-            if (data[row * bytes_per_row + col / 8] & (0x80 >> (col % 8))) {
-                sh1106_draw_pixel(pen_x + g->x_offset + col, baseline + g->y_offset + row);
-            }
-        }
-    }
+    // Glyphs use the same 1-bit format as the bitmaps.
+    sh1106_draw_bitmap(pen_x + g->x_offset, baseline + g->y_offset, g->width, g->height, &font->bitmap[g->offset]);
 }
 
 void sh1106_draw_text(int x, int y, const font_t *font, text_align_t align, const char *utf8)

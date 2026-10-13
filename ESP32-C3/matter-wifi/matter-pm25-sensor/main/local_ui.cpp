@@ -46,6 +46,12 @@ static const char *TAG = "local_ui";
 #define OLED_ROTATE_180             false
 #endif
 
+#if CONFIG_PM_SENSOR_MODEL_SDS011
+#define PM_SENSOR_NAME              "SDS011"
+#else
+#define PM_SENSOR_NAME              "PMS5003"
+#endif
+
 #define AQ_LEVEL_COUNT              5
 
 static const char *const k_level_labels[AQ_LEVEL_COUNT] = {
@@ -92,6 +98,9 @@ static int64_t now_ms()
 // PM2.5 thresholds (µg/m³) of the 5 levels.
 int local_ui_pm25_level(float pm25)
 {
+    if (!isfinite(pm25) || pm25 < 0.0f) {
+        return -1;      // NAN would otherwise fail every test below and give the worst level
+    }
     return pm25 <= 12.0f  ? 0 :
            pm25 <= 35.4f  ? 1 :
            pm25 <= 55.4f  ? 2 :
@@ -100,12 +109,13 @@ int local_ui_pm25_level(float pm25)
 
 void local_ui_set_pm25(float pm25)
 {
-    if (!isfinite(pm25) || pm25 < 0) {
-        return;
+    const int level = local_ui_pm25_level(pm25);
+    if (level < 0) {
+        return;     // no value: keep showing the last one, as the ESPHome version did
     }
     taskENTER_CRITICAL(&s_lock);
     s_pm25 = pm25;
-    s_aq_level = local_ui_pm25_level(pm25);
+    s_aq_level = level;
     taskEXIT_CRITICAL(&s_lock);
 }
 
@@ -142,7 +152,8 @@ static bool presence_raw(int64_t now)
     return distance <= CONFIG_PRESENCE_DISTANCE_CM;
 }
 
-static void draw_screen(float pm25, int level, bool matter_connected)
+// Fails when the OLED does not acknowledge the frame.
+static esp_err_t draw_screen(float pm25, int level, bool matter_connected)
 {
     sh1106_clear();
     if (matter_connected) {
@@ -153,7 +164,7 @@ static void draw_screen(float pm25, int level, bool matter_connected)
     }
     if (level < 0) {
         // Below the Matter icon row.
-        sh1106_draw_text(64, 24, &font_medium, TEXT_ALIGN_CENTER, "PMS5003");
+        sh1106_draw_text(64, 24, &font_medium, TEXT_ALIGN_CENTER, PM_SENSOR_NAME);
         sh1106_draw_text(64, 47, &font_small, TEXT_ALIGN_CENTER, "Đang đo...");
     } else {
         char value[8];
@@ -164,9 +175,7 @@ static void draw_screen(float pm25, int level, bool matter_connected)
         sh1106_draw_hline(8, 119, 47);
         sh1106_draw_text(64, 50, &font_small, TEXT_ALIGN_TOP_CENTER, k_level_labels[level]);
     }
-    if (sh1106_flush() != ESP_OK) {
-        ESP_LOGW(TAG, "OLED write failed");
-    }
+    return sh1106_flush();
 }
 
 static bool init_oled();
@@ -228,17 +237,27 @@ static void local_ui_task(void *arg)
         // OLED: on during start-up or while someone is close.
         if (s_oled_ok) {
             const bool should_be_on = startup || presence;
+            esp_err_t err = ESP_OK;
             if (should_be_on != oled_on) {
                 oled_on = should_be_on;
                 ESP_LOGI(TAG, "Display %s", oled_on ? "ON" : "OFF");
                 if (oled_on) {
-                    draw_screen(pm25, level, matter_connected);     // fresh frame before turning on
+                    err = draw_screen(pm25, level, matter_connected);   // fresh frame before turning on
                     last_redraw_ms = now;
                 }
-                sh1106_set_power(oled_on);
+                if (err == ESP_OK) {
+                    err = sh1106_set_power(oled_on);
+                }
             } else if (oled_on && now - last_redraw_ms >= UI_REDRAW_MS) {
-                draw_screen(pm25, level, matter_connected);
+                err = draw_screen(pm25, level, matter_connected);
                 last_redraw_ms = now;
+            }
+            if (err != ESP_OK) {
+                // Loose wire or the panel lost power (and with it its settings):
+                // initialize it again instead of writing to it every second.
+                ESP_LOGW(TAG, "OLED write failed (%s), re-initializing", esp_err_to_name(err));
+                s_oled_ok = false;
+                last_oled_retry_ms = 0;     // first retry at the next tick
             }
         }
 
@@ -274,11 +293,7 @@ static bool init_oled()
 esp_err_t local_ui_init(void)
 {
     // Each part is optional: a missing OLED or radar must not stop the sensor.
-    s_oled_ok = init_oled();
-    if (s_oled_ok) {
-        draw_screen(NAN, -1, false);
-        sh1106_set_power(true);
-    }
+    s_oled_ok = init_oled() && draw_screen(NAN, -1, false) == ESP_OK && sh1106_set_power(true) == ESP_OK;
 
     esp_err_t err;
 

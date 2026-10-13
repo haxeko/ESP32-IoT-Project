@@ -269,8 +269,10 @@ static void pm_sensor_task(void *arg)
         } else if (!reported_invalid && now_ms - last_sample_ms > DATA_TIMEOUT_MS) {
             reported_invalid = true;
             report_invalid();
-            // The sensor may have been unplugged or reset; send setup commands again.
+            // The sensor may have been unplugged or reset; send setup commands
+            // again and skip its warm-up readings once it answers.
             sensor_setup();
+            cycle_start_ms = now_ms;
         }
 #endif
     }

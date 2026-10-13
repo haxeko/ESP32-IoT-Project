@@ -17,16 +17,13 @@
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_matter.h>
-#include <esp_matter_ota.h>
 #include <esp_system.h>
 #include <esp_timer.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 #include <nvs.h>
 #include <nvs_flash.h>
 
-
 #include <atomic>
+#include <iterator>
 #include <math.h>
 
 // drivers implemented by this example
@@ -59,16 +56,21 @@ static constexpr char kNvsBootCountKey[] = "boot_count";
 //   KHÔNG TỐT   -> Moderate      (HomeKit: Inferior)
 //   KÉM         -> Poor          (HomeKit: Poor)
 //   CỰC KỲ KÉM  -> ExtremelyPoor (HomeKit: Poor)
+// No value (NAN) -> Unknown.
 static AirQuality::AirQualityEnum pm25_to_air_quality(float pm25)
 {
-    static const AirQuality::AirQualityEnum k_level_to_matter[] = {
+    static constexpr AirQuality::AirQualityEnum k_level_to_matter[] = {
         AirQuality::AirQualityEnum::kGood,
         AirQuality::AirQualityEnum::kFair,
         AirQuality::AirQualityEnum::kModerate,
         AirQuality::AirQualityEnum::kPoor,
         AirQuality::AirQualityEnum::kExtremelyPoor,
     };
-    return k_level_to_matter[local_ui_pm25_level(pm25)];
+    const int level = local_ui_pm25_level(pm25);
+    if (level < 0 || level >= (int)std::size(k_level_to_matter)) {
+        return AirQuality::AirQualityEnum::kUnknown;
+    }
+    return k_level_to_matter[level];
 }
 
 // Must be called from the Matter thread.
@@ -97,17 +99,20 @@ static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data
     const uint16_t endpoint_id = s_air_quality_endpoint_id;
 
     // schedule the attribute update so that we can report it from matter thread
-    chip::DeviceLayer::SystemLayer().ScheduleLambda([endpoint_id, d]() {
-        float pm2_5 = d.valid ? d.pm2_5 : NAN;
+    CHIP_ERROR err = chip::DeviceLayer::SystemLayer().ScheduleLambda([endpoint_id, d]() {
+        // MeasuredValue must stay within [MinMeasuredValue, MaxMeasuredValue].
+        const float pm2_5 = d.valid ? fminf(fmaxf(d.pm2_5, 0.0f), kPmMaxMeasuredValue) : NAN;
 
         update_measured_value(endpoint_id, Pm25ConcentrationMeasurement::Id,
                               Pm25ConcentrationMeasurement::Attributes::MeasuredValue::Id, pm2_5);
 
-        AirQuality::AirQualityEnum air_quality = d.valid ? pm25_to_air_quality(pm2_5)
-                                                         : AirQuality::AirQualityEnum::kUnknown;
-        esp_matter_attr_val_t val = esp_matter_enum8(chip::to_underlying(air_quality));
+        esp_matter_attr_val_t val = esp_matter_enum8(chip::to_underlying(pm25_to_air_quality(pm2_5)));
         attribute::update(endpoint_id, AirQuality::Id, AirQuality::Attributes::AirQuality::Id, &val);
     });
+    if (err != CHIP_NO_ERROR) {
+        // Matter event queue full: this value is lost, the next one is sent normally.
+        ESP_LOGW(TAG, "Failed to schedule the Matter update, err:%" CHIP_ERROR_FORMAT, err.Format());
+    }
 }
 
 // Adds the Numeric Measurement feature (MeasuredValue in µg/m³) to a concentration measurement cluster.
@@ -312,10 +317,28 @@ static esp_err_t start_matter()
     return ESP_OK;
 }
 
+// Initializes the default NVS partition. A partition without free pages, or
+// written by a newer NVS format, can only be erased: otherwise Matter could
+// never start (and could not be factory reset either) until the device is
+// reflashed. Erasing it is a factory reset: fabrics and Wi-Fi are forgotten.
+static void init_nvs()
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS partition unusable (%s), erasing it", esp_err_to_name(err));
+        err = nvs_flash_erase();
+        if (err == ESP_OK) {
+            err = nvs_flash_init();
+        }
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(err));
+    }
+}
+
 extern "C" void app_main()
 {
-    /* Initialize the ESP NVS layer */
-    nvs_flash_init();
+    init_nvs();
 
     ESP_LOGI(TAG, "%s %s, firmware %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME,
              esp_app_get_description()->version);
@@ -325,7 +348,7 @@ extern "C" void app_main()
     /* The sensor, OLED, WS2812 and LD2410 work locally, before and without Matter */
     esp_err_t err = local_ui_init();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start local UI, err:%d", err);
+        ESP_LOGE(TAG, "Failed to start local UI: %s", esp_err_to_name(err));
     }
 
     pm_sensor_config_t pm_config = {
@@ -337,11 +360,18 @@ extern "C" void app_main()
     };
     err = pm_sensor_init(&pm_config);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize PM sensor driver, err:%d", err);
+        ESP_LOGE(TAG, "Failed to initialize PM sensor driver: %s", esp_err_to_name(err));
     }
 
     /* Matter is optional for the local functions: on failure, keep running without it */
     if (start_matter() != ESP_OK) {
+        if (factory_reset_requested) {
+            // esp_matter::factory_reset() needs a running Matter stack, and a
+            // broken Matter storage may be why it failed: erase it directly.
+            ESP_LOGW(TAG, "Factory reset requested while Matter is not running: erasing NVS");
+            ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_flash_erase());
+            esp_restart();
+        }
         ESP_LOGE(TAG, "Matter is not running; the device keeps working locally");
         return;
     }
