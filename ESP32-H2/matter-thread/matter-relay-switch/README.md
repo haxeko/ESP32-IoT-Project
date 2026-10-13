@@ -9,14 +9,18 @@ Cấu trúc Matter giống bản ESP32-C3 Wi-Fi trong repo này (`ESP32-C3/matte
 | Relay (active-high mặc định) | **GPIO4** |
 | Nút BOOT, nhấn ngắn: bật/tắt relay | GPIO9 |
 | Nút BOOT, giữ 5 s (LED chuyển đỏ) rồi thả: LED nháy đỏ 3 lần, factory reset | GPIO9 |
-| LED RGB WS2812 trên board: sáng xanh lá khi relay ON | GPIO8 |
+| LED RGB WS2812 trên board: xanh lá khi relay ON, nháy xanh dương khi Identify | GPIO8 |
 
-- Trạng thái relay được lưu NVS và khôi phục sau khi mất điện.
-- Khi khởi động, GPIO4 được đặt mức OFF *trước* khi chuyển sang output, và không bật pull-up, nên relay không bị nhảy lúc boot.
-- **Thông tin thiết bị** (Basic Information), xem trong Apple Home ở phụ kiện → cài đặt, hoặc dòng log `device_info: Manufacturer: ..., Model: ..., Serial number: ...` khi khởi động:
+- **Trạng thái relay sau mất điện:** relay quay về trạng thái cuối cùng (Matter `StartUpOnOff` = null). Home Assistant đổi được trong mục *Power-on behavior* (luôn tắt / luôn bật / đảo / trạng thái cuối).
+- **Khởi động lại mềm** (OTA, factory reset, crash, watchdog): relay giữ nguyên mức, không bị tắt rồi bật lại. Cắm điện lần đầu hoặc sụt áp thì relay bắt đầu từ OFF rồi mới khôi phục trạng thái cuối.
+- **GPIO4 lúc cấp điện:** GPIO4 là chân MTCK của JTAG. Từ lúc cấp điện tới khi firmware chạy (~0,5 s), chip tự bật điện trở kéo lên ~45 kΩ trên chân này. Với mạch kích relay active-high (NPN/MOSFET), **phải có điện trở kéo xuống ≤10 kΩ** từ IN/cực G xuống GND, nếu không relay có thể nhảy lúc cấp điện. Module relay active-low không bị ảnh hưởng.
+- **Thông tin thiết bị** (Basic Information), xem trong Apple Home ở phụ kiện → cài đặt, hoặc dòng log `device_info: Manufacturer: ..., Model: ..., Hardware: ..., Serial number: ...` khi khởi động:
   - Nhà sản xuất: **Haxeko**
   - Kiểu máy: **Matter Thread Plug**
-  - Số sê-ri: **mã commit git** của bản build, ví dụ `a0fbc8c` (`a0fbc8c-dirty` nếu build khi còn thay đổi chưa commit). Các mạch nạp cùng một bản build có cùng số sê-ri; muốn mỗi chip một số riêng thì chọn `SERIAL_NUMBER_FROM_MAC` (địa chỉ MAC trong eFuse).
+  - Phần cứng: **ESP32-H2-DevKitM-1 v1.0**
+  - Số sê-ri: **địa chỉ MAC gốc** của chip (eFuse, giống dòng `BASE MAC` của esptool), 12 ký tự hex in hoa, ví dụ `744DBDA1B2C3`. Mỗi chip một số riêng, không đổi khi OTA hay `erase-flash`.
+- **Identify:** nút *Identify* trong Home Assistant (hoặc lệnh Identify của app khác) làm LED nháy xanh dương để nhận ra thiết bị.
+- **Xoá khỏi hệ cuối cùng:** khi thiết bị bị xoá khỏi hệ Matter cuối cùng (Apple Home / HA / Aqara), nó tự factory reset (relay OFF) và mở lại cửa sổ ghép nối BLE 15 phút với mã QR gốc.
 - Thiết bị chạy dạng **FTD** (Full Thread Device): cấp nguồn lưới nên có thể làm Thread Router, giúp mở rộng mạng mesh.
 
 ## Yêu cầu mạng
@@ -33,31 +37,36 @@ Matter over Thread cần một **Thread Border Router** trong nhà, ví dụ:
 
 ## Cấu hình
 
-`idf.py menuconfig` → **Relay Configuration**:
+`idf.py menuconfig` → menu **Relay Configuration**, **Thread Diagnostics**, **Device Identity**:
 
 | Tuỳ chọn | Mặc định | Ý nghĩa |
 |---|---|---|
-| `RELAY_GPIO` | 4 | chân điều khiển relay |
-| `RELAY_ACTIVE_LEVEL` | 1 | 1 = active-high, 0 = active-low (module relay opto rẻ tiền thường là active-low) |
-| `DEVICE_VENDOR_NAME` | Haxeko | nhà sản xuất (*Device Identity*) |
-| `DEVICE_PRODUCT_NAME` | Matter Thread Plug | kiểu máy (*Device Identity*) |
-| `SERIAL_NUMBER_SOURCE` | commit git | nguồn số sê-ri: commit git hoặc địa chỉ MAC (*Device Identity*) |
-| `SERIAL_NUMBER_PREFIX` | (trống) | tiền tố số sê-ri, ví dụ `RLY-` → `RLY-a0fbc8c` (*Device Identity*) |
-| `STATUS_LED_ENABLE` | y | LED WS2812 GPIO8 hiển thị trạng thái relay; tắt nếu board tự làm không có LED này |
+| `RELAY_GPIO` | 4 | chân điều khiển relay (*Relay Configuration*) |
+| `RELAY_ACTIVE_LEVEL` | 1 | 1 = active-high, 0 = active-low; module relay opto rẻ tiền thường là active-low (*Relay Configuration*) |
+| `STATUS_LED_ENABLE` | y | LED WS2812 GPIO8; tắt nếu board tự làm không có LED này, khi đó Identify báo "không có đèn" (*Relay Configuration*) |
+| `THREAD_DIAG_LOG` | y | cứ 10 s in log chẩn đoán Thread/SRP cho tới khi ghép nối xong (*Thread Diagnostics*) |
+| `DEVICE_VENDOR_NAME` | Haxeko | nhà sản xuất, tối đa 32 ký tự (*Device Identity*) |
+| `DEVICE_PRODUCT_NAME` | Matter Thread Plug | kiểu máy, tối đa 32 ký tự (*Device Identity*) |
+| `DEVICE_HARDWARE_VERSION_STRING` | ESP32-H2-DevKitM-1 v1.0 | phiên bản phần cứng (*Device Identity*) |
+| `SERIAL_NUMBER_SOURCE` | địa chỉ MAC | số sê-ri: địa chỉ MAC (riêng từng chip) hoặc commit git (chỉ dùng để thử, mọi mạch cùng số) (*Device Identity*) |
+| `SERIAL_NUMBER_PREFIX` | (trống) | tiền tố số sê-ri, tối đa 20 ký tự, ví dụ `RLY-` → `RLY-744DBDA1B2C3` (*Device Identity*) |
 
-Hoặc sửa trực tiếp `sdkconfig.defaults.esp32h2` rồi xoá `sdkconfig` để áp dụng lại.
+Hoặc sửa trực tiếp `sdkconfig.defaults` / `sdkconfig.defaults.esp32h2` rồi xoá `sdkconfig` để áp dụng lại. Độ dài các chuỗi được kiểm tra lúc build.
 
-Khi đổi chân relay, tránh các chân strapping của ESP32-H2 (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25) và chân flash (GPIO15–GPIO21). GPIO4 là chân MTCK của JTAG, nhưng mặc định JTAG đi qua USB-Serial-JTAG nên GPIO4 dùng làm GPIO bình thường.
+Khi đổi chân relay, tránh: các chân strapping (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25; trên DevKitM-1 GPIO8 là LED, GPIO9 là nút BOOT), chân flash (GPIO15–GPIO21), GPIO23/GPIO24 (UART0 console; ROM và bootloader in log trên GPIO24 mỗi lần khởi động, relay sẽ nhảy loạn) và GPIO26/GPIO27 (USB D-/D+). GPIO0/1/5/10–14/22 không có điện trở kéo lên lúc reset.
 
 ## Build
 
-Yêu cầu: ESP-IDF v6.0.2 + esp-matter release/v1.6 (đã `export.sh` cả hai). Cách nhanh nhất là dùng Docker:
+Yêu cầu: ESP-IDF v6.0.2 + esp-matter release/v1.6 (đã `export.sh` cả hai). Cách nhanh nhất là dùng Docker. Mount **cả repo** (không chỉ thư mục dự án) để CMake đọc được commit git cho số phiên bản:
 
 ```bash
-docker run --rm -it -v $PWD:/project \
+# chạy từ bất kỳ thư mục nào trong repo
+docker run --rm -it -v "$(git rev-parse --show-toplevel)":/repo \
   espressif/esp-matter:release-v1.6.1_idf_v6.0.2 \
-  bash -c "cd /project && idf.py set-target esp32h2 && idf.py build"
+  bash -c "git config --global --add safe.directory /repo && cd /repo/ESP32-H2/matter-thread/matter-relay-switch && { [ -f sdkconfig ] || idf.py set-target esp32h2; } && idf.py build"
 ```
+
+`set-target` chỉ chạy khi chưa có `sdkconfig`, nên các lần sau build nối tiếp và giữ thay đổi menuconfig. Đổi `sdkconfig.defaults` thì xoá `sdkconfig` để áp dụng.
 
 Hoặc cài local:
 
@@ -66,25 +75,47 @@ Hoặc cài local:
 . ~/esp/esp-matter/export.sh
 idf.py set-target esp32h2
 idf.py build
-idf.py -p /dev/ttyACM0 erase-flash flash monitor
+idf.py -p /dev/ttyUSB0 erase-flash flash monitor
 ```
 
-GitHub Actions (`.github/workflows/matter-relay-h2-thread.yml` ở gốc repo) tự build và upload file `.bin`, trong đó có `matter_relay_h2_merged.bin` để nạp một lần ở địa chỉ `0x0`:
+`/dev/ttyUSB0` (Windows: `COMx`) là cổng USB-C **UART** của DevKit: nạp, xem log và gõ lệnh được. Cổng USB gốc (`/dev/ttyACM0`) cũng nạp được, nhưng monitor trên cổng đó chỉ xem log, không gõ lệnh được.
+
+GitHub Actions (`.github/workflows/matter-relay-h2-thread.yml` ở gốc repo) tự build và upload:
+
+- artifact `matter_relay_h2-esp32h2`: các file `.bin`, trong đó `matter_relay_h2_merged.bin` để nạp một lần ở địa chỉ `0x0`, và `matter_relay_h2-ota.bin` để cập nhật OTA;
+- artifact `matter_relay_h2-esp32h2-debug`: file `.elf`/`.map` để giải mã địa chỉ khi thiết bị crash.
 
 ```bash
-esptool.py --chip esp32h2 -p /dev/ttyACM0 write_flash 0x0 matter_relay_h2_merged.bin
+esptool --chip esp32h2 -p /dev/ttyUSB0 write-flash 0x0 matter_relay_h2_merged.bin
 ```
 
-Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
+(cú pháp esptool v5, có sẵn trong ESP-IDF v6; esptool v4.x dùng `esptool.py ... write_flash`). Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
+
+> **Nâng cấp từ bản cũ:** bản này bật OTA rollback nên bootloader thay đổi. Bootloader không cập nhật được qua OTA, nên phải nạp qua USB một lần (`idf.py flash`, hoặc `write-flash @flash_args` trong thư mục artifact; hai cách này giữ nguyên ghép nối). Dùng `merged.bin` thì vùng NVS bị xoá, phải ghép nối lại.
+
+### Bản build debug (CHIP shell + OpenThread CLI)
+
+Bản phát hành tắt CHIP shell và OpenThread CLI để tiết kiệm ~60 KB flash; log `thread_diag` đã đủ để chẩn đoán. Khi cần gõ lệnh trên cổng UART, build bản debug ở thư mục riêng:
+
+```bash
+idf.py -B build-debug -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.debug \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.debug" build
+idf.py -B build-debug -p /dev/ttyUSB0 flash monitor
+```
+
+## OTA
+
+- Mỗi bản build tạo thêm `build/matter_relay_h2-ota.bin` (định dạng Matter OTA) để đưa vào một OTA provider (ví dụ `chip-ota-provider-app`).
+- **Rollback:** image mới khởi động ở trạng thái chờ xác nhận. Firmware tự xác nhận 60 s sau khi vào lại mạng Thread mà vẫn còn ghép nối. Nếu image mới crash hoặc khởi động lại trước đó, bootloader tự quay về bản cũ.
 
 ## Phiên bản firmware
 
 Mỗi lần build, firmware tự có phiên bản mới dạng `1.0.<yyMMddHHmm>-<commit>` (giờ build theo UTC + 7 ký tự đầu mã commit git). Ví dụ `1.0.2610121430-6a81e10` là bản build lúc 14:30 UTC ngày 12/10/2026 từ commit `6a81e10`. Xem ở Apple Home (phụ kiện → cài đặt → **Firmware**) hoặc dòng `App version:` trong log khởi động.
 
-- Hậu tố `-dirty` (ví dụ `1.0.2610121430-6a81e10-dirty`) nghĩa là lúc build thư mục dự án có thay đổi chưa commit.
-- `nogit` nghĩa là build ngoài repo git (ví dụ thư mục đã copy ra ngoài).
+- Hậu tố `-dirty` (ví dụ `1.0.2610121430-6a81e10-dirty`) nghĩa là lúc CMake cấu hình lần cuối, thư mục dự án có thay đổi chưa commit.
+- `nogit` nghĩa là lúc build CMake không thấy thư mục `.git` (thư mục đã copy ra ngoài repo, hoặc Docker chỉ mount thư mục dự án thay vì cả repo).
 - Số phiên bản Matter dùng cho OTA (`SoftwareVersion`) chỉ là phần thời gian `yyMMddHHmm`, nên luôn tăng.
-- Build local: commit mới (hoặc checkout) sẽ tự cấu hình lại và lấy phiên bản mới ở lần build sau. Ngoài ra chạy `idf.py fullclean` để lấy số mới.
+- Build local: commit mới (hoặc checkout) sẽ tự cấu hình lại và lấy phiên bản mới ở lần build sau. Chỉ sửa file thì phiên bản và `-dirty` không đổi cho tới lần cấu hình lại (`idf.py reconfigure` hoặc `fullclean`).
 
 ## Commissioning
 
@@ -96,15 +127,19 @@ Firmware dùng chứng chỉ test (DAC test) của esp-matter, mã ghép nối m
 
 Mở Apple Home / Google Home / SmartThings / Home Assistant → *Add Matter device* → quét QR hoặc nhập mã ở trên. Vì dùng chứng chỉ test, app sẽ cảnh báo "Uncertified accessory": chọn tiếp tục.
 
+Mọi mạch nạp firmware này đều dùng **chung mã ghép nối** trên: khi có nhiều mạch, ghép nối **từng mạch một** (các mạch khác chưa ghép thì để tắt nguồn).
+
 Với chip-tool (lấy dataset từ Border Router, ví dụ `ot-ctl dataset active -x`):
 
 ```bash
 chip-tool pairing ble-thread 0x7283 hex:<ACTIVE_DATASET> 20202021 3840
 chip-tool onoff toggle 0x7283 1
-chip-tool onoff read on-off 0x7283 1
+chip-tool basicinformation read serial-number 0x7283 0
 ```
 
 Sau khi bật nguồn, thiết bị quảng bá BLE nhanh trong 30 s rồi chuyển sang chậm (log `bleAdv Timeout : Start slow advertisement`, chu kỳ 500 ms). Đây là bình thường: thiết bị vẫn chờ ghép nối, cứ quét QR như bình thường. Cửa sổ ghép nối mở 15 phút; hết thời gian thì rút điện cắm lại.
+
+Thêm vào hệ thứ hai (ví dụ đã có Home Assistant, muốn thêm Apple Home): mã QR gốc không dùng lại được khi thiết bị đã ghép. Dùng chức năng chia sẻ của hệ đang quản lý (HA: *Share device*; Apple Home: *Bật chế độ ghép nối*) để lấy mã mới. Chuyển sang mạng Thread khác: giữ BOOT 5 s để factory reset trước.
 
 > Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại.
 
@@ -139,9 +174,9 @@ I thread_diag: Summary: OMR address YES, on-mesh prefixes 1, SRP host Registered
 
 Chỉ cần xem log, không phải gõ lệnh. `OMR address NO` hoặc SRP không `Registered` nghĩa là lỗi phía Border Router / mạng LAN.
 
-### Gõ lệnh OpenThread CLI (tuỳ chọn)
+### Gõ lệnh OpenThread CLI (chỉ bản build debug)
 
-Gõ lệnh trên serial monitor ở **115200 baud**, qua cổng USB-C **UART** của DevKit (chip USB-UART, hiện là `COMx` / `/dev/ttyUSB0`). Cổng USB-C còn lại (USB gốc của ESP32-H2) chỉ xuất log, **không nhận lệnh gõ**. Gõ `matter help` để thử. Gõ trong lúc điện thoại vẫn đang ghép nối:
+Cần [bản build debug](#bản-build-debug-chip-shell--openthread-cli). Gõ lệnh trên serial monitor ở **115200 baud**, qua cổng USB-C **UART** của DevKit (`COMx` / `/dev/ttyUSB0`). Cổng USB gốc chỉ xuất log, **không nhận lệnh gõ**. Gõ `matter help` để thử. Gõ trong lúc điện thoại vẫn đang ghép nối:
 
 | Lệnh | Kết quả mong đợi |
 |---|---|
@@ -158,21 +193,25 @@ Gõ lệnh trên serial monitor ở **115200 baud**, qua cổng USB-C **UART** c
 ## Cấu trúc
 
 ```
-CMakeLists.txt             project esp-matter (esp32h2, device_hal esp32h2_devkit_c)
-sdkconfig.defaults         cấu hình chung Matter/BLE, tắt cluster không dùng
-sdkconfig.defaults.esp32h2 OpenThread (FTD, SRP client), relay GPIO4, LED trạng thái
+CMakeLists.txt             project esp-matter (esp32h2), phiên bản firmware theo giờ build + commit git
+sdkconfig.defaults         cấu hình chung: Matter, BLE tối giản, OTA + rollback, tối ưu flash, cluster không dùng
+sdkconfig.defaults.esp32h2 OpenThread (FTD, SRP client), chỉ IPv6, relay GPIO4, LED trạng thái
+sdkconfig.defaults.debug   bật thêm CHIP shell + OpenThread CLI (bản build debug)
 partitions.csv             4 MB, 2 phân vùng OTA
-main/app_main.cpp          tạo node + endpoint On/Off Plug-in Unit, cấu hình OpenThread
-main/app_driver.cpp        điều khiển GPIO relay + nút + LED
-main/device_info.cpp       nhà sản xuất, kiểu máy, số sê-ri (custom Device Instance Info provider)
+dependencies.lock          phiên bản cố định của các managed component
+main/app_main.cpp          node + endpoint On/Off Plug-in Unit, Identify, sự kiện Matter, xác nhận OTA
+main/app_driver.cpp        relay GPIO (giữ trạng thái qua reset mềm), nút BOOT, LED trạng thái/Identify/reset
+main/app_priv.h            khai báo dùng chung của driver
+main/device_info.cpp       nhà sản xuất, kiểu máy, phần cứng, số sê-ri MAC (custom Device Instance Info provider)
 main/thread_diag.cpp       log chẩn đoán Thread/SRP khi chưa ghép nối
-main/Kconfig.projbuild     tuỳ chọn relay, LED
+main/Kconfig.projbuild     menu Relay Configuration / Thread Diagnostics / Device Identity
 ```
 
 ## Sơ đồ đấu nối
 
 ```
 ESP32-H2 GPIO4 ──► IN  (module relay 3.3V, hoặc qua transistor NPN/MOSFET + diode)
+            IN ── 10k ── GND   (bắt buộc với mạch kích active-high NPN/MOSFET, xem mục GPIO4 ở trên)
 ESP32-H2 3V3   ──► VCC (module relay 5V: cấp 5V, IN vẫn dùng mức 3.3V)
 ESP32-H2 GND   ──► GND
 ```

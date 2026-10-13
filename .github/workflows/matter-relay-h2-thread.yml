@@ -20,6 +20,10 @@ jobs:
         working-directory: ESP32-H2/matter-thread/matter-relay-switch
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On pull_request, build the PR head commit rather than the synthetic merge commit, so the git hash
+          # in the firmware version exists on a branch. Empty on push/dispatch: default ref.
+          ref: ${{ github.event.pull_request.head.sha }}
       - name: Build (esp32h2)
         shell: bash
         run: |
@@ -39,3 +43,11 @@ jobs:
             ESP32-H2/matter-thread/matter-relay-switch/build/ota_data_initial.bin
             ESP32-H2/matter-thread/matter-relay-switch/build/flash_args
             ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2_merged.bin
+            ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2-ota.bin
+      # ELF/map decode silent-assert and panic addresses from a CI-flashed device
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matter_relay_h2-esp32h2-debug
+          path: |
+            ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2.elf
+            ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2.map

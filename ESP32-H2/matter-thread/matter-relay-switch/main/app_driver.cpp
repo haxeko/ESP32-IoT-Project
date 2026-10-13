@@ -1,11 +1,16 @@
 #include <esp_log.h>
+#include <esp_rom_sys.h>
 #include <driver/gpio.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <soc/gpio_reg.h>
+#include <soc/reset_reasons.h>
+#include <soc/soc.h>
 
 #include <app_priv.h>
 #include <common_macros.h>
 #include <esp_matter.h>
+#include <platform/CHIPDeviceLayer.h>
 
 #include <button_gpio.h>
 #include <device.h>
@@ -26,11 +31,17 @@ static constexpr gpio_num_t k_relay_gpio = (gpio_num_t)CONFIG_RELAY_GPIO;
 static led_driver_handle_t s_led_handle = NULL;
 #endif
 
-static bool s_factory_reset_armed = false;
-static bool s_factory_reset_started = false;
+/* Written in the esp_timer (button) task, read in the CHIP and factory reset tasks */
+static volatile bool s_factory_reset_armed = false;
+static volatile bool s_factory_reset_started = false;
 
-/* Status LED colors (hue): relay ON = green, factory reset = red */
+/* CHIP task only (Identify callbacks, attribute updates) */
+static bool s_relay_on = false;
+static bool s_identifying = false;
+
+/* Status LED colors (hue): relay ON = green, Identify = blue, factory reset = red */
 static constexpr uint16_t k_hue_relay_on = 120;
+static constexpr uint16_t k_hue_identify = 240;
 static constexpr uint16_t k_hue_reset = 0;
 
 static void app_driver_led_set(bool on, uint16_t hue)
@@ -47,26 +58,38 @@ static esp_err_t app_driver_relay_set_power(bool on)
 {
     int level = on ? CONFIG_RELAY_ACTIVE_LEVEL : !CONFIG_RELAY_ACTIVE_LEVEL;
     ESP_LOGI(TAG, "Relay (GPIO%d) -> %s", (int)k_relay_gpio, on ? "ON" : "OFF");
-    if (!s_factory_reset_armed) {
-        app_driver_led_set(on, k_hue_relay_on);
+    s_relay_on = on;
+#if CONFIG_STATUS_LED_ENABLE
+    /* The hue is green outside Identify and factory reset, so one refresh is enough */
+    if (s_led_handle && !s_factory_reset_armed && !s_identifying) {
+        led_driver_set_power(s_led_handle, on);
+        if (s_factory_reset_armed) {
+            /* armed_cb preempted us mid-write: restore the solid red "release now" indication */
+            app_driver_led_set(true, k_hue_reset);
+        }
     }
+#endif
     return gpio_set_level(k_relay_gpio, level);
 }
 
 static void app_driver_button_toggle_cb(void *arg, void *data)
 {
     ESP_LOGI(TAG, "Toggle button pressed");
-    uint16_t endpoint_id = relay_endpoint_id;
-    uint32_t cluster_id = OnOff::Id;
-    uint32_t attribute_id = OnOff::Attributes::OnOff::Id;
-
-    attribute_t *attribute = attribute::get(endpoint_id, cluster_id, attribute_id);
-
-    esp_matter_attr_val_t val = esp_matter_invalid(NULL);
-    attribute::get_val(attribute, &val);
-    val.val.b = !val.val.b;
-    /* update() runs the attribute callback (drives the relay) and reports the new state to controllers */
-    attribute::update(endpoint_id, cluster_id, attribute_id, &val);
+    /* Read-modify-write on the CHIP task: atomic with controller On/Off/Toggle commands,
+     * and the esp_timer task never blocks on the CHIP lock or the NVS write */
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork([](intptr_t) {
+        attribute_t *attribute = attribute::get(relay_endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id);
+        esp_matter_attr_val_t val = esp_matter_invalid(NULL);
+        if (attribute::get_val(attribute, &val) != ESP_OK) {
+            return;
+        }
+        val.val.b = !val.val.b;
+        /* update() runs the attribute callback (drives the relay) and reports the new state to controllers */
+        attribute::update(relay_endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val);
+    });
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "Toggle ignored, Matter stack not ready: %" CHIP_ERROR_FORMAT, err.Format());
+    }
 }
 
 static void app_driver_factory_reset_task(void *arg)
@@ -105,6 +128,50 @@ static void app_driver_button_factory_reset_release_cb(void *arg, void *data)
     }
 }
 
+#if CONFIG_STATUS_LED_ENABLE
+/* Identify: blue blinks on the CHIP SystemLayer timer, so every WS2812 write happens on the CHIP task */
+static bool s_blink_phase = false;
+static uint16_t s_blinks_left = 0; /* 0 = blink until STOP */
+
+static void app_driver_identify_blink_cb(chip::System::Layer *, void *)
+{
+    if (!s_identifying || s_factory_reset_armed) {
+        return;
+    }
+    s_blink_phase = !s_blink_phase;
+    app_driver_led_set(s_blink_phase, k_hue_identify);
+    if (!s_blink_phase && s_blinks_left && --s_blinks_left == 0) {
+        app_driver_identify_stop();
+        return;
+    }
+    chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Milliseconds32(500), app_driver_identify_blink_cb,
+                                                nullptr);
+}
+
+void app_driver_identify_start(uint16_t blinks)
+{
+    chip::DeviceLayer::SystemLayer().CancelTimer(app_driver_identify_blink_cb, nullptr);
+    s_identifying = true;
+    s_blinks_left = blinks;
+    s_blink_phase = false;
+    app_driver_identify_blink_cb(nullptr, nullptr);
+}
+
+void app_driver_identify_stop()
+{
+    chip::DeviceLayer::SystemLayer().CancelTimer(app_driver_identify_blink_cb, nullptr);
+    if (s_identifying) {
+        s_identifying = false;
+        if (!s_factory_reset_armed) {
+            app_driver_led_set(s_relay_on, k_hue_relay_on);
+        }
+    }
+}
+#else
+void app_driver_identify_start(uint16_t blinks) {}
+void app_driver_identify_stop() {}
+#endif // CONFIG_STATUS_LED_ENABLE
+
 esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle, uint16_t endpoint_id, uint32_t cluster_id,
                                       uint32_t attribute_id, esp_matter_attr_val_t *val)
 {
@@ -129,9 +196,17 @@ esp_err_t app_driver_relay_set_defaults(uint16_t endpoint_id)
 
 app_driver_handle_t app_driver_relay_init()
 {
-    /* Latch the OFF level before switching the pad to output, so the relay never clicks on at boot.
-     * gpio_reset_pin() is not used: it enables the pull-up, which would turn an active-high relay on. */
-    gpio_set_level(k_relay_gpio, !CONFIG_RELAY_ACTIVE_LEVEL);
+    /* esp_restart() and panics (OTA apply, factory reset, crash, watchdog) reset only the CPU: GPIO_OUT,
+     * GPIO_ENABLE and IO_MUX survive ROM and bootloader. Keep the relay level then, instead of switching the
+     * load OFF until Matter restores it. Power-on, brownout and other resets start from OFF. */
+    const uint32_t mask = 1UL << k_relay_gpio;
+    const bool keep = esp_rom_get_reset_reason(0) == RESET_REASON_CPU0_SW && (REG_READ(GPIO_ENABLE_REG) & mask);
+    const bool on = keep && (((REG_READ(GPIO_OUT_REG) & mask) ? 1 : 0) == CONFIG_RELAY_ACTIVE_LEVEL);
+    if (!keep) {
+        /* Latch the OFF level before switching the pad to output, so the relay never clicks on at boot.
+         * gpio_reset_pin() is not used: it enables the pull-up, which would turn an active-high relay on. */
+        gpio_set_level(k_relay_gpio, !CONFIG_RELAY_ACTIVE_LEVEL);
+    }
     gpio_config_t io_conf = {
         .pin_bit_mask = 1ULL << k_relay_gpio,
         .mode = GPIO_MODE_OUTPUT,
@@ -145,6 +220,8 @@ app_driver_handle_t app_driver_relay_init()
     led_driver_config_t led_cfg = led_driver_get_config();
     s_led_handle = led_driver_init(&led_cfg);
     if (s_led_handle) {
+        /* Drop the per-update "led set r:g:b" INFO lines */
+        esp_log_level_set("led_driver_ws2812", ESP_LOG_WARN);
         /* Dim green while the relay is ON */
         led_driver_set_hue(s_led_handle, k_hue_relay_on);
         led_driver_set_saturation(s_led_handle, 100);
@@ -152,7 +229,7 @@ app_driver_handle_t app_driver_relay_init()
     }
 #endif
 
-    app_driver_relay_set_power(false);
+    app_driver_relay_set_power(on);
     return (app_driver_handle_t)k_relay_gpio;
 }
 

@@ -1,10 +1,11 @@
 #include <esp_err.h>
 #include <esp_log.h>
+#include <esp_ota_ops.h>
+#include <esp_timer.h>
 #include <nvs_flash.h>
 
 #include <esp_matter.h>
 #include <esp_matter_console.h>
-#include <esp_matter_ota.h>
 
 #include <common_macros.h>
 
@@ -26,7 +27,37 @@ using namespace esp_matter::attribute;
 using namespace esp_matter::endpoint;
 using namespace chip::app::Clusters;
 
-constexpr auto k_timeout_seconds = 300;
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+/* A new OTA image boots as PENDING_VERIFY; it is confirmed 60 s after it rejoins Thread with its fabrics.
+ * A crash or reset before that makes the bootloader roll back to the previous image. */
+static constexpr uint64_t k_ota_confirm_delay_us = 60 * 1000 * 1000ULL;
+static bool s_ota_pending_verify = false;
+static esp_timer_handle_t s_ota_confirm_timer = nullptr;
+
+static void ota_confirm_cb(void *arg)
+{
+    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+        s_ota_pending_verify = false;
+        ESP_LOGI(TAG, "OTA image confirmed");
+    }
+}
+
+static void ota_check_pending_verify()
+{
+    esp_ota_img_states_t state;
+    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) == ESP_OK &&
+        state == ESP_OTA_IMG_PENDING_VERIFY) {
+        const esp_timer_create_args_t args = {
+            .callback = ota_confirm_cb,
+            .name = "ota_confirm",
+        };
+        if (esp_timer_create(&args, &s_ota_confirm_timer) == ESP_OK) {
+            s_ota_pending_verify = true;
+            ESP_LOGW(TAG, "New OTA image pending verification");
+        }
+    }
+}
+#endif // CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
@@ -37,6 +68,15 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kThreadConnectivityChange:
         ESP_LOGI(TAG, "Thread connectivity changed");
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+        /* Never confirm with 0 fabrics: after an OTA that means the new image lost its fabric table */
+        if (s_ota_pending_verify &&
+            event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Established &&
+            chip::Server::GetInstance().GetFabricTable().FabricCount() > 0 &&
+            !esp_timer_is_active(s_ota_confirm_timer)) {
+            esp_timer_start_once(s_ota_confirm_timer, k_ota_confirm_delay_us);
+        }
+#endif
         break;
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
@@ -65,16 +105,24 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kFabricRemoved: {
         ESP_LOGI(TAG, "Fabric removed successfully");
-        if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
-            chip::CommissioningWindowManager &commissionMgr = chip::Server::GetInstance().GetCommissioningWindowManager();
-            constexpr auto kTimeoutSeconds = chip::System::Clock::Seconds16(k_timeout_seconds);
-            if (!commissionMgr.IsCommissioningWindowOpen()) {
-                /* Thread credentials are kept, so only advertise over DNS-SD (SRP) */
-                CHIP_ERROR err = commissionMgr.OpenBasicCommissioningWindow(kTimeoutSeconds,
-                                                                            chip::CommissioningWindowAdvertisement::kDnssdOnly);
-                if (err != CHIP_NO_ERROR) {
-                    ESP_LOGE(TAG, "Failed to open commissioning window, err:%" CHIP_ERROR_FORMAT, err.Format());
-                }
+        chip::Server &server = chip::Server::GetInstance();
+        /* The window is still open when a failed first commissioning reverts its AddNOC: leave that path alone */
+        if (server.GetFabricTable().FabricCount() == 0 &&
+            !server.GetCommissioningWindowManager().IsCommissioningWindowOpen()) {
+            /* Last fabric gone: BLE memory is already released and the old Thread dataset would make joining another
+             * network fail, so erase everything and reboot into a fresh 15 min BLE commissioning window.
+             * The 1 s delay lets the RemoveFabric response go out first. */
+            CHIP_ERROR err = chip::DeviceLayer::SystemLayer().StartTimer(
+                chip::System::Clock::Milliseconds32(1000),
+                [](chip::System::Layer *, void *) {
+                    if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
+                        ESP_LOGW(TAG, "Last fabric removed, factory reset");
+                        esp_matter::factory_reset();
+                    }
+                },
+                nullptr);
+            if (err != CHIP_NO_ERROR) {
+                ESP_LOGE(TAG, "Failed to schedule factory reset, err:%" CHIP_ERROR_FORMAT, err.Format());
             }
         }
         break;
@@ -89,10 +137,41 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     }
 }
 
+/* Runs on the CHIP task: Identify commands blink the status LED blue */
 static esp_err_t app_identification_cb(identification::callback_type_t type, uint16_t endpoint_id, uint8_t effect_id,
                                        uint8_t effect_variant, void *priv_data)
 {
+    using chip::app::Clusters::Identify::EffectIdentifierEnum;
     ESP_LOGI(TAG, "Identification callback: type: %u, effect: %u, variant: %u", type, effect_id, effect_variant);
+    switch (type) {
+    case identification::START:
+        app_driver_identify_start(0);
+        break;
+    case identification::STOP:
+        app_driver_identify_stop();
+        break;
+    case identification::EFFECT:
+        switch (static_cast<EffectIdentifierEnum>(effect_id)) {
+        case EffectIdentifierEnum::kBlink:
+            app_driver_identify_start(1);
+            break;
+        case EffectIdentifierEnum::kOkay:
+            app_driver_identify_start(2);
+            break;
+        case EffectIdentifierEnum::kBreathe:
+            app_driver_identify_start(15);
+            break;
+        case EffectIdentifierEnum::kChannelChange:
+            app_driver_identify_start(8);
+            break;
+        default: /* kFinishEffect, kStopEffect */
+            app_driver_identify_stop();
+            break;
+        }
+        break;
+    default:
+        break;
+    }
     return ESP_OK;
 }
 
@@ -113,11 +192,16 @@ extern "C" void app_main()
 {
     esp_err_t err = ESP_OK;
 
-    nvs_flash_init();
-
-    /* Relay on GPIO4 (CONFIG_RELAY_GPIO), BOOT button (GPIO9): click = toggle, hold 5 s = factory reset */
+    /* Relay on GPIO4 (CONFIG_RELAY_GPIO) first: it needs nothing from NVS and ends the reset pull-up window sooner.
+     * BOOT button (GPIO9): click = toggle, hold 5 s = factory reset */
     app_driver_handle_t relay_handle = app_driver_relay_init();
     app_driver_button_init();
+
+    nvs_flash_init();
+
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    ota_check_pending_verify();
+#endif
 
     node::config_t node_config;
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
@@ -126,15 +210,27 @@ extern "C" void app_main()
     /* On/Off Plug-in Unit device type: shows up as a switch/outlet in Apple Home, Google Home, Alexa, HA */
     on_off_plug_in_unit::config_t plug_config;
     plug_config.on_off.on_off = DEFAULT_POWER;
+    /* StartUpOnOff = null: restore the last OnOff state after a power cut (the default 0 would force OFF) */
+    plug_config.on_off_lighting.start_up_on_off = nullptr;
+#if !CONFIG_STATUS_LED_ENABLE
+    /* No LED to blink: do not advertise a visible indicator (never identify by switching the mains load) */
+    plug_config.identify.identify_type = chip::to_underlying(Identify::IdentifyTypeEnum::kNone);
+#endif
     endpoint_t *endpoint = on_off_plug_in_unit::create(node, &plug_config, ENDPOINT_FLAG_NONE, relay_handle);
     ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create on/off plug-in unit endpoint"));
 
     relay_endpoint_id = endpoint::get_id(endpoint);
     ESP_LOGI(TAG, "Relay plug-in unit created with endpoint_id %d", relay_endpoint_id);
 
-    /* Basic Information: Manufacturer, Model, SerialNumber */
-    err = device_info_provider_init();
-    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to set device info provider, err:%d", err));
+    /* Basic Information: Manufacturer, Model, Hardware version, SerialNumber */
+    device_info_provider_init();
+    /* SerialNumber is optional in Basic Information and root_node does not create it: without the attribute the
+     * value from the provider is never visible to controllers. Must be added before esp_matter::start(), which
+     * reads the cluster's optional attribute set once. The value is managed internally by the provider. */
+    cluster_t *basic_info = cluster::get(endpoint::get(node, chip::kRootEndpointId), BasicInformation::Id);
+    ABORT_APP_ON_FAILURE(basic_info != nullptr &&
+                         cluster::basic_information::attribute::create_serial_number(basic_info, nullptr, 0) != nullptr,
+                         ESP_LOGE(TAG, "Failed to add Basic Information SerialNumber attribute"));
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     /* OpenThread on the ESP32-H2 native 802.15.4 radio */
@@ -152,7 +248,7 @@ extern "C" void app_main()
     /* Log Thread addresses / SRP state until commissioned (see README, troubleshooting) */
     thread_diag_start();
 
-    /* Restore the last relay state persisted in NVS */
+    /* Apply the persisted OnOff (last state, via StartUpOnOff = null) to the relay */
     app_driver_relay_set_defaults(relay_endpoint_id);
 
 #if CONFIG_ENABLE_CHIP_SHELL

@@ -1,10 +1,11 @@
 #pragma once
 
-#include <esp_err.h>
-
 /** Install the Device Instance Info provider that reports
- *  - VendorName  = CONFIG_DEVICE_VENDOR_NAME  (Manufacturer in Apple Home)
- *  - ProductName = CONFIG_DEVICE_PRODUCT_NAME (Model in Apple Home)
- *  - SerialNumber = CONFIG_SERIAL_NUMBER_PREFIX + git commit of the build, or the factory MAC address.
- *  Must be called before esp_matter::start(). */
-esp_err_t device_info_provider_init();
+ *  - VendorName            = CONFIG_DEVICE_VENDOR_NAME             (Manufacturer in Apple Home)
+ *  - ProductName           = CONFIG_DEVICE_PRODUCT_NAME            (Model in Apple Home)
+ *  - HardwareVersionString = CONFIG_DEVICE_HARDWARE_VERSION_STRING (Hardware in Home Assistant)
+ *  - SerialNumber          = CONFIG_SERIAL_NUMBER_PREFIX + factory MAC address (12 uppercase hex digits),
+ *                            or the git commit of the build with SERIAL_NUMBER_FROM_GIT_COMMIT.
+ *  Must be called before esp_matter::start(). The SerialNumber attribute itself must also be created
+ *  on the root endpoint (it is optional in Basic Information), see app_main(). */
+void device_info_provider_init();

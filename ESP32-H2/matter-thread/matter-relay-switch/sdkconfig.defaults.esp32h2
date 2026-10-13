@@ -5,8 +5,9 @@ CONFIG_OPENTHREAD_ENABLED=y
 CONFIG_OPENTHREAD_SRP_CLIENT=y
 CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
 CONFIG_OPENTHREAD_LOG_LEVEL_NOTE=y
-# OpenThread CLI on the serial console for network diagnostics: "matter esp ot_cli <command>"
-CONFIG_OPENTHREAD_CLI=y
+# OpenThread CLI ("matter esp ot_cli <command>") and factory diags only in the debug build (sdkconfig.defaults.debug)
+CONFIG_OPENTHREAD_CLI=n
+CONFIG_OPENTHREAD_DIAG=n
 # Mains-powered relay: Full Thread Device, can become a Thread router and extend the mesh
 CONFIG_OPENTHREAD_FTD=y
 
@@ -17,15 +18,23 @@ CONFIG_LWIP_IPV6_AUTOCONFIG=n
 CONFIG_LWIP_IPV6_NUM_ADDRESSES=8
 CONFIG_LWIP_MULTICAST_PING=y
 
+# Matter over Thread is IPv6-only: drop lwIP IPv4 (DHCP, ARP, IGMP, ICMPv4) and the CHIP IPv4 paths.
+# Both must be set together (the chip component enforces it)
+CONFIG_LWIP_IPV4=n
+CONFIG_DISABLE_IPV4=y
+
 # MDNS platform: SRP over Thread instead of mDNS
 CONFIG_USE_MINIMAL_MDNS=n
 
 # No Wi-Fi on ESP32-H2
 CONFIG_ENABLE_WIFI_STATION=n
 
-# Relay on GPIO4, active-high
+# Size: shared __riscv_save/restore routines for function prologues/epilogues (about 12-16 KB less flash)
+CONFIG_COMPILER_SAVE_RESTORE_LIBCALLS=y
+
+# Relay on GPIO4, active-high (fit a pull-down on the relay input, see RELAY_GPIO help)
 CONFIG_RELAY_GPIO=4
 CONFIG_RELAY_ACTIVE_LEVEL=1
 
-# On-board WS2812 LED (GPIO8) mirrors the relay state
+# On-board WS2812 LED (GPIO8): relay state, Identify, factory reset
 CONFIG_STATUS_LED_ENABLE=y

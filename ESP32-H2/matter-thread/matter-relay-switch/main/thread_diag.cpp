@@ -18,8 +18,8 @@
 static const char *TAG = "thread_diag";
 static constexpr uint32_t k_interval_ms = 10000;
 
-static volatile bool s_running = false;
-/* Set once commissioned; stop() can arrive (kServerReady) before start() */
+/* One-way flag set once commissioned. stop() can arrive (kServerReady) before start(); nothing ever clears it,
+ * so a stop() racing with start() is still seen by the task at its next tick */
 static volatile bool s_done = false;
 static TaskHandle_t s_task = NULL;
 
@@ -111,9 +111,9 @@ static void thread_diag_dump()
 
 static void thread_diag_task(void *arg)
 {
-    while (s_running) {
+    while (!s_done) {
         vTaskDelay(pdMS_TO_TICKS(k_interval_ms));
-        if (!s_running) {
+        if (s_done) {
             break;
         }
         thread_diag_dump();
@@ -128,18 +128,15 @@ void thread_diag_start()
     if (s_task || s_done) {
         return;
     }
-    s_running = true;
     if (xTaskCreate(thread_diag_task, "thread_diag", 4096, NULL, 2, &s_task) != pdPASS) {
-        s_running = false;
         ESP_LOGE(TAG, "Failed to create diagnostics task");
     }
 }
 
 void thread_diag_stop()
 {
-    /* Only flags here: this runs on the CHIP task, the OpenThread lock is taken by the diag task alone */
+    /* Only a flag here: this runs on the CHIP task, the OpenThread lock is taken by the diag task alone */
     s_done = true;
-    s_running = false;
 }
 
 #else // CONFIG_THREAD_DIAG_LOG

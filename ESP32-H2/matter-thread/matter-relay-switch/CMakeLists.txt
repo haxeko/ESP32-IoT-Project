@@ -15,7 +15,7 @@ endif(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
 
 # Firmware version, shown as "Firmware" in Apple Home (Basic Information SoftwareVersionString).
 # Every build gets a new version: <major>.<minor>.<UTC build time yyMMddHHmm>-<git commit>[-dirty].
-# "-dirty" marks a build with uncommitted changes in this project directory.
+# "-dirty" marks uncommitted changes in this project directory at the last CMake configure.
 # PROJECT_VER_NUMBER (Matter SoftwareVersion, used by OTA) is the timestamp alone, so it always increases.
 # The version is taken when CMake configures. A new commit or checkout re-runs CMake on the next build;
 # otherwise run "idf.py fullclean" (or build in a fresh tree, as CI does) to get a new version.
@@ -49,6 +49,11 @@ if(GIT_FOUND)
         if(FW_GIT_REF AND EXISTS "${FW_GIT_DIR}/${FW_GIT_REF}")
             set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${FW_GIT_DIR}/${FW_GIT_REF}")
         endif()
+        # Git appends to HEAD's reflog on every commit/checkout/reset/pull, even with packed refs or in a
+        # worktree (HEAD and logs/HEAD are per-worktree, under --absolute-git-dir)
+        if(EXISTS "${FW_GIT_DIR}/logs/HEAD")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${FW_GIT_DIR}/logs/HEAD")
+        endif()
     endif()
 endif()
 
@@ -64,8 +69,8 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 include(${ESP_MATTER_PATH}/examples/common/cmake_common/components_include.cmake)
 include($ENV{ESP_MATTER_DEVICE_PATH}/esp_matter_device.cmake)
 
+# examples/common (app_reset, app_bridge) is not used: only examples/common/utils headers, see main/CMakeLists.txt
 set(EXTRA_COMPONENT_DIRS
-    "${ESP_MATTER_PATH}/examples/common"
     "${MATTER_SDK_PATH}/config/esp32/components"
     "${ESP_MATTER_PATH}/components"
     "${ESP_MATTER_PATH}/device_hal/device"
