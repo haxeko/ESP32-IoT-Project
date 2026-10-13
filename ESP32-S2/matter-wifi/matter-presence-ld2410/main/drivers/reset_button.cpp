@@ -20,11 +20,18 @@ static int s_gpio;
 static uint32_t s_hold_ms;
 static reset_button_cb_t s_cb;
 static uint32_t s_pressed_ms;
+static bool s_armed;
 
 static void poll_cb(void *arg)
 {
     if (gpio_get_level((gpio_num_t)s_gpio) != 0) {
         s_pressed_ms = 0;
+        s_armed = true;
+        return;
+    }
+    // A pin that reads low from boot on (held button, wiring, strapping) must
+    // never trigger a reset loop: only count presses that start after release.
+    if (!s_armed) {
         return;
     }
     if (s_pressed_ms == 0) {

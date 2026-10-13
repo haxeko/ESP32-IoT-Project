@@ -76,12 +76,17 @@ bool wifi_setup_is_provisioned(void)
     return provisioned;
 }
 
+// Lowest power the driver accepts (2 dBm), used after a brownout reset.
+static constexpr int8_t kMinTxPower = 8;
+
 void wifi_setup_limit_tx_power(void)
 {
-    esp_err_t err = esp_wifi_set_max_tx_power(CONFIG_WIFI_MAX_TX_POWER);
+    // A brownout means the board's 3.3 V supply sagged, usually while the
+    // radio was transmitting: retry with the lowest power.
+    const int8_t power = diag_last_reset_was_brownout() ? kMinTxPower : CONFIG_WIFI_MAX_TX_POWER;
+    esp_err_t err = esp_wifi_set_max_tx_power(power);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Wi-Fi TX power limited to %d.%02d dBm", CONFIG_WIFI_MAX_TX_POWER / 4,
-                 (CONFIG_WIFI_MAX_TX_POWER % 4) * 25);
+        ESP_LOGI(TAG, "Wi-Fi TX power limited to %d.%02d dBm", power / 4, (power % 4) * 25);
     } else {
         ESP_LOGW(TAG, "Failed to set Wi-Fi TX power: %s", esp_err_to_name(err));
     }
@@ -530,7 +535,9 @@ void wifi_setup_run_portal(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
     wifi_setup_limit_tx_power();
-    scan_networks();
+    if (!diag_last_reset_was_brownout()) {
+        scan_networks(); // after a brownout, skip it: the SSID can still be typed in
+    }
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));

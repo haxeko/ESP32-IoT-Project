@@ -23,6 +23,7 @@
 #include <esp_matter.h>
 #include <esp_system.h>
 #include <esp_timer.h>
+#include <esp_wifi.h>
 #include <nvs_flash.h>
 #include <setup_payload/OnboardingCodesUtil.h>
 
@@ -242,7 +243,11 @@ static void factory_reset_cb()
     if (s_matter_started) {
         esp_matter::factory_reset(); // also clears the Wi-Fi network, then restarts
     } else {
-        nvs_flash_erase();
+        // Matter did not start: drop the Wi-Fi network only, keep the
+        // diagnostics, and go back to the setup page.
+        if (esp_wifi_restore() != ESP_OK) {
+            nvs_flash_erase();
+        }
         esp_restart();
     }
 }
@@ -262,12 +267,12 @@ extern "C" void app_main()
     diag_record_boot();
 
     status_led_init(CONFIG_STATUS_LED_GPIO, CONFIG_STATUS_LED_ACTIVE_HIGH);
-    reset_button_init(CONFIG_RESET_BUTTON_GPIO, kFactoryResetHoldMs, factory_reset_cb);
-
     if (!wifi_setup_is_provisioned()) {
+        // Nothing to reset yet: the button is only enabled once Wi-Fi is set.
         status_led_set_mode(STATUS_LED_WIFI_SETUP);
         wifi_setup_run_portal(); // restarts once Wi-Fi is configured
     }
+    reset_button_init(CONFIG_RESET_BUTTON_GPIO, kFactoryResetHoldMs, factory_reset_cb);
     status_led_set_mode(STATUS_LED_COMMISSIONING);
 
     err = ld2410_init(CONFIG_LD2410_UART_RX_PIN, CONFIG_LD2410_UART_TX_PIN);

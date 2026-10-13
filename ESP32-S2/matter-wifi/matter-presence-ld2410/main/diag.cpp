@@ -83,6 +83,11 @@ void diag_record_boot(void)
     }
 }
 
+bool diag_last_reset_was_brownout(void)
+{
+    return s_resets[0] == ESP_RST_BROWNOUT;
+}
+
 void diag_get_report(char *buf, size_t size)
 {
     int n = snprintf(buf, size, "Boot #%lu. Last resets (newest first):", (unsigned long)s_boot_count);

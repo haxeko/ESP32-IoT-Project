@@ -16,5 +16,8 @@
 // Call once after nvs_flash_init().
 void diag_record_boot(void);
 
+// True when the previous reset was caused by a supply voltage dip.
+bool diag_last_reset_was_brownout(void);
+
 // Human-readable report: boot count, last reset reasons and last crash.
 void diag_get_report(char *buf, size_t size);
