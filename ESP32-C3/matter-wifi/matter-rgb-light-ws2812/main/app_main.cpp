@@ -114,10 +114,13 @@ extern "C" void app_main()
 
     /* Extended Color Light: on/off, brightness, hue/saturation, XY and color temperature */
     extended_color_light::config_t light_config;
+    /* Null StartUp* values: after a power cut, restore the last on/off, brightness and color from NVS */
     light_config.on_off.on_off = DEFAULT_POWER;
     light_config.on_off_lighting.start_up_on_off = nullptr;
     light_config.level_control.current_level = DEFAULT_BRIGHTNESS;
-    light_config.level_control.on_level = DEFAULT_BRIGHTNESS;
+    /* OnLevel must stay null: with a value, Off drops CurrentLevel to the minimum (and stores it) and
+     * On always jumps to OnLevel, so the brightness set before turning off is lost */
+    light_config.level_control.on_level = nullptr;
     light_config.level_control_lighting.start_up_current_level = nullptr;
     light_config.color_control.color_mode = (uint8_t)ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation;
     light_config.color_control.enhanced_color_mode =

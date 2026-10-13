@@ -21,7 +21,9 @@ Thiết bị dùng device type **Extended Color Light (0x010D)**: bật/tắt, �
   Công thức: `số LED = round(CurrentLevel × 30 / 254)`, tối thiểu 1 LED khi đèn bật.
 - **Tắt** trong app thì tắt hết 30 LED.
 - **Màu** chọn trong app được áp cho mọi LED đang sáng, sau đó nhân với 30 %. Ví dụ đỏ = RGB(77, 0, 0), trắng = RGB(77, 77, 77).
-- Lần đầu khởi động: đèn bật, 100 % (30 LED), màu trắng. Sau đó trạng thái bật/tắt, độ sáng và màu được lưu lại và khôi phục khi mất điện.
+- **Tắt rồi bật lại** (từ app hoặc nút BOOT): đèn sáng lại đúng số LED và màu như trước khi tắt.
+- **Mất điện / rút nguồn**: trạng thái bật/tắt, độ sáng và màu được lưu vào flash ngay khi thay đổi, có điện lại thì khôi phục đúng như lúc trước khi mất điện.
+- Lần đầu khởi động (chưa có gì lưu): đèn bật, 100 % (30 LED), màu trắng.
 
 Mức 30 %, số LED, chân GPIO và chiều sáng (từ đầu hay từ cuối dải) đều đổi được trong `idf.py menuconfig` → **WS2812 RGB Light**.
 
