@@ -1,0 +1,44 @@
+name: Build matter-rgb-light-ws2812
+
+on:
+  push:
+    paths:
+      - 'ESP32-C3/matter-wifi/matter-rgb-light-ws2812/**'
+      - '.github/workflows/matter-rgb-light-ws2812.yml'
+  pull_request:
+    paths:
+      - 'ESP32-C3/matter-wifi/matter-rgb-light-ws2812/**'
+      - '.github/workflows/matter-rgb-light-ws2812.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/esp-matter:release-v1.6.1_idf_v6.0.2
+    defaults:
+      run:
+        working-directory: ESP32-C3/matter-wifi/matter-rgb-light-ws2812
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (esp32c3)
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          pushd $IDF_PATH && . ./export.sh && popd
+          pushd $ESP_MATTER_PATH && . ./export.sh && popd
+          idf.py set-target esp32c3
+          # Also writes build/*_<version>.bin and build/*_merged_<version>.bin (see CMakeLists.txt)
+          idf.py build
+          FW_VERSION=$(python3 -c "import json; print(json.load(open('build/project_description.json'))['project_version'])")
+          echo "FW_VERSION=$FW_VERSION" >> "$GITHUB_ENV"
+          ls -l build/matter_rgb_light_ws2812_esp32c3_*"$FW_VERSION".bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matter_rgb_light_ws2812-esp32c3-${{ env.FW_VERSION }}
+          path: |
+            ESP32-C3/matter-wifi/matter-rgb-light-ws2812/build/matter_rgb_light_ws2812_esp32c3_${{ env.FW_VERSION }}.bin
+            ESP32-C3/matter-wifi/matter-rgb-light-ws2812/build/matter_rgb_light_ws2812_esp32c3_merged_${{ env.FW_VERSION }}.bin
+            ESP32-C3/matter-wifi/matter-rgb-light-ws2812/build/bootloader/bootloader.bin
+            ESP32-C3/matter-wifi/matter-rgb-light-ws2812/build/partition_table/partition-table.bin
+            ESP32-C3/matter-wifi/matter-rgb-light-ws2812/build/ota_data_initial.bin
+            ESP32-C3/matter-wifi/matter-rgb-light-ws2812/build/flash_args
