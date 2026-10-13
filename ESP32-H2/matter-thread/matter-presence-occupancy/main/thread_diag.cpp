@@ -10,6 +10,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include <atomic>
+
 #include <openthread/ip6.h>
 #include <openthread/netdata.h>
 #include <openthread/srp_client.h>
@@ -18,9 +20,10 @@
 static const char *TAG = "thread_diag";
 static constexpr uint32_t k_interval_ms = 10000;
 
-static volatile bool s_running = false;
+/* Written by the Matter task (stop) and read by the diag task */
+static std::atomic<bool> s_running{false};
 /* Set once commissioned; stop() can arrive (kServerReady) before start() */
-static volatile bool s_done = false;
+static std::atomic<bool> s_done{false};
 static TaskHandle_t s_task = NULL;
 
 static bool is_link_local(const otIp6Address &addr)

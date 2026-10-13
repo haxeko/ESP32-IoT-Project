@@ -14,7 +14,6 @@
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_matter_providers.h>
-#include <lib/support/Span.h>
 #include <platform/ESP32/ESP32Config.h>
 #include <platform/internal/GenericDeviceInstanceInfoProvider.h>
 #include <stdio.h>
@@ -55,6 +54,9 @@ private:
 
 } // namespace
 
+// Basic Information string limits (Matter spec): longer values fail to read.
+static_assert(sizeof(CONFIG_DEVICE_VENDOR_NAME) - 1 <= 32, "Manufacturer must be at most 32 characters");
+static_assert(sizeof(CONFIG_DEVICE_PRODUCT_NAME) - 1 <= 32, "Model must be at most 32 characters");
 static_assert(sizeof(CONFIG_DEVICE_DISPLAY_NAME) - 1 <= 32, "Device name must be at most 32 characters");
 
 void device_info_get_serial(char *buf, size_t size)
@@ -62,7 +64,10 @@ void device_info_get_serial(char *buf, size_t size)
     // ESP32-H2 has no Wi-Fi: use the factory base MAC burned in eFuse,
     // e.g. "744DBDA1B2C3". Unique per chip, survives erase-flash.
     uint8_t mac[6] = {};
-    esp_efuse_mac_get_default(mac);
+    esp_err_t err = esp_efuse_mac_get_default(mac);
+    if (err != ESP_OK) {
+        ESP_LOGE("device_info", "Failed to read the MAC address from eFuse, err:%d", err);
+    }
     snprintf(buf, size, "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 

@@ -19,6 +19,12 @@
 #include <led_strip.h>
 #endif
 
+static std::atomic<status_led_mode_t> s_mode{STATUS_LED_COMMISSIONING};
+static std::atomic<bool> s_present{false};
+static std::atomic<bool> s_radar_fault{false};
+static std::atomic<bool> s_identify{false};
+
+#if !CONFIG_STATUS_LED_TYPE_NONE
 static const char *TAG = "status_led";
 
 static constexpr uint64_t kTickUs = 100 * 1000;
@@ -33,11 +39,8 @@ static constexpr color_t kGreen = {0, 255, 0};
 static constexpr color_t kRed = {255, 0, 0};
 static constexpr color_t kWhite = {255, 255, 255};
 
-static std::atomic<status_led_mode_t> s_mode{STATUS_LED_COMMISSIONING};
-static std::atomic<bool> s_present{false};
-static std::atomic<bool> s_radar_fault{false};
-static std::atomic<bool> s_identify{false};
-static uint32_t s_ticks;
+static uint32_t s_ticks; // only touched by the status_led timer callback
+#endif
 
 #if CONFIG_STATUS_LED_TYPE_WS2812
 static led_strip_handle_t s_strip;
