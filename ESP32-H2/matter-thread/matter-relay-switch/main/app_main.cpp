@@ -9,8 +9,7 @@
 #include <common_macros.h>
 
 #include <app_priv.h>
-#include <app_reset.h>
-#include <serial_number.h>
+#include <device_info.h>
 #include <thread_diag.h>
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <platform/ESP32/OpenthreadLauncher.h>
@@ -116,10 +115,9 @@ extern "C" void app_main()
 
     nvs_flash_init();
 
-    /* Relay on GPIO4 (CONFIG_RELAY_GPIO), BOOT button (GPIO9) for toggle + factory reset */
+    /* Relay on GPIO4 (CONFIG_RELAY_GPIO), BOOT button (GPIO9): click = toggle, hold 5 s = factory reset */
     app_driver_handle_t relay_handle = app_driver_relay_init();
-    app_driver_handle_t button_handle = app_driver_button_init();
-    app_reset_button_register(button_handle);
+    app_driver_button_init();
 
     node::config_t node_config;
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
@@ -134,9 +132,9 @@ extern "C" void app_main()
     relay_endpoint_id = endpoint::get_id(endpoint);
     ESP_LOGI(TAG, "Relay plug-in unit created with endpoint_id %d", relay_endpoint_id);
 
-    /* Basic Information SerialNumber = MAC address */
-    err = serial_number_provider_init();
-    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to set serial number provider, err:%d", err));
+    /* Basic Information: Manufacturer, Model, SerialNumber */
+    err = device_info_provider_init();
+    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to set device info provider, err:%d", err));
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     /* OpenThread on the ESP32-H2 native 802.15.4 radio */

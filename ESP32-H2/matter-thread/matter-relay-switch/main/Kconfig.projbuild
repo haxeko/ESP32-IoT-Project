@@ -40,11 +40,41 @@ endmenu
 
 menu "Device Identity"
 
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+        help
+            Shown as Manufacturer in Apple Home. At most 32 characters.
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName)"
+        default "Matter Thread Plug"
+        help
+            Shown as Model in Apple Home. At most 32 characters.
+
+    choice SERIAL_NUMBER_SOURCE
+        prompt "Serial number source"
+        default SERIAL_NUMBER_FROM_GIT_COMMIT
+
+        config SERIAL_NUMBER_FROM_GIT_COMMIT
+            bool "Git commit of the firmware build"
+            help
+                Serial number = short git commit hash of the build (e.g. "a0fbc8c",
+                "a0fbc8c-dirty" with uncommitted changes, "nogit" outside git).
+                Every device flashed with the same build gets the same serial number.
+
+        config SERIAL_NUMBER_FROM_MAC
+            bool "Factory MAC address"
+            help
+                Serial number = factory eFuse MAC address (12 uppercase hex digits),
+                unique per chip.
+    endchoice
+
     config SERIAL_NUMBER_PREFIX
         string "Serial number prefix"
         default ""
         help
-            Matter SerialNumber = prefix + factory MAC address (12 uppercase hex digits),
-            e.g. prefix "RLY-" gives "RLY-744DBDA1B2C3". Total length must stay within 32 characters.
+            Prepended to the serial number, e.g. prefix "RLY-" gives "RLY-a0fbc8c".
+            Total length must stay within 32 characters.
 
 endmenu

@@ -15,7 +15,8 @@ typedef void *app_driver_handle_t;
 /** Configure the relay GPIO (CONFIG_RELAY_GPIO) as output, relay OFF. */
 app_driver_handle_t app_driver_relay_init();
 
-/** Initialize the BOOT button (GPIO9): short press toggles the relay. */
+/** Initialize the BOOT button (GPIO9): short press toggles the relay,
+ *  hold 5 s then release: 3 red LED blinks and factory reset. */
 app_driver_handle_t app_driver_button_init();
 
 /** Apply an attribute change coming from Matter to the hardware. */

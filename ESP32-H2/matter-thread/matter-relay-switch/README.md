@@ -8,12 +8,15 @@ Cấu trúc Matter giống bản ESP32-C3 Wi-Fi trong repo này (`ESP32-C3/matte
 |---|---|
 | Relay (active-high mặc định) | **GPIO4** |
 | Nút BOOT, nhấn ngắn: bật/tắt relay | GPIO9 |
-| Nút BOOT, giữ 5 s rồi thả: factory reset | GPIO9 |
+| Nút BOOT, giữ 5 s (LED chuyển đỏ) rồi thả: LED nháy đỏ 3 lần, factory reset | GPIO9 |
 | LED RGB WS2812 trên board: sáng xanh lá khi relay ON | GPIO8 |
 
 - Trạng thái relay được lưu NVS và khôi phục sau khi mất điện.
 - Khi khởi động, GPIO4 được đặt mức OFF *trước* khi chuyển sang output, và không bật pull-up, nên relay không bị nhảy lúc boot.
-- **Số serial** (Basic Information → SerialNumber) lấy từ địa chỉ MAC gốc trong eFuse, 12 ký tự hex in hoa, ví dụ `744DBDA1B2C3`. Mỗi chip một số khác nhau, không đổi sau `erase-flash`. Xem trong Apple Home (phụ kiện → cài đặt → **Số sê-ri**) hoặc dòng log `serial_number: Serial number: ...` khi khởi động.
+- **Thông tin thiết bị** (Basic Information), xem trong Apple Home ở phụ kiện → cài đặt, hoặc dòng log `device_info: Manufacturer: ..., Model: ..., Serial number: ...` khi khởi động:
+  - Nhà sản xuất: **Haxeko**
+  - Kiểu máy: **Matter Thread Plug**
+  - Số sê-ri: **mã commit git** của bản build, ví dụ `a0fbc8c` (`a0fbc8c-dirty` nếu build khi còn thay đổi chưa commit). Các mạch nạp cùng một bản build có cùng số sê-ri; muốn mỗi chip một số riêng thì chọn `SERIAL_NUMBER_FROM_MAC` (địa chỉ MAC trong eFuse).
 - Thiết bị chạy dạng **FTD** (Full Thread Device): cấp nguồn lưới nên có thể làm Thread Router, giúp mở rộng mạng mesh.
 
 ## Yêu cầu mạng
@@ -36,7 +39,10 @@ Matter over Thread cần một **Thread Border Router** trong nhà, ví dụ:
 |---|---|---|
 | `RELAY_GPIO` | 4 | chân điều khiển relay |
 | `RELAY_ACTIVE_LEVEL` | 1 | 1 = active-high, 0 = active-low (module relay opto rẻ tiền thường là active-low) |
-| `SERIAL_NUMBER_PREFIX` | (trống) | tiền tố số serial, ví dụ `RLY-` → `RLY-744DBDA1B2C3` (*Device Identity*) |
+| `DEVICE_VENDOR_NAME` | Haxeko | nhà sản xuất (*Device Identity*) |
+| `DEVICE_PRODUCT_NAME` | Matter Thread Plug | kiểu máy (*Device Identity*) |
+| `SERIAL_NUMBER_SOURCE` | commit git | nguồn số sê-ri: commit git hoặc địa chỉ MAC (*Device Identity*) |
+| `SERIAL_NUMBER_PREFIX` | (trống) | tiền tố số sê-ri, ví dụ `RLY-` → `RLY-a0fbc8c` (*Device Identity*) |
 | `STATUS_LED_ENABLE` | y | LED WS2812 GPIO8 hiển thị trạng thái relay; tắt nếu board tự làm không có LED này |
 
 Hoặc sửa trực tiếp `sdkconfig.defaults.esp32h2` rồi xoá `sdkconfig` để áp dụng lại.
@@ -158,7 +164,7 @@ sdkconfig.defaults.esp32h2 OpenThread (FTD, SRP client), relay GPIO4, LED trạn
 partitions.csv             4 MB, 2 phân vùng OTA
 main/app_main.cpp          tạo node + endpoint On/Off Plug-in Unit, cấu hình OpenThread
 main/app_driver.cpp        điều khiển GPIO relay + nút + LED
-main/serial_number.cpp     SerialNumber = MAC (custom Device Instance Info provider)
+main/device_info.cpp       nhà sản xuất, kiểu máy, số sê-ri (custom Device Instance Info provider)
 main/thread_diag.cpp       log chẩn đoán Thread/SRP khi chưa ghép nối
 main/Kconfig.projbuild     tuỳ chọn relay, LED
 ```
