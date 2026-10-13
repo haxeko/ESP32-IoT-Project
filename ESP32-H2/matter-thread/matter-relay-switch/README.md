@@ -4,6 +4,8 @@ Firmware ESP-IDF + [esp-matter](https://github.com/espressif/esp-matter) cho **E
 
 Cấu trúc Matter giống bản ESP32-C3 Wi-Fi trong repo này (`ESP32-C3/matter-wifi/matter-energy-bl0942`), bỏ phần đo công suất và thay Wi-Fi bằng OpenThread.
 
+Dự án này cần **flash 4 MB** (ESP32-H2-DevKitM-1 / ESP32-H2-MINI-1 bản 4 MB). Module **2 MB flash** (ví dụ ESP32-H2-WROOM-03, `esptool flash-id` ra `Flash ID` kết thúc bằng `15`) dùng dự án riêng [`ESP32-H2/matter-thread-plug-wroom-2m`](../../matter-thread-plug-wroom-2m).
+
 | Chức năng | Chân |
 |---|---|
 | Relay (active-high mặc định) | **GPIO4** |
@@ -98,25 +100,11 @@ esptool --chip esp32h2 -p /dev/ttyUSB0 write-flash 0x0 build/matter_relay_h2-1.0
 GitHub Actions (`.github/workflows/matter-relay-h2-thread.yml` ở gốc repo) tự build và upload, tên artifact cũng có phiên bản:
 
 - `matter_relay_h2-<phiên bản>`: file `matter_relay_h2-<phiên bản>.bin` (nạp ở `0x0`), `matter_relay_h2-ota.bin`, cùng `flash_args`, `bootloader/`, `partition_table/`, `ota_data_initial.bin`, `matter_relay_h2.bin` để nạp bằng `write-flash @flash_args`;
-- `matter_relay_h2-<phiên bản>-debug`: file `.elf`/`.map` để giải mã địa chỉ khi thiết bị crash;
-- `matter_relay_h2-<phiên bản>-2MB`: file `matter_relay_h2-<phiên bản>-2MB.bin` cho module 2 MB flash (nạp ở `0x0`).
+- `matter_relay_h2-<phiên bản>-debug`: file `.elf`/`.map` để giải mã địa chỉ khi thiết bị crash.
 
 Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 
 > **Nâng cấp từ bản cũ:** bản này bật OTA rollback nên bootloader thay đổi. Bootloader không cập nhật được qua OTA, nên phải nạp qua USB một lần (`idf.py flash`, hoặc `write-flash @flash_args` trong thư mục artifact; hai cách này giữ nguyên ghép nối). Dùng file `matter_relay_h2-<phiên bản>.bin` (nạp ở `0x0`) thì vùng NVS bị xoá, phải ghép nối lại.
-
-### Module 2 MB flash (ESP32-H2-WROOM-03, ESP32-H2FH2)
-
-Bảng phân vùng mặc định cần flash 4 MB (ESP32-H2-DevKitM-1 / MINI-1 bản 4 MB). Kiểm tra dung lượng flash bằng `esptool --chip esp32h2 -p COM5 flash-id`: `Flash ID` kết thúc bằng `16` là 4 MB, `15` là 2 MB (ví dụ `1540a1`).
-
-Với module 2 MB, hai phân vùng OTA không đủ chỗ cho app (~1,4 MB), nên biến thể này dùng **một phân vùng app** (`partitions_2mb.csv`), **không có OTA Matter / rollback** (cập nhật qua USB). Mọi chức năng khác giữ nguyên.
-
-```bash
-idf.py -B build-2mb -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.2mb \
-  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.2mb" build
-```
-
-File nạp ở `0x0`: `build-2mb/matter_relay_h2-<phiên bản>-2MB.bin`. Đừng nạp file 4 MB vào module 2 MB (và ngược lại).
 
 ### Bản build debug (CHIP shell + OpenThread CLI)
 
@@ -223,8 +211,6 @@ sdkconfig.defaults         cấu hình chung: Matter, BLE tối giản, OTA + ro
 sdkconfig.defaults.esp32h2 OpenThread (FTD, SRP client), chỉ IPv6, relay GPIO4, LED trạng thái
 sdkconfig.defaults.debug   bật thêm CHIP shell + OpenThread CLI (bản build debug)
 partitions.csv             4 MB, 2 phân vùng OTA
-partitions_2mb.csv         2 MB, 1 phân vùng app (không OTA)
-sdkconfig.defaults.2mb     biến thể module 2 MB flash
 dependencies.lock          phiên bản cố định của các managed component
 main/app_main.cpp          node + endpoint On/Off Plug-in Unit, Identify, sự kiện Matter, xác nhận OTA
 main/app_driver.cpp        relay GPIO (giữ trạng thái qua reset mềm), nút BOOT, LED trạng thái/Identify/reset

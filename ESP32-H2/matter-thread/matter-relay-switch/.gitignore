@@ -4,5 +4,3 @@ sdkconfig.old
 managed_components/
 sdkconfig.debug
 build-debug/
-sdkconfig.2mb
-build-2mb/
