@@ -28,6 +28,7 @@ Mức 30 %, số LED, chân GPIO và chiều sáng (từ đầu hay từ cuối 
 ## Phần cứng
 
 - Board ESP32-S2, flash 4 MB (LOLIN/Wemos S2 Mini, ESP32-S2-Saola-1, ESP32-S2-DevKitM-1...). Nếu board có PSRAM (S2 Mini có 2 MB), firmware tự dùng thêm; không có cũng chạy.
+  ESP32-S2 chỉ có 320 KB RAM. Firmware để code Wi-Fi/lwIP chạy từ flash thay vì IRAM, nên RAM trong còn khoảng 140 KB heap lúc khởi động. Board có PSRAM sẽ dư dả hơn.
 - Dải 64 LED WS2812 / WS2812B.
 - Nguồn 5V cho LED. 64 LED ở 30 %, màu trắng, ăn khoảng **1,2 A**, nên dùng nguồn **5V 2A** trở lên.
 
