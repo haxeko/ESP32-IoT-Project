@@ -32,22 +32,25 @@ jobs:
           pushd $ESP_MATTER_PATH && . ./export.sh && popd
           idf.py set-target esp32h2
           idf.py build
-          idf.py merge-bin -o matter_relay_h2_merged.bin
+          # Firmware version (also the suffix of the versioned .bin files the build creates)
+          echo "FW_VERSION=$(python3 -c "import json; print(json.load(open('build/project_description.json'))['project_version'])")" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
-          name: matter_relay_h2-esp32h2
+          name: matter_relay_h2-${{ env.FW_VERSION }}
+          if-no-files-found: error
           path: |
+            ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2-${{ env.FW_VERSION }}-merged.bin
+            ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2-${{ env.FW_VERSION }}.bin
+            ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2-${{ env.FW_VERSION }}-ota.bin
             ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2.bin
             ESP32-H2/matter-thread/matter-relay-switch/build/bootloader/bootloader.bin
             ESP32-H2/matter-thread/matter-relay-switch/build/partition_table/partition-table.bin
             ESP32-H2/matter-thread/matter-relay-switch/build/ota_data_initial.bin
             ESP32-H2/matter-thread/matter-relay-switch/build/flash_args
-            ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2_merged.bin
-            ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2-ota.bin
       # ELF/map decode silent-assert and panic addresses from a CI-flashed device
       - uses: actions/upload-artifact@v4
         with:
-          name: matter_relay_h2-esp32h2-debug
+          name: matter_relay_h2-${{ env.FW_VERSION }}-debug
           path: |
             ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2.elf
             ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2.map

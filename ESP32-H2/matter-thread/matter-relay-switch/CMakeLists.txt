@@ -81,3 +81,34 @@ project(matter_relay_h2)
 idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-Os;-DCHIP_HAVE_CONFIG_H;-Wno-overloaded-virtual" APPEND)
 idf_build_set_property(C_COMPILE_OPTIONS "-Os" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-security" APPEND)
+
+# Versioned copies of the build outputs, so the files of different builds can be told apart, e.g.
+#   build/matter_relay_h2-1.0.2610131335-c8656ca.bin         app image (idf.py flash / write-flash @flash_args)
+#   build/matter_relay_h2-1.0.2610131335-c8656ca-merged.bin  bootloader + partition table + otadata + app, flash at 0x0
+#   build/matter_relay_h2-1.0.2610131335-c8656ca-ota.bin     Matter OTA image (CONFIG_CHIP_OTA_IMAGE_BUILD)
+# Regenerated on every build; copies left from earlier versions are removed at configure time.
+idf_build_get_property(fw_build_dir BUILD_DIR)
+idf_build_get_property(fw_python PYTHON)
+idf_build_get_property(fw_target IDF_TARGET)
+set(FW_ARTIFACT_PREFIX "${fw_build_dir}/${CMAKE_PROJECT_NAME}-${PROJECT_VER}")
+file(GLOB fw_stale_artifacts "${fw_build_dir}/${CMAKE_PROJECT_NAME}-[0-9]*.bin")
+if(fw_stale_artifacts)
+    file(REMOVE ${fw_stale_artifacts})
+endif()
+
+set(fw_artifact_commands
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_PROJECT_NAME}.bin" "${FW_ARTIFACT_PREFIX}.bin"
+    COMMAND ${fw_python} -m esptool --chip ${fw_target} merge-bin -o "${FW_ARTIFACT_PREFIX}-merged.bin" @flash_args)
+if(CONFIG_CHIP_OTA_IMAGE_BUILD)
+    list(APPEND fw_artifact_commands
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_PROJECT_NAME}-ota.bin" "${FW_ARTIFACT_PREFIX}-ota.bin")
+endif()
+add_custom_target(versioned_artifacts ALL
+    ${fw_artifact_commands}
+    WORKING_DIRECTORY "${fw_build_dir}"
+    COMMENT "Firmware ${PROJECT_VER}: ${FW_ARTIFACT_PREFIX}-merged.bin"
+    VERBATIM)
+add_dependencies(versioned_artifacts gen_project_binary bootloader partition_table_bin blank_ota_data)
+if(CONFIG_CHIP_OTA_IMAGE_BUILD)
+    add_dependencies(versioned_artifacts chip-ota-image)
+endif()

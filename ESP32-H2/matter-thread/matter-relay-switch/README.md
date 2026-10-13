@@ -16,7 +16,7 @@ Cấu trúc Matter giống bản ESP32-C3 Wi-Fi trong repo này (`ESP32-C3/matte
 - **GPIO4 lúc cấp điện:** GPIO4 là chân MTCK của JTAG. Từ lúc cấp điện tới khi firmware chạy (~0,5 s), chip tự bật điện trở kéo lên ~45 kΩ trên chân này. Với mạch kích relay active-high (NPN/MOSFET), **phải có điện trở kéo xuống ≤10 kΩ** từ IN/cực G xuống GND, nếu không relay có thể nhảy lúc cấp điện. Module relay active-low không bị ảnh hưởng.
 - **Thông tin thiết bị** (Basic Information), xem trong Apple Home ở phụ kiện → cài đặt, hoặc dòng log `device_info: Manufacturer: ..., Model: ..., Hardware: ..., Serial number: ...` khi khởi động:
   - Nhà sản xuất: **Haxeko**
-  - Kiểu máy: **Matter Thread Plug**
+  - Kiểu máy: **ESP32-H2**
   - Phần cứng: **ESP32-H2-DevKitM-1 v1.0**
   - Số sê-ri: **địa chỉ MAC gốc** của chip (eFuse, giống dòng `BASE MAC` của esptool), 12 ký tự hex in hoa, ví dụ `744DBDA1B2C3`. Mỗi chip một số riêng, không đổi khi OTA hay `erase-flash`.
 - **Identify:** nút *Identify* trong Home Assistant (hoặc lệnh Identify của app khác) làm LED nháy xanh dương để nhận ra thiết bị.
@@ -46,7 +46,7 @@ Matter over Thread cần một **Thread Border Router** trong nhà, ví dụ:
 | `STATUS_LED_ENABLE` | y | LED WS2812 GPIO8; tắt nếu board tự làm không có LED này, khi đó Identify báo "không có đèn" (*Relay Configuration*) |
 | `THREAD_DIAG_LOG` | y | cứ 10 s in log chẩn đoán Thread/SRP cho tới khi ghép nối xong (*Thread Diagnostics*) |
 | `DEVICE_VENDOR_NAME` | Haxeko | nhà sản xuất, tối đa 32 ký tự (*Device Identity*) |
-| `DEVICE_PRODUCT_NAME` | Matter Thread Plug | kiểu máy, tối đa 32 ký tự (*Device Identity*) |
+| `DEVICE_PRODUCT_NAME` | ESP32-H2 | kiểu máy, tối đa 32 ký tự (*Device Identity*) |
 | `DEVICE_HARDWARE_VERSION_STRING` | ESP32-H2-DevKitM-1 v1.0 | phiên bản phần cứng (*Device Identity*) |
 | `SERIAL_NUMBER_SOURCE` | địa chỉ MAC | số sê-ri: địa chỉ MAC (riêng từng chip) hoặc commit git (chỉ dùng để thử, mọi mạch cùng số) (*Device Identity*) |
 | `SERIAL_NUMBER_PREFIX` | (trống) | tiền tố số sê-ri, tối đa 20 ký tự, ví dụ `RLY-` → `RLY-744DBDA1B2C3` (*Device Identity*) |
@@ -80,18 +80,30 @@ idf.py -p /dev/ttyUSB0 erase-flash flash monitor
 
 `/dev/ttyUSB0` (Windows: `COMx`) là cổng USB-C **UART** của DevKit: nạp, xem log và gõ lệnh được. Cổng USB gốc (`/dev/ttyACM0`) cũng nạp được, nhưng monitor trên cổng đó chỉ xem log, không gõ lệnh được.
 
-GitHub Actions (`.github/workflows/matter-relay-h2-thread.yml` ở gốc repo) tự build và upload:
+### File firmware có hậu tố phiên bản
 
-- artifact `matter_relay_h2-esp32h2`: các file `.bin`, trong đó `matter_relay_h2_merged.bin` để nạp một lần ở địa chỉ `0x0`, và `matter_relay_h2-ota.bin` để cập nhật OTA;
-- artifact `matter_relay_h2-esp32h2-debug`: file `.elf`/`.map` để giải mã địa chỉ khi thiết bị crash.
+Mỗi lần build tự tạo các file mang tên phiên bản trong `build/`, để phân biệt file của các lần build khác nhau (ví dụ phiên bản `1.0.2610131335-c8656ca`):
+
+| File | Dùng để |
+|---|---|
+| `matter_relay_h2-<phiên bản>-merged.bin` | nạp một lần ở địa chỉ `0x0` (bootloader + bảng phân vùng + app). Xoá cả vùng NVS nên phải ghép nối lại |
+| `matter_relay_h2-<phiên bản>.bin` | file app (giống `matter_relay_h2.bin`) |
+| `matter_relay_h2-<phiên bản>-ota.bin` | cập nhật OTA qua Matter |
 
 ```bash
-esptool --chip esp32h2 -p /dev/ttyUSB0 write-flash 0x0 matter_relay_h2_merged.bin
+esptool --chip esp32h2 -p /dev/ttyUSB0 write-flash 0x0 build/matter_relay_h2-1.0.2610131335-c8656ca-merged.bin
 ```
 
-(cú pháp esptool v5, có sẵn trong ESP-IDF v6; esptool v4.x dùng `esptool.py ... write_flash`). Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
+(cú pháp esptool v5, có sẵn trong ESP-IDF v6; esptool v4.x dùng `esptool.py ... write_flash`). Muốn giữ ghép nối thì nạp bằng `idf.py flash`, hoặc `write-flash @flash_args` trong thư mục `build/`.
 
-> **Nâng cấp từ bản cũ:** bản này bật OTA rollback nên bootloader thay đổi. Bootloader không cập nhật được qua OTA, nên phải nạp qua USB một lần (`idf.py flash`, hoặc `write-flash @flash_args` trong thư mục artifact; hai cách này giữ nguyên ghép nối). Dùng `merged.bin` thì vùng NVS bị xoá, phải ghép nối lại.
+GitHub Actions (`.github/workflows/matter-relay-h2-thread.yml` ở gốc repo) tự build và upload, tên artifact cũng có phiên bản:
+
+- `matter_relay_h2-<phiên bản>`: các file có hậu tố phiên bản ở trên, cùng `flash_args`, `bootloader/`, `partition_table/`, `ota_data_initial.bin`, `matter_relay_h2.bin` để nạp bằng `write-flash @flash_args`;
+- `matter_relay_h2-<phiên bản>-debug`: file `.elf`/`.map` để giải mã địa chỉ khi thiết bị crash.
+
+Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
+
+> **Nâng cấp từ bản cũ:** bản này bật OTA rollback nên bootloader thay đổi. Bootloader không cập nhật được qua OTA, nên phải nạp qua USB một lần (`idf.py flash`, hoặc `write-flash @flash_args` trong thư mục artifact; hai cách này giữ nguyên ghép nối). Dùng file `-merged.bin` thì vùng NVS bị xoá, phải ghép nối lại.
 
 ### Bản build debug (CHIP shell + OpenThread CLI)
 
@@ -105,7 +117,7 @@ idf.py -B build-debug -p /dev/ttyUSB0 flash monitor
 
 ## OTA
 
-- Mỗi bản build tạo thêm `build/matter_relay_h2-ota.bin` (định dạng Matter OTA) để đưa vào một OTA provider (ví dụ `chip-ota-provider-app`).
+- Mỗi bản build tạo thêm `build/matter_relay_h2-<phiên bản>-ota.bin` (định dạng Matter OTA) để đưa vào một OTA provider (ví dụ `chip-ota-provider-app`).
 - **Rollback:** image mới khởi động ở trạng thái chờ xác nhận. Firmware tự xác nhận 60 s sau khi vào lại mạng Thread mà vẫn còn ghép nối. Nếu image mới crash hoặc khởi động lại trước đó, bootloader tự quay về bản cũ.
 
 ## Phiên bản firmware
@@ -193,7 +205,7 @@ Cần [bản build debug](#bản-build-debug-chip-shell--openthread-cli). Gõ l�
 ## Cấu trúc
 
 ```
-CMakeLists.txt             project esp-matter (esp32h2), phiên bản firmware theo giờ build + commit git
+CMakeLists.txt             project esp-matter (esp32h2), phiên bản firmware theo giờ build + commit git, file .bin có hậu tố phiên bản
 sdkconfig.defaults         cấu hình chung: Matter, BLE tối giản, OTA + rollback, tối ưu flash, cluster không dùng
 sdkconfig.defaults.esp32h2 OpenThread (FTD, SRP client), chỉ IPv6, relay GPIO4, LED trạng thái
 sdkconfig.defaults.debug   bật thêm CHIP shell + OpenThread CLI (bản build debug)

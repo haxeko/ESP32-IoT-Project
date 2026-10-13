@@ -59,7 +59,7 @@ menu "Device Identity"
 
     config DEVICE_PRODUCT_NAME
         string "Model (Basic Information ProductName)"
-        default "Matter Thread Plug"
+        default "ESP32-H2"
         help
             Shown as Model in Apple Home. At most 32 characters (checked at build time).
 
