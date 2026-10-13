@@ -1,0 +1,116 @@
+menu "Device Information"
+
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName)"
+        default "ESP32H2 LD2410"
+
+    config DEVICE_DISPLAY_NAME
+        string "Device name (Basic Information NodeLabel / ProductLabel)"
+        default "Presence Sensor"
+        help
+            Default name that controllers show when the device is added.
+            Max 32 characters. It can be renamed later in the app.
+
+endmenu
+
+menu "Presence Sensor Configuration"
+
+    config LD2410_UART_RX_PIN
+        int "ESP32-H2 UART RX pin (connect to LD2410 TX)"
+        range 0 27
+        default 4
+        help
+            Avoid the strapping pins (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25),
+            the flash pins (GPIO15-GPIO21) and the console UART pins
+            (GPIO23, GPIO24).
+
+    config LD2410_UART_TX_PIN
+        int "ESP32-H2 UART TX pin (connect to LD2410 RX)"
+        range 0 27
+        default 5
+
+    config PRESENCE_MAX_DISTANCE_CM
+        int "Only count targets closer than (cm, 0 = use the radar's own gates)"
+        range 0 800
+        default 0
+        help
+            The LD2410 decides presence with its own per-gate sensitivity
+            (default up to 6 m). A non-zero value additionally ignores targets
+            further away than this distance.
+
+    config PRESENCE_HOLD_TIME_SEC
+        int "Default hold time (seconds)"
+        range 1 300
+        default 30
+        help
+            Occupancy Sensing HoldTime at first boot: how long the device keeps
+            reporting "occupied" after the radar stops seeing anyone.
+            Controllers (Home Assistant...) can change it later in 1-300 s;
+            the new value is kept across reboots.
+
+    config RADAR_TIMEOUT_SEC
+        int "Report unoccupied when the radar sends nothing for (seconds)"
+        range 1 300
+        default 10
+
+    choice STATUS_LED_TYPE
+        prompt "Status LED"
+        default STATUS_LED_TYPE_WS2812
+        help
+            Blinks blue while waiting to be commissioned, then shows green
+            while the radar sees someone (no hold time) and blinks red when
+            the radar sends no data.
+
+        config STATUS_LED_TYPE_WS2812
+            bool "Addressable WS2812 RGB LED (ESP32-H2-DevKitM-1: GPIO8)"
+
+        config STATUS_LED_TYPE_GPIO
+            bool "Single-colour LED on a GPIO"
+
+        config STATUS_LED_TYPE_NONE
+            bool "None"
+    endchoice
+
+    config STATUS_LED_GPIO
+        int "Status LED pin"
+        depends on !STATUS_LED_TYPE_NONE
+        range 0 27
+        default 8
+
+    config STATUS_LED_ACTIVE_HIGH
+        bool "Status LED is on when the pin is high"
+        depends on STATUS_LED_TYPE_GPIO
+        default y
+
+    config STATUS_LED_BRIGHTNESS
+        int "WS2812 brightness (1-255)"
+        depends on STATUS_LED_TYPE_WS2812
+        range 1 255
+        default 20
+
+    config RESET_BUTTON_GPIO
+        int "Factory reset button pin (-1 = none)"
+        range -1 27
+        default 9
+        help
+            Holding this button (active low) for 5 seconds erases the Thread
+            network and the Matter pairing. GPIO9 is the BOOT button.
+
+endmenu
+
+menu "Thread Diagnostics"
+
+    config THREAD_DIAG_LOG
+        bool "Log Thread addresses and SRP state until commissioned"
+        default y
+        help
+            Every 10 s, until commissioning completes, log the Thread role, IPv6 addresses
+            (link-local / mesh-local / OMR), on-mesh prefixes from the Border Router and
+            the SRP host/service registration state. Helps find why a phone cannot reach
+            the device after BLE provisioning. Stops once the device is commissioned.
+
+endmenu
