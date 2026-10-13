@@ -40,6 +40,16 @@ CONFIG_LWIP_IPV6_NUM_ADDRESSES=6
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
 
+# Save a core dump to flash on a crash: its summary is shown in the log and on
+# the Wi-Fi setup page (main/diag.cpp), and the full dump can be read back with
+# esptool even without a serial console.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+
+# The setup page's Wi-Fi event handlers log and save the network from the
+# default event loop task; give it more than the 2304-byte default.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+
 # Manufacturer / Model / Serial number come from main/device_info.cpp
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 

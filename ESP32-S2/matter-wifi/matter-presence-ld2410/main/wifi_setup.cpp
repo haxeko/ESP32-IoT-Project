@@ -22,6 +22,7 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
+#include <dhcpserver/dhcpserver.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <lwip/inet.h>
@@ -32,6 +33,7 @@
 
 #include <atomic>
 
+#include "diag.h"
 #include "wifi_setup.h"
 
 static const char *TAG = "wifi_setup";
@@ -261,9 +263,14 @@ static const char kPageTail[] = "</body></html>";
 
 static void send_html_escaped(httpd_req_t *req, const char *text)
 {
-    char out[8 * 32 + 1];
+    char out[128];
     size_t n = 0;
-    for (const char *p = text; *p && n < sizeof(out) - 7; p++) {
+    for (const char *p = text; *p; p++) {
+        if (n > sizeof(out) - 8) { // room for the longest entity and the terminator
+            out[n] = 0;
+            httpd_resp_sendstr_chunk(req, out);
+            n = 0;
+        }
         const char *rep = nullptr;
         switch (*p) {
         case '&': rep = "&amp;"; break;
@@ -277,6 +284,17 @@ static void send_html_escaped(httpd_req_t *req, const char *text)
     }
     out[n] = 0;
     httpd_resp_sendstr_chunk(req, out);
+}
+
+// Small grey diagnostics line at the bottom of every page.
+static void send_page_tail(httpd_req_t *req)
+{
+    char report[512];
+    diag_get_report(report, sizeof(report));
+    httpd_resp_sendstr_chunk(req, "<p style=\"color:#999;font-size:12px;margin-top:32px\">");
+    send_html_escaped(req, report);
+    httpd_resp_sendstr_chunk(req, "</p>");
+    httpd_resp_sendstr_chunk(req, kPageTail);
 }
 
 static esp_err_t send_form(httpd_req_t *req, const char *error)
@@ -311,7 +329,7 @@ static esp_err_t send_form(httpd_req_t *req, const char *error)
         "<button class=\"b\" type=\"submit\">Kết nối</button></form>"
         "<script>function pick(b){document.getElementById('s').value=b.dataset.s;"
         "document.getElementById('p').focus()}</script>");
-    httpd_resp_sendstr_chunk(req, kPageTail);
+    send_page_tail(req);
     return httpd_resp_sendstr_chunk(req, NULL);
 }
 
@@ -337,7 +355,7 @@ static esp_err_t send_status(httpd_req_t *req)
                                       "<p>Thiết bị đang khởi động lại. Hãy đưa điện thoại về mạng Wi-Fi nhà, rồi thêm "
                                       "thiết bị vào ứng dụng nhà thông minh bằng mã Matter.</p>");
     }
-    httpd_resp_sendstr_chunk(req, kPageTail);
+    send_page_tail(req);
     return httpd_resp_sendstr_chunk(req, NULL);
 }
 
@@ -442,6 +460,30 @@ static void start_web_server()
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, redirect_handler);
 }
 
+// Phones need a DNS server from DHCP to detect the captive portal (and some
+// refuse a network without one). Hand out the AP itself, plus the portal URL
+// (DHCP option 114) for phones that support it.
+static void configure_dhcp_server(const esp_netif_ip_info_t &ip_info)
+{
+    static char s_portal_uri[32]; // the DHCP server keeps the pointer
+    snprintf(s_portal_uri, sizeof(s_portal_uri), "http://" IPSTR "/", IP2STR(&ip_info.ip));
+
+    esp_netif_dns_info_t dns = {};
+    dns.ip.type = ESP_IPADDR_TYPE_V4;
+    dns.ip.u_addr.ip4.addr = ip_info.ip.addr;
+    uint8_t offer_dns = OFFER_DNS;
+
+    esp_netif_dhcps_stop(s_ap_netif);
+    esp_netif_set_dns_info(s_ap_netif, ESP_NETIF_DNS_MAIN, &dns);
+    esp_netif_dhcps_option(s_ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer_dns, sizeof(offer_dns));
+    esp_netif_dhcps_option(s_ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, s_portal_uri,
+                           strlen(s_portal_uri));
+    esp_err_t err = esp_netif_dhcps_start(s_ap_netif);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "DHCP server failed to start: %s", esp_err_to_name(err));
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 void wifi_setup_run_portal(void)
@@ -480,19 +522,29 @@ void wifi_setup_run_portal(void)
     ap.ap.max_connection = 4;
     strlcpy((char *)ap.ap.password, CONFIG_WIFI_SETUP_AP_PASSWORD, sizeof(ap.ap.password));
     ap.ap.authmode = ap.ap.password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    ap.ap.pmf_cfg.required = false;
 
+    // Scan first as a plain station: scanning hops channels, and a phone
+    // trying to join the access point meanwhile would time out.
     esp_wifi_set_storage(WIFI_STORAGE_RAM);
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    wifi_setup_limit_tx_power();
+    scan_networks();
+
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    // 20 MHz channel and no modem sleep: the most compatible settings for phones.
+    esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW20);
+    esp_wifi_set_ps(WIFI_PS_NONE);
     wifi_setup_limit_tx_power();
 
     esp_netif_ip_info_t ip_info = {};
     esp_netif_get_ip_info(s_ap_netif, &ip_info);
+    configure_dhcp_server(ip_info);
 
-    scan_networks();
     start_web_server();
-    xTaskCreate(dns_task, "dns", 3072, (void *)(uintptr_t)ip_info.ip.addr, 5, NULL);
+    xTaskCreate(dns_task, "dns", 4096, (void *)(uintptr_t)ip_info.ip.addr, 5, NULL);
 
     ESP_LOGW(TAG, "Wi-Fi setup: join \"%s\" and open http://" IPSTR, (const char *)ap.ap.ssid, IP2STR(&ip_info.ip));
 

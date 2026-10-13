@@ -29,6 +29,7 @@
 #include <atomic>
 
 #include <device_info.h>
+#include <diag.h>
 #include <drivers/ld2410.h>
 #include <drivers/reset_button.h>
 #include <drivers/status_led.h>
@@ -257,6 +258,8 @@ extern "C" void app_main()
 
     ESP_LOGI(TAG, "%s %s, firmware %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME,
              esp_app_get_description()->version);
+
+    diag_record_boot();
 
     status_led_init(CONFIG_STATUS_LED_GPIO, CONFIG_STATUS_LED_ACTIVE_HIGH);
     reset_button_init(CONFIG_RESET_BUTTON_GPIO, kFactoryResetHoldMs, factory_reset_cb);

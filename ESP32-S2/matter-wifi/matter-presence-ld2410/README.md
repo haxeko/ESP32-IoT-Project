@@ -45,6 +45,15 @@ Các thiết bị Matter Wi-Fi thường nhận thông tin Wi-Fi từ điện th
 
 > **Không thấy hoặc không vào được mạng `Presence-XXXX`?** Nhiều board ESP32-S2 nhỏ (LOLIN S2 Mini...) bị lỗi Wi-Fi khi phát ở công suất mặc định ~20 dBm do anten và mạch nguồn 3.3V yếu. Firmware vì vậy giới hạn công suất phát ở **8.5 dBm** (`menuconfig` → *Wi-Fi Setup* → *Maximum Wi-Fi transmit power*). Nếu vẫn không được: đặt điện thoại gần thiết bị, cắm nguồn USB tốt, tắt "Wi-Fi riêng tư / địa chỉ MAC ngẫu nhiên" nếu điện thoại báo lỗi, và xem log (`idf.py monitor`): dòng `Phone ... joined the setup network` cho biết điện thoại đã vào được mạng cài đặt.
 
+#### Chẩn đoán khi thiết bị tự khởi động lại
+
+Firmware lưu lý do của 8 lần khởi động gần nhất (mất điện, **BROWNOUT** = sụt áp, **CRASH**, watchdog...) và tóm tắt lần crash cuối. Thông tin này hiện ở dòng chữ xám cuối trang cài đặt và trong log. Nếu không mở được trang lẫn log, hãy đưa board vào chế độ nạp (giữ nút 0, bấm RST) rồi đọc ra hai file sau và gửi cho người phát triển:
+
+```bash
+python -m esptool --chip esp32s2 -p COMx read-flash 0x10000 0xC000 nvs.bin
+python -m esptool --chip esp32s2 -p COMx read-flash 0x3F0000 0x10000 coredump.bin
+```
+
 Muốn cài sẵn Wi-Fi lúc build thì đặt `CONFIG_DEFAULT_WIFI_SSID` / `CONFIG_DEFAULT_WIFI_PASSWORD` trong `menuconfig` (*Component config → CHIP Device Layer → WiFi Station Options*). Khi đó thiết bị bỏ qua bước 1.
 
 ### Bước 2: thêm vào Apple Home
