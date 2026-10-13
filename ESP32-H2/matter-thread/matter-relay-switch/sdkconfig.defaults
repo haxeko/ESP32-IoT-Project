@@ -26,7 +26,7 @@ CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
 
 # Use a custom partition table
 CONFIG_PARTITION_TABLE_CUSTOM=y
-CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_OFFSET=0xC000
 
 # CHIP shell (and the OpenThread CLI) only in the debug build: sdkconfig.defaults.debug.

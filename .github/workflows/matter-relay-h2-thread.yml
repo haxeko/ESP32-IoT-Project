@@ -34,6 +34,8 @@ jobs:
           idf.py build
           # Firmware version (also the name of the complete flash image the build creates)
           echo "FW_VERSION=$(python3 -c "import json; print(json.load(open('build/project_description.json'))['project_version'])")" >> "$GITHUB_ENV"
+          # Variant for 2 MB flash modules (ESP32-H2-WROOM-03): single app partition, no OTA
+          idf.py -B build-2mb -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.2mb -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.2mb" build
       - uses: actions/upload-artifact@v4
         with:
           name: matter_relay_h2-${{ env.FW_VERSION }}
@@ -53,3 +55,9 @@ jobs:
           path: |
             ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2.elf
             ESP32-H2/matter-thread/matter-relay-switch/build/matter_relay_h2.map
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matter_relay_h2-${{ env.FW_VERSION }}-2MB
+          if-no-files-found: error
+          path: |
+            ESP32-H2/matter-thread/matter-relay-switch/build-2mb/matter_relay_h2-*-2MB.bin

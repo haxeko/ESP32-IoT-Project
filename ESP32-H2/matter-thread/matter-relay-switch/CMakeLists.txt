@@ -76,7 +76,12 @@ idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-secur
 idf_build_get_property(fw_build_dir BUILD_DIR)
 idf_build_get_property(fw_python PYTHON)
 idf_build_get_property(fw_target IDF_TARGET)
-set(FW_IMAGE "${fw_build_dir}/${CMAKE_PROJECT_NAME}-${PROJECT_VER}.bin")
+# Builds for another flash size (e.g. the 2 MB variant) say so in the name: matter_relay_h2-1.0.2610131450-2MB.bin
+set(fw_image_suffix "")
+if(NOT CONFIG_ESPTOOLPY_FLASHSIZE STREQUAL "4MB")
+    set(fw_image_suffix "-${CONFIG_ESPTOOLPY_FLASHSIZE}")
+endif()
+set(FW_IMAGE "${fw_build_dir}/${CMAKE_PROJECT_NAME}-${PROJECT_VER}${fw_image_suffix}.bin")
 file(GLOB fw_stale_images "${fw_build_dir}/${CMAKE_PROJECT_NAME}-[0-9]*.bin")
 if(fw_stale_images)
     file(REMOVE ${fw_stale_images})
@@ -86,4 +91,8 @@ add_custom_target(versioned_image ALL
     WORKING_DIRECTORY "${fw_build_dir}"
     COMMENT "Firmware ${PROJECT_VER}: ${FW_IMAGE}"
     VERBATIM)
-add_dependencies(versioned_image gen_project_binary bootloader partition_table_bin blank_ota_data)
+add_dependencies(versioned_image gen_project_binary bootloader partition_table_bin)
+if(TARGET blank_ota_data)
+    # Only exists with an otadata partition (not in the single-app 2 MB layout)
+    add_dependencies(versioned_image blank_ota_data)
+endif()

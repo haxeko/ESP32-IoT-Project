@@ -1,0 +1,8 @@
+# 2 MB flash modules (ESP32-H2-WROOM-03 / ESP32-H2FH2): applied after sdkconfig.defaults and .esp32h2,
+# see README "Module 2 MB flash". Two OTA slots do not fit, so a single app partition and no Matter OTA:
+# update over USB.
+CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_2mb.csv"
+CONFIG_ENABLE_OTA_REQUESTOR=n
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n
+CONFIG_CHIP_OTA_IMAGE_BUILD=n
