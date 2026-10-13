@@ -127,8 +127,9 @@ idf.py -p /dev/ttyACM0 flash monitor
 | Nhà sản xuất (Manufacturer) | `Haxeko` | `menuconfig` → *Device Information* |
 | Kiểu máy (Model) | `PM5003` | `menuconfig` → *Device Information* |
 | Tên thiết bị khi ghép nối | `Air Quality Sensor` | `menuconfig` → *Device Information* |
-| Số serial | `PM5003-<MAC Wi-Fi>`, ví dụ `PM5003-8ED0B2A8594B` | Tự động, riêng cho từng chip |
+| Số serial | `<MAC Wi-Fi>`, ví dụ `8ED0B2A8594B` | Tự động, riêng cho từng chip |
 | Tên Bluetooth khi chờ ghép nối | `AirQuality-3840` | `CONFIG_BLE_DEVICE_NAME_PREFIX` trong `sdkconfig.defaults` |
+| Tên và loại thiết bị khi dò tìm trong mạng (DNS-SD `DN`, `DT`) | `Air Quality Sensor`, loại 0x002C | `main/chip_project_config.h`, `CONFIG_DEVICE_TYPE` |
 | Firmware | `1.0.<số commit>`, ví dụ `1.0.8` | Tự động |
 
 Phiên bản firmware **tự tăng sau mỗi commit**. Số cuối là số commit của repo (`git rev-list --count HEAD`), và cũng được dùng làm số phiên bản Matter (SoftwareVersion) cho OTA. Khi ra bản lớn, sửa `FIRMWARE_VERSION_BASE` trong `CMakeLists.txt`, ví dụ từ `1.0` thành `1.1`.
@@ -183,6 +184,7 @@ matter-pm25-sensor/
 ├── partitions.csv
 ├── sdkconfig.defaults
 ├── main/
+│   ├── chip_project_config.h # Tên/loại thiết bị khi dò tìm ghép nối
 │   ├── app_main.cpp          # Matter node, endpoint Air Quality Sensor, factory reset
 │   ├── device_info.cpp       # Manufacturer / Model (Basic Information)
 │   ├── local_ui.cpp          # Logic màn hình / LED / radar chạy tại chỗ

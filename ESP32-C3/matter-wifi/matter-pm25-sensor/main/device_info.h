@@ -20,5 +20,5 @@ void device_info_set_name(esp_matter::node::config_t *node_config);
 // Adds the ProductLabel and SerialNumber attributes to Basic Information.
 void device_info_add_attributes(esp_matter::node_t *node);
 
-// Serial number "<Model>-<Wi-Fi MAC>", e.g. "PM5003-8ED0B2A8594B".
+// Serial number: the Wi-Fi MAC, e.g. "8ED0B2A8594B".
 void device_info_get_serial(char *buf, size_t size);

@@ -59,11 +59,10 @@ static_assert(sizeof(CONFIG_DEVICE_DISPLAY_NAME) - 1 <= 32, "Device name must be
 
 void device_info_get_serial(char *buf, size_t size)
 {
-    // "<Model>-<Wi-Fi MAC>", e.g. "PM5003-8ED0B2A8594B": unique per chip.
+    // Wi-Fi MAC, e.g. "8ED0B2A8594B": unique per chip.
     uint8_t mac[6] = {};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(buf, size, "%s-%02X%02X%02X%02X%02X%02X", CONFIG_DEVICE_PRODUCT_NAME, mac[0], mac[1], mac[2], mac[3],
-             mac[4], mac[5]);
+    snprintf(buf, size, "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 void device_info_init(void)
