@@ -312,7 +312,8 @@ static esp_err_t send_form(httpd_req_t *req, const char *error)
         httpd_resp_sendstr_chunk(req, error);
         httpd_resp_sendstr_chunk(req, "</p>");
     }
-    httpd_resp_sendstr_chunk(req, "<p>Chọn mạng Wi-Fi 2.4 GHz cho thiết bị:</p>");
+    httpd_resp_sendstr_chunk(req, s_scan_count ? "<p>Chọn mạng Wi-Fi 2.4 GHz cho thiết bị:</p>"
+                                               : "<p>Nhập tên và mật khẩu mạng Wi-Fi 2.4 GHz cho thiết bị:</p>");
     for (uint16_t i = 0; i < s_scan_count; i++) {
         const char *ssid = (const char *)s_scan[i].ssid;
         const int rssi = s_scan[i].rssi;
@@ -327,7 +328,7 @@ static esp_err_t send_form(httpd_req_t *req, const char *error)
         httpd_resp_sendstr_chunk(req, extra);
     }
     httpd_resp_sendstr_chunk(req,
-        "<p><a href=\"/?scan=1\">Quét lại</a></p>"
+        "<p><a href=\"/?scan=1\">Tìm các mạng Wi-Fi xung quanh</a></p>"
         "<form method=\"post\" action=\"/connect\">"
         "<label>Tên mạng (SSID)</label><input id=\"s\" name=\"ssid\" maxlength=\"32\" required>"
         "<label>Mật khẩu</label><input id=\"p\" name=\"pass\" type=\"password\" maxlength=\"64\">"
@@ -529,20 +530,15 @@ void wifi_setup_run_portal(void)
     ap.ap.authmode = ap.ap.password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
     ap.ap.pmf_cfg.required = false;
 
-    // Scan first as a plain station: scanning hops channels, and a phone
-    // trying to join the access point meanwhile would time out.
+    // No automatic scan: scanning transmits on every channel, and on weak
+    // boards that is enough to reset the chip. The SSID is typed in, or the
+    // user asks for a scan from the page.
     esp_wifi_set_storage(WIFI_STORAGE_RAM);
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    wifi_setup_limit_tx_power();
-    if (!diag_last_reset_was_brownout()) {
-        scan_networks(); // after a brownout, skip it: the SSID can still be typed in
-    }
-
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
     // 20 MHz channel and no modem sleep: the most compatible settings for phones.
     esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW20);
+    ESP_ERROR_CHECK(esp_wifi_start());
     esp_wifi_set_ps(WIFI_PS_NONE);
     wifi_setup_limit_tx_power();
 

@@ -63,7 +63,7 @@ void diag_record_boot(void)
         s_resets[0] = reason;
     }
 
-    esp_core_dump_summary_t summary;
+    static esp_core_dump_summary_t summary;
     if (esp_core_dump_image_check() == ESP_OK && esp_core_dump_get_summary(&summary) == ESP_OK) {
         int n = snprintf(s_crash, sizeof(s_crash), "task %s, PC 0x%08lx, EXCCAUSE %lu, backtrace",
                          summary.exc_task, (unsigned long)summary.exc_pc,
@@ -73,7 +73,7 @@ void diag_record_boot(void)
         }
     }
 
-    char report[512];
+    static char report[512];
     diag_get_report(report, sizeof(report));
     if (reason == ESP_RST_PANIC || reason == ESP_RST_BROWNOUT || reason == ESP_RST_INT_WDT ||
         reason == ESP_RST_TASK_WDT || reason == ESP_RST_WDT) {
@@ -86,6 +86,18 @@ void diag_record_boot(void)
 bool diag_last_reset_was_brownout(void)
 {
     return s_resets[0] == ESP_RST_BROWNOUT;
+}
+
+int diag_last_reset_blinks(void)
+{
+    switch (s_resets[0]) {
+    case ESP_RST_BROWNOUT: return 2;
+    case ESP_RST_PANIC: return 3;
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT: return 4;
+    default: return 1;
+    }
 }
 
 void diag_get_report(char *buf, size_t size)

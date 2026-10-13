@@ -20,6 +20,7 @@ static bool s_active_high;
 static std::atomic<status_led_mode_t> s_mode{STATUS_LED_PRESENCE};
 static std::atomic<bool> s_present{false};
 static std::atomic<bool> s_identify{false};
+static std::atomic<int> s_code{1};
 static uint32_t s_ticks;
 
 static void led_write(bool on)
@@ -44,6 +45,12 @@ static void tick_cb(void *arg)
     case STATUS_LED_PRESENCE:
         led_write(s_present);
         break;
+    case STATUS_LED_CODE: {
+        // 3 s cycle: N blinks of 0.2 s on / 0.2 s off, then dark.
+        const uint32_t t = s_ticks % 30;
+        led_write(t < (uint32_t)s_code * 4 && (t % 4) < 2);
+        break;
+    }
     }
 }
 
@@ -83,4 +90,10 @@ void status_led_set_presence(bool present)
 void status_led_set_identify(bool identify)
 {
     s_identify = identify;
+}
+
+void status_led_set_code(int blinks)
+{
+    s_code = blinks;
+    s_mode = STATUS_LED_CODE;
 }

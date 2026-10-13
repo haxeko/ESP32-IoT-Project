@@ -24,6 +24,8 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <nvs_flash.h>
 #include <setup_payload/OnboardingCodesUtil.h>
 
@@ -44,6 +46,7 @@ using namespace chip::app::Clusters;
 
 static constexpr uint64_t kRadarPollUs = 100 * 1000;
 static constexpr uint32_t kFactoryResetHoldMs = 5000;
+static constexpr int kDiagWindowSec = 10;
 
 static std::atomic<bool> s_matter_started{false};
 static uint16_t s_occupancy_endpoint_id;
@@ -268,6 +271,16 @@ extern "C" void app_main()
 
     status_led_init(CONFIG_STATUS_LED_GPIO, CONFIG_STATUS_LED_ACTIVE_HIGH);
     if (!wifi_setup_is_provisioned()) {
+        // Before the radio starts, show why the chip last reset: the LED
+        // blinks 1x normal, 2x brownout, 3x crash, 4x watchdog, and the USB
+        // serial port stays up long enough to read the report.
+        status_led_set_code(diag_last_reset_blinks());
+        for (int i = 0; i < kDiagWindowSec / 2; i++) {
+            static char report[512];
+            diag_get_report(report, sizeof(report));
+            ESP_LOGW(TAG, "Wi-Fi setup starts in %d s. %s", kDiagWindowSec - 2 * i, report);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
         // Nothing to reset yet: the button is only enabled once Wi-Fi is set.
         status_led_set_mode(STATUS_LED_WIFI_SETUP);
         wifi_setup_run_portal(); // restarts once Wi-Fi is configured

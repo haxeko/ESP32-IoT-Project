@@ -19,5 +19,9 @@ void diag_record_boot(void);
 // True when the previous reset was caused by a supply voltage dip.
 bool diag_last_reset_was_brownout(void);
 
+// Previous reset as a number of LED blinks: 1 normal (power-on, reset
+// button, restart), 2 brownout, 3 crash, 4 watchdog.
+int diag_last_reset_blinks(void);
+
 // Human-readable report: boot count, last reset reasons and last crash.
 void diag_get_report(char *buf, size_t size);

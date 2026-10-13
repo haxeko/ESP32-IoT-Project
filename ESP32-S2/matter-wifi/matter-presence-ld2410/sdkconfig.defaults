@@ -50,6 +50,10 @@ CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 # default event loop task; give it more than the 2304-byte default.
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 
+# app_main reads the core dump summary, starts Wi-Fi and the Matter stack
+# from the main task: the 3584-byte default is too tight.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
 # Manufacturer / Model / Serial number come from main/device_info.cpp
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 
