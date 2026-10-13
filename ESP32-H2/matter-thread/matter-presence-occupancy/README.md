@@ -143,6 +143,8 @@ Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 | WS2812 brightness | 20 | Độ sáng LED WS2812 (1–255) |
 | Factory reset button pin | 9 | Nút BOOT, giữ 5 giây để reset. `-1` để tắt |
 
+Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc nếu chọn chân flash (GPIO15–GPIO21).
+
 *Device Information*:
 
 | Mục | Giá trị mặc định |

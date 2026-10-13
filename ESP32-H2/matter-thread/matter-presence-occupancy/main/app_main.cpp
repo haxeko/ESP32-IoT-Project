@@ -25,6 +25,8 @@
 #include <esp_matter_console.h>
 #include <esp_system.h>
 #include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <nvs_flash.h>
 #include <platform/KeyValueStoreManager.h>
 
@@ -45,7 +47,11 @@ using namespace esp_matter;
 using namespace esp_matter::endpoint;
 using namespace chip::app::Clusters;
 
-static constexpr uint64_t kRadarPollUs = 100 * 1000;
+static constexpr uint32_t kRadarPollMs = 100;
+static constexpr uint32_t kPresenceTaskStack = 4096;
+// Above the Matter task (CONFIG_CHIP_TASK_PRIORITY = 1) so radar sampling keeps
+// its pace, below OpenThread (5); the task sleeps between polls.
+static constexpr UBaseType_t kPresenceTaskPriority = 2;
 static constexpr uint32_t kFactoryResetHoldMs = 5000;
 static constexpr uint16_t kCommissioningWindowSec = 300;
 
@@ -57,20 +63,42 @@ static constexpr uint16_t kHoldTimeMax = 300;
 // default HoldTime from menuconfig has been applied.
 static const char kHoldTimeInitKey[] = "app/hold-init";
 
+// Catch pin mistakes from menuconfig at build time. GPIO15-GPIO21 connect the
+// in-package flash of ESP32-H2.
+static constexpr bool is_flash_pin(int gpio)
+{
+    return gpio >= 15 && gpio <= 21;
+}
+static_assert(CONFIG_LD2410_UART_RX_PIN != CONFIG_LD2410_UART_TX_PIN, "LD2410 RX and TX must be different pins");
+static_assert(!is_flash_pin(CONFIG_LD2410_UART_RX_PIN) && !is_flash_pin(CONFIG_LD2410_UART_TX_PIN),
+              "LD2410 pins must not be flash pins (GPIO15-GPIO21)");
+static_assert(CONFIG_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_RX_PIN &&
+                  CONFIG_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_TX_PIN && !is_flash_pin(CONFIG_RESET_BUTTON_GPIO),
+              "Reset button pin conflicts with the radar or flash pins");
+#if !CONFIG_STATUS_LED_TYPE_NONE
+static_assert(CONFIG_STATUS_LED_GPIO != CONFIG_LD2410_UART_RX_PIN && CONFIG_STATUS_LED_GPIO != CONFIG_LD2410_UART_TX_PIN &&
+                  CONFIG_STATUS_LED_GPIO != CONFIG_RESET_BUTTON_GPIO && !is_flash_pin(CONFIG_STATUS_LED_GPIO),
+              "Status LED pin conflicts with the radar, the reset button or flash pins");
+#endif
+
 static std::atomic<bool> s_matter_started{false};
 static uint16_t s_occupancy_endpoint_id;
 
 // ---------------------------------------------------------------------------
 // Radar -> occupancy
 
-// Runs on the Matter thread. The cluster applies HoldTime itself: occupied is
-// reported at once, unoccupied only after HoldTime seconds without presence.
-static void report_occupancy(bool present)
+// Called from the presence task: the cluster belongs to the Matter stack, so
+// take the stack lock. This blocks until the Matter task is free instead of
+// posting to its event queue, which reboots the device when the queue is full.
+// The cluster applies HoldTime itself: occupied is reported at once,
+// unoccupied only after HoldTime seconds without presence.
+static bool report_occupancy(bool present)
 {
+    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
     OccupancySensingCluster *cluster = OccupancySensing::FindClusterOnEndpoint(s_occupancy_endpoint_id);
-    if (cluster) {
-        cluster->SetOccupancy(present);
-    }
+    VerifyOrReturnValue(cluster != nullptr, false);
+    cluster->SetOccupancy(present);
+    return true;
 }
 
 static bool radar_presence(const ld2410_target_t &t)
@@ -82,42 +110,54 @@ static bool radar_presence(const ld2410_target_t &t)
            (t.still && t.still_cm <= CONFIG_PRESENCE_MAX_DISTANCE_CM);
 }
 
-static void radar_poll_cb(void *arg)
+// Polls the radar every kRadarPollMs. Runs in its own task rather than an
+// esp_timer callback: it logs and may wait for the Matter stack lock, which
+// must not stall the high-priority esp_timer task.
+static void presence_task(void *arg)
 {
-    static bool s_radar_ok = true;
-    static bool s_present = false;
-    static bool s_reported = false;
-    static bool s_reported_present = false;
+    bool radar_ok = true;
+    bool present = false;
+    bool reported = false;
+    bool reported_present = false;
 
-    ld2410_target_t t = {};
-    // Before the first frame, count from boot so the radar gets the same grace period.
-    const int64_t last_ms = ld2410_get_target(&t) ? t.timestamp_ms : 0;
-    const bool fresh = esp_timer_get_time() / 1000 - last_ms <= CONFIG_RADAR_TIMEOUT_SEC * 1000;
-    if (fresh != s_radar_ok) {
-        s_radar_ok = fresh;
-        status_led_set_radar_fault(!fresh);
-        if (fresh) {
-            ESP_LOGI(TAG, "Radar data received");
-        } else {
-            ESP_LOGE(TAG, "No data from the LD2410 for %d s, check the wiring (radar TX -> GPIO%d, RX -> GPIO%d)",
-                     CONFIG_RADAR_TIMEOUT_SEC, CONFIG_LD2410_UART_RX_PIN, CONFIG_LD2410_UART_TX_PIN);
+    TickType_t last_wake = xTaskGetTickCount();
+    while (true) {
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(kRadarPollMs));
+
+        ld2410_target_t t = {};
+        // Before the first frame, count from boot so the radar gets the same grace period.
+        const int64_t last_ms = ld2410_get_target(&t) ? t.timestamp_ms : 0;
+        const bool fresh = esp_timer_get_time() / 1000 - last_ms <= CONFIG_RADAR_TIMEOUT_SEC * 1000;
+        if (fresh != radar_ok) {
+            radar_ok = fresh;
+            status_led_set_radar_fault(!fresh);
+            if (fresh) {
+                ESP_LOGI(TAG, "Radar data received");
+            } else {
+                ESP_LOGE(TAG, "No data from the LD2410 for %d s, check the wiring (radar TX -> GPIO%d, RX -> GPIO%d)",
+                         CONFIG_RADAR_TIMEOUT_SEC, CONFIG_LD2410_UART_RX_PIN, CONFIG_LD2410_UART_TX_PIN);
+            }
         }
-    }
 
-    // A silent radar counts as "no one", so the room does not stay occupied forever.
-    const bool present = fresh && radar_presence(t);
-    if (present != s_present) {
-        s_present = present;
-        ESP_LOGI(TAG, "Radar: %s (moving %s %u cm, still %s %u cm)", present ? "presence" : "no one",
-                 t.moving ? "yes" : "no", t.moving_cm, t.still ? "yes" : "no", t.still_cm);
-        status_led_set_presence(present);
-    }
+        // A silent radar counts as "no one", so the room does not stay occupied forever.
+        const bool now_present = fresh && radar_presence(t);
+        if (now_present != present) {
+            present = now_present;
+            if (fresh) {
+                ESP_LOGI(TAG, "Radar: %s (moving %s %u cm, still %s %u cm)", present ? "presence" : "no one",
+                         t.moving ? "yes" : "no", t.moving_cm, t.still ? "yes" : "no", t.still_cm);
+            } else {
+                ESP_LOGI(TAG, "Radar: no one (no radar data)");
+            }
+            status_led_set_presence(present);
+        }
 
-    // Only transitions go to the cluster: each "unoccupied" restarts its hold timer.
-    if (s_matter_started && (!s_reported || present != s_reported_present)) {
-        s_reported = true;
-        s_reported_present = present;
-        chip::DeviceLayer::SystemLayer().ScheduleLambda([present]() { report_occupancy(present); });
+        // Only transitions go to the cluster: each "unoccupied" restarts its hold timer.
+        // A report that does not reach the cluster is retried on the next poll.
+        if (s_matter_started && (!reported || present != reported_present) && report_occupancy(present)) {
+            reported = true;
+            reported_present = present;
+        }
     }
 }
 
@@ -338,11 +378,8 @@ extern "C" void app_main()
         ESP_LOGE(TAG, "Matter is not running");
     }
 
-    static esp_timer_handle_t s_radar_timer;
-    const esp_timer_create_args_t timer_args = {
-        .callback = radar_poll_cb,
-        .name = "radar_poll",
-    };
-    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &s_radar_timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(s_radar_timer, kRadarPollUs));
+    // Started after Matter so that its first report sees s_matter_started.
+    if (xTaskCreate(presence_task, "presence", kPresenceTaskStack, NULL, kPresenceTaskPriority, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create the presence task");
+    }
 }
