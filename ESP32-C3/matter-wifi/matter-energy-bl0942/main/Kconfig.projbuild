@@ -1,3 +1,20 @@
+menu "Device Information"
+
+    config DEVICE_INFO_VENDOR_NAME
+        string "Manufacturer name (Basic Information VendorName)"
+        default "Haxeko"
+        help
+            Shown as "Manufacturer" in Apple Home and other Matter controllers. Max 32 characters.
+
+    config DEVICE_INFO_PRODUCT_NAME
+        string "Model name (Basic Information ProductName / ProductLabel)"
+        default "Matter Plug"
+        help
+            Shown as "Model" and used as the default accessory name when pairing. Max 32 characters.
+            The serial number is the Wi-Fi MAC address.
+
+endmenu
+
 menu "Relay Configuration"
 
     config RELAY_GPIO

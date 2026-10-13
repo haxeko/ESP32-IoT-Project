@@ -34,6 +34,11 @@ CONFIG_BUTTON_LONG_PRESS_TIME_MS=5000
 # disable softap by default
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
+# Device identity: vendor/product names from Kconfig, serial number from the MAC (main/device_info.cpp)
+CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
+# BLE name while commissioning: "MatterPlug-<discriminator>" (prefix + up to 5 digits must fit 16 characters)
+CONFIG_BLE_DEVICE_NAME_PREFIX="MatterPlug-"
+
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
 # Also package build/<project>-ota.bin, the Matter OTA image (VID/PID + PROJECT_VER_NUMBER header)

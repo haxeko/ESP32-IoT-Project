@@ -10,6 +10,7 @@
 
 #include <app_priv.h>
 #include <app_reset.h>
+#include <device_info.h>
 #if CONFIG_BL0942_ENABLE
 #include <power_meter.h>
 #endif
@@ -116,6 +117,10 @@ extern "C" void app_main()
     node::config_t node_config;
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
     ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
+
+    /* Manufacturer / model / serial number (MAC) in Basic Information */
+    err = device_info_init(node);
+    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to set device information, err:%d", err));
 
     /* On/Off Plug-in Unit device type: shows up as a switch/outlet in Apple Home, Google Home, Alexa, HA */
     on_off_plug_in_unit::config_t plug_config;

@@ -103,6 +103,17 @@ Mỗi lần build, firmware tự có phiên bản mới dạng `1.1.<yyMMddHHmm>
 
 Khi build local, phiên bản lấy theo lúc CMake cấu hình. Muốn có số mới thì chạy `idf.py fullclean` trước khi build. GitHub Actions luôn build từ đầu nên mỗi lần chạy đều có số mới. Đổi `FW_VERSION_MAJOR_MINOR` trong `CMakeLists.txt` khi muốn tăng số chính.
 
+## Thông tin thiết bị
+
+| Thông tin Matter | Giá trị | Đổi trong `menuconfig` → **Device Information** |
+|---|---|---|
+| Manufacturer (VendorName) | **Haxeko** | `DEVICE_INFO_VENDOR_NAME` |
+| Model (ProductName, ProductLabel) | **Matter Plug** | `DEVICE_INFO_PRODUCT_NAME` |
+| Serial Number | **Địa chỉ MAC Wi-Fi**, 12 ký tự hex, ví dụ `A0B1C2D3E4F5` | tự động |
+| Tên BLE khi kết nối | `MatterPlug-3840` (tiền tố + discriminator, tối đa 16 ký tự) | `BLE_DEVICE_NAME_PREFIX` |
+
+Apple Home dùng Model làm tên mặc định khi thêm phụ kiện. Với phụ kiện đã thêm từ trước, xoá rồi thêm lại để Home đọc thông tin mới.
+
 ## Cập nhật OTA
 
 Mỗi lần build tạo thêm `build/matter_plug_bl0942-ota.bin`: file OTA chuẩn Matter (app firmware kèm header VID `0xFFF1`, PID `0x8000`, số phiên bản). Số phiên bản theo giờ build nên bản mới luôn lớn hơn bản đang chạy, thiết bị mới chịu nhận.
