@@ -1,12 +1,12 @@
-# ESP32-S2 Matter over Wi-Fi RGB light (Extended Color Light), 64 x WS2812 on GPIO8
+# ESP32-C3 Matter over Wi-Fi RGB light (Extended Color Light), 30 x WS2812 on GPIO4
 cmake_minimum_required(VERSION 3.5)
 
 if(NOT DEFINED ENV{ESP_MATTER_PATH})
     message(FATAL_ERROR "Please set ESP_MATTER_PATH to the path of esp-matter repo")
 endif(NOT DEFINED ENV{ESP_MATTER_PATH})
 
-if(NOT "${IDF_TARGET}" STREQUAL "esp32s2" AND NOT "${IDF_TARGET}" STREQUAL "")
-    message(FATAL_ERROR "This project targets esp32s2 only")
+if(NOT "${IDF_TARGET}" STREQUAL "esp32c3" AND NOT "${IDF_TARGET}" STREQUAL "")
+    message(FATAL_ERROR "This project targets esp32c3 only")
 endif()
 
 # Firmware version: <major>.<minor>.<UTC build time yyMMddHHmm>, PROJECT_VER_NUMBER (OTA) = same timestamp.
@@ -22,8 +22,8 @@ set(MATTER_SDK_PATH ${ESP_MATTER_PATH}/connectedhomeip/connectedhomeip)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 include(${ESP_MATTER_PATH}/examples/common/cmake_common/components_include.cmake)
 
-# esp-matter's device_hal has no ESP32-S2 board: the WS2812 strip (espressif/led_strip) and
-# the button (espressif/button) are driven directly from main/.
+# The WS2812 strip (espressif/led_strip) and the button (espressif/button) are driven directly
+# from main/, so esp-matter's device_hal is not needed.
 set(EXTRA_COMPONENT_DIRS
     "${ESP_MATTER_PATH}/examples/common"
     "${MATTER_SDK_PATH}/config/esp32/components"

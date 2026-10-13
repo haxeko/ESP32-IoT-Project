@@ -2,15 +2,15 @@ menu "WS2812 RGB Light"
 
     config LED_GPIO
         int "WS2812 data GPIO"
-        range 0 46
-        default 8
+        range 0 21
+        default 4
         help
             GPIO connected to DIN of the first WS2812.
 
     config LED_COUNT
         int "Number of WS2812 LEDs"
         range 1 1024
-        default 64
+        default 30
 
     config LED_FIXED_BRIGHTNESS_PERCENT
         int "Fixed intensity of every lit LED (%)"
@@ -33,10 +33,10 @@ menu "Button"
 
     config APP_BUTTON_GPIO
         int "Button GPIO (active low)"
-        range -1 46
-        default 0
+        range -1 21
+        default 9
         help
             Short press: toggle the light. Hold 5 s: factory reset.
-            GPIO0 is the BOOT button on most ESP32-S2 boards. -1 disables the button.
+            GPIO9 is the BOOT button on ESP32-C3 boards (SuperMini, DevKitM-1). -1 disables the button.
 
 endmenu

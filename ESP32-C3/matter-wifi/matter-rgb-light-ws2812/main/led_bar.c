@@ -25,7 +25,7 @@ uint16_t led_bar_count_for_level(uint8_t level)
     if (level > LED_MATTER_MAX) {
         level = LED_MATTER_MAX;
     }
-    /* Round to nearest (50 % -> 32 of 64 LEDs); while on, at least one LED stays lit */
+    /* Round to nearest (50 % -> 15 of 30 LEDs); while on, at least one LED stays lit */
     uint16_t n = (uint16_t)(((uint32_t)level * LED_COUNT + LED_MATTER_MAX / 2) / LED_MATTER_MAX);
     return n ? n : 1;
 }
@@ -83,7 +83,7 @@ esp_err_t led_bar_init(void)
         .resolution_hz = 10 * 1000 * 1000,
         .mem_block_symbols = 0,
         .flags = {
-            .with_dma = false, /* ESP32-S2 RMT has no DMA */
+            .with_dma = false, /* ESP32-C3 RMT has no DMA */
         },
     };
     esp_err_t err = led_strip_new_rmt_device(&strip_config, &rmt_config, &s_strip);

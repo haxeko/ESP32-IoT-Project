@@ -1,14 +1,16 @@
-CONFIG_IDF_TARGET="esp32s2"
+CONFIG_IDF_TARGET="esp32c3"
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
-# ESP32-S2 has no Bluetooth: commissioning happens on the Wi-Fi network (DNS-SD)
-CONFIG_BT_ENABLED=n
+#enable BT (Matter commissioning over BLE)
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
 
-# Wi-Fi joined at first boot (ESP32-S2 cannot receive Wi-Fi credentials over BLE).
-# Set them with "idf.py menuconfig" -> Component config -> CHIP Device Layer -> WiFi Station Options,
-# or here. Leave empty to set Wi-Fi from the serial console: matter esp wifi connect <ssid> <password>
-CONFIG_DEFAULT_WIFI_SSID=""
-CONFIG_DEFAULT_WIFI_PASSWORD=""
+#disable BT connection reattempt
+CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT=n
+
+# Log and Matter console on the built-in USB port (ESP32-C3 SuperMini has no USB-UART chip)
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
 #enable lwip ipv6 autoconfig
 CONFIG_LWIP_IPV6_AUTOCONFIG=y
@@ -42,20 +44,6 @@ CONFIG_MBEDTLS_HKDF_C=y
 # Increase LwIP IPv6 address number to 6 (MAX_FABRIC + 1)
 # unique local addresses for fabrics(MAX_FABRIC), a link local address(1)
 CONFIG_LWIP_IPV6_NUM_ADDRESSES=6
-
-# ESP32-S2 has only 320 KB of RAM: use the 2 MB PSRAM found on boards such as the
-# LOLIN/Wemos S2 Mini when present, and keep running without it otherwise
-CONFIG_SPIRAM=y
-CONFIG_SPIRAM_IGNORE_NOTFOUND=y
-CONFIG_SPIRAM_USE_MALLOC=y
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
-CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
-CONFIG_SPIRAM_MEMTEST=n
-
-# ESP32-S2 shares IRAM and DRAM: keep Wi-Fi/lwIP hot paths in flash to leave more heap for Matter
-CONFIG_ESP_WIFI_IRAM_OPT=n
-CONFIG_ESP_WIFI_RX_IRAM_OPT=n
-CONFIG_LWIP_IRAM_OPTIMIZATION=n
 
 # Exclude unused clusters to optimize flash and memory usage
 CONFIG_SUPPORT_ACCOUNT_LOGIN_CLUSTER=n

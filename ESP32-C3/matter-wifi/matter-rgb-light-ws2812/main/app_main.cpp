@@ -12,7 +12,6 @@
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
-#include <setup_payload/OnboardingCodesUtil.h>
 
 static const char *TAG = "app_main";
 uint16_t light_endpoint_id = 0;
@@ -24,12 +23,6 @@ using namespace chip::app::Clusters;
 
 constexpr auto k_timeout_seconds = 300;
 
-/* ESP32-S2 has no BLE: the commissioner finds the device on the Wi-Fi network (DNS-SD) */
-static void print_on_network_codes()
-{
-    PrintOnboardingCodes(chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kOnNetwork));
-}
-
 static void open_commissioning_window_if_needed()
 {
     if (chip::Server::GetInstance().GetFabricTable().FabricCount() != 0) {
@@ -40,6 +33,7 @@ static void open_commissioning_window_if_needed()
         return;
     }
     constexpr auto kTimeoutSeconds = chip::System::Clock::Seconds16(k_timeout_seconds);
+    /* Wi-Fi credentials are kept, so only advertise over DNS-SD */
     CHIP_ERROR err =
         commissionMgr.OpenBasicCommissioningWindow(kTimeoutSeconds, chip::CommissioningWindowAdvertisement::kDnssdOnly);
     if (err != CHIP_NO_ERROR) {
@@ -64,7 +58,6 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningWindowOpened:
         ESP_LOGI(TAG, "Commissioning window opened");
-        print_on_network_codes();
         break;
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningWindowClosed:
@@ -74,6 +67,10 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     case chip::DeviceLayer::DeviceEventType::kFabricRemoved:
         ESP_LOGI(TAG, "Fabric removed successfully");
         open_commissioning_window_if_needed();
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kBLEDeinitialized:
+        ESP_LOGI(TAG, "BLE deinitialized and memory reclaimed");
         break;
 
     default:
@@ -107,7 +104,7 @@ extern "C" void app_main()
 
     nvs_flash_init();
 
-    /* WS2812 x64 on GPIO8, BOOT button (GPIO0) for toggle + factory reset */
+    /* WS2812 x30 on GPIO4, BOOT button (GPIO9) for toggle + factory reset */
     app_driver_handle_t light_handle = app_driver_light_init();
     app_driver_button_init();
 
