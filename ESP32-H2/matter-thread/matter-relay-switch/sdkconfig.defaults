@@ -41,10 +41,9 @@ CONFIG_BUTTON_PERIOD_TIME_MS=20
 CONFIG_BUTTON_LONG_PRESS_TIME_MS=5000
 
 # Vendor/product name, hardware version and MAC-based serial number (main/device_info.cpp).
-# Set here as well as in Kconfig so existing sdkconfig files pick up changed defaults.
+# Product name set here as well as in Kconfig so existing sdkconfig files pick up the changed default.
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 CONFIG_DEVICE_PRODUCT_NAME="ESP32-H2"
-CONFIG_SERIAL_NUMBER_FROM_MAC=y
 
 # Matter OTA requestor, with app rollback: a new image is confirmed after 60 s on the real Thread mesh with its
 # fabrics (main/app_main.cpp); an unconfirmed image is reverted by the bootloader at the next reset

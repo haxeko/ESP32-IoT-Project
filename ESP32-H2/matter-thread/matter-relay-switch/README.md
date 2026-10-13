@@ -48,8 +48,7 @@ Matter over Thread cần một **Thread Border Router** trong nhà, ví dụ:
 | `DEVICE_VENDOR_NAME` | Haxeko | nhà sản xuất, tối đa 32 ký tự (*Device Identity*) |
 | `DEVICE_PRODUCT_NAME` | ESP32-H2 | kiểu máy, tối đa 32 ký tự (*Device Identity*) |
 | `DEVICE_HARDWARE_VERSION_STRING` | ESP32-H2-DevKitM-1 v1.0 | phiên bản phần cứng (*Device Identity*) |
-| `SERIAL_NUMBER_SOURCE` | địa chỉ MAC | số sê-ri: địa chỉ MAC (riêng từng chip) hoặc commit git (chỉ dùng để thử, mọi mạch cùng số) (*Device Identity*) |
-| `SERIAL_NUMBER_PREFIX` | (trống) | tiền tố số sê-ri, tối đa 20 ký tự với nguồn MAC (19 với nguồn commit git, vì `abcdef1-dirty` dài 13), ví dụ `RLY-` → `RLY-744DBDA1B2C3` (*Device Identity*) |
+| `SERIAL_NUMBER_PREFIX` | (trống) | tiền tố thêm trước số sê-ri (địa chỉ MAC), tối đa 20 ký tự, ví dụ `RLY-` → `RLY-744DBDA1B2C3` (*Device Identity*) |
 
 Hoặc sửa trực tiếp `sdkconfig.defaults` / `sdkconfig.defaults.esp32h2` rồi xoá `sdkconfig` (và `sdkconfig.debug` nếu dùng bản debug) để áp dụng lại. Độ dài các chuỗi được kiểm tra lúc build.
 
@@ -57,7 +56,7 @@ Khi đổi chân relay, tránh: các chân strapping (GPIO2, GPIO3, GPIO8, GPIO9
 
 ## Build
 
-Yêu cầu: ESP-IDF v6.0.2 + esp-matter release/v1.6 (đã `export.sh` cả hai). Cách nhanh nhất là dùng Docker. Mount **cả repo** (không chỉ thư mục dự án) để CMake đọc được commit git cho số phiên bản:
+Yêu cầu: ESP-IDF v6.0.2 + esp-matter release/v1.6 (đã `export.sh` cả hai). Cách nhanh nhất là dùng Docker. Mount **cả repo** (không chỉ thư mục dự án) để mỗi commit mới tự lấy giờ build mới cho số phiên bản:
 
 ```bash
 # chạy từ bất kỳ thư mục nào trong repo
@@ -82,28 +81,28 @@ idf.py -p /dev/ttyUSB0 erase-flash flash monitor
 
 ### File firmware có hậu tố phiên bản
 
-Mỗi lần build tự tạo các file mang tên phiên bản trong `build/`, để phân biệt file của các lần build khác nhau (ví dụ phiên bản `1.0.2610131335-c8656ca`):
+Mỗi lần build tự tạo trong `build/` một file firmware đầy đủ mang tên phiên bản, để phân biệt file của các lần build khác nhau (ví dụ phiên bản `1.0.2610131450`):
 
 | File | Dùng để |
 |---|---|
-| `matter_relay_h2-<phiên bản>-merged.bin` | nạp một lần ở địa chỉ `0x0` (bootloader + bảng phân vùng + app). Xoá cả vùng NVS nên phải ghép nối lại |
-| `matter_relay_h2-<phiên bản>.bin` | file app (giống `matter_relay_h2.bin`) |
-| `matter_relay_h2-<phiên bản>-ota.bin` | cập nhật OTA qua Matter |
+| `matter_relay_h2-<phiên bản>.bin` | nạp một lần ở địa chỉ `0x0` (bootloader + bảng phân vùng + app). Xoá cả vùng NVS nên phải ghép nối lại |
+| `matter_relay_h2.bin` | file app, dùng với `idf.py flash` / `write-flash @flash_args` |
+| `matter_relay_h2-ota.bin` | cập nhật OTA qua Matter |
 
 ```bash
-esptool --chip esp32h2 -p /dev/ttyUSB0 write-flash 0x0 build/matter_relay_h2-1.0.2610131335-c8656ca-merged.bin
+esptool --chip esp32h2 -p /dev/ttyUSB0 write-flash 0x0 build/matter_relay_h2-1.0.2610131450.bin
 ```
 
 (cú pháp esptool v5, có sẵn trong ESP-IDF v6; esptool v4.x dùng `esptool.py ... write_flash`). Muốn giữ ghép nối thì nạp bằng `idf.py flash`, hoặc `write-flash @flash_args` trong thư mục `build/`.
 
 GitHub Actions (`.github/workflows/matter-relay-h2-thread.yml` ở gốc repo) tự build và upload, tên artifact cũng có phiên bản:
 
-- `matter_relay_h2-<phiên bản>`: các file có hậu tố phiên bản ở trên, cùng `flash_args`, `bootloader/`, `partition_table/`, `ota_data_initial.bin`, `matter_relay_h2.bin` để nạp bằng `write-flash @flash_args`;
+- `matter_relay_h2-<phiên bản>`: file `matter_relay_h2-<phiên bản>.bin` (nạp ở `0x0`), `matter_relay_h2-ota.bin`, cùng `flash_args`, `bootloader/`, `partition_table/`, `ota_data_initial.bin`, `matter_relay_h2.bin` để nạp bằng `write-flash @flash_args`;
 - `matter_relay_h2-<phiên bản>-debug`: file `.elf`/`.map` để giải mã địa chỉ khi thiết bị crash.
 
 Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 
-> **Nâng cấp từ bản cũ:** bản này bật OTA rollback nên bootloader thay đổi. Bootloader không cập nhật được qua OTA, nên phải nạp qua USB một lần (`idf.py flash`, hoặc `write-flash @flash_args` trong thư mục artifact; hai cách này giữ nguyên ghép nối). Dùng file `-merged.bin` thì vùng NVS bị xoá, phải ghép nối lại.
+> **Nâng cấp từ bản cũ:** bản này bật OTA rollback nên bootloader thay đổi. Bootloader không cập nhật được qua OTA, nên phải nạp qua USB một lần (`idf.py flash`, hoặc `write-flash @flash_args` trong thư mục artifact; hai cách này giữ nguyên ghép nối). Dùng file `matter_relay_h2-<phiên bản>.bin` (nạp ở `0x0`) thì vùng NVS bị xoá, phải ghép nối lại.
 
 ### Bản build debug (CHIP shell + OpenThread CLI)
 
@@ -119,17 +118,15 @@ Sau khi sửa `sdkconfig.defaults*` (kể cả `sdkconfig.defaults.debug`), xoá
 
 ## OTA
 
-- Mỗi bản build tạo thêm `build/matter_relay_h2-<phiên bản>-ota.bin` (định dạng Matter OTA) để đưa vào một OTA provider (ví dụ `chip-ota-provider-app`).
+- Mỗi bản build tạo thêm `build/matter_relay_h2-ota.bin` (định dạng Matter OTA) để đưa vào một OTA provider (ví dụ `chip-ota-provider-app`).
 - **Rollback:** image mới khởi động ở trạng thái chờ xác nhận. Firmware chỉ xác nhận khi đã kết nối Thread liên tục 60 s, đang ở trong mạng Thread thật (làm child/router, hoặc leader có thiết bị lân cận; tự lập mạng một mình không tính) và vẫn còn các ghép nối. Nếu image mới crash hoặc khởi động lại trước khi được xác nhận, bootloader tự quay về bản cũ. Image không vào được mạng thì không bao giờ được xác nhận: rút điện cắm lại là quay về bản cũ.
 
 ## Phiên bản firmware
 
-Mỗi lần build, firmware tự có phiên bản mới dạng `1.0.<yyMMddHHmm>-<commit>` (giờ build theo UTC + 7 ký tự đầu mã commit git). Ví dụ `1.0.2610121430-6a81e10` là bản build lúc 14:30 UTC ngày 12/10/2026 từ commit `6a81e10`. Xem ở Apple Home (phụ kiện → cài đặt → **Firmware**) hoặc dòng `App version:` trong log khởi động.
+Mỗi lần build, firmware tự có phiên bản mới dạng `1.0.<yyMMddHHmm>` (giờ build theo UTC). Ví dụ `1.0.2610131450` là bản build lúc 14:50 UTC ngày 13/10/2026. Xem ở Apple Home (phụ kiện → cài đặt → **Firmware**) hoặc dòng `App version:` trong log khởi động. Tên file firmware đầy đủ cũng là phiên bản này: `matter_relay_h2-1.0.2610131450.bin`.
 
-- Hậu tố `-dirty` (ví dụ `1.0.2610121430-6a81e10-dirty`) nghĩa là lúc CMake cấu hình lần cuối, thư mục dự án có thay đổi chưa commit.
-- `nogit` nghĩa là lúc build CMake không thấy thư mục `.git` (thư mục đã copy ra ngoài repo, hoặc Docker chỉ mount thư mục dự án thay vì cả repo).
-- Số phiên bản Matter dùng cho OTA (`SoftwareVersion`) chỉ là phần thời gian `yyMMddHHmm`, nên luôn tăng.
-- Build local: commit mới (hoặc checkout) sẽ tự cấu hình lại và lấy phiên bản mới ở lần build sau. Chỉ sửa file thì phiên bản và `-dirty` không đổi cho tới lần cấu hình lại (`idf.py reconfigure` hoặc `fullclean`).
+- Số phiên bản Matter dùng cho OTA (`SoftwareVersion`) là phần thời gian `yyMMddHHmm`, nên luôn tăng.
+- Build local: commit mới (hoặc checkout) sẽ tự cấu hình lại và lấy phiên bản mới ở lần build sau. Chỉ sửa file thì phiên bản không đổi cho tới lần cấu hình lại (`idf.py reconfigure` hoặc `fullclean`). GitHub Actions luôn build từ đầu nên mỗi lần chạy đều có phiên bản mới. Đổi `FW_VERSION_MAJOR_MINOR` trong `CMakeLists.txt` khi muốn tăng số chính.
 
 ## Commissioning
 
@@ -207,7 +204,7 @@ Cần [bản build debug](#bản-build-debug-chip-shell--openthread-cli). Gõ l�
 ## Cấu trúc
 
 ```
-CMakeLists.txt             project esp-matter (esp32h2), phiên bản firmware theo giờ build + commit git, file .bin có hậu tố phiên bản
+CMakeLists.txt             project esp-matter (esp32h2), phiên bản firmware theo giờ build, file firmware đầy đủ mang tên phiên bản
 sdkconfig.defaults         cấu hình chung: Matter, BLE tối giản, OTA + rollback, tối ưu flash, cluster không dùng
 sdkconfig.defaults.esp32h2 OpenThread (FTD, SRP client), chỉ IPv6, relay GPIO4, LED trạng thái
 sdkconfig.defaults.debug   bật thêm CHIP shell + OpenThread CLI (bản build debug)

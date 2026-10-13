@@ -70,29 +70,12 @@ menu "Device Identity"
             Human-readable hardware revision, shown as "Hardware" in Home Assistant.
             Replaces the SDK default "TEST_VERSION". At most 64 characters.
 
-    choice SERIAL_NUMBER_SOURCE
-        prompt "Serial number source"
-        default SERIAL_NUMBER_FROM_MAC
-
-        config SERIAL_NUMBER_FROM_MAC
-            bool "Factory MAC address"
-            help
-                Serial number = factory eFuse MAC address (esptool "BASE MAC"),
-                12 uppercase hex digits, unique per chip, unchanged by OTA and erase-flash.
-
-        config SERIAL_NUMBER_FROM_GIT_COMMIT
-            bool "Git commit of the firmware build (test builds only)"
-            help
-                Serial number = short git commit hash of the build (e.g. "a0fbc8c",
-                "a0fbc8c-dirty" with uncommitted changes, "nogit" outside git).
-                Every device flashed with the same build gets the same serial number.
-    endchoice
-
     config SERIAL_NUMBER_PREFIX
         string "Serial number prefix"
         default ""
         help
-            Prepended to the serial number, e.g. prefix "RLY-" gives "RLY-744DBDA1B2C3".
-            At most 20 characters with the MAC source, 19 with the git source (checked at build time).
+            The serial number is the factory eFuse MAC address (esptool "BASE MAC"), 12 uppercase hex digits,
+            unique per chip and unchanged by OTA and erase-flash. This prefix is prepended to it, e.g. "RLY-" gives
+            "RLY-744DBDA1B2C3". At most 20 characters (checked at build time).
 
 endmenu

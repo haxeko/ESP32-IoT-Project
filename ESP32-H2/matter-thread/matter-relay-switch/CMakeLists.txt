@@ -13,35 +13,22 @@ if(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
     endif()
 endif(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
 
-# Firmware version, shown as "Firmware" in Apple Home (Basic Information SoftwareVersionString).
-# Every build gets a new version: <major>.<minor>.<UTC build time yyMMddHHmm>-<git commit>[-dirty].
-# "-dirty" marks uncommitted changes in this project directory at the last CMake configure.
-# PROJECT_VER_NUMBER (Matter SoftwareVersion, used by OTA) is the timestamp alone, so it always increases.
-# The version is taken when CMake configures. A new commit or checkout re-runs CMake on the next build;
-# otherwise run "idf.py fullclean" (or build in a fresh tree, as CI does) to get a new version.
+# Firmware version, shown as "Firmware" in Apple Home (Basic Information SoftwareVersionString):
+# <major>.<minor>.<UTC build time yyMMddHHmm>, e.g. 1.0.2610131450. PROJECT_VER_NUMBER (Matter SoftwareVersion,
+# used by OTA) is the same timestamp, so it always increases.
+# The build time is taken when CMake configures. A new commit or checkout re-runs CMake on the next build;
+# otherwise run "idf.py reconfigure" (or build in a fresh tree, as CI does) to get a new version.
 set(FW_VERSION_MAJOR_MINOR "1.0")
 string(TIMESTAMP FW_BUILD_TIME "%y%m%d%H%M" UTC)
 
-set(FW_GIT_COMMIT "nogit")
+# Re-run CMake (and so take a new build time) whenever git HEAD moves to another commit
 find_package(Git QUIET)
 if(GIT_FOUND)
-    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short=7 HEAD
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --absolute-git-dir
                     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                    OUTPUT_VARIABLE FW_GIT_HEAD OUTPUT_STRIP_TRAILING_WHITESPACE
+                    OUTPUT_VARIABLE FW_GIT_DIR OUTPUT_STRIP_TRAILING_WHITESPACE
                     RESULT_VARIABLE FW_GIT_RESULT ERROR_QUIET)
     if(FW_GIT_RESULT EQUAL 0)
-        set(FW_GIT_COMMIT ${FW_GIT_HEAD})
-        execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no -- .
-                        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                        OUTPUT_VARIABLE FW_GIT_STATUS OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-        if(NOT "${FW_GIT_STATUS}" STREQUAL "")
-            set(FW_GIT_COMMIT "${FW_GIT_COMMIT}-dirty")
-        endif()
-
-        # Re-run CMake (and so refresh the version) whenever HEAD moves to another commit
-        execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --absolute-git-dir
-                        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                        OUTPUT_VARIABLE FW_GIT_DIR OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
         execute_process(COMMAND ${GIT_EXECUTABLE} symbolic-ref -q HEAD
                         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
                         OUTPUT_VARIABLE FW_GIT_REF OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
@@ -57,8 +44,7 @@ if(GIT_FOUND)
     endif()
 endif()
 
-# esp_app_desc_t.version holds at most 31 characters: "1.0.2610121430-abcdef1-dirty" is 28
-set(PROJECT_VER "${FW_VERSION_MAJOR_MINOR}.${FW_BUILD_TIME}-${FW_GIT_COMMIT}")
+set(PROJECT_VER "${FW_VERSION_MAJOR_MINOR}.${FW_BUILD_TIME}")
 set(PROJECT_VER_NUMBER ${FW_BUILD_TIME})
 message(STATUS "Firmware version: ${PROJECT_VER} (${PROJECT_VER_NUMBER})")
 
@@ -82,33 +68,22 @@ idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-Os;-DCHIP_HAVE_CONFIG_
 idf_build_set_property(C_COMPILE_OPTIONS "-Os" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-security" APPEND)
 
-# Versioned copies of the build outputs, so the files of different builds can be told apart, e.g.
-#   build/matter_relay_h2-1.0.2610131335-c8656ca.bin         app image (idf.py flash / write-flash @flash_args)
-#   build/matter_relay_h2-1.0.2610131335-c8656ca-merged.bin  bootloader + partition table + otadata + app, flash at 0x0
-#   build/matter_relay_h2-1.0.2610131335-c8656ca-ota.bin     Matter OTA image (CONFIG_CHIP_OTA_IMAGE_BUILD)
-# Regenerated on every build; copies left from earlier versions are removed at configure time.
+# Complete flash image named after the firmware version, so the files of different builds can be told apart:
+#   build/matter_relay_h2-1.0.2610131450.bin   bootloader + partition table + otadata + app, flash at 0x0
+#                                             (same content as "idf.py merge-bin")
+# Regenerated on every build; images left from earlier versions are removed at configure time.
+# The app image (matter_relay_h2.bin) and the Matter OTA image (matter_relay_h2-ota.bin) keep their usual names.
 idf_build_get_property(fw_build_dir BUILD_DIR)
 idf_build_get_property(fw_python PYTHON)
 idf_build_get_property(fw_target IDF_TARGET)
-set(FW_ARTIFACT_PREFIX "${fw_build_dir}/${CMAKE_PROJECT_NAME}-${PROJECT_VER}")
-file(GLOB fw_stale_artifacts "${fw_build_dir}/${CMAKE_PROJECT_NAME}-[0-9]*.bin")
-if(fw_stale_artifacts)
-    file(REMOVE ${fw_stale_artifacts})
+set(FW_IMAGE "${fw_build_dir}/${CMAKE_PROJECT_NAME}-${PROJECT_VER}.bin")
+file(GLOB fw_stale_images "${fw_build_dir}/${CMAKE_PROJECT_NAME}-[0-9]*.bin")
+if(fw_stale_images)
+    file(REMOVE ${fw_stale_images})
 endif()
-
-set(fw_artifact_commands
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_PROJECT_NAME}.bin" "${FW_ARTIFACT_PREFIX}.bin"
-    COMMAND ${fw_python} -m esptool --chip ${fw_target} merge-bin -o "${FW_ARTIFACT_PREFIX}-merged.bin" @flash_args)
-if(CONFIG_CHIP_OTA_IMAGE_BUILD)
-    list(APPEND fw_artifact_commands
-        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_PROJECT_NAME}-ota.bin" "${FW_ARTIFACT_PREFIX}-ota.bin")
-endif()
-add_custom_target(versioned_artifacts ALL
-    ${fw_artifact_commands}
+add_custom_target(versioned_image ALL
+    COMMAND ${fw_python} -m esptool --chip ${fw_target} merge-bin -o "${FW_IMAGE}" @flash_args
     WORKING_DIRECTORY "${fw_build_dir}"
-    COMMENT "Firmware ${PROJECT_VER}: ${FW_ARTIFACT_PREFIX}-merged.bin"
+    COMMENT "Firmware ${PROJECT_VER}: ${FW_IMAGE}"
     VERBATIM)
-add_dependencies(versioned_artifacts gen_project_binary bootloader partition_table_bin blank_ota_data)
-if(CONFIG_CHIP_OTA_IMAGE_BUILD)
-    add_dependencies(versioned_artifacts chip-ota-image)
-endif()
+add_dependencies(versioned_image gen_project_binary bootloader partition_table_bin blank_ota_data)
