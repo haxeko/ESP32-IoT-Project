@@ -1,4 +1,4 @@
-# Matter RGB Light WS2812 (ESP32-C3, Wi-Fi)
+# Haxeko Vibe Light: Matter RGB Light WS2812 (ESP32-C3, Wi-Fi)
 
 Đèn RGB chuẩn **Matter over Wi-Fi** chạy trên ESP32-C3 (SuperMini), dùng dải **30 LED WS2812** nối vào **GPIO4**. Thêm trực tiếp vào Apple Home, Google Home, Home Assistant, SmartThings, Alexa...
 
@@ -76,9 +76,37 @@ docker run --rm -v "$PWD":/project -w /project espressif/esp-matter:release-v1.6
   bash -c '. $IDF_PATH/export.sh && . $ESP_MATTER_PATH/export.sh && cd /project && idf.py set-target esp32c3 && idf.py build'
 ```
 
-Mỗi lần push, GitHub Actions build sẵn firmware (artifact `matter_rgb_light_ws2812-esp32c3`, có file `*_merged.bin` để nạp một lần tại địa chỉ `0x0`).
+### File firmware
+
+Mỗi lần `idf.py build` tạo thêm 2 file trong `build/`, tên có **hậu tố là phiên bản firmware**:
+
+| File | Dùng khi |
+|---|---|
+| `matter_rgb_light_ws2812_esp32c3_<phiên bản>.bin` | Cập nhật, giữ ghép nối và Wi-Fi: nạp tại `0x20000` (hoặc dùng cho OTA) |
+| `matter_rgb_light_ws2812_esp32c3_merged_<phiên bản>.bin` | Nạp mới hoàn toàn: một file tại `0x0` (xóa ghép nối và Wi-Fi) |
+
+Ví dụ: `matter_rgb_light_ws2812_esp32c3_merged_1.0.2610131432.bin`.
+
+Phiên bản có dạng `1.0.<thời điểm build UTC yyMMddHHmm>` và được lấy lúc CMake cấu hình. Khi build lại trong cùng thư mục, chạy `idf.py fullclean` trước để có phiên bản mới (CI luôn build mới nên mỗi lần đều có phiên bản riêng).
+
+Mỗi lần push, GitHub Actions build sẵn firmware, artifact tên `matter_rgb_light_ws2812-esp32c3-<phiên bản>` chứa 2 file trên.
 
 Log và console Matter chạy qua **cổng USB có sẵn** của ESP32-C3 (USB-Serial-JTAG), nạp firmware cũng qua cổng này. Nếu không nạp được, giữ nút BOOT, nhấn RST, rồi nhả BOOT.
+
+## Thông tin thiết bị
+
+Ứng dụng nhà thông minh hiển thị:
+
+| Mục | Giá trị | Sửa ở đâu |
+|---|---|---|
+| Nhà sản xuất (Manufacturer) | `Haxeko` | `menuconfig` → *Device Information* |
+| Kiểu máy (Model) | `Vibe Light` | `menuconfig` → *Device Information* |
+| Tên thiết bị khi ghép nối | `Vibe Light` | `menuconfig` → *Device Information* |
+| Số serial | `VibeLight-<MAC Wi-Fi>`, ví dụ `VibeLight-8ED0B2A8594B` | Tự động, riêng cho từng chip |
+| Tên Bluetooth khi chờ ghép nối | `VibeLight-3840` | `CONFIG_BLE_DEVICE_NAME_PREFIX` trong `sdkconfig.defaults` |
+| Firmware | `1.0.<yyMMddHHmm>` | Tự động |
+
+Thiết bị đã ghép nối từ trước sẽ thấy Manufacturer/Model mới sau khi nạp firmware mới. Một số app (Apple Home) lưu tạm thông tin cũ, có thể cần xóa rồi thêm lại đèn mới hiện tên mới.
 
 ## Ghép nối
 
@@ -112,7 +140,8 @@ Khi xóa thiết bị khỏi tất cả ứng dụng, thiết bị tự mở l�
 | File | Nội dung |
 |---|---|
 | `main/app_main.cpp` | Tạo node Matter, endpoint Extended Color Light |
+| `main/device_info.cpp` | Manufacturer / Model / tên / số serial (Basic Information) |
 | `main/app_driver.cpp` | Nhận thay đổi OnOff / LevelControl / ColorControl từ Matter, Identify, nút BOOT |
 | `main/led_bar.c` | Điều khiển WS2812 qua RMT (`espressif/led_strip`): số LED sáng theo độ sáng, cường độ cố định 30 %, nháy Identify; chỉ gửi dữ liệu ra LED khi hình ảnh thay đổi |
 | `main/color_convert.c` | Đổi Hue/Saturation, XY, nhiệt độ màu sang RGB |
-| `main/Kconfig.projbuild` | Tùy chọn: GPIO, số LED, mức 30 %, chiều sáng, chân nút |
+| `main/Kconfig.projbuild` | Tùy chọn: Manufacturer/Model, GPIO, số LED, mức 30 %, chiều sáng, chân nút |

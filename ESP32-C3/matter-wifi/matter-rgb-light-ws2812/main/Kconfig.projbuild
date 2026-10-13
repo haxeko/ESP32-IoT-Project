@@ -1,3 +1,27 @@
+menu "Device Information"
+
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+        help
+            Shown as Manufacturer by Apple Home, Google Home, Home Assistant... Max 32 characters.
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName)"
+        default "Vibe Light"
+        help
+            Shown as Model. Max 32 characters. The serial number is this name without
+            spaces followed by the Wi-Fi MAC, e.g. "VibeLight-8ED0B2A8594B".
+
+    config DEVICE_DISPLAY_NAME
+        string "Device name (Basic Information NodeLabel / ProductLabel)"
+        default "Vibe Light"
+        help
+            Default name that controllers show when the device is added.
+            Max 32 characters. It can be renamed later in the app.
+
+endmenu
+
 menu "WS2812 RGB Light"
 
     config LED_GPIO

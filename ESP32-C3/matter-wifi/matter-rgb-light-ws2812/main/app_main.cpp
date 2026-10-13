@@ -9,6 +9,7 @@
 #include <common_macros.h>
 
 #include <app_priv.h>
+#include <device_info.h>
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
@@ -113,9 +114,14 @@ extern "C" void app_main()
         app_reset_button_register(button_handle);
     }
 
+    /* Manufacturer "Haxeko", Model "Vibe Light", MAC-based serial number (menuconfig -> Device Information) */
+    device_info_init();
+
     node::config_t node_config;
+    device_info_set_name(&node_config);
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
     ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
+    device_info_add_attributes(node);
 
     /* Extended Color Light: on/off, brightness, hue/saturation, XY and color temperature */
     extended_color_light::config_t light_config;

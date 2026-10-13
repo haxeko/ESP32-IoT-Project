@@ -12,6 +12,12 @@ CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT=n
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
+# Manufacturer / Model / serial number come from main/device_info.cpp
+CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
+
+# Bluetooth name while waiting for commissioning: "VibeLight-<discriminator>" (at most 16 characters)
+CONFIG_BLE_DEVICE_NAME_PREFIX="VibeLight-"
+
 # BLE is only used for commissioning, as a peripheral (esp-matter docs/en/optimizations.rst)
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
