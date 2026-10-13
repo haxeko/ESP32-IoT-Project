@@ -11,11 +11,10 @@ extern "C" {
 /** One reading of the BL0942 */
 typedef struct {
     bool valid;              /* false when the BL0942 did not answer (wiring / baud problem) */
-    float power_w;           /* active power, W */
+    float power_w;           /* active power, W (absolute value) */
     float voltage_v;         /* RMS voltage, V */
     float current_a;         /* RMS current, A */
-    float frequency_hz;      /* mains frequency, Hz */
-    uint64_t energy_mwh;     /* cumulative imported energy since first boot, mWh */
+    uint64_t energy_mwh;     /* cumulative energy since first boot, mWh */
 } bl0942_reading_t;
 
 /**

@@ -100,7 +100,13 @@ extern "C" void app_main()
 {
     esp_err_t err = ESP_OK;
 
-    nvs_flash_init();
+    /* Recover from a full or format-changed NVS partition instead of running without storage */
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
 
     /* Relay on GPIO5 (CONFIG_RELAY_GPIO), BOOT button for toggle + factory reset */
     app_driver_handle_t relay_handle = app_driver_relay_init();

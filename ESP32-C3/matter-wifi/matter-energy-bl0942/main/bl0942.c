@@ -15,6 +15,7 @@
 
 #include <driver/uart.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -42,6 +43,9 @@ static const char *TAG = "bl0942";
 #define BL0942_CURRENT_NOISE_A  0.015f
 #define BL0942_POWER_NOISE_W    0.5f
 
+/* Highest plausible power, used to reject CF_CNT jumps (BL0942 reset) */
+#define BL0942_MAX_POWER_KW     20.0
+
 static const uart_port_t s_uart = (uart_port_t)CONFIG_BL0942_UART_PORT;
 static const uint8_t s_address = CONFIG_BL0942_ADDRESS;
 
@@ -49,11 +53,12 @@ static float s_voltage_ref;
 static float s_current_ref;
 static float s_power_ref;
 static double s_mwh_per_pulse;
-static uint32_t s_max_pulses;
+static double s_pulses_per_kwh;
 
 static uint64_t s_energy_base_mwh;
 static double s_energy_counted_mwh;
 static int32_t s_last_cf = -1;
+static int64_t s_last_cf_us;
 static int s_fail_count;
 static bl0942_reading_t s_last;
 
@@ -62,7 +67,6 @@ typedef struct {
     uint32_t v_rms;
     int32_t watt;
     uint32_t cf_cnt;
-    uint16_t freq;
 } bl0942_raw_t;
 
 static inline uint32_t le24(const uint8_t *p)
@@ -140,7 +144,6 @@ static esp_err_t bl0942_read_raw(bl0942_raw_t *out)
     out->v_rms = le24(&buf[4]);
     out->watt = le24_signed(&buf[10]);
     out->cf_cnt = le24(&buf[13]);
-    out->freq = (uint16_t)(buf[16] | (buf[17] << 8));
     return ESP_OK;
 }
 
@@ -156,8 +159,7 @@ esp_err_t bl0942_init(uint64_t energy_base_mwh)
     energy_ref = energy_ref > 0 ? energy_ref * 1000.0f / CONFIG_BL0942_POWER_CAL_PERMILLE
                                 : s_power_ref * 3600000.0f / 419430.4f;
     s_mwh_per_pulse = 1e6 / energy_ref;
-    /* Upper bound of CF pulses between two reads (~20 kW); a bigger jump means the BL0942 was reset */
-    s_max_pulses = (uint32_t)(energy_ref * 20.0f * CONFIG_BL0942_UPDATE_INTERVAL_MS / 3600000.0f) + 10;
+    s_pulses_per_kwh = energy_ref;
 
     const uart_config_t uart_cfg = {
         .baud_rate = CONFIG_BL0942_UART_BAUD,
@@ -211,22 +213,28 @@ void bl0942_update(bl0942_reading_t *out)
     }
     s_fail_count = 0;
 
-    /* Energy from the 24-bit CF pulse counter */
+    /* Energy from the 24-bit CF pulse counter. The plausibility limit grows with the time since the last good
+     * read, so pulses counted while some reads failed are kept; a bigger jump means the BL0942 was reset. */
     const uint32_t cf = raw.cf_cnt & 0xFFFFFF;
+    const int64_t now_us = esp_timer_get_time();
     if (s_last_cf >= 0) {
         const uint32_t delta = (cf - (uint32_t)s_last_cf) & 0xFFFFFF;
-        if (delta <= s_max_pulses) {
+        const double hours = (now_us - s_last_cf_us) / 3.6e9;
+        if (delta <= s_pulses_per_kwh * BL0942_MAX_POWER_KW * hours + 10) {
             s_energy_counted_mwh += delta * s_mwh_per_pulse;
         }
     }
     s_last_cf = (int32_t)cf;
+    s_last_cf_us = now_us;
 
     float current = raw.i_rms / s_current_ref;
-    float power = raw.watt / s_power_ref;
+    /* The MODE register counts energy as an absolute value, so report power the same way: a reversed shunt or
+     * CT wiring then still reads as consumption */
+    float power = fabsf(raw.watt / s_power_ref);
     if (current < BL0942_CURRENT_NOISE_A) {
         current = 0;
     }
-    if (fabsf(power) < BL0942_POWER_NOISE_W) {
+    if (power < BL0942_POWER_NOISE_W) {
         power = 0;
     }
 
@@ -234,7 +242,6 @@ void bl0942_update(bl0942_reading_t *out)
     out->voltage_v = raw.v_rms / s_voltage_ref;
     out->current_a = current;
     out->power_w = power;
-    out->frequency_hz = raw.freq ? 1000000.0f / raw.freq : 0;
     out->energy_mwh = s_energy_base_mwh + (uint64_t)s_energy_counted_mwh;
     s_last = *out;
 }

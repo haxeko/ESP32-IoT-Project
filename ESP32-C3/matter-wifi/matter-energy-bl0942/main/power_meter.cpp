@@ -180,11 +180,12 @@ void save_energy(uint64_t energy)
     }
 }
 
-bool report_energy(uint64_t energy_mwh)
+bool report_energy(uint64_t energy_mwh, int64_t now_us)
 {
     EEM::Structs::EnergyMeasurementStruct::Type imported;
     imported.energy = static_cast<int64_t>(energy_mwh);
-    imported.endSystime = MakeOptional(static_cast<uint64_t>(esp_timer_get_time()));
+    /* systime_ms: milliseconds since boot */
+    imported.endSystime = MakeOptional(static_cast<uint64_t>(now_us / 1000));
     return EEM::NotifyCumulativeEnergyMeasured(s_endpoint_id, DataModel::MakeNullable(imported), DataModel::NullNullable);
 }
 
@@ -208,25 +209,32 @@ bool set_energy_accuracy()
     return err == CHIP_NO_ERROR;
 }
 
+/* Round so measurement jitter does not trigger a Matter report every cycle (same resolution as the ESPHome
+ * config: 0.1 W, 1 V, 0.01 A) */
+inline int64_t round_to(float value, float unit, int64_t milli_per_unit)
+{
+    return llroundf(value / unit) * milli_per_unit;
+}
+
 void meter_task(void *arg)
 {
-    uint64_t saved_energy = load_energy();
+    uint64_t saved_energy = *static_cast<uint64_t *>(arg);
     uint64_t reported_energy = UINT64_MAX;
     int64_t last_energy_report = 0;
     int64_t last_energy_save = esp_timer_get_time();
     bool accuracy_set = false;
+    TickType_t last_wake = xTaskGetTickCount();
 
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(CONFIG_BL0942_UPDATE_INTERVAL_MS));
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(CONFIG_BL0942_UPDATE_INTERVAL_MS));
 
         bl0942_reading_t r = {};
         bl0942_update(&r);
         int64_t now = esp_timer_get_time();
 
-        /* Round to 0.1 W / 0.1 V / 1 mA so jitter does not flood subscribers */
-        int64_t power_mw = llround(r.power_w * 10.0f) * 100;
-        int64_t voltage_mv = llround(r.voltage_v * 10.0f) * 100;
-        int64_t current_ma = llround(r.current_a * 1000.0f);
+        int64_t power_mw = round_to(r.power_w, 0.1f, 100);
+        int64_t voltage_mv = round_to(r.voltage_v, 1.0f, 1000);
+        int64_t current_ma = round_to(r.current_a, 0.01f, 10);
 
         ESP_LOGD(TAG, "P=%.1f W U=%.1f V I=%.3f A E=%llu mWh", r.power_w, r.voltage_v, r.current_a,
                  (unsigned long long)r.energy_mwh);
@@ -247,7 +255,7 @@ void meter_task(void *arg)
             s_power_delegate.SetActiveCurrent(DataModel::MakeNullable(current_ma));
             s_power_delegate.SetVoltage(DataModel::MakeNullable(voltage_mv));
             if (r.energy_mwh != reported_energy && now - last_energy_report >= k_energy_report_interval_us &&
-                report_energy(r.energy_mwh)) {
+                report_energy(r.energy_mwh, now)) {
                 reported_energy = r.energy_mwh;
                 last_energy_report = now;
             }
@@ -299,16 +307,17 @@ esp_err_t power_meter_start(uint16_t endpoint_id)
 {
     s_endpoint_id = endpoint_id;
 
-    uint64_t energy = load_energy();
-    ESP_LOGI(TAG, "Restored energy: %llu mWh", (unsigned long long)energy);
+    static uint64_t s_restored_energy;
+    s_restored_energy = load_energy();
+    ESP_LOGI(TAG, "Restored energy: %llu mWh", (unsigned long long)s_restored_energy);
 
-    esp_err_t err = bl0942_init(energy);
+    esp_err_t err = bl0942_init(s_restored_energy);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "BL0942 init failed: %s", esp_err_to_name(err));
         return err;
     }
 
-    if (xTaskCreate(meter_task, "power_meter", 4096, NULL, 5, NULL) != pdPASS) {
+    if (xTaskCreate(meter_task, "power_meter", 4096, &s_restored_energy, 5, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
