@@ -36,7 +36,7 @@ menu "Button"
         range -1 21
         default 9
         help
-            Short press: toggle the light. Hold 5 s: factory reset.
+            Short press: toggle the light. Hold 5 s, then release: factory reset.
             GPIO9 is the BOOT button on ESP32-C3 boards (SuperMini, DevKitM-1). -1 disables the button.
 
 endmenu

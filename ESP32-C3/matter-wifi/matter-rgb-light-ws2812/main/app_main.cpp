@@ -4,8 +4,8 @@
 
 #include <esp_matter.h>
 #include <esp_matter_console.h>
-#include <esp_matter_ota.h>
 
+#include <app_reset.h>
 #include <common_macros.h>
 
 #include <app_priv.h>
@@ -82,7 +82,7 @@ static esp_err_t app_identification_cb(identification::callback_type_t type, uin
                                        uint8_t effect_variant, void *priv_data)
 {
     ESP_LOGI(TAG, "Identification callback: type: %u, effect: %u, variant: %u", type, effect_id, effect_variant);
-    return ESP_OK;
+    return app_driver_identify(type, effect_id);
 }
 
 static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16_t endpoint_id, uint32_t cluster_id,
@@ -91,8 +91,7 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
     esp_err_t err = ESP_OK;
 
     if (type == PRE_UPDATE) {
-        app_driver_handle_t driver_handle = (app_driver_handle_t)priv_data;
-        err = app_driver_attribute_update(driver_handle, endpoint_id, cluster_id, attribute_id, val);
+        err = app_driver_attribute_update(endpoint_id, cluster_id, attribute_id, val);
     }
 
     return err;
@@ -100,13 +99,19 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
 
 extern "C" void app_main()
 {
-    esp_err_t err = ESP_OK;
+    esp_err_t err = nvs_flash_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
+    }
 
-    nvs_flash_init();
+    /* WS2812 x30 on GPIO4. The light keeps working as a Matter device even if the strip fails to init. */
+    app_driver_light_init();
 
-    /* WS2812 x30 on GPIO4, BOOT button (GPIO9) for toggle + factory reset */
-    app_driver_handle_t light_handle = app_driver_light_init();
-    app_driver_button_init();
+    /* BOOT button (GPIO9): short press toggles, hold 5 s then release = factory reset */
+    void *button_handle = app_driver_button_init();
+    if (button_handle) {
+        app_reset_button_register(button_handle);
+    }
 
     node::config_t node_config;
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
@@ -122,12 +127,13 @@ extern "C" void app_main()
      * On always jumps to OnLevel, so the brightness set before turning off is lost */
     light_config.level_control.on_level = nullptr;
     light_config.level_control_lighting.start_up_current_level = nullptr;
-    light_config.color_control.color_mode = (uint8_t)ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation;
+    light_config.color_control.color_mode = chip::to_underlying(ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation);
     light_config.color_control.enhanced_color_mode =
-        (uint8_t)ColorControl::EnhancedColorModeEnum::kCurrentHueAndCurrentSaturation;
+        chip::to_underlying(ColorControl::EnhancedColorModeEnum::kCurrentHueAndCurrentSaturation);
     light_config.color_control_color_temperature.start_up_color_temperature_mireds = nullptr;
+    light_config.identify.identify_type = chip::to_underlying(Identify::IdentifyTypeEnum::kLightOutput);
 
-    endpoint_t *endpoint = extended_color_light::create(node, &light_config, ENDPOINT_FLAG_NONE, light_handle);
+    endpoint_t *endpoint = extended_color_light::create(node, &light_config, ENDPOINT_FLAG_NONE, nullptr);
     ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create extended color light endpoint"));
 
     light_endpoint_id = endpoint::get_id(endpoint);
@@ -139,6 +145,24 @@ extern "C" void app_main()
     hue_saturation_config.current_hue = 0;
     hue_saturation_config.current_saturation = 0;
     cluster::color_control::feature::hue_saturation::add(color_control, &hue_saturation_config);
+
+    /* Level and color move in many small steps during a transition: store them in flash only once the value has
+     * settled (CONFIG_ESP_MATTER_DEFERRED_ATTR_PERSISTENCE_TIME_MS, 3 s) instead of at every step. OnOff is still
+     * stored immediately. */
+    const struct {
+        uint32_t cluster_id;
+        uint32_t attribute_id;
+    } deferred[] = {
+        {LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id},
+        {ColorControl::Id, ColorControl::Attributes::CurrentHue::Id},
+        {ColorControl::Id, ColorControl::Attributes::CurrentSaturation::Id},
+        {ColorControl::Id, ColorControl::Attributes::CurrentX::Id},
+        {ColorControl::Id, ColorControl::Attributes::CurrentY::Id},
+        {ColorControl::Id, ColorControl::Attributes::ColorTemperatureMireds::Id},
+    };
+    for (const auto &d : deferred) {
+        attribute::set_deferred_persistence(attribute::get(light_endpoint_id, d.cluster_id, d.attribute_id));
+    }
 
     err = esp_matter::start(app_event_cb);
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));

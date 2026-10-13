@@ -22,7 +22,8 @@ Thiết bị dùng device type **Extended Color Light (0x010D)**: bật/tắt, �
 - **Tắt** trong app thì tắt hết 30 LED.
 - **Màu** chọn trong app được áp cho mọi LED đang sáng, sau đó nhân với 30 %. Ví dụ đỏ = RGB(77, 0, 0), trắng = RGB(77, 77, 77).
 - **Tắt rồi bật lại** (từ app hoặc nút BOOT): đèn sáng lại đúng số LED và màu như trước khi tắt.
-- **Mất điện / rút nguồn**: trạng thái bật/tắt, độ sáng và màu được lưu vào flash ngay khi thay đổi, có điện lại thì khôi phục đúng như lúc trước khi mất điện.
+- **Mất điện / rút nguồn**: có điện lại thì đèn khôi phục bật/tắt, độ sáng và màu như trước khi mất điện. Bật/tắt được lưu vào flash ngay; độ sáng và màu được lưu khi giá trị đã đứng yên **3 giây** (giống ví dụ `light` của Espressif, tránh ghi flash ở mỗi bước chuyển sáng/màu). Nếu rút điện trong vòng 3 giây sau khi vừa chỉnh độ sáng/màu thì lần chỉnh đó không được nhớ.
+- **Nhận dạng (Identify)**: nút "Nhận dạng" trong Apple Home / Home Assistant làm cả dải LED nháy (0,5 s sáng, 0,5 s tắt) bằng màu hiện tại, kể cả khi đèn đang tắt.
 - Lần đầu khởi động (chưa có gì lưu): đèn bật, 100 % (30 LED), màu trắng.
 
 Mức 30 %, số LED, chân GPIO và chiều sáng (từ đầu hay từ cuối dải) đều đổi được trong `idf.py menuconfig` → **WS2812 RGB Light**.
@@ -49,7 +50,7 @@ Có thể cấp nguồn cho cả mạch từ chân **5V** của SuperMini khi c�
 
 Nút **BOOT (GPIO9)**:
 - **Nhấn nhanh**: bật/tắt đèn (trạng thái được báo về app).
-- **Giữ 5 giây**: factory reset (xóa Wi-Fi và thông tin ghép nối Matter).
+- **Giữ 5 giây rồi nhả ra**: factory reset (xóa Wi-Fi và thông tin ghép nối Matter). Reset chạy lúc nhả nút, nên giữ quá 5 giây vẫn được.
 
 Đổi chân nút trong menuconfig → **Button** (`-1` để tắt).
 
@@ -104,14 +105,14 @@ Tạo ảnh QR từ chuỗi trên, ví dụ: `https://project-chip.github.io/con
   chip-tool colorcontrol move-to-hue-and-saturation 0 254 0 0 0 1 1   # đỏ
   ```
 
-Khi xóa thiết bị khỏi tất cả ứng dụng, thiết bị tự mở lại chế độ ghép nối 5 phút (qua Wi-Fi đã lưu). Muốn ghép lại từ đầu, giữ nút BOOT 5 giây để factory reset.
+Khi xóa thiết bị khỏi tất cả ứng dụng, thiết bị tự mở lại chế độ ghép nối 5 phút (qua Wi-Fi đã lưu). Muốn ghép lại từ đầu, giữ nút BOOT 5 giây rồi nhả ra để factory reset.
 
 ## Cấu trúc mã nguồn
 
 | File | Nội dung |
 |---|---|
 | `main/app_main.cpp` | Tạo node Matter, endpoint Extended Color Light |
-| `main/app_driver.cpp` | Nhận thay đổi OnOff / LevelControl / ColorControl từ Matter, nút BOOT |
-| `main/led_bar.c` | Điều khiển WS2812 qua RMT: số LED sáng theo độ sáng, cường độ cố định 30 % |
+| `main/app_driver.cpp` | Nhận thay đổi OnOff / LevelControl / ColorControl từ Matter, Identify, nút BOOT |
+| `main/led_bar.c` | Điều khiển WS2812 qua RMT (`espressif/led_strip`): số LED sáng theo độ sáng, cường độ cố định 30 %, nháy Identify; chỉ gửi dữ liệu ra LED khi hình ảnh thay đổi |
 | `main/color_convert.c` | Đổi Hue/Saturation, XY, nhiệt độ màu sang RGB |
 | `main/Kconfig.projbuild` | Tùy chọn: GPIO, số LED, mức 30 %, chiều sáng, chân nút |

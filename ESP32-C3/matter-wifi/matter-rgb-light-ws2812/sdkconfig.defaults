@@ -12,6 +12,15 @@ CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT=n
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
+# BLE is only used for commissioning, as a peripheral (esp-matter docs/en/optimizations.rst)
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+
+# WS2812 via RMT without DMA: keep refilling the RMT buffer while the flash cache is disabled
+# (NVS writes), otherwise the frame on the strip can be corrupted (wrong colors / flicker)
+CONFIG_RMT_TX_ISR_CACHE_SAFE=y
+
 #enable lwip ipv6 autoconfig
 CONFIG_LWIP_IPV6_AUTOCONFIG=y
 
