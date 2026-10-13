@@ -74,6 +74,17 @@ bool wifi_setup_is_provisioned(void)
     return provisioned;
 }
 
+void wifi_setup_limit_tx_power(void)
+{
+    esp_err_t err = esp_wifi_set_max_tx_power(CONFIG_WIFI_MAX_TX_POWER);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Wi-Fi TX power limited to %d.%02d dBm", CONFIG_WIFI_MAX_TX_POWER / 4,
+                 (CONFIG_WIFI_MAX_TX_POWER % 4) * 25);
+    } else {
+        ESP_LOGW(TAG, "Failed to set Wi-Fi TX power: %s", esp_err_to_name(err));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Station: test the network chosen on the page
 
@@ -137,7 +148,13 @@ static void connect_failed()
 
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+    if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
+        const wifi_event_ap_staconnected_t *event = (const wifi_event_ap_staconnected_t *)data;
+        ESP_LOGI(TAG, "Phone " MACSTR " joined the setup network", MAC2STR(event->mac));
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
+        const wifi_event_ap_stadisconnected_t *event = (const wifi_event_ap_stadisconnected_t *)data;
+        ESP_LOGI(TAG, "Phone " MACSTR " left the setup network, reason %u", MAC2STR(event->mac), event->reason);
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_state != ConnectState::kConnecting) {
             return;
         }
@@ -436,7 +453,7 @@ void wifi_setup_run_portal(void)
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL));
 
     const esp_timer_create_args_t timeout_args = {
@@ -468,6 +485,7 @@ void wifi_setup_run_portal(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
     ESP_ERROR_CHECK(esp_wifi_start());
+    wifi_setup_limit_tx_power();
 
     esp_netif_ip_info_t ip_info = {};
     esp_netif_get_ip_info(s_ap_netif, &ip_info);

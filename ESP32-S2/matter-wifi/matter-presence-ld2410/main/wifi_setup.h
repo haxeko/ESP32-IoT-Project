@@ -20,6 +20,9 @@
 // esp_matter::start().
 bool wifi_setup_is_provisioned(void);
 
+// Applies CONFIG_WIFI_MAX_TX_POWER. Call after the Wi-Fi driver is started.
+void wifi_setup_limit_tx_power(void);
+
 // Starts the access point "<CONFIG_WIFI_SETUP_AP_PREFIX><last 4 MAC digits>"
 // with a captive setup page at http://192.168.4.1. The chosen network is tested
 // first; once the device got an IP address, the credentials are saved and the

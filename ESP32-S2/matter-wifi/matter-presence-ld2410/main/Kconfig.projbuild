@@ -66,6 +66,17 @@ endmenu
 
 menu "Wi-Fi Setup"
 
+    config WIFI_MAX_TX_POWER
+        int "Maximum Wi-Fi transmit power (unit 0.25 dBm)"
+        range 8 84
+        default 34
+        help
+            34 = 8.5 dBm. Many small ESP32-S2 boards (LOLIN S2 Mini...) cannot
+            keep a Wi-Fi connection at the default ~20 dBm because of their
+            antenna and 3.3 V regulator, so the power is limited. If the
+            board is good and you need more range, raise it, e.g. 52
+            (13 dBm) or 78 (19.5 dBm).
+
     config WIFI_SETUP_AP_PREFIX
         string "Setup access point name prefix"
         default "Presence-"

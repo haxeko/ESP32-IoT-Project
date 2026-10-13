@@ -43,6 +43,8 @@ Các thiết bị Matter Wi-Fi thường nhận thông tin Wi-Fi từ điện th
 3. Chọn mạng Wi-Fi nhà (**2.4 GHz**), nhập mật khẩu, bấm **Kết nối**.
 4. Thiết bị thử kết nối trước. Nếu sai mật khẩu, trang báo lỗi để nhập lại. Nếu thành công, thiết bị lưu lại rồi khởi động lại, mạng `Presence-XXXX` biến mất và LED chuyển sang nháy chậm.
 
+> **Không thấy hoặc không vào được mạng `Presence-XXXX`?** Nhiều board ESP32-S2 nhỏ (LOLIN S2 Mini...) bị lỗi Wi-Fi khi phát ở công suất mặc định ~20 dBm do anten và mạch nguồn 3.3V yếu. Firmware vì vậy giới hạn công suất phát ở **8.5 dBm** (`menuconfig` → *Wi-Fi Setup* → *Maximum Wi-Fi transmit power*). Nếu vẫn không được: đặt điện thoại gần thiết bị, cắm nguồn USB tốt, tắt "Wi-Fi riêng tư / địa chỉ MAC ngẫu nhiên" nếu điện thoại báo lỗi, và xem log (`idf.py monitor`): dòng `Phone ... joined the setup network` cho biết điện thoại đã vào được mạng cài đặt.
+
 Muốn cài sẵn Wi-Fi lúc build thì đặt `CONFIG_DEFAULT_WIFI_SSID` / `CONFIG_DEFAULT_WIFI_PASSWORD` trong `menuconfig` (*Component config → CHIP Device Layer → WiFi Station Options*). Khi đó thiết bị bỏ qua bước 1.
 
 ### Bước 2: thêm vào Apple Home
@@ -145,6 +147,7 @@ ESP32-S2 có 320 KB SRAM, ít hơn ESP32-C3. Bù lại ESP32-S2 không có Bluet
 
 | Tùy chọn | Mặc định | Ý nghĩa |
 |---|---|---|
+| Maximum Wi-Fi transmit power | 34 (8.5 dBm) | Đơn vị 0,25 dBm. Board tốt có thể tăng lên 52 (13 dBm) hoặc 78 (19.5 dBm) để xa hơn |
 | Setup access point name prefix | `Presence-` | Tên mạng cài đặt là `<prefix><4 số cuối MAC>` |
 | Setup access point password | (trống) | Để trống: mạng mở. Hoặc 8–63 ký tự |
 

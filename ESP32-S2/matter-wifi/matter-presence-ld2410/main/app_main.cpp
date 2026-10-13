@@ -160,6 +160,13 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
         print_onboarding_codes_if_necessary();
         break;
 
+    case chip::DeviceLayer::DeviceEventType::kESPSystemEvent:
+        if (event->Platform.ESPSystemEvent.Base == WIFI_EVENT &&
+            event->Platform.ESPSystemEvent.Id == WIFI_EVENT_STA_START) {
+            wifi_setup_limit_tx_power();
+        }
+        break;
+
     case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "IP address changed");
         break;
@@ -222,6 +229,8 @@ static esp_err_t start_matter()
     esp_err_t err = esp_matter::start(app_event_cb);
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
+    // Wi-Fi may already be running (STA_START delivered before this point).
+    wifi_setup_limit_tx_power();
     return ESP_OK;
 }
 
