@@ -14,5 +14,5 @@ void device_info_set_name(esp_matter::node::config_t *node_config);
 /** Add the ProductLabel and SerialNumber attributes to Basic Information. */
 void device_info_add_attributes(esp_matter::node_t *node);
 
-/** Serial number "<Model without spaces>-<Wi-Fi MAC>", e.g. "VibeLight-8ED0B2A8594B". */
+/** Serial number: the Wi-Fi MAC address, e.g. "8ED0B2A8594B". */
 void device_info_get_serial(char *buf, size_t size);

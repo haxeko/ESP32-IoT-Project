@@ -10,8 +10,7 @@ menu "Device Information"
         string "Model (Basic Information ProductName)"
         default "Vibe Light"
         help
-            Shown as Model. Max 32 characters. The serial number is this name without
-            spaces followed by the Wi-Fi MAC, e.g. "VibeLight-8ED0B2A8594B".
+            Shown as Model. Max 32 characters.
 
     config DEVICE_DISPLAY_NAME
         string "Device name (Basic Information NodeLabel / ProductLabel)"

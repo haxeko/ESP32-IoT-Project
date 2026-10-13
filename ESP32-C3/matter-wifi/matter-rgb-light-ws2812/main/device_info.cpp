@@ -62,19 +62,10 @@ static_assert(sizeof(CONFIG_DEVICE_DISPLAY_NAME) - 1 <= 32, "Device name must be
 
 void device_info_get_serial(char *buf, size_t size)
 {
-    /* Model without spaces + Wi-Fi MAC: unique per chip, e.g. "VibeLight-8ED0B2A8594B" */
-    char model[sizeof(CONFIG_DEVICE_PRODUCT_NAME)];
-    size_t n = 0;
-    for (const char *p = CONFIG_DEVICE_PRODUCT_NAME; *p; p++) {
-        if (*p != ' ') {
-            model[n++] = *p;
-        }
-    }
-    model[n] = '\0';
-
+    /* Wi-Fi MAC: unique per chip, e.g. "8ED0B2A8594B" */
     uint8_t mac[6] = {};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(buf, size, "%s-%02X%02X%02X%02X%02X%02X", model, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    snprintf(buf, size, "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 void device_info_init(void)

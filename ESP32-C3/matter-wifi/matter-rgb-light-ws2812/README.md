@@ -21,7 +21,7 @@ Thiết bị dùng device type **Extended Color Light (0x010D)**: bật/tắt, �
   Công thức: `số LED = round(CurrentLevel × 30 / 254)`, tối thiểu 1 LED khi đèn bật.
 - **Tắt** trong app thì tắt hết 30 LED.
 - **Màu** chọn trong app được áp cho mọi LED đang sáng, sau đó nhân với 30 %. Ví dụ đỏ = RGB(77, 0, 0), trắng = RGB(77, 77, 77).
-- **Tắt rồi bật lại** (từ app hoặc nút BOOT): đèn sáng lại đúng số LED và màu như trước khi tắt.
+- **Tắt rồi bật lại** (từ app hoặc nút BOOT): đèn sáng lại ngay đúng số LED và màu như trước khi tắt. Hiệu ứng "sáng dần từ mức thấp nhất" của Matter khi Bật được bỏ qua, vì trên dải LED này mức thấp nhất là 1 LED và sẽ trông như đèn nháy tắt một lần. Khi Tắt, dải LED thu ngắn rất nhanh về 1 LED rồi tắt.
 - **Mất điện / rút nguồn**: có điện lại thì đèn khôi phục bật/tắt, độ sáng và màu như trước khi mất điện. Bật/tắt được lưu vào flash ngay; độ sáng và màu được lưu khi giá trị đã đứng yên **3 giây** (giống ví dụ `light` của Espressif, tránh ghi flash ở mỗi bước chuyển sáng/màu). Nếu rút điện trong vòng 3 giây sau khi vừa chỉnh độ sáng/màu thì lần chỉnh đó không được nhớ.
 - **Nhận dạng (Identify)**: nút "Nhận dạng" trong Apple Home / Home Assistant làm cả dải LED nháy (0,5 s sáng, 0,5 s tắt) bằng màu hiện tại, kể cả khi đèn đang tắt.
 - Lần đầu khởi động (chưa có gì lưu): đèn bật, 100 % (30 LED), màu trắng.
@@ -102,7 +102,7 @@ Log và console Matter chạy qua **cổng USB có sẵn** của ESP32-C3 (USB-S
 | Nhà sản xuất (Manufacturer) | `Haxeko` | `menuconfig` → *Device Information* |
 | Kiểu máy (Model) | `Vibe Light` | `menuconfig` → *Device Information* |
 | Tên thiết bị khi ghép nối | `Vibe Light` | `menuconfig` → *Device Information* |
-| Số serial | `VibeLight-<MAC Wi-Fi>`, ví dụ `VibeLight-8ED0B2A8594B` | Tự động, riêng cho từng chip |
+| Số serial | Địa chỉ MAC Wi-Fi, ví dụ `8ED0B2A8594B` | Tự động, riêng cho từng chip |
 | Tên Bluetooth khi chờ ghép nối | `VibeLight-3840` | `CONFIG_BLE_DEVICE_NAME_PREFIX` trong `sdkconfig.defaults` |
 | Firmware | `1.0.<yyMMddHHmm>` | Tự động |
 

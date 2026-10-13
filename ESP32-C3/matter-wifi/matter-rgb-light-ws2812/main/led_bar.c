@@ -11,17 +11,29 @@
 static const char *TAG = "led_bar";
 
 #define LED_COUNT            CONFIG_LED_COUNT
+#define LED_MATTER_MIN       1   /* Matter Level Control (Lighting): MinLevel */
 #define LED_MATTER_MAX       254 /* Matter Level Control: MaxLevel */
 #define IDENTIFY_HALF_PERIOD (500 * 1000) /* us */
+#define FADE_IN_ARM_TIME     (100 * 1000)  /* us: the drop to MinLevel comes right after OnOff = on */
+#define FADE_IN_MAX_HOLD     (1500 * 1000) /* us: safety limit for the hold */
 
 static led_strip_handle_t s_strip;
 static SemaphoreHandle_t s_lock;
 static esp_timer_handle_t s_identify_timer;
+static esp_timer_handle_t s_hold_timer;
 
 /* Logical state, as set by Matter */
 static bool s_on;
 static uint8_t s_level = LED_MATTER_MAX;
 static uint8_t s_r = 255, s_g = 255, s_b = 255;
+
+/* Matter "fade in" on the On command: the Level Control cluster sets OnOff = on, then drops CurrentLevel to
+ * MinLevel and steps it back up to the previous level. On a dimmer that is a fade-in; on this bar MinLevel is
+ * one LED, so it showed as the light going (almost) off once right after being switched on. While that fade-in
+ * runs, keep showing the level the light had when it was switched on. */
+static int64_t s_fade_in_armed_until; /* set when switched on; the drop to MinLevel must come before this */
+static bool s_hold;                   /* showing s_hold_level instead of s_level */
+static uint8_t s_hold_level;
 
 /* Identify blinking */
 static bool s_identify;
@@ -63,7 +75,7 @@ static void render(void)
     if (s_identify) {
         lit = s_identify_phase ? LED_COUNT : 0;
     } else {
-        lit = s_on ? led_bar_count_for_level(s_level) : 0;
+        lit = s_on ? led_bar_count_for_level(s_hold ? s_hold_level : s_level) : 0;
     }
     uint8_t r = scale(s_r), g = scale(s_g), b = scale(s_b);
     if (lit == 0) {
@@ -105,6 +117,23 @@ static void render(void)
              s_level, lit, LED_COUNT, r, g, b);
 }
 
+static void hold_end(void)
+{
+    s_hold = false;
+    esp_timer_stop(s_hold_timer);
+}
+
+static void hold_timer_cb(void *arg)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_hold) {
+        ESP_LOGW(TAG, "fade-in hold timed out, showing level %u", s_level);
+        s_hold = false;
+        render();
+    }
+    xSemaphoreGive(s_lock);
+}
+
 static void identify_timer_cb(void *arg)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -129,6 +158,11 @@ esp_err_t led_bar_init(void)
         .name = "led_identify",
     };
     ESP_RETURN_ON_ERROR(esp_timer_create(&timer_args, &s_identify_timer), TAG, "identify timer");
+    const esp_timer_create_args_t hold_timer_args = {
+        .callback = hold_timer_cb,
+        .name = "led_fade_in",
+    };
+    ESP_RETURN_ON_ERROR(esp_timer_create(&hold_timer_args, &s_hold_timer), TAG, "fade-in timer");
 
     led_strip_config_t strip_config = {
         .strip_gpio_num = CONFIG_LED_GPIO,
@@ -164,6 +198,8 @@ esp_err_t led_bar_init(void)
 void led_bar_set_state(bool on, uint8_t level, uint8_t r, uint8_t g, uint8_t b)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    hold_end();
+    s_fade_in_armed_until = 0;
     s_on = on;
     s_level = level;
     s_r = r;
@@ -176,6 +212,12 @@ void led_bar_set_state(bool on, uint8_t level, uint8_t r, uint8_t g, uint8_t b)
 void led_bar_set_power(bool on)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (on && !s_on) {
+        s_fade_in_armed_until = esp_timer_get_time() + FADE_IN_ARM_TIME;
+    } else if (!on) {
+        s_fade_in_armed_until = 0;
+        hold_end();
+    }
     s_on = on;
     render();
     xSemaphoreGive(s_lock);
@@ -192,6 +234,20 @@ bool led_bar_get_power(void)
 void led_bar_set_level(uint8_t level)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_fade_in_armed_until) {
+        /* First level change after switching on: the fade-in starts with a drop to MinLevel. Anything else (e.g.
+         * MoveToLevelWithOnOff from off) is a normal level change. */
+        if (level == LED_MATTER_MIN && s_level > LED_MATTER_MIN && esp_timer_get_time() < s_fade_in_armed_until) {
+            s_hold = true;
+            s_hold_level = s_level;
+            esp_timer_stop(s_hold_timer);
+            esp_timer_start_once(s_hold_timer, FADE_IN_MAX_HOLD);
+        }
+        s_fade_in_armed_until = 0;
+    } else if (s_hold && (level >= s_hold_level || level < s_level)) {
+        /* Fade-in reached the held level, or a new command moves the level down: follow the real level again */
+        hold_end();
+    }
     s_level = level;
     render();
     xSemaphoreGive(s_lock);
