@@ -152,11 +152,6 @@ static bool parse_frame(const uint8_t *f, pm_sensor_data_t *out)
 
 static pm_sensor_config_t s_config;
 
-static float round1(float v)
-{
-    return roundf(v * 10.0f) / 10.0f;
-}
-
 // Running average of the samples received since the last report.
 typedef struct {
     float pm1_0;
@@ -167,14 +162,16 @@ typedef struct {
 
 static void report_average(pm_accumulator_t *acc)
 {
+    // Whole µg/m³: the average would otherwise have long fractions (e.g.
+    // 2.754654) that controllers such as Home Assistant show as is.
     pm_sensor_data_t data = {
         .valid = true,
-        .pm1_0 = round1(acc->pm1_0 / acc->count),
-        .pm2_5 = round1(acc->pm2_5 / acc->count),
-        .pm10 = round1(acc->pm10 / acc->count),
+        .pm1_0 = roundf(acc->pm1_0 / acc->count),
+        .pm2_5 = roundf(acc->pm2_5 / acc->count),
+        .pm10 = roundf(acc->pm10 / acc->count),
     };
     memset(acc, 0, sizeof(*acc));
-    ESP_LOGI(TAG, "PM1.0=%.1f PM2.5=%.1f PM10=%.1f ug/m3", data.pm1_0, data.pm2_5, data.pm10);
+    ESP_LOGI(TAG, "PM1.0=%.0f PM2.5=%.0f PM10=%.0f ug/m3", data.pm1_0, data.pm2_5, data.pm10);
     s_config.cb(&data, s_config.user_data);
 }
 
