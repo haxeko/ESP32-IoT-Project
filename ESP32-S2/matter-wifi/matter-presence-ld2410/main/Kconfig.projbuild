@@ -1,0 +1,83 @@
+menu "Device Information"
+
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName)"
+        default "ESP32S2 LD2410"
+
+    config DEVICE_DISPLAY_NAME
+        string "Device name (Basic Information NodeLabel / ProductLabel)"
+        default "Presence Sensor"
+        help
+            Default name that controllers show when the device is added.
+            Max 32 characters. It can be renamed later in the app.
+
+endmenu
+
+menu "Presence Sensor Configuration"
+
+    config LD2410_UART_RX_PIN
+        int "ESP32 UART RX pin (connect to LD2410 TX)"
+        default 33
+
+    config LD2410_UART_TX_PIN
+        int "ESP32 UART TX pin (connect to LD2410 RX)"
+        default 18
+
+    config PRESENCE_MAX_DISTANCE_CM
+        int "Only count targets closer than (cm, 0 = use the radar's own gates)"
+        range 0 800
+        default 0
+        help
+            The LD2410 decides presence with its own per-gate sensitivity
+            (default up to 6 m). A non-zero value additionally ignores targets
+            further away than this distance.
+
+    config RADAR_TIMEOUT_SEC
+        int "Report unoccupied when the radar sends nothing for (seconds)"
+        range 1 300
+        default 10
+
+    config STATUS_LED_GPIO
+        int "Status LED pin (-1 = none)"
+        range -1 46
+        default 15
+        help
+            Single-colour LED. GPIO15 is the blue LED of the LOLIN S2 Mini.
+            Fast blink: Wi-Fi setup. Slow blink: waiting for Matter
+            commissioning. Afterwards it is on while the radar sees someone.
+
+    config STATUS_LED_ACTIVE_HIGH
+        bool "Status LED is on when the pin is high"
+        default y
+
+    config RESET_BUTTON_GPIO
+        int "Factory reset button pin (-1 = none)"
+        range -1 46
+        default 0
+        help
+            Holding this button (active low) for 5 seconds erases Wi-Fi and
+            Matter pairing. GPIO0 is the BOOT button.
+
+endmenu
+
+menu "Wi-Fi Setup"
+
+    config WIFI_SETUP_AP_PREFIX
+        string "Setup access point name prefix"
+        default "Presence-"
+        help
+            While the device has no Wi-Fi, it opens the access point
+            "<prefix><last 4 digits of the MAC>" with a setup page at
+            http://192.168.4.1. Max 28 characters.
+
+    config WIFI_SETUP_AP_PASSWORD
+        string "Setup access point password (empty = open)"
+        default ""
+        help
+            Leave empty for an open setup network, or use 8 to 63 characters.
+
+endmenu
