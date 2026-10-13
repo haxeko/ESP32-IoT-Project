@@ -34,6 +34,7 @@ jobs:
           name: matter_plug_bl0942-esp32c3
           path: |
             ESP32-C3/matter-wifi/matter-energy-bl0942/build/matter_plug_bl0942.bin
+            ESP32-C3/matter-wifi/matter-energy-bl0942/build/matter_plug_bl0942-ota.bin
             ESP32-C3/matter-wifi/matter-energy-bl0942/build/bootloader/bootloader.bin
             ESP32-C3/matter-wifi/matter-energy-bl0942/build/partition_table/partition-table.bin
             ESP32-C3/matter-wifi/matter-energy-bl0942/build/ota_data_initial.bin

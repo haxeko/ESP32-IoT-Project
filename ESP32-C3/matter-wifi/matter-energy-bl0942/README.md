@@ -103,6 +103,32 @@ Mỗi lần build, firmware tự có phiên bản mới dạng `1.1.<yyMMddHHmm>
 
 Khi build local, phiên bản lấy theo lúc CMake cấu hình. Muốn có số mới thì chạy `idf.py fullclean` trước khi build. GitHub Actions luôn build từ đầu nên mỗi lần chạy đều có số mới. Đổi `FW_VERSION_MAJOR_MINOR` trong `CMakeLists.txt` khi muốn tăng số chính.
 
+## Cập nhật OTA
+
+Mỗi lần build tạo thêm `build/matter_plug_bl0942-ota.bin`: file OTA chuẩn Matter (app firmware kèm header VID `0xFFF1`, PID `0x8000`, số phiên bản). Số phiên bản theo giờ build nên bản mới luôn lớn hơn bản đang chạy, thiết bị mới chịu nhận.
+
+| File | Dùng khi |
+|---|---|
+| `matter_plug_bl0942-ota.bin` | Cập nhật qua Matter OTA (OTA Provider) |
+| `matter_plug_bl0942.bin` | Nạp app qua USB ở `0x20000` (`esptool.py write_flash 0x20000 ...`), giữ nguyên dữ liệu Matter và kWh |
+| `matter_plug_bl0942_merged.bin` | Nạp lần đầu / nạp lại toàn bộ ở `0x0` |
+
+Apple Home chỉ cập nhật firmware đã đăng ký trên DCL (cơ sở dữ liệu chứng nhận Matter), nên không đẩy được file OTA tự build với VID test. Dùng một OTA Provider thay thế, ví dụ `chip-tool` + `chip-ota-provider-app` của connectedhomeip:
+
+```bash
+# Máy tính chạy OTA Provider (node id 0x1234), phục vụ file OTA
+./chip-ota-provider-app -f matter_plug_bl0942-ota.bin
+
+# Ghép OTA Provider vào cùng fabric, cấp quyền cho thiết bị đọc nó
+chip-tool pairing onnetwork 0x1234 20202021
+chip-tool accesscontrol write acl '[{"fabricIndex": 1, "privilege": 5, "authMode": 2, "subjects": [112233], "targets": null}, {"fabricIndex": 1, "privilege": 3, "authMode": 2, "subjects": null, "targets": [{"cluster": 41, "endpoint": null, "deviceType": null}]}]' 0x1234 0
+
+# Yêu cầu thiết bị (node id 0x7283) tải bản mới từ Provider
+chip-tool otasoftwareupdaterequestor announce-otaprovider 0x1234 0 0 0 0x7283 0
+```
+
+Thiết bị tải xong sẽ tự khởi động lại vào bản mới. Kiểm tra mục Firmware trong Apple Home (hoặc dòng `App version` trong log) để xác nhận.
+
 ## Commissioning
 
 Firmware dùng chứng chỉ test (DAC test) của esp-matter, mã ghép nối mặc định:

@@ -36,6 +36,8 @@ CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
+# Also package build/<project>-ota.bin, the Matter OTA image (VID/PID + PROJECT_VER_NUMBER header)
+CONFIG_CHIP_OTA_IMAGE_BUILD=y
 
 # Enable HKDF in mbedtls
 CONFIG_MBEDTLS_HKDF_C=y
