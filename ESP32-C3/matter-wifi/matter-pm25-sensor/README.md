@@ -59,8 +59,8 @@ Factory reset xóa Wi-Fi và thông tin ghép nối Matter, rồi thiết bị k
 
 - **Nút factory reset trên GPIO7** (nối giữa GPIO7 và GND, firmware tự bật điện trở kéo lên):
   1. Giữ nút. Sau 1 giây màn hình sáng, hiện **ĐẶT LẠI THIẾT BỊ** và đếm ngược 4, 3, 2, 1.
-  2. Khi màn hình hiện **0 / Buông nút là đặt lại**, buông nút. Màn hình hiện *Đang đặt lại...* rồi thiết bị khởi động lại.
-  3. Buông nút trước khi đếm xong là hủy (màn hình ghi *Buông nút là dừng*). Nút bị kẹt (giữ mãi không buông) cũng không reset.
+  2. Khi màn hình hiện số **0**, buông nút. Màn hình hiện *Đang đặt lại...* rồi thiết bị khởi động lại.
+  3. Buông nút trước khi về 0 là hủy. Nút bị kẹt (giữ mãi không buông) cũng không reset.
 
   Đổi chân trong `menuconfig` → *Factory Reset Button*, đặt `-1` nếu không lắp nút. Firmware báo lỗi khi build nếu chọn trùng chân đang dùng, chân strapping (GPIO2/8/9), chân flash (GPIO11–17) hay chân USB (GPIO18/19). Chân còn trống: GPIO0, 1, 5, 6, 7.
 - **Cắm rồi rút nguồn 5 lần liên tiếp**, mỗi lần giữ điện dưới 10 giây. Ở lần cắm thứ 5, thiết bị factory reset. Cách này dùng được cả khi không lắp nút.

@@ -41,6 +41,8 @@ static const char *TAG = "local_ui";
 #define LED_BRIGHTNESS              (CONFIG_STATUS_LED_BRIGHTNESS / 100.0f)
 // Top of the factory reset title: its accents rise above the font ascent.
 #define RESET_TITLE_Y               2
+// Baseline of the countdown digits (20 px high): centered in rows 16..63.
+#define RESET_DIGIT_BASELINE        50
 
 #if CONFIG_OLED_ROTATE_180
 #define OLED_ROTATE_180             true
@@ -176,8 +178,8 @@ static bool presence_raw(int64_t now)
     return distance <= CONFIG_PRESENCE_DISTANCE_CM;
 }
 
-// Factory reset: count down while the button is held, then ask to release it.
-// The texts avoid the hỏi/ngã tone marks, which look like sắc at 12 px.
+// Factory reset: count down while the button is held (4..1), then 0 when
+// releasing it resets.
 static void draw_reset(local_ui_reset_t reset, int seconds_left)
 {
     sh1106_draw_text(64, RESET_TITLE_Y, &font_small, TEXT_ALIGN_TOP_CENTER, "ĐẶT LẠI THIẾT BỊ");
@@ -187,10 +189,8 @@ static void draw_reset(local_ui_reset_t reset, int seconds_left)
     }
     char value[8];
     snprintf(value, sizeof(value), "%d", reset == LOCAL_UI_RESET_HOLD ? seconds_left : 0);
-    sh1106_draw_text(64, 16, &font_large, TEXT_ALIGN_TOP_CENTER, value);
-    sh1106_draw_hline(8, 119, 47);
-    sh1106_draw_text(64, 50, &font_small, TEXT_ALIGN_TOP_CENTER,
-                     reset == LOCAL_UI_RESET_HOLD ? "Buông nút là dừng" : "Buông nút là đặt lại");
+    // Digits centered vertically below the title.
+    sh1106_draw_text(64, RESET_DIGIT_BASELINE - font_large.ascent, &font_large, TEXT_ALIGN_TOP_CENTER, value);
 }
 
 // Fails when the OLED does not acknowledge the frame.
