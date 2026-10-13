@@ -13,6 +13,9 @@
 #include <device_info.h>
 #include <thread_diag.h>
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
+#include <esp_openthread.h>
+#include <esp_openthread_lock.h>
+#include <openthread/thread.h>
 #include <platform/ESP32/OpenthreadLauncher.h>
 #endif
 
@@ -28,17 +31,64 @@ using namespace esp_matter::endpoint;
 using namespace chip::app::Clusters;
 
 #if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
-/* A new OTA image boots as PENDING_VERIFY; it is confirmed 60 s after it rejoins Thread with its fabrics.
- * A crash or reset before that makes the bootloader roll back to the previous image. */
+/* A new OTA image boots as PENDING_VERIFY. It is confirmed once it has been on the real Thread mesh (child/router,
+ * or leader with neighbours) with its fabrics for 60 s. An unconfirmed image is rolled back at the next reset
+ * (crash, watchdog or power cycle); nothing forces that reset. */
 static constexpr uint64_t k_ota_confirm_delay_us = 60 * 1000 * 1000ULL;
 static bool s_ota_pending_verify = false;
 static esp_timer_handle_t s_ota_confirm_timer = nullptr;
 
-static void ota_confirm_cb(void *arg)
+/* An FTD that hears nobody becomes leader of a one-node partition, and CHIP reports that as Established too.
+ * Count only a child/router role, or a leader with at least one neighbour. */
+static bool ota_on_real_mesh()
 {
+    otInstance *ot = esp_openthread_get_instance();
+    if (!ot) {
+        return false;
+    }
+    bool on_mesh = false;
+    esp_openthread_lock_acquire(portMAX_DELAY);
+    switch (otThreadGetDeviceRole(ot)) {
+    case OT_DEVICE_ROLE_CHILD:
+    case OT_DEVICE_ROLE_ROUTER:
+        on_mesh = true;
+        break;
+    case OT_DEVICE_ROLE_LEADER: {
+        otNeighborInfoIterator it = OT_NEIGHBOR_INFO_ITERATOR_INIT;
+        otNeighborInfo info;
+        on_mesh = otThreadGetNextNeighborInfo(ot, &it, &info) == OT_ERROR_NONE;
+        break;
+    }
+    default:
+        break;
+    }
+    esp_openthread_lock_release();
+    return on_mesh;
+}
+
+/* CHIP task (FabricCount() needs the CHIP lock) */
+static void ota_confirm_work(intptr_t)
+{
+    if (!s_ota_pending_verify) {
+        return;
+    }
+    if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0 || !ota_on_real_mesh()) {
+        /* Not on the real mesh yet. A later leader -> child/router merge posts no new connectivity event: poll again.
+         * Never confirm with 0 fabrics: after an OTA that means the new image lost its fabric table. */
+        esp_timer_start_once(s_ota_confirm_timer, k_ota_confirm_delay_us);
+        return;
+    }
     if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
         s_ota_pending_verify = false;
         ESP_LOGI(TAG, "OTA image confirmed");
+    }
+}
+
+/* esp_timer task: hop to the CHIP task */
+static void ota_confirm_cb(void *arg)
+{
+    if (chip::DeviceLayer::PlatformMgr().ScheduleWork(ota_confirm_work) != CHIP_NO_ERROR) {
+        esp_timer_start_once(s_ota_confirm_timer, k_ota_confirm_delay_us);
     }
 }
 
@@ -69,12 +119,16 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     case chip::DeviceLayer::DeviceEventType::kThreadConnectivityChange:
         ESP_LOGI(TAG, "Thread connectivity changed");
 #if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
-        /* Never confirm with 0 fabrics: after an OTA that means the new image lost its fabric table */
-        if (s_ota_pending_verify &&
-            event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Established &&
-            chip::Server::GetInstance().GetFabricTable().FabricCount() > 0 &&
-            !esp_timer_is_active(s_ota_confirm_timer)) {
-            esp_timer_start_once(s_ota_confirm_timer, k_ota_confirm_delay_us);
+        if (s_ota_pending_verify) {
+            if (event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Established) {
+                if (chip::Server::GetInstance().GetFabricTable().FabricCount() > 0 &&
+                    !esp_timer_is_active(s_ota_confirm_timer)) {
+                    esp_timer_start_once(s_ota_confirm_timer, k_ota_confirm_delay_us);
+                }
+            } else if (event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Lost) {
+                /* The 60 s count restarts on the next attach */
+                esp_timer_stop(s_ota_confirm_timer);
+            }
         }
 #endif
         break;
@@ -164,7 +218,11 @@ static esp_err_t app_identification_cb(identification::callback_type_t type, uin
         case EffectIdentifierEnum::kChannelChange:
             app_driver_identify_start(8);
             break;
-        default: /* kFinishEffect, kStopEffect */
+        case EffectIdentifierEnum::kFinishEffect:
+            /* Complete the blink in progress, then stop */
+            app_driver_identify_finish();
+            break;
+        default: /* kStopEffect: as soon as possible */
             app_driver_identify_stop();
             break;
         }
@@ -250,6 +308,8 @@ extern "C" void app_main()
 
     /* Apply the persisted OnOff (last state, via StartUpOnOff = null) to the relay */
     app_driver_relay_set_defaults(relay_endpoint_id);
+    /* Startup reached the relay restore: the next CPU-only reset may keep the relay level again */
+    app_driver_relay_boot_done();
 
 #if CONFIG_ENABLE_CHIP_SHELL
     esp_matter::console::diagnostics_register_commands();

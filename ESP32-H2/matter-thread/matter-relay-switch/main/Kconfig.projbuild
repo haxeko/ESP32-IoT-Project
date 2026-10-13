@@ -93,6 +93,6 @@ menu "Device Identity"
         default ""
         help
             Prepended to the serial number, e.g. prefix "RLY-" gives "RLY-744DBDA1B2C3".
-            With the MAC source the prefix can be at most 20 characters (checked at build time).
+            At most 20 characters with the MAC source, 19 with the git source (checked at build time).
 
 endmenu

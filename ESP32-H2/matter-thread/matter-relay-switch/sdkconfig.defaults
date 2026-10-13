@@ -1,7 +1,8 @@
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
 # BLE is only used for Matter commissioning (one CHIPoBLE peripheral link, no BLE pairing).
-# Peripheral-only NimBLE, from esp-matter docs "BLE Optimizations" (ESP32-H2: about -24 KB flash, +10 KB heap)
+# Peripheral-only NimBLE, adapted from esp-matter docs "BLE Optimizations" (ESP32-H2: about -24 KB flash, +10 KB heap).
+# CONFIG_BT_NIMBLE_MAX_BONDS from that list only exists with BT_NIMBLE_SECURITY_ENABLE=y, so it is left out.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT=n
@@ -10,7 +11,6 @@ CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
 CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
 CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT=n
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
-CONFIG_BT_NIMBLE_MAX_BONDS=2
 CONFIG_BT_NIMBLE_MAX_CCCDS=2
 CONFIG_BT_NIMBLE_WHITELIST_SIZE=1
 CONFIG_BT_NIMBLE_GATT_MAX_PROCS=1
@@ -46,8 +46,8 @@ CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 CONFIG_DEVICE_PRODUCT_NAME="ESP32-H2"
 CONFIG_SERIAL_NUMBER_FROM_MAC=y
 
-# Matter OTA requestor, with app rollback: a new image that crashes or never rejoins Thread with its fabrics
-# is reverted by the bootloader (confirmation in main/app_main.cpp)
+# Matter OTA requestor, with app rollback: a new image is confirmed after 60 s on the real Thread mesh with its
+# fabrics (main/app_main.cpp); an unconfirmed image is reverted by the bootloader at the next reset
 CONFIG_ENABLE_OTA_REQUESTOR=y
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # Also build a Matter OTA image (build/matter_relay_h2-ota.bin) to serve from an OTA provider

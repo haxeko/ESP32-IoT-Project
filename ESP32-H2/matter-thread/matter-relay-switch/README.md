@@ -12,7 +12,7 @@ Cấu trúc Matter giống bản ESP32-C3 Wi-Fi trong repo này (`ESP32-C3/matte
 | LED RGB WS2812 trên board: xanh lá khi relay ON, nháy xanh dương khi Identify | GPIO8 |
 
 - **Trạng thái relay sau mất điện:** relay quay về trạng thái cuối cùng (Matter `StartUpOnOff` = null). Home Assistant đổi được trong mục *Power-on behavior* (luôn tắt / luôn bật / đảo / trạng thái cuối).
-- **Khởi động lại mềm** (OTA, factory reset, crash, watchdog): relay giữ nguyên mức, không bị tắt rồi bật lại. Cắm điện lần đầu hoặc sụt áp thì relay bắt đầu từ OFF rồi mới khôi phục trạng thái cuối.
+- **Khởi động lại mềm** (OTA, factory reset, crash, watchdog): relay giữ nguyên mức, không bị tắt rồi bật lại. Nếu thiết bị khởi động lại liên tục trước khi Matter chạy xong (lỗi lặp lúc khởi động), relay về OFF để tải không bị giữ ON mà không điều khiển được. Cắm điện lần đầu hoặc sụt áp thì relay bắt đầu từ OFF rồi mới khôi phục trạng thái cuối.
 - **GPIO4 lúc cấp điện:** GPIO4 là chân MTCK của JTAG. Từ lúc cấp điện tới khi firmware chạy (~0,5 s), chip tự bật điện trở kéo lên ~45 kΩ trên chân này. Với mạch kích relay active-high (NPN/MOSFET), **phải có điện trở kéo xuống ≤10 kΩ** từ IN/cực G xuống GND, nếu không relay có thể nhảy lúc cấp điện. Module relay active-low không bị ảnh hưởng.
 - **Thông tin thiết bị** (Basic Information), xem trong Apple Home ở phụ kiện → cài đặt, hoặc dòng log `device_info: Manufacturer: ..., Model: ..., Hardware: ..., Serial number: ...` khi khởi động:
   - Nhà sản xuất: **Haxeko**
@@ -49,9 +49,9 @@ Matter over Thread cần một **Thread Border Router** trong nhà, ví dụ:
 | `DEVICE_PRODUCT_NAME` | ESP32-H2 | kiểu máy, tối đa 32 ký tự (*Device Identity*) |
 | `DEVICE_HARDWARE_VERSION_STRING` | ESP32-H2-DevKitM-1 v1.0 | phiên bản phần cứng (*Device Identity*) |
 | `SERIAL_NUMBER_SOURCE` | địa chỉ MAC | số sê-ri: địa chỉ MAC (riêng từng chip) hoặc commit git (chỉ dùng để thử, mọi mạch cùng số) (*Device Identity*) |
-| `SERIAL_NUMBER_PREFIX` | (trống) | tiền tố số sê-ri, tối đa 20 ký tự, ví dụ `RLY-` → `RLY-744DBDA1B2C3` (*Device Identity*) |
+| `SERIAL_NUMBER_PREFIX` | (trống) | tiền tố số sê-ri, tối đa 20 ký tự với nguồn MAC (19 với nguồn commit git, vì `abcdef1-dirty` dài 13), ví dụ `RLY-` → `RLY-744DBDA1B2C3` (*Device Identity*) |
 
-Hoặc sửa trực tiếp `sdkconfig.defaults` / `sdkconfig.defaults.esp32h2` rồi xoá `sdkconfig` để áp dụng lại. Độ dài các chuỗi được kiểm tra lúc build.
+Hoặc sửa trực tiếp `sdkconfig.defaults` / `sdkconfig.defaults.esp32h2` rồi xoá `sdkconfig` (và `sdkconfig.debug` nếu dùng bản debug) để áp dụng lại. Độ dài các chuỗi được kiểm tra lúc build.
 
 Khi đổi chân relay, tránh: các chân strapping (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25; trên DevKitM-1 GPIO8 là LED, GPIO9 là nút BOOT), chân flash (GPIO15–GPIO21), GPIO23/GPIO24 (UART0 console; ROM và bootloader in log trên GPIO24 mỗi lần khởi động, relay sẽ nhảy loạn) và GPIO26/GPIO27 (USB D-/D+). GPIO0/1/5/10–14/22 không có điện trở kéo lên lúc reset.
 
@@ -66,7 +66,7 @@ docker run --rm -it -v "$(git rev-parse --show-toplevel)":/repo \
   bash -c "git config --global --add safe.directory /repo && cd /repo/ESP32-H2/matter-thread/matter-relay-switch && { [ -f sdkconfig ] || idf.py set-target esp32h2; } && idf.py build"
 ```
 
-`set-target` chỉ chạy khi chưa có `sdkconfig`, nên các lần sau build nối tiếp và giữ thay đổi menuconfig. Đổi `sdkconfig.defaults` thì xoá `sdkconfig` để áp dụng.
+`set-target` chỉ chạy khi chưa có `sdkconfig`, nên các lần sau build nối tiếp và giữ thay đổi menuconfig. Đổi `sdkconfig.defaults` thì xoá `sdkconfig` (bản debug: `sdkconfig.debug`) để áp dụng.
 
 Hoặc cài local:
 
@@ -78,7 +78,7 @@ idf.py build
 idf.py -p /dev/ttyUSB0 erase-flash flash monitor
 ```
 
-`/dev/ttyUSB0` (Windows: `COMx`) là cổng USB-C **UART** của DevKit: nạp, xem log và gõ lệnh được. Cổng USB gốc (`/dev/ttyACM0`) cũng nạp được, nhưng monitor trên cổng đó chỉ xem log, không gõ lệnh được.
+`/dev/ttyUSB0` (Windows: `COMx`) là cổng USB-C **UART** của DevKit: nạp và xem log được; gõ lệnh trên cổng này chỉ được với [bản build debug](#bản-build-debug-chip-shell--openthread-cli) (bản phát hành không có shell). Cổng USB gốc (`/dev/ttyACM0`) cũng nạp được, nhưng monitor trên cổng đó chỉ xem log, không gõ lệnh được.
 
 ### File firmware có hậu tố phiên bản
 
@@ -107,7 +107,7 @@ Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 
 ### Bản build debug (CHIP shell + OpenThread CLI)
 
-Bản phát hành tắt CHIP shell và OpenThread CLI để tiết kiệm ~60 KB flash; log `thread_diag` đã đủ để chẩn đoán. Khi cần gõ lệnh trên cổng UART, build bản debug ở thư mục riêng:
+Bản phát hành tắt CHIP shell và OpenThread CLI để tiết kiệm ~95 KB flash (bản debug ~1,52 MB, vẫn vừa phân vùng OTA); log `thread_diag` đã đủ để chẩn đoán. Khi cần gõ lệnh trên cổng UART, build bản debug ở thư mục riêng:
 
 ```bash
 idf.py -B build-debug -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.debug \
@@ -115,10 +115,12 @@ idf.py -B build-debug -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.debug \
 idf.py -B build-debug -p /dev/ttyUSB0 flash monitor
 ```
 
+Sau khi sửa `sdkconfig.defaults*` (kể cả `sdkconfig.defaults.debug`), xoá `sdkconfig.debug` rồi build lại; nếu không, các giá trị cũ trong `sdkconfig.debug` vẫn được giữ mà không có cảnh báo.
+
 ## OTA
 
 - Mỗi bản build tạo thêm `build/matter_relay_h2-<phiên bản>-ota.bin` (định dạng Matter OTA) để đưa vào một OTA provider (ví dụ `chip-ota-provider-app`).
-- **Rollback:** image mới khởi động ở trạng thái chờ xác nhận. Firmware tự xác nhận 60 s sau khi vào lại mạng Thread mà vẫn còn ghép nối. Nếu image mới crash hoặc khởi động lại trước đó, bootloader tự quay về bản cũ.
+- **Rollback:** image mới khởi động ở trạng thái chờ xác nhận. Firmware chỉ xác nhận khi đã kết nối Thread liên tục 60 s, đang ở trong mạng Thread thật (làm child/router, hoặc leader có thiết bị lân cận; tự lập mạng một mình không tính) và vẫn còn các ghép nối. Nếu image mới crash hoặc khởi động lại trước khi được xác nhận, bootloader tự quay về bản cũ. Image không vào được mạng thì không bao giờ được xác nhận: rút điện cắm lại là quay về bản cũ.
 
 ## Phiên bản firmware
 

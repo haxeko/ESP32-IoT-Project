@@ -1,3 +1,4 @@
+#include <esp_attr.h>
 #include <esp_log.h>
 #include <esp_rom_sys.h>
 #include <driver/gpio.h>
@@ -29,15 +30,21 @@ static constexpr gpio_num_t k_relay_gpio = (gpio_num_t)CONFIG_RELAY_GPIO;
 
 #if CONFIG_STATUS_LED_ENABLE
 static led_driver_handle_t s_led_handle = NULL;
+/* CHIP task only (Identify callbacks, attribute updates) */
+static bool s_identifying = false;
 #endif
 
 /* Written in the esp_timer (button) task, read in the CHIP and factory reset tasks */
 static volatile bool s_factory_reset_armed = false;
 static volatile bool s_factory_reset_started = false;
 
-/* CHIP task only (Identify callbacks, attribute updates) */
+/* CHIP task only (attribute updates; read by Identify to restore the LED) */
 static bool s_relay_on = false;
-static bool s_identifying = false;
+
+/* Survives CPU-only resets: set at relay init, cleared once Matter has applied the stored OnOff state
+ * (app_driver_relay_boot_done). Still set at the next boot = the previous boot crashed during startup. */
+static RTC_NOINIT_ATTR uint32_t s_boot_pending;
+static constexpr uint32_t k_boot_pending_magic = 0x52454C59; /* "RELY" */
 
 /* Status LED colors (hue): relay ON = green, Identify = blue, factory reset = red */
 static constexpr uint16_t k_hue_relay_on = 120;
@@ -53,6 +60,21 @@ static void app_driver_led_set(bool on, uint16_t hue)
     }
 #endif
 }
+
+#if CONFIG_STATUS_LED_ENABLE
+/* CHIP task only. armed_cb (esp_timer task, priority 22) can run during the write, and its own red write can be
+ * rejected while our refresh is in flight. Re-check afterwards so the solid red "release now" cue is the last write. */
+static void app_driver_led_set_unless_reset(bool on, uint16_t hue)
+{
+    if (s_factory_reset_armed) {
+        return;
+    }
+    app_driver_led_set(on, hue);
+    if (s_factory_reset_armed) {
+        app_driver_led_set(true, k_hue_reset);
+    }
+}
+#endif
 
 static esp_err_t app_driver_relay_set_power(bool on)
 {
@@ -129,7 +151,9 @@ static void app_driver_button_factory_reset_release_cb(void *arg, void *data)
 }
 
 #if CONFIG_STATUS_LED_ENABLE
-/* Identify: blue blinks on the CHIP SystemLayer timer, so every WS2812 write happens on the CHIP task */
+/* Identify: blue blinks on the CHIP SystemLayer timer, so Identify and relay LED writes are serialised on the CHIP
+ * task. The factory reset path (esp_timer task, factory_reset task) also writes the LED; the CHIP-side writes
+ * re-check s_factory_reset_armed afterwards. */
 static bool s_blink_phase = false;
 static uint16_t s_blinks_left = 0; /* 0 = blink until STOP */
 
@@ -139,7 +163,7 @@ static void app_driver_identify_blink_cb(chip::System::Layer *, void *)
         return;
     }
     s_blink_phase = !s_blink_phase;
-    app_driver_led_set(s_blink_phase, k_hue_identify);
+    app_driver_led_set_unless_reset(s_blink_phase, k_hue_identify);
     if (!s_blink_phase && s_blinks_left && --s_blinks_left == 0) {
         app_driver_identify_stop();
         return;
@@ -162,14 +186,24 @@ void app_driver_identify_stop()
     chip::DeviceLayer::SystemLayer().CancelTimer(app_driver_identify_blink_cb, nullptr);
     if (s_identifying) {
         s_identifying = false;
-        if (!s_factory_reset_armed) {
-            app_driver_led_set(s_relay_on, k_hue_relay_on);
-        }
+        app_driver_led_set_unless_reset(s_relay_on, k_hue_relay_on);
+    }
+}
+
+void app_driver_identify_finish()
+{
+    if (s_identifying && s_blink_phase && !s_factory_reset_armed) {
+        /* blink_cb stops at the end of this ON half (<= 500 ms) */
+        s_blinks_left = 1;
+    } else {
+        /* Between blinks (LED already dark) or nothing running */
+        app_driver_identify_stop();
     }
 }
 #else
 void app_driver_identify_start(uint16_t blinks) {}
 void app_driver_identify_stop() {}
+void app_driver_identify_finish() {}
 #endif // CONFIG_STATUS_LED_ENABLE
 
 esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle, uint16_t endpoint_id, uint32_t cluster_id,
@@ -194,13 +228,23 @@ esp_err_t app_driver_relay_set_defaults(uint16_t endpoint_id)
     return app_driver_relay_set_power(val.val.b);
 }
 
+void app_driver_relay_boot_done()
+{
+    s_boot_pending = 0;
+}
+
 app_driver_handle_t app_driver_relay_init()
 {
     /* esp_restart() and panics (OTA apply, factory reset, crash, watchdog) reset only the CPU: GPIO_OUT,
      * GPIO_ENABLE and IO_MUX survive ROM and bootloader. Keep the relay level then, instead of switching the
-     * load OFF until Matter restores it. Power-on, brownout and other resets start from OFF. */
+     * load OFF until Matter restores it. Power-on, brownout and other resets start from OFF.
+     * A reset before the previous boot reached app_driver_relay_boot_done() (crash/abort/watchdog loop during
+     * startup) also falls back to OFF, instead of holding the load ON with no way to control it. */
     const uint32_t mask = 1UL << k_relay_gpio;
-    const bool keep = esp_rom_get_reset_reason(0) == RESET_REASON_CPU0_SW && (REG_READ(GPIO_ENABLE_REG) & mask);
+    const bool prev_boot_done = s_boot_pending != k_boot_pending_magic;
+    s_boot_pending = k_boot_pending_magic;
+    const bool keep = prev_boot_done && esp_rom_get_reset_reason(0) == RESET_REASON_CPU0_SW &&
+                      (REG_READ(GPIO_ENABLE_REG) & mask);
     const bool on = keep && (((REG_READ(GPIO_OUT_REG) & mask) ? 1 : 0) == CONFIG_RELAY_ACTIVE_LEVEL);
     if (!keep) {
         /* Latch the OFF level before switching the pad to output, so the relay never clicks on at boot.
