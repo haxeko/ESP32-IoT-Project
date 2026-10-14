@@ -33,10 +33,19 @@
 
 #include <atomic>
 
+#include "captive_dns.h"
 #include "diag.h"
+#include "portal_form.h"
 #include "wifi_setup.h"
 
 static const char *TAG = "wifi_setup";
+
+// The AP name is "<prefix>XXXX" (32 bytes at most) and a WPA2 password has
+// 8..63 characters: a wrong value would make esp_wifi_set_config() fail.
+static_assert(sizeof(CONFIG_WIFI_SETUP_AP_PREFIX) - 1 + 4 <= 32, "Setup AP name prefix: at most 28 characters");
+static_assert(sizeof(CONFIG_WIFI_SETUP_AP_PASSWORD) == 1 ||
+                  (sizeof(CONFIG_WIFI_SETUP_AP_PASSWORD) - 1 >= 8 && sizeof(CONFIG_WIFI_SETUP_AP_PASSWORD) - 1 <= 63),
+              "Setup AP password: empty (open network) or 8..63 characters");
 
 static constexpr int kMaxScanResults = 20;
 static constexpr int kMaxConnectRetries = 3;
@@ -52,8 +61,10 @@ static int s_retries;
 static esp_timer_handle_t s_timeout_timer;
 static esp_timer_handle_t s_restart_timer;
 static esp_netif_t *s_ap_netif;
+static esp_netif_ip_info_t s_ap_ip;
 
-static wifi_ap_record_t s_scan[kMaxScanResults];
+// Scan results, allocated by the setup page only (not kept in RAM in Matter mode).
+static wifi_ap_record_t *s_scan;
 static uint16_t s_scan_count;
 
 bool wifi_setup_is_provisioned(void)
@@ -97,8 +108,15 @@ void wifi_setup_limit_tx_power(void)
 
 static void scan_networks()
 {
+    if (s_scan == NULL) {
+        s_scan = (wifi_ap_record_t *)calloc(kMaxScanResults, sizeof(wifi_ap_record_t));
+        if (s_scan == NULL) {
+            ESP_LOGE(TAG, "No memory for the scan results");
+            return;
+        }
+    }
+    s_scan_count = 0;
     if (esp_wifi_scan_start(NULL, true) != ESP_OK) {
-        s_scan_count = 0;
         return;
     }
     uint16_t count = kMaxScanResults;
@@ -192,7 +210,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
 
 static void dns_task(void *arg)
 {
-    const uint32_t ap_ip = (uint32_t)(uintptr_t)arg; // network byte order
+    uint8_t ip[4];
+    memcpy(ip, &s_ap_ip.ip.addr, sizeof(ip)); // lwIP keeps the address in network byte order
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     struct sockaddr_in addr = {};
@@ -212,38 +231,16 @@ static void dns_task(void *arg)
     while (true) {
         struct sockaddr_in from;
         socklen_t from_len = sizeof(from);
-        int len = recvfrom(sock, buf, sizeof(buf) - 16, 0, (struct sockaddr *)&from, &from_len);
-        // Standard query (QR=0, OPCODE=0) with exactly one question.
-        if (len < 12 || (buf[2] & 0xF8) != 0 || buf[4] != 0 || buf[5] != 1) {
+        const int len = recvfrom(sock, buf, sizeof(buf) - CAPTIVE_DNS_ANSWER_LEN, 0, (struct sockaddr *)&from,
+                                 &from_len);
+        if (len < 0) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // do not spin on a socket error
             continue;
         }
-        int pos = 12;
-        while (pos < len && buf[pos] != 0) {
-            pos += buf[pos] + 1;
+        const size_t reply_len = captive_dns_reply(buf, (size_t)len, sizeof(buf), ip);
+        if (reply_len > 0) {
+            sendto(sock, buf, reply_len, 0, (struct sockaddr *)&from, from_len);
         }
-        pos += 5; // terminating zero, QTYPE, QCLASS
-        if (pos > len) {
-            continue;
-        }
-        const uint16_t qtype = (buf[pos - 4] << 8) | buf[pos - 3];
-
-        buf[2] = 0x84 | (buf[2] & 0x01); // response, authoritative, keep RD
-        buf[3] = 0x80;                   // recursion available, no error
-        memset(&buf[6], 0, 6);           // no answers / authority / additional yet
-        len = pos;                       // drop any additional records (EDNS)
-        if (qtype == 1) {                // A
-            const uint8_t answer[] = {
-                0xC0, 0x0C,             // name: pointer to the question
-                0x00, 0x01, 0x00, 0x01, // type A, class IN
-                0x00, 0x00, 0x00, 0x3C, // TTL 60 s
-                0x00, 0x04,             // address length
-            };
-            memcpy(&buf[len], answer, sizeof(answer));
-            memcpy(&buf[len + sizeof(answer)], &ap_ip, 4);
-            len += sizeof(answer) + 4;
-            buf[7] = 1;
-        }
-        sendto(sock, buf, len, 0, (struct sockaddr *)&from, from_len);
     }
 }
 
@@ -381,26 +378,22 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     return send_status(req);
 }
 
-// Decodes application/x-www-form-urlencoded text in place.
-static void url_decode(char *s)
+static esp_err_t redirect_to_status(httpd_req_t *req)
 {
-    char *out = s;
-    for (char *p = s; *p; p++) {
-        if (*p == '+') {
-            *out++ = ' ';
-        } else if (*p == '%' && p[1] && p[2]) {
-            char hex[3] = { p[1], p[2], 0 };
-            *out++ = (char)strtol(hex, NULL, 16);
-            p += 2;
-        } else {
-            *out++ = *p;
-        }
-    }
-    *out = 0;
+    httpd_resp_set_status(req, "303 See Other");
+    httpd_resp_set_hdr(req, "Location", "/status");
+    return httpd_resp_send(req, NULL, 0);
 }
 
 static esp_err_t connect_post_handler(httpd_req_t *req)
 {
+    // One attempt at a time: a second form sent while a network is being
+    // tested (or was just saved) must not change the network being saved.
+    const ConnectState state = s_state;
+    if (state == ConnectState::kConnecting || state == ConnectState::kConnected) {
+        return redirect_to_status(req);
+    }
+
     char body[kMaxFormSize + 1];
     if (req->content_len > kMaxFormSize) {
         return send_form(req, "Dữ liệu quá dài.");
@@ -420,20 +413,20 @@ static esp_err_t connect_post_handler(httpd_req_t *req)
     char pass[3 * 64 + 1] = {};
     httpd_query_key_value(body, "ssid", ssid, sizeof(ssid));
     httpd_query_key_value(body, "pass", pass, sizeof(pass));
-    url_decode(ssid);
-    url_decode(pass);
-
-    if (ssid[0] == 0 || strlen(ssid) > 32) {
-        return send_form(req, "Tên mạng không hợp lệ.");
+    if (!form_url_decode(ssid) || !form_url_decode(pass)) {
+        return send_form(req, "Tên mạng hoặc mật khẩu chứa ký tự không hợp lệ.");
     }
-    if (strlen(pass) > 64 || (pass[0] && strlen(pass) < 8)) {
-        return send_form(req, "Mật khẩu Wi-Fi phải từ 8 đến 64 ký tự (để trống nếu mạng không có mật khẩu).");
+
+    switch (wifi_creds_check(ssid, pass)) {
+    case WIFI_CREDS_BAD_SSID:
+        return send_form(req, "Tên mạng không hợp lệ.");
+    case WIFI_CREDS_BAD_PASSWORD:
+        return send_form(req, "Mật khẩu Wi-Fi phải từ 8 đến 63 ký tự (để trống nếu mạng không có mật khẩu).");
+    case WIFI_CREDS_OK:
+        break;
     }
     start_connect(ssid, pass);
-
-    httpd_resp_set_status(req, "303 See Other");
-    httpd_resp_set_hdr(req, "Location", "/status");
-    return httpd_resp_send(req, NULL, 0);
+    return redirect_to_status(req);
 }
 
 // Phones probe fixed URLs (captive.apple.com/hotspot-detect.html,
@@ -441,8 +434,10 @@ static esp_err_t connect_post_handler(httpd_req_t *req)
 // URL to the form makes them open it as a "sign in to network" page.
 static esp_err_t redirect_handler(httpd_req_t *req, httpd_err_code_t err)
 {
+    static char s_location[24]; // "http://255.255.255.255/"
+    snprintf(s_location, sizeof(s_location), "http://" IPSTR "/", IP2STR(&s_ap_ip.ip));
     httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    httpd_resp_set_hdr(req, "Location", s_location);
     return httpd_resp_send(req, NULL, 0);
 }
 
@@ -469,8 +464,9 @@ static void start_web_server()
 // Phones need a DNS server from DHCP to detect the captive portal (and some
 // refuse a network without one). Hand out the AP itself, plus the portal URL
 // (DHCP option 114) for phones that support it.
-static void configure_dhcp_server(const esp_netif_ip_info_t &ip_info)
+static void configure_dhcp_server()
 {
+    const esp_netif_ip_info_t &ip_info = s_ap_ip;
     static char s_portal_uri[32]; // the DHCP server keeps the pointer
     snprintf(s_portal_uri, sizeof(s_portal_uri), "http://" IPSTR "/", IP2STR(&ip_info.ip));
 
@@ -520,10 +516,12 @@ void wifi_setup_run_portal(void)
 
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    // A 32-byte SSID has no terminating zero in wifi_config_t: build it apart.
+    char ssid[sizeof(((wifi_ap_config_t *)0)->ssid) + 1];
+    snprintf(ssid, sizeof(ssid), "%s%02X%02X", CONFIG_WIFI_SETUP_AP_PREFIX, mac[4], mac[5]);
     wifi_config_t ap = {};
-    const int ssid_len = snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "%s%02X%02X", CONFIG_WIFI_SETUP_AP_PREFIX,
-                                  mac[4], mac[5]);
-    ap.ap.ssid_len = (uint8_t)ssid_len;
+    ap.ap.ssid_len = (uint8_t)strlen(ssid);
+    memcpy(ap.ap.ssid, ssid, ap.ap.ssid_len);
     ap.ap.channel = 1;
     ap.ap.max_connection = 4;
     strlcpy((char *)ap.ap.password, CONFIG_WIFI_SETUP_AP_PASSWORD, sizeof(ap.ap.password));
@@ -542,14 +540,13 @@ void wifi_setup_run_portal(void)
     esp_wifi_set_ps(WIFI_PS_NONE);
     wifi_setup_limit_tx_power();
 
-    esp_netif_ip_info_t ip_info = {};
-    esp_netif_get_ip_info(s_ap_netif, &ip_info);
-    configure_dhcp_server(ip_info);
+    esp_netif_get_ip_info(s_ap_netif, &s_ap_ip);
+    configure_dhcp_server();
 
     start_web_server();
-    xTaskCreate(dns_task, "dns", 4096, (void *)(uintptr_t)ip_info.ip.addr, 5, NULL);
+    xTaskCreate(dns_task, "dns", 4096, NULL, 5, NULL);
 
-    ESP_LOGW(TAG, "Wi-Fi setup: join \"%s\" and open http://" IPSTR, (const char *)ap.ap.ssid, IP2STR(&ip_info.ip));
+    ESP_LOGW(TAG, "Wi-Fi setup: join \"%s\" and open http://" IPSTR, ssid, IP2STR(&s_ap_ip.ip));
 
     while (true) {
         vTaskDelay(portMAX_DELAY);

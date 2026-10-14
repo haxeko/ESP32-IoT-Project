@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 
 // Keeps the reasons of the last resets in NVS and reads the summary of the
@@ -25,3 +26,9 @@ int diag_last_reset_blinks(void);
 
 // Human-readable report: boot count, last reset reasons and last crash.
 void diag_get_report(char *buf, size_t size);
+
+// Logs the free internal RAM (now, lowest so far, largest block) and PSRAM.
+void diag_log_heap(void);
+
+// Calls diag_log_heap() every period_s seconds.
+void diag_start_heap_log(unsigned period_s);

@@ -59,10 +59,13 @@ esp_err_t status_led_init(int gpio, bool active_high)
     if (gpio < 0) {
         return ESP_OK;
     }
+    gpio_reset_pin((gpio_num_t)gpio);
+    esp_err_t err = gpio_set_direction((gpio_num_t)gpio, GPIO_MODE_OUTPUT);
+    if (err != ESP_OK) {
+        return err; // the LED stays off; the rest of the device keeps working
+    }
     s_gpio = gpio;
     s_active_high = active_high;
-    gpio_reset_pin((gpio_num_t)gpio);
-    ESP_ERROR_CHECK(gpio_set_direction((gpio_num_t)gpio, GPIO_MODE_OUTPUT));
     led_write(false);
 
     static esp_timer_handle_t timer;
@@ -70,7 +73,7 @@ esp_err_t status_led_init(int gpio, bool active_high)
         .callback = tick_cb,
         .name = "status_led",
     };
-    esp_err_t err = esp_timer_create(&args, &timer);
+    err = esp_timer_create(&args, &timer);
     if (err == ESP_OK) {
         err = esp_timer_start_periodic(timer, kTickUs);
     }

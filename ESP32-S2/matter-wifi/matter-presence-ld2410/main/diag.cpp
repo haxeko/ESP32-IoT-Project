@@ -7,8 +7,10 @@
 */
 
 #include <esp_core_dump.h>
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 #include <nvs.h>
 #include <stdio.h>
 #include <string.h>
@@ -63,7 +65,8 @@ void diag_record_boot(void)
         s_resets[0] = reason;
     }
 
-    static esp_core_dump_summary_t summary;
+    // Runs once at boot on the main task (8 KB stack): no need to keep these buffers in RAM.
+    esp_core_dump_summary_t summary;
     if (esp_core_dump_image_check() == ESP_OK && esp_core_dump_get_summary(&summary) == ESP_OK) {
         int n = snprintf(s_crash, sizeof(s_crash), "task %s, PC 0x%08lx, EXCCAUSE %lu, backtrace",
                          summary.exc_task, (unsigned long)summary.exc_pc,
@@ -73,7 +76,7 @@ void diag_record_boot(void)
         }
     }
 
-    static char report[512];
+    char report[512];
     diag_get_report(report, sizeof(report));
     if (reason == ESP_RST_PANIC || reason == ESP_RST_BROWNOUT || reason == ESP_RST_INT_WDT ||
         reason == ESP_RST_TASK_WDT || reason == ESP_RST_WDT) {
@@ -108,5 +111,29 @@ void diag_get_report(char *buf, size_t size)
     }
     if (s_crash[0] && n > 0 && (size_t)n < size) {
         snprintf(&buf[n], size - n, ". Last crash: %s", s_crash);
+    }
+}
+
+void diag_log_heap(void)
+{
+    ESP_LOGI(TAG, "Heap: internal free %u (lowest %u, largest block %u), PSRAM free %u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+}
+
+void diag_start_heap_log(unsigned period_s)
+{
+    static esp_timer_handle_t s_timer;
+    if (s_timer != NULL || period_s == 0) {
+        return;
+    }
+    const esp_timer_create_args_t args = {
+        .callback = [](void *) { diag_log_heap(); },
+        .name = "diag_heap",
+    };
+    if (esp_timer_create(&args, &s_timer) == ESP_OK) {
+        esp_timer_start_periodic(s_timer, (uint64_t)period_s * 1000 * 1000);
     }
 }

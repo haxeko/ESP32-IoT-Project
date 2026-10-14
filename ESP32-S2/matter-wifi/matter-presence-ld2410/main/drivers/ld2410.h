@@ -12,13 +12,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "ld2410_parser.h"
+
 // Latest target report from the HLK-LD2410 24 GHz presence radar.
 typedef struct {
-    bool moving;            // a moving target is detected
-    bool still;             // a still (stationary) target is detected
-    uint16_t moving_cm;     // distance of the moving target
-    uint16_t still_cm;      // distance of the still target
-    uint16_t detection_cm;  // "detection distance" reported by the radar
+    ld2410_report_t report;
     int64_t timestamp_ms;   // esp_timer time of the last valid frame
 } ld2410_target_t;
 
