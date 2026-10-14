@@ -5,6 +5,7 @@ Firmware ESP-IDF + [esp-matter](https://github.com/espressif/esp-matter) cho **E
 - **4 relay**: 3 relay chọn số (1 / 2 / 3) và 1 relay bật/tắt động cơ trục xoay (đảo gió).
 - **Thanh tốc độ chỉ có 3 vị trí khi bật: 33 %, 66 %, 100 %** (tương ứng số 1, 2, 3).
 - **Nút đảo gió bên dưới thanh tốc độ** (giao diện quạt kiểu *Fan v2* của Apple Home) điều khiển relay trục xoay.
+- **Gió tự nhiên**: công tắc **Tự động (Auto)** cạnh thanh tốc độ trong Apple Home (preset *natural_wind* / *auto* trong Home Assistant). Quạt tự đổi số 1 ↔ 2 ↔ 3 ngẫu nhiên như gió ngoài trời.
 - **Mắt thu hồng ngoại**: dùng lại remote gốc của quạt (học lệnh ngay trên thiết bị, nhận mọi loại remote).
 - Nút BOOT trên mạch: bật/tắt, ghép nối, học remote, factory reset. Thêm được nút số và nút đảo gió ngoài.
 
@@ -36,9 +37,27 @@ Firmware ESP-IDF + [esp-matter](https://github.com/espressif/esp-matter) cho **E
 
   Nút hướng quay vốn để đảo chiều gió của quạt trần, ở đây được **gán vào bật/tắt trục xoay**: chiều *Reverse* = đang đảo gió, *Forward* = không đảo gió. Tuỳ phiên bản iOS mà Apple Home hiện một hoặc cả hai nút; nhấn nút nào cũng được. Muốn chỉ còn một nút, tắt `FAN_MATTER_ROCKING` hoặc `FAN_MATTER_AIRFLOW_DIRECTION` trong menuconfig, nạp lại rồi xoá và thêm lại quạt trong ứng dụng.
 
+### Gió tự nhiên
+
+Khi bật gió tự nhiên, quạt tự chuyển qua lại giữa số 1, 2, 3 theo nhịp ngẫu nhiên: phần lớn thời gian ở số 1–2 (gió nhẹ), thỉnh thoảng lên số 3 một lúc ngắn (cơn gió mạnh). Mỗi số giữ ngẫu nhiên **8–30 s** (cơn gió số 3 tối đa 19 s), chỉnh được bằng `FAN_NATURAL_MIN_S` / `FAN_NATURAL_MAX_S`. Đổi số vẫn theo quy tắc ngắt trước, chờ 200 ms rồi mới đóng, như khi đổi số bằng tay. Đảo gió vẫn chạy độc lập.
+
+| Bật / tắt gió tự nhiên bằng | Bật | Tắt (quạt vẫn chạy ở số thường) |
+|---|---|---|
+| **Apple Home** | công tắc **Tự động** (*Auto*) cạnh thanh tốc độ | tắt công tắc *Tự động*, hoặc kéo thanh tốc độ |
+| **Home Assistant** | preset `natural_wind` hoặc `auto` | preset `low` / `medium` / `high`, hoặc kéo thanh tốc độ |
+| Remote | nút đã học ở bước 8 (**NATURAL**: nút *Nhịp gió*, *Tự nhiên*, *Mode*...) | bấm lại nút đó, hoặc nút số |
+| Nút ngoài (tuỳ chọn) | `BUTTON_NATURAL_GPIO` | nhấn lại |
+
+- Bật gió tự nhiên khi quạt đang tắt thì quạt bật lên luôn.
+- **Chọn số bất kỳ** (kéo thanh tốc độ, nút số trên remote, nút số ngoài, lệnh Step) là chuyển về chạy **số thường** ở số đã chọn.
+- **Tắt quạt** (ứng dụng, remote, nút) vẫn **nhớ** gió tự nhiên: bật lại bằng nút nguồn remote hoặc nút BOOT thì chạy gió tự nhiên tiếp. Ứng dụng gửi lệnh bật kiểu "On" / chọn tốc độ thì quạt về số thường; bấm *Tự động* để chạy gió tự nhiên lại.
+- Gió tự nhiên cũng được nhớ khi mất điện / khởi động lại.
+- Trên Matter, gió tự nhiên là **FanMode Auto** (Apple Home hiện công tắc *Tự động*, các thuộc tính `PercentSetting`/`SpeedSetting` là null) và **WindSetting = gió tự nhiên** (Home Assistant hiện preset *natural_wind*). Apple Home không hiển thị Wind. `PercentCurrent`/`SpeedCurrent` luôn cho biết số đang chạy thật lúc đó. Preset *sleep_wind* mà Home Assistant luôn liệt kê kèm thì thiết bị không hỗ trợ (báo lỗi khi chọn).
+- ⚠️ **Tuổi thọ relay**: với 8–30 s quạt đổi số khoảng 200 lần một giờ (mỗi relay số đóng cắt khoảng 70–100 lần một giờ). Relay 10 A tải motor quạt nhỏ thường chịu được hàng trăm nghìn lần, nhưng nếu bật gió tự nhiên nhiều giờ mỗi ngày nên tăng thời gian giữ số (ví dụ 20–60 s) hoặc dùng relay tốt hơn. Không cần chức năng này thì tắt `FAN_MATTER_AUTO_NATURAL` và `FAN_MATTER_WIND_NATURAL` (khi đó gió tự nhiên chỉ còn ở remote và nút ngoài).
+
 ### Mất điện, khởi động lại
 
-- **Mất điện rồi có điện lại**: quạt quay về trạng thái cuối (số và đảo gió), chỉ chậm khoảng 0,5 s sau khi cấp điện, không cần chờ Wi-Fi. Đổi được thành "luôn tắt khi có điện lại" trong menuconfig (`FAN_POWER_ON_STATE`); khi đó số và đảo gió vẫn được nhớ cho lần bật tiếp theo.
+- **Mất điện rồi có điện lại**: quạt quay về trạng thái cuối (số, đảo gió và gió tự nhiên), chỉ chậm khoảng 0,5 s sau khi cấp điện, không cần chờ Wi-Fi. Đổi được thành "luôn tắt khi có điện lại" trong menuconfig (`FAN_POWER_ON_STATE`); khi đó số và đảo gió vẫn được nhớ cho lần bật tiếp theo.
 - **Khởi động lại mềm** (OTA, factory reset, crash, watchdog): luôn khôi phục trạng thái cuối. Riêng khi thiết bị bị crash, watchdog hoặc sụt áp trong vòng **30 s** sau khi khởi động, lần khởi động sau quạt ở trạng thái **tắt** (và lưu luôn trạng thái tắt), để một lỗi lặp lúc khởi động (ví dụ nguồn yếu sụt áp mỗi khi relay đóng) không bật tắt motor liên tục.
 - Trạng thái quạt được ghi vào flash khi đã đứng yên **3 giây**, và ngay trước mỗi lần khởi động lại mềm (OTA, factory reset). Rút điện trong 3 giây sau khi vừa đổi thì lần đổi đó không được nhớ.
 
@@ -60,7 +79,7 @@ Firmware ESP-IDF + [esp-matter](https://github.com/espressif/esp-matter) cho **E
 | Mắt hồng ngoại, chân OUT | **GPIO10** | VCC 3,3 V, GND |
 | Nút BOOT | GPIO9 | có sẵn trên mạch |
 | LED trạng thái | GPIO8 | SuperMini: LED xanh dương (sáng ở mức thấp). DevKitM-1: WS2812 |
-| Nút số / nút đảo gió ngoài (tuỳ chọn) | ví dụ GPIO0 / GPIO1 | nối xuống GND, bật trong menuconfig |
+| Nút số / đảo gió / gió tự nhiên ngoài (tuỳ chọn) | ví dụ GPIO0 / GPIO1 / GPIO6 | nối xuống GND, bật trong menuconfig |
 
 - Các chân relay được chọn là chân **không có điện trở kéo lên lúc reset** (GPIO0, 1, 3, 4, 5, 7, 10 trên ESP32-C3): từ lúc cấp điện tới khi firmware chạy (~0,3 s) chân relay để hở, mạch kích relay active-high không bị kích nhầm. Không dùng cho relay: GPIO2/8/9 (chân strapping), GPIO6 (có kéo lên lúc reset), GPIO11–17 (flash), GPIO18/19 (USB), GPIO20/21 (UART0, ROM in log ra GPIO21 mỗi lần khởi động). Firmware báo lỗi khi build nếu hai chức năng dùng trùng chân hoặc dùng chân flash/USB.
 - **Mức kích relay**: mặc định `FAN_RELAY_ACTIVE_LEVEL = 1` (active-high, mạch kích transistor/MOSFET). **Module relay opto 4 kênh phổ biến thường là active-low**: đặt `FAN_RELAY_ACTIVE_LEVEL = 0`. Đặt sai thì lúc khởi động **cả 4 relay cùng đóng**: luôn thử với nguồn USB, chưa nối motor, nghe/nhìn đèn relay trước (tắt hết khi quạt tắt, chỉ một relay số đóng khi quạt chạy).
@@ -114,21 +133,22 @@ Remote mỗi hãng một mã, nên firmware **học** các nút của remote nga
 | 5 | 5 lần | **Số 1**, nếu remote có | chạy số 1 |
 | 6 | 6 lần | **Số 2**, nếu remote có | chạy số 2 |
 | 7 | 7 lần | **Số 3**, nếu remote có | chạy số 3 |
+| 8 | 8 lần | **Gió tự nhiên** (*Nhịp gió*, *Tự nhiên*, *Rhythm*, *Nature*, *Mode*), nếu remote có | bật/tắt [gió tự nhiên](#gió-tự-nhiên) |
 
 - **Nhấn BOOT 1 lần**: bỏ qua bước hiện tại (giữ mã đã học trước đó cho nút này, nếu có).
 - **Nhấn BOOT 2 lần**: kết thúc và lưu ngay (remote thông thường chỉ có 3 nút đầu: học xong bước 3 thì nhấn đúp).
 - Không bấm gì trong **30 giây** (`IR_LEARN_TIMEOUT_S`): tự kết thúc và lưu những nút đã học.
 - Một nút remote chỉ làm một việc: học lại nút đó cho chức năng khác thì nó bị bỏ khỏi chức năng cũ.
-- Học lại lúc nào cũng được (nhấn BOOT 3 lần); các bước bỏ qua giữ nguyên mã cũ. Mã đã học được lưu trong flash, **factory reset không xoá** (muốn xoá hết: `idf.py erase-flash`).
+- Học lại lúc nào cũng được (nhấn BOOT 3 lần); các bước bỏ qua giữ nguyên mã cũ (cập nhật từ bản trước chưa có bước 8: mã đã học vẫn còn, chỉ cần học thêm bước 8). Mã đã học được lưu trong flash, **factory reset không xoá** (muốn xoá hết: `idf.py erase-flash`).
 
 Trong lúc học, remote không điều khiển quạt. Log in từng bước, ví dụ:
 
 ```
-I ir_rx: IR learning 1/7: press the POWER button on the remote (not learned yet; click: skip, double click: finish)
+I ir_rx: IR learning 1/8: press the POWER button on the remote (not learned yet; click: skip, double click: finish)
 I ir_rx: IR NEC address 0x00 command 0x45 (0xBA45FF00)
 I ir_rx: Learned POWER
 ...
-I ir_rx: IR learning finished (double click): 3 of 7 remote buttons learned
+I ir_rx: IR learning finished (double click): 3 of 8 remote buttons learned
 ```
 
 ### Remote nào dùng được
@@ -149,7 +169,7 @@ I ir_rx: IR learning finished (double click): 3 of 7 remote buttons learned
 | Giữ 5 s (LED chuyển đỏ) rồi thả | LED nháy đỏ, factory reset: xoá Wi-Fi và ghép nối Matter (giữ trạng thái quạt và mã remote) |
 
 - Có thể nối thêm một nút nhấn ra ngoài vỏ quạt song song với nút BOOT (GPIO9 xuống GND). Đừng giữ nút này lúc cấp điện: chip sẽ vào chế độ nạp firmware.
-- **Nút số** (`BUTTON_SPEED_GPIO`) và **nút đảo gió** (`BUTTON_SWING_GPIO`) ngoài, tuỳ chọn: mỗi lần nhấn chuyển số (quạt tắt thì bật lên) / bật-tắt đảo gió.
+- **Nút số** (`BUTTON_SPEED_GPIO`), **nút đảo gió** (`BUTTON_SWING_GPIO`) và **nút gió tự nhiên** (`BUTTON_NATURAL_GPIO`) ngoài, tuỳ chọn: mỗi lần nhấn chuyển số (quạt tắt thì bật lên) / bật-tắt đảo gió / bật-tắt gió tự nhiên.
 
 ## LED trạng thái
 
@@ -170,15 +190,17 @@ Thiết bị là **Quạt** (Fan, 0x002B) với cluster Fan Control:
 
 | Thuộc tính | Giá trị |
 |---|---|
-| FanModeSequence | Off / Low / Medium / High (không có Auto) |
+| FanModeSequence | Off / Low / Medium / High / Auto (Auto = gió tự nhiên) |
 | SpeedMax | 3 (MultiSpeed) |
-| PercentSetting / PercentCurrent | 0, 33, 66, 100 |
+| PercentSetting / PercentCurrent | 0, 33, 66, 100 (gió tự nhiên: PercentSetting null, PercentCurrent theo số đang chạy) |
 | RockSupport / RockSetting | trái-phải / đảo gió |
 | AirflowDirection | Forward = không đảo gió, Reverse = đảo gió |
+| WindSupport / WindSetting | gió tự nhiên / gió tự nhiên bật-tắt |
 | Lệnh Step | tăng/giảm một số (Google Home, chip-tool) |
 
-- **Apple Home**: ô quạt bật/tắt; mở ra là thanh tốc độ 3 vị trí, bên dưới là nút đảo gió (xem [Đảo gió](#đảo-gió-trục-xoay)).
-- **Home Assistant**: thực thể `fan` có thanh tốc độ bước 33 %, preset low/medium/high, *Oscillate* và *Direction*.
+- **Apple Home**: ô quạt bật/tắt; mở ra là thanh tốc độ 3 vị trí, bên cạnh là công tắc **Tự động** (gió tự nhiên), bên dưới là nút đảo gió (xem [Đảo gió](#đảo-gió-trục-xoay), [Gió tự nhiên](#gió-tự-nhiên)).
+- **Home Assistant**: thực thể `fan` có thanh tốc độ bước 33 %, preset low/medium/high/auto/natural_wind, *Oscillate* và *Direction*.
+- **Cập nhật từ bản chưa có gió tự nhiên** (qua OTA hoặc nạp lại app): ứng dụng đã thêm quạt từ trước thường không tự nhận chức năng mới. Xoá quạt khỏi ứng dụng rồi thêm lại (mở ghép nối bằng nút BOOT nhấn đúp, hoặc factory reset) để công tắc *Tự động* hiện ra.
 - Ứng dụng ghi **FanMode = On** (bật mà không chọn số): theo chuẩn Matter là số cao nhất, firmware này cho chạy **số trước khi tắt** như nút nguồn của remote (`FAN_ON_RESUMES_LAST_SPEED`, tắt đi để theo đúng chuẩn).
 - Điều khiển bằng remote hay nút trên mạch thì ứng dụng cập nhật ngay.
 
@@ -190,6 +212,8 @@ chip-tool fancontrol write percent-setting 70 0x7283 1     # -> số 2, 66 %
 chip-tool fancontrol write fan-mode 3 0x7283 1             # High -> số 3, 100 %
 chip-tool fancontrol write rock-setting 1 0x7283 1         # đảo gió bật (0 = tắt)
 chip-tool fancontrol write airflow-direction 1 0x7283 1    # Reverse = đảo gió bật (0 = tắt)
+chip-tool fancontrol write fan-mode 5 0x7283 1             # Auto -> gió tự nhiên
+chip-tool fancontrol write wind-setting 2 0x7283 1         # gió tự nhiên bật (0 = tắt)
 chip-tool fancontrol step 0 0x7283 1 --Wrap false --LowestOff true   # tăng một số
 chip-tool fancontrol read percent-current 0x7283 1
 ```
@@ -208,10 +232,13 @@ chip-tool fancontrol read percent-current 0x7283 1
 | | `FAN_ON_RESUMES_LAST_SPEED` | y | FanMode On chạy số trước đó (n = số cao nhất theo chuẩn) |
 | | `FAN_MATTER_ROCKING` | y | đảo gió dạng Rocking (nút *Oscillate*) |
 | | `FAN_MATTER_AIRFLOW_DIRECTION` | y | đảo gió trên nút hướng quay (*Rotation Direction*) |
+| | `FAN_MATTER_AUTO_NATURAL` | y | gió tự nhiên là FanMode Auto (công tắc *Tự động* của Apple Home) |
+| | `FAN_MATTER_WIND_NATURAL` | y | gió tự nhiên là Wind (preset *natural_wind* của Home Assistant) |
+| | `FAN_NATURAL_MIN_S` / `FAN_NATURAL_MAX_S` | 8 / 30 | gió tự nhiên: thời gian giữ một số ngắn nhất / dài nhất (giây) |
 | IR Receiver | `IR_RX_GPIO` | 10 | chân OUT của mắt thu, -1 = không có mắt thu |
 | | `IR_LEARN_TIMEOUT_S` | 30 | tự kết thúc học remote sau chừng này giây không bấm gì |
 | Buttons | `APP_BUTTON_GPIO` | 9 | nút chính (BOOT), -1 = không có |
-| | `BUTTON_SPEED_GPIO` / `BUTTON_SWING_GPIO` | -1 | nút số / nút đảo gió ngoài |
+| | `BUTTON_SPEED_GPIO` / `BUTTON_SWING_GPIO` / `BUTTON_NATURAL_GPIO` | -1 | nút số / nút đảo gió / nút gió tự nhiên ngoài |
 | Status LED | `STATUS_LED_TYPE` | GPIO | không có / LED một màu / WS2812 |
 | | `STATUS_LED_GPIO` | 8 | |
 | | `STATUS_LED_ACTIVE_LEVEL` | 0 | LED một màu: 0 = sáng ở mức thấp (SuperMini) |
@@ -309,8 +336,8 @@ test/host/run.sh
 
 | Test | Kiểm tra |
 |---|---|
-| `test_fan_logic.c` | % ↔ số (33/66/100, mọi giá trị 0–100), khớp với FanMode/SpeedSetting mà cluster Matter tự tính; bật/tắt nhớ số cũ, chuyển số vòng, đặt số, đảo gió chỉ chạy khi quạt chạy, lệnh Step (wrap, lowest off), dữ liệu lưu bị hỏng |
-| `test_ir.c` | chuyển dữ liệu RMT thành xung (bỏ mức nghỉ đầu khung, gộp đoạn cùng mức, cắt khung quá dài); giải mã NEC với méo của mắt thu và nhiễu thời gian, khung lặp NEC, khung hỏng; mã theo hình dạng (Sony, Samsung) ổn định với nhiễu và khác nhau giữa các nút; lọc nhiễu; giữ nút không lặp lệnh; bảng nút đã học (POWER thành ON khi có nút OFF, học lại chuyển chức năng) |
+| `test_fan_logic.c` | % ↔ số (33/66/100, mọi giá trị 0–100), khớp với FanMode/SpeedSetting mà cluster Matter tự tính; bật/tắt nhớ số cũ, chuyển số vòng, đặt số, đảo gió chỉ chạy khi quạt chạy, lệnh Step (wrap, lowest off), dữ liệu lưu bị hỏng; gió tự nhiên (bật quạt khi bật, chọn số thì thoát, tắt quạt vẫn nhớ), nhịp gió tự nhiên (luôn đổi số, cả 3 số đều dùng, số 2 nhiều nhất, thời gian giữ trong giới hạn) |
+| `test_ir.c` | chuyển dữ liệu RMT thành xung (bỏ mức nghỉ đầu khung, gộp đoạn cùng mức, cắt khung quá dài); giải mã NEC với méo của mắt thu và nhiễu thời gian, khung lặp NEC, khung hỏng; mã theo hình dạng (Sony, Samsung) ổn định với nhiễu và khác nhau giữa các nút; lọc nhiễu; giữ nút không lặp lệnh; bảng nút đã học (POWER thành ON khi có nút OFF, học lại chuyển chức năng, nút NATURAL) |
 
 Phần relay, Matter, Wi-Fi và BLE vẫn phải thử trên thiết bị thật.
 
@@ -321,13 +348,13 @@ CMakeLists.txt             project esp-matter (esp32c3), phiên bản theo giờ
 sdkconfig.defaults         Matter over Wi-Fi, BLE tối giản, OTA + rollback, watchdog, cluster không dùng
 partitions.csv             4 MB, 2 phân vùng OTA
 main/app_main.cpp          khởi tạo, node Matter, sự kiện ghép nối/LED, Identify, xác nhận OTA, factory reset
-main/fan_matter.cpp        endpoint Fan, delegate Fan Control <-> task quạt, kéo thanh tốc độ về 33/66/100 %
-main/fan_ctrl.cpp          task quạt: relay (ngắt trước - đóng sau, thời gian chết), lưu/khôi phục trạng thái
+main/fan_matter.cpp        endpoint Fan, delegate Fan Control <-> task quạt, kéo thanh tốc độ về 33/66/100 %, Auto/Wind = gió tự nhiên
+main/fan_ctrl.cpp          task quạt: relay (ngắt trước - đóng sau, thời gian chết), gió tự nhiên, lưu/khôi phục trạng thái
 main/fan_logic.c           máy trạng thái quạt (thuần C, có test)
 main/ir_rx.cpp             mắt thu hồng ngoại (RMT), học remote, lưu mã
 main/ir_decode.c           giải mã NEC, mã theo hình dạng khung, lọc lặp phím (thuần C, có test)
 main/ir_table.c            bảng nút remote đã học -> lệnh quạt (thuần C, có test)
-main/buttons.cpp           nút BOOT (1/2/3 lần, giữ 5 s), nút số / đảo gió ngoài
+main/buttons.cpp           nút BOOT (1/2/3 lần, giữ 5 s), nút số / đảo gió / gió tự nhiên ngoài
 main/status_led.cpp        LED trạng thái (GPIO hoặc WS2812)
 main/device_info.cpp       nhà sản xuất, kiểu máy, tên, phần cứng, số sê-ri (MAC Wi-Fi)
 main/chip_project_config.h tên và loại thiết bị khi quảng bá trước ghép nối (DNS-SD)

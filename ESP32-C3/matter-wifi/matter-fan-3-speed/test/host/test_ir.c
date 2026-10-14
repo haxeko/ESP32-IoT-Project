@@ -307,6 +307,9 @@ static void test_table(void)
         CHECK_EQ(cmd.type, FAN_CMD_SET_SPEED);
         CHECK_EQ(cmd.arg, i + 1);
     }
+    CHECK(ir_table_command(&t, IR_FUNC_NATURAL, &cmd));
+    CHECK_EQ(cmd.type, FAN_CMD_NATURAL_TOGGLE);
+    CHECK(strcmp(ir_func_name(IR_FUNC_NATURAL), "NATURAL") == 0);
     CHECK(!ir_table_command(&t, IR_FUNC_COUNT, &cmd));
     CHECK(!ir_table_command(&t, -1, &cmd));
     ir_table_assign(&t, IR_FUNC_COUNT, &unknown); /* ignored */
@@ -315,7 +318,9 @@ static void test_table(void)
     CHECK(strcmp(ir_func_name(IR_FUNC_SWING), "SWING") == 0);
     CHECK(strcmp(ir_func_name(99), "?") == 0);
 
-    /* NVS layout */
+    /* NVS layout: functions are only appended (the 7 of version 1 keep their index) */
+    CHECK_EQ(IR_FUNC_SPEED_3, 6);
+    CHECK_EQ(IR_FUNC_NATURAL, 7);
     CHECK_EQ(sizeof(ir_code_t), 8);
     CHECK_EQ(sizeof(ir_table_t), 8 * IR_FUNC_COUNT);
 }

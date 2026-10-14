@@ -54,12 +54,14 @@ constexpr int64_t k_learn_timeout_us = CONFIG_IR_LEARN_TIMEOUT_S * 1000000LL;
  * next button */
 constexpr int64_t k_learn_quiet_us = 600 * 1000;
 
-/* NVS record of the learned codes. Same namespace as the fan state. */
+/* NVS record of the learned codes. Same namespace as the fan state. Version 1 had 7 functions (no NATURAL): new
+ * functions are appended, so an older record is a prefix of the table. */
 struct StoredCodes {
     uint32_t version;
     ir_table_t table;
 };
-constexpr uint32_t k_codes_version = 1;
+constexpr uint32_t k_codes_version = 2;
+constexpr size_t k_codes_v1_functions = 7;
 constexpr const char *k_nvs_namespace = "fan";
 constexpr const char *k_nvs_key_codes = "ir_codes";
 
@@ -137,11 +139,16 @@ static void load_codes()
         return;
     }
     StoredCodes stored;
+    memset(&stored, 0, sizeof(stored));
     size_t len = sizeof(stored);
     const esp_err_t err = nvs_get_blob(handle, k_nvs_key_codes, &stored, &len);
     nvs_close(handle);
-    if (err == ESP_OK && len == sizeof(stored) && stored.version == k_codes_version) {
-        s_table = stored.table;
+    if (err != ESP_OK) {
+        return;
+    }
+    const bool v1 = stored.version == 1 && len == sizeof(uint32_t) + k_codes_v1_functions * sizeof(ir_code_t);
+    if (v1 || (stored.version == k_codes_version && len == sizeof(stored))) {
+        s_table = stored.table; /* v1: the functions it did not have stay zero (not learned) */
     }
 }
 

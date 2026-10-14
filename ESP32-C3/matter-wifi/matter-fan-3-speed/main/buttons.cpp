@@ -101,7 +101,15 @@ static void swing_press_cb(void *, void *)
 }
 #endif
 
-#if CONFIG_APP_BUTTON_GPIO >= 0 || CONFIG_BUTTON_SPEED_GPIO >= 0 || CONFIG_BUTTON_SWING_GPIO >= 0
+#if CONFIG_BUTTON_NATURAL_GPIO >= 0
+static void natural_press_cb(void *, void *)
+{
+    fan_ctrl_post_type(FAN_CMD_NATURAL_TOGGLE, 0, FAN_SRC_BUTTON);
+}
+#endif
+
+#if CONFIG_APP_BUTTON_GPIO >= 0 || CONFIG_BUTTON_SPEED_GPIO >= 0 || CONFIG_BUTTON_SWING_GPIO >= 0 ||                  \
+    CONFIG_BUTTON_NATURAL_GPIO >= 0
 static button_handle_t create_button(int gpio, const char *name)
 {
     const button_config_t config = {
@@ -130,7 +138,8 @@ void buttons_init(const buttons_actions_t *actions)
         s_actions = *actions;
     }
 
-#if CONFIG_APP_BUTTON_GPIO < 0 && CONFIG_BUTTON_SPEED_GPIO < 0 && CONFIG_BUTTON_SWING_GPIO < 0
+#if CONFIG_APP_BUTTON_GPIO < 0 && CONFIG_BUTTON_SPEED_GPIO < 0 && CONFIG_BUTTON_SWING_GPIO < 0 &&                   \
+    CONFIG_BUTTON_NATURAL_GPIO < 0
     ESP_LOGW(TAG, "No buttons (menuconfig -> Buttons): pairing and factory reset only from the apps");
 #endif
 #if CONFIG_APP_BUTTON_GPIO >= 0
@@ -155,6 +164,11 @@ void buttons_init(const buttons_actions_t *actions)
 #if CONFIG_BUTTON_SWING_GPIO >= 0
     if (button_handle_t swing = create_button(CONFIG_BUTTON_SWING_GPIO, "Oscillation")) {
         iot_button_register_cb(swing, BUTTON_PRESS_DOWN, NULL, swing_press_cb, NULL);
+    }
+#endif
+#if CONFIG_BUTTON_NATURAL_GPIO >= 0
+    if (button_handle_t natural = create_button(CONFIG_BUTTON_NATURAL_GPIO, "Natural wind")) {
+        iot_button_register_cb(natural, BUTTON_PRESS_DOWN, NULL, natural_press_cb, NULL);
     }
 #endif
 }

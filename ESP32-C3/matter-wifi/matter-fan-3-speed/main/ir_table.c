@@ -59,6 +59,9 @@ bool ir_table_command(const ir_table_t *table, int func, fan_cmd_t *cmd)
         cmd->type = FAN_CMD_SET_SPEED;
         cmd->arg = (uint8_t)(func - IR_FUNC_SPEED_1 + 1);
         return true;
+    case IR_FUNC_NATURAL:
+        cmd->type = FAN_CMD_NATURAL_TOGGLE;
+        return true;
     default:
         return false;
     }
@@ -67,7 +70,7 @@ bool ir_table_command(const ir_table_t *table, int func, fan_cmd_t *cmd)
 const char *ir_func_name(int func)
 {
     static const char *const names[IR_FUNC_COUNT] = {
-        "POWER", "SPEED", "SWING", "OFF", "SPEED 1", "SPEED 2", "SPEED 3",
+        "POWER", "SPEED", "SWING", "OFF", "SPEED 1", "SPEED 2", "SPEED 3", "NATURAL",
     };
     return (func >= 0 && func < IR_FUNC_COUNT) ? names[func] : "?";
 }

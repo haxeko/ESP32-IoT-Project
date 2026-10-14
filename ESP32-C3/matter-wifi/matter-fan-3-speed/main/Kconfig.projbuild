@@ -94,6 +94,36 @@ menu "Fan Behavior"
             rotation direction button under the speed slider, Home Assistant as Direction.
             Both features drive the same swing relay and always show the same state.
 
+    config FAN_MATTER_AUTO_NATURAL
+        bool "Natural wind as Matter FanMode Auto (Apple Home 'Auto' switch)"
+        default y
+        help
+            Fan Control Auto feature (FanModeSequence Off/Low/Med/High/Auto). Apple Home shows an Auto
+            switch next to the speed slider, Home Assistant an "auto" preset: both turn natural wind
+            on and off. Moving the slider (or any other speed setting) leaves natural wind.
+
+    config FAN_MATTER_WIND_NATURAL
+        bool "Natural wind as Matter Wind (Home Assistant 'natural_wind' preset)"
+        default y
+        help
+            Fan Control Wind feature with WindSupport = natural wind. Home Assistant shows it as the
+            "natural_wind" preset. Apple Home does not show Wind (use the Auto switch above).
+
+    config FAN_NATURAL_MIN_S
+        int "Natural wind: shortest time at one speed (s)"
+        range 3 600
+        default 8
+
+    config FAN_NATURAL_MAX_S
+        int "Natural wind: longest time at one speed (s)"
+        range 3 600
+        default 30
+        help
+            Natural wind switches between speeds 1, 2 and 3 at random, holding each one for a random
+            time between the two limits (a gust at speed 3 at most halfway). With 8-30 s the speed
+            changes about 200 times an hour (each speed relay switches 70-100 times an hour): prefer
+            longer times, or relays rated for many operations, if natural wind runs many hours a day.
+
 endmenu
 
 menu "IR Receiver"
@@ -142,6 +172,14 @@ menu "Buttons"
         default -1
         help
             Optional push button to GND: each click toggles oscillation.
+
+    config BUTTON_NATURAL_GPIO
+        int "Natural wind button GPIO (active low, -1 = none)"
+        range -1 21
+        default -1
+        help
+            Optional push button to GND: each click turns natural wind on (and the fan on when it is
+            off) or off (the fan keeps running at its manual speed).
 
 endmenu
 

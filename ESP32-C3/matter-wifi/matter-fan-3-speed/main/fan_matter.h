@@ -1,8 +1,9 @@
 #pragma once
 
 /* Matter side of the fan: Fan device type (0x002B) with the Fan Control cluster
- *   FanModeSequence Off/Low/Med/High, MultiSpeed (SpeedMax 3), Step,
- *   Rocking (RockSupport left-right) and AirflowDirection, both mapped to the oscillation relay.
+ *   FanModeSequence Off/Low/Med/High/Auto, MultiSpeed (SpeedMax 3), Step,
+ *   Rocking (RockSupport left-right) and AirflowDirection, both mapped to the oscillation relay,
+ *   Auto (FanMode Auto) and Wind (WindSupport natural wind), both mapped to natural wind.
  *
  * Fan Control is a code-driven cluster in esp-matter 1.6: controller writes reach the application through the
  * FanControl::Delegate, not through the attribute callback. The delegate forwards them to the fan task

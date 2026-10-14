@@ -20,6 +20,7 @@ typedef enum {
     IR_FUNC_SPEED_1,   /**< speed 1 */
     IR_FUNC_SPEED_2,   /**< speed 2 */
     IR_FUNC_SPEED_3,   /**< speed 3 */
+    IR_FUNC_NATURAL,   /**< natural wind on/off ("rhythm" / "nature" / "mode" button of fan remotes) */
     IR_FUNC_COUNT
 } ir_func_t;
 

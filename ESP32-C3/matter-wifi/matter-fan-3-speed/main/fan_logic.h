@@ -20,6 +20,8 @@ typedef struct {
     uint8_t speed;      /**< 0 = off, 1..FAN_SPEED_COUNT */
     uint8_t last_speed; /**< 1..FAN_SPEED_COUNT: speed of the next "on" without a speed (power button, FanMode On) */
     bool swing;         /**< oscillation setting; the swing relay runs only while the fan runs */
+    bool natural;       /**< natural wind: while the fan runs, the fan task varies the speed (fan_natural_next());
+                             speed is then the speed of the next manual setting */
 } fan_state_t;
 
 typedef enum {
@@ -32,7 +34,12 @@ typedef enum {
     FAN_CMD_SET_SWING,    /**< arg = 0 (off) / 1 (on) */
     FAN_CMD_STEP_UP,      /**< Matter Step, direction Increase (wrap, lowest_off) */
     FAN_CMD_STEP_DOWN,    /**< Matter Step, direction Decrease (wrap, lowest_off) */
+    FAN_CMD_NATURAL_TOGGLE, /**< natural wind running -> manual; otherwise -> natural wind, on at last_speed when off */
+    FAN_CMD_SET_NATURAL,    /**< arg = 1: natural wind, on at last_speed when off; arg = 0: manual, speed unchanged */
 } fan_cmd_type_t;
+
+/* Natural wind is left by every command that selects a speed (SET_SPEED 1..3, SPEED_CYCLE, STEP to a running speed)
+ * and by SET_NATURAL 0 / NATURAL_TOGGLE. Off, On and Toggle keep it: the power button resumes natural wind. */
 
 typedef struct {
     uint8_t type; /**< fan_cmd_type_t */
@@ -56,6 +63,15 @@ void fan_state_sanitize(fan_state_t *state);
 
 /** Whether the swing relay is closed for this state (oscillation on and the fan running). */
 bool fan_state_swing_running(const fan_state_t *state);
+
+/** Whether the fan task varies the speed (natural wind on and the fan running). */
+bool fan_state_natural_running(const fan_state_t *state);
+
+/** Natural wind: the next speed after `current` (0 = natural wind just started) and how long to hold it.
+ *  The speed always changes: from 1 mostly up to 2, from 3 mostly down to 2, short gusts at 3. The hold time is
+ *  random between min_s and max_s seconds (a gust at speed 3 at most halfway). rng: state of the random generator,
+ *  any non-zero value to start with. */
+uint8_t fan_natural_next(uint32_t *rng, uint8_t current, uint16_t min_s, uint16_t max_s, uint32_t *hold_ms);
 
 #ifdef __cplusplus
 }
