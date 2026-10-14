@@ -9,6 +9,7 @@
 #pragma once
 
 #include <esp_err.h>
+#include <stdint.h>
 
 // On-device UI that runs without any controller: OLED, WS2812 air quality
 // indicator and the LD2410 presence radar that wakes the OLED.
@@ -37,3 +38,9 @@ typedef enum {
 } local_ui_reset_t;
 
 void local_ui_set_reset(local_ui_reset_t reset, int seconds_left);
+
+// Matter Identify: the LEDs blink white for duration_ms (0 stops it,
+// LOCAL_UI_IDENTIFY_FOREVER until stopped), then show the air quality color
+// again. Can be called from any task.
+#define LOCAL_UI_IDENTIFY_FOREVER   UINT32_MAX
+void local_ui_identify(uint32_t duration_ms);

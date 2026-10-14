@@ -11,7 +11,7 @@ Thiết bị dùng device type **Air Quality Sensor (0x002C)** và chỉ gửi q
 
 Màn hình OLED, đèn LED WS2812 và radar LD2410 chạy **tại chỗ trên thiết bị**, không gửi qua Matter (giống bản ESPHome trước đó):
 
-- **LED WS2812** đổi màu theo mức chất lượng không khí, theo bảng màu của Apple Home: xanh lá, xanh vàng, vàng, đỏ, tím.
+- **LED WS2812** đổi màu theo mức chất lượng không khí, theo bảng màu của Apple Home: xanh lá, xanh vàng, vàng, đỏ, tím. Khi ứng dụng gửi lệnh **Identify** (ví dụ nút *Identify* của thiết bị trong Home Assistant), LED nháy trắng để chỉ ra thiết bị, xong thì trở lại màu chất lượng không khí.
 - **Màn hình OLED** hiện PM2.5 và mức chất lượng không khí. Giữa dòng tiêu đề có biểu tượng ngôi nhà khi thiết bị có Wi-Fi **và** có ít nhất một ứng dụng (Apple Home, Home Assistant...) đang kết nối. Khi không còn ứng dụng nào kết nối, biểu tượng tự mất, chậm nhất sau khoảng thời gian báo cáo tối đa mà ứng dụng chọn (thường tới 10 phút).
   Màn hình sáng/tắt như sau:
   - Luôn sáng khi khởi động cho tới khi có kết quả đo đầu tiên, sau đó sáng thêm 5 giây. Nếu cảm biến PM lỗi thì tối đa 120 giây.
@@ -30,7 +30,9 @@ Màn hình OLED, đèn LED WS2812 và radar LD2410 chạy **tại chỗ trên th
 
 Các phần OLED, LED và LD2410 đều không bắt buộc. Thiếu phần nào thì firmware ghi lỗi vào log rồi chạy tiếp, cảm biến PM2.5 và Matter vẫn hoạt động. Màn hình không trả lời (chưa cắm, lỏng dây, mất nguồn giữa chừng) thì firmware thử khởi tạo lại mỗi 5 giây và tự sáng lại khi màn hình trả lời.
 
-Thiết bị **chạy độc lập với Matter**: cảm biến, màn hình, LED và radar khởi động trước Matter. Chúng vẫn hoạt động khi thiết bị chưa được ghép nối, khi mất Wi-Fi, hoặc khi Matter không khởi động được. Mỗi 30 giây, log in một dòng `local_ui: status: ...` cho biết trạng thái của màn hình, radar và LED.
+Thiết bị **chạy độc lập với Matter**: cảm biến, màn hình, LED và radar khởi động trước Matter. Chúng vẫn hoạt động khi thiết bị chưa được ghép nối, khi mất Wi-Fi, hoặc khi Matter không khởi động được. Mỗi 30 giây, log in một dòng `local_ui: status: ...` cho biết trạng thái của màn hình, radar và LED, và một dòng `local_ui: heap: free=... min=... largest=...` cho biết RAM trống hiện tại, mức thấp nhất từ khi khởi động và khối liền lớn nhất.
+
+Nếu luồng Matter hoặc một task của thiết bị (cảm biến PM, radar, màn hình) bị treo quá 30 giây, watchdog khởi động lại thiết bị thay vì để nó đứng im.
 
 ### Sơ đồ nối dây
 
@@ -103,16 +105,23 @@ idf.py menuconfig          # (tùy chọn) PM2.5 Sensor Configuration
 idf.py -p /dev/ttyACM0 flash monitor
 ```
 
+`sdkconfig.defaults` chỉ áp dụng khi tạo file `sdkconfig` mới. Sau khi kéo code mới về, nếu thư mục đã có `sdkconfig` từ lần build trước thì xóa nó đi để các thay đổi trong `sdkconfig.defaults` có hiệu lực.
+
 Mỗi lần build xong, thư mục `build/firmware/` chỉ chứa file của đúng phiên bản vừa build (xem [Phiên bản firmware](#phiên-bản-firmware)):
 
-| File | Nội dung | Nạp ở địa chỉ |
-|---|---|---|
-| `haxeko_pm5003_v1.0.49_esp32c3_merged.bin` | bootloader + bảng phân vùng + firmware | `0x0` (máy mới, ESP Web Flasher...) |
-| `haxeko_pm5003_v1.0.49_esp32c3_app.bin` | chỉ firmware | `0x20000` |
+| File | Dùng khi | Nạp ở địa chỉ | Wi-Fi và ghép nối Matter |
+|---|---|---|---|
+| `haxeko_pm5003_v1.0.49_esp32c3_merged.bin` | Mạch mới, hoặc muốn xóa sạch | `0x0` | **Bị xóa**: file phủ cả vùng NVS |
+| `haxeko_pm5003_v1.0.49_esp32c3_update.bin` | Cập nhật thiết bị đang dùng | `0x1D000` | Giữ nguyên |
 
 ```bash
+# Mạch mới (xóa ghép nối)
 esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x0 build/firmware/haxeko_pm5003_v1.0.49_esp32c3_merged.bin
+# Cập nhật, giữ ghép nối
+esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x1d000 build/firmware/haxeko_pm5003_v1.0.49_esp32c3_update.bin
 ```
+
+File update chỉ ghi vùng chọn phân vùng OTA và firmware, nên vẫn chạy đúng kể cả sau một lần cập nhật OTA. Khi bootloader hoặc bảng phân vùng thay đổi (sửa `partitions.csv` hay cấu hình bootloader), phải nạp file merged. `idf.py flash` cũng giữ nguyên ghép nối.
 
 ### Cấu hình (`idf.py menuconfig`)
 
@@ -209,6 +218,23 @@ Muốn đổi ngưỡng thì sửa `local_ui_pm25_level()` trong `main/local_ui.
 
 Nếu cảm biến không gửi dữ liệu (lỏng dây, mất nguồn), Matter báo PM2.5 là `null` và Air Quality là `Unknown`. Màn hình và LED giữ giá trị cuối cùng, giống bản ESPHome. Khi có lại dữ liệu, thiết bị tự cập nhật bình thường.
 
+## Kiểm thử trên máy tính
+
+`test/host/` chạy code của driver và màn hình trên máy tính (Linux/macOS, chỉ cần `gcc`/`g++`), với UART, I2C, GPIO và đồng hồ giả lập. Không cần ESP32 hay ESP-IDF:
+
+```bash
+test/host/run.sh
+```
+
+| Test | Kiểm tra |
+|---|---|
+| `test_pm_sensor.cpp` (đo theo chu kỳ và đo liên tục) | Ghép khung PMS5003 bị chia nhỏ, nhiễu, khung trả lời lệnh; bỏ 30 giây khởi động; báo mất dữ liệu; gửi lại lệnh cấu hình khi cảm biến im lặng |
+| `test_ld2410.cpp` | Khung radar bị chia nhỏ, header lặp, độ dài sai, footer hỏng, chế độ engineering, khung ACK |
+| `test_button.cpp` | Chống dội nút, thời gian giữ, nút bị kẹt |
+| `test_local_ui.cpp` | OLED bật/tắt theo khởi động và radar, rút/cắm OLED, OLED mất nguồn âm thầm, màn reset, LED theo mức không khí, Identify |
+
+Phần Matter, Wi-Fi và BLE vẫn phải thử trên thiết bị thật.
+
 ## Đổi font màn hình
 
 Font chữ trên OLED là bitmap sinh sẵn từ Roboto (Regular 12 px, Bold 16 px, Bold 28 px), nằm trong `main/ui/fonts.c`. Muốn đổi cỡ chữ hoặc thêm ký tự, sửa `tools/gen_fonts.py` rồi chạy:
@@ -240,6 +266,7 @@ matter-pm25-sensor/
 │   │   └── button.cpp        # Nút factory reset
 │   └── ui/
 │       └── fonts.c           # Font bitmap Roboto (sinh bởi tools/gen_fonts.py)
+├── test/host/                 # Kiểm thử trên máy tính (run.sh)
 └── tools/
     ├── firmware_version.cmake # Tính phiên bản firmware
     ├── firmware_files.cmake   # Tạo file nạp mang số phiên bản sau mỗi lần build

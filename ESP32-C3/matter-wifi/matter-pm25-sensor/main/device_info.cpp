@@ -14,7 +14,6 @@
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_matter_providers.h>
-#include <lib/support/Span.h>
 #include <platform/ESP32/ESP32Config.h>
 #include <platform/internal/GenericDeviceInstanceInfoProvider.h>
 #include <stdio.h>
@@ -57,6 +56,9 @@ private:
 
 } // namespace
 
+// Basic Information limits (VendorName, ProductName, NodeLabel: 32 characters).
+static_assert(sizeof(CONFIG_DEVICE_VENDOR_NAME) - 1 <= 32, "Manufacturer must be at most 32 characters");
+static_assert(sizeof(CONFIG_DEVICE_PRODUCT_NAME) - 1 <= 32, "Model must be at most 32 characters");
 static_assert(sizeof(CONFIG_DEVICE_DISPLAY_NAME) - 1 <= 32, "Device name must be at most 32 characters");
 
 void device_info_get_serial(char *buf, size_t size)

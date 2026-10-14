@@ -26,6 +26,7 @@ static const char *TAG = "sh1106";
 
 static i2c_master_bus_handle_t s_bus;
 static i2c_master_dev_handle_t s_dev;
+static bool s_rotate_180;
 // Page-major layout, as in the controller RAM: byte = 8 vertical pixels.
 static uint8_t s_frame[SH1106_PAGES][SH1106_WIDTH];
 
@@ -38,6 +39,30 @@ static esp_err_t send_commands(const uint8_t *cmds, size_t len)
     buf[0] = 0x00;  // control byte: command stream
     memcpy(&buf[1], cmds, len);
     return i2c_master_transmit(s_dev, buf, len + 1, SH1106_I2C_TIMEOUT_MS);
+}
+
+// Panel settings, without display on/off. Sent at init and again by
+// sh1106_set_power(true): a panel that lost power forgets them, and an
+// SSD1306-based module then stays dark without its charge pump command.
+static esp_err_t send_settings()
+{
+    const uint8_t cmds[] = {
+        0xD5, 0x80,                     // clock divide ratio / oscillator frequency
+        0xA8, 0x3F,                     // multiplex ratio: 64
+        0xD3, 0x00,                     // display offset
+        0x40,                           // start line 0
+        0x8D, 0x14,                     // charge pump on, as ESPHome does: needed by SSD1306-based
+                                        // "SH1106" modules, ignored by a real SH1106 (its DC-DC is on at reset)
+        (uint8_t)(s_rotate_180 ? 0xA0 : 0xA1),  // segment remap
+        (uint8_t)(s_rotate_180 ? 0xC0 : 0xC8),  // COM scan direction
+        0xDA, 0x12,                     // COM pins configuration
+        0x81, 0xFF,                     // contrast 100%
+        0xD9, 0xF1,                     // pre-charge period
+        0xDB, 0x40,                     // VCOMH deselect level
+        0xA4,                           // display follows RAM
+        0xA6,                           // normal (not inverted)
+    };
+    return send_commands(cmds, sizeof(cmds));
 }
 
 // The panel may need some time after power-up before it answers on I2C.
@@ -86,25 +111,12 @@ esp_err_t sh1106_init(int sda_pin, int scl_pin, uint8_t address, bool rotate_180
         }
     }
 
-    const uint8_t init_cmds[] = {
-        0xAE,                           // display off
-        0xD5, 0x80,                     // clock divide ratio / oscillator frequency
-        0xA8, 0x3F,                     // multiplex ratio: 64
-        0xD3, 0x00,                     // display offset
-        0x40,                           // start line 0
-        0x8D, 0x14,                     // charge pump on, as ESPHome does: needed by SSD1306-based
-                                        // "SH1106" modules, ignored by a real SH1106 (its DC-DC is on at reset)
-        (uint8_t)(rotate_180 ? 0xA0 : 0xA1),    // segment remap
-        (uint8_t)(rotate_180 ? 0xC0 : 0xC8),    // COM scan direction
-        0xDA, 0x12,                     // COM pins configuration
-        0x81, 0xFF,                     // contrast 100%
-        0xD9, 0xF1,                     // pre-charge period
-        0xDB, 0x40,                     // VCOMH deselect level
-        0xA4,                           // display follows RAM
-        0xA6,                           // normal (not inverted)
-    };
+    s_rotate_180 = rotate_180;
     for (int attempt = 1; attempt <= SH1106_INIT_ATTEMPTS; attempt++) {
-        err = send_commands(init_cmds, sizeof(init_cmds));
+        err = sh1106_set_power(false);
+        if (err == ESP_OK) {
+            err = send_settings();
+        }
         if (err == ESP_OK) {
             break;
         }
@@ -130,6 +142,12 @@ esp_err_t sh1106_init(int sda_pin, int scl_pin, uint8_t address, bool rotate_180
 
 esp_err_t sh1106_set_power(bool on)
 {
+    if (on) {
+        const esp_err_t err = send_settings();
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
     const uint8_t cmd = on ? 0xAF : 0xAE;
     return send_commands(&cmd, 1);
 }
@@ -172,9 +190,9 @@ esp_err_t sh1106_flush(void)
     buf[0] = 0x40;  // control byte: data stream
     for (int page = 0; page < SH1106_PAGES; page++) {
         const uint8_t addr_cmds[] = {
-            (uint8_t)(0xB0 | page),
-            (uint8_t)(0x00 | (SH1106_COLUMN_OFFSET & 0x0F)),
-            (uint8_t)(0x10 | (SH1106_COLUMN_OFFSET >> 4)),
+            (uint8_t)(0xB0 | page),                         // page address
+            (uint8_t)(SH1106_COLUMN_OFFSET & 0x0F),         // 0x00-0x0F: column address, low nibble
+            (uint8_t)(0x10 | (SH1106_COLUMN_OFFSET >> 4)),  // 0x10-0x1F: column address, high nibble
         };
         esp_err_t err = send_commands(addr_cmds, sizeof(addr_cmds));
         if (err != ESP_OK) {

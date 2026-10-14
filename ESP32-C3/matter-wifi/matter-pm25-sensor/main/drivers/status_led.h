@@ -15,3 +15,9 @@ esp_err_t status_led_init(int gpio, int led_count);
 // Fades all LEDs to the given color (components and brightness in 0..1).
 // Blocks for the transition time.
 void status_led_set(float red, float green, float blue, float brightness);
+
+// Sets all LEDs to the given color at once, without a fade.
+void status_led_set_now(float red, float green, float blue, float brightness);
+
+// Sends the current color again (one frame, no fade).
+void status_led_refresh(void);

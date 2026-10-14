@@ -7,11 +7,15 @@
 */
 
 // Local UI logic (ported from the ESPHome configuration):
-// - WS2812 color follows the air quality level of the last PM2.5 value.
+// - WS2812 color follows the air quality level of the last PM2.5 value; the
+//   LEDs blink white during a Matter Identify.
 // - The OLED is on during start-up (until the first PM2.5 value + 5 s, at most
-//   120 s + 5 s), then only while someone is within 1 m of the LD2410 radar.
+//   120 s + 5 s), then only while someone is within CONFIG_PRESENCE_DISTANCE_CM
+//   of the LD2410 radar, and during a factory reset.
 
+#include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_task_wdt.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -32,6 +36,15 @@ static const char *TAG = "local_ui";
 #define UI_REDRAW_MS                1000
 // Retry the OLED init this often while it does not answer.
 #define OLED_RETRY_MS               5000
+// While on, send the OLED settings again this often: a panel reset by a short
+// power loss still acknowledges the frames but stays dark.
+#define OLED_SETTINGS_REFRESH_MS    10000
+// Send the LED color again this often: a frame corrupted by a delayed RMT
+// interrupt (e.g. during a flash write) would otherwise stay until the next
+// level change.
+#define LED_REFRESH_MS              5000
+// Identify blink: half period (on, then off).
+#define IDENTIFY_BLINK_MS           500
 // Status line in the log, also useful when the monitor is attached late.
 #define STATUS_LOG_MS               30000
 // Start-up: keep the screen on until the first PM2.5 value (at most this long)...
@@ -99,6 +112,7 @@ typedef struct {
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static screen_t s_screen = { .pm25 = NAN, .level = -1, .matter_connected = false,
                              .reset = LOCAL_UI_RESET_NONE, .reset_seconds = 0 };
+static int64_t s_identify_until_ms;     // under s_lock; 0 = not identifying
 static TaskHandle_t s_task;
 static bool s_oled_ok;
 static bool s_led_ok;
@@ -153,6 +167,18 @@ void local_ui_set_reset(local_ui_reset_t reset, int seconds_left)
     taskEXIT_CRITICAL(&s_lock);
     if (changed && s_task != NULL) {
         xTaskNotifyGive(s_task);    // redraw now rather than at the next tick
+    }
+}
+
+void local_ui_identify(uint32_t duration_ms)
+{
+    const int64_t until = duration_ms == 0                         ? 0 :
+                          duration_ms == LOCAL_UI_IDENTIFY_FOREVER ? INT64_MAX : now_ms() + duration_ms;
+    taskENTER_CRITICAL(&s_lock);
+    s_identify_until_ms = until;
+    taskEXIT_CRITICAL(&s_lock);
+    if (s_task != NULL) {
+        xTaskNotifyGive(s_task);    // start or stop blinking now
     }
 }
 
@@ -238,14 +264,22 @@ static void local_ui_task(void *arg)
     int64_t last_redraw_ms = 0;
     int64_t last_oled_retry_ms = boot_ms;
     int64_t last_status_ms = boot_ms;
+    int64_t last_settings_ms = boot_ms;
     int led_level = -1;
+    int64_t last_led_ms = boot_ms;
+    int64_t identify_since_ms = -1;     // -1 = not identifying
+    bool blink_on = false;
     screen_t drawn = {};    // last frame sent, to redraw at once when the reset state changes
 
+    esp_task_wdt_add(NULL);     // restart the device if this task ever stops
+
     while (true) {
+        esp_task_wdt_reset();
         const int64_t now = now_ms();
 
         taskENTER_CRITICAL(&s_lock);
         const screen_t screen = s_screen;
+        const bool identifying = s_identify_until_ms > now;
         taskEXIT_CRITICAL(&s_lock);
         const float pm25 = screen.pm25;
         const int level = screen.level;
@@ -262,7 +296,7 @@ static void local_ui_task(void *arg)
             }
         }
 
-        // Presence within 1 m, with a delayed off.
+        // Presence within CONFIG_PRESENCE_DISTANCE_CM, with a delayed off.
         if (s_radar_ok && presence_raw(now)) {
             presence = true;
             last_presence_ms = now;
@@ -270,11 +304,37 @@ static void local_ui_task(void *arg)
             presence = false;
         }
 
-        // Air quality indicator: only changes when the level changes.
-        if (s_led_ok && level >= 0 && level != led_level) {
-            led_level = level;
-            status_led_set(k_level_colors[level][0], k_level_colors[level][1], k_level_colors[level][2],
-                           LED_BRIGHTNESS);
+        // LEDs: blink white during a Matter Identify, otherwise show the air
+        // quality color, faded when the level changes.
+        if (s_led_ok && identifying) {
+            if (identify_since_ms < 0) {
+                identify_since_ms = now;
+                blink_on = false;
+            }
+            const bool on = ((now - identify_since_ms) / IDENTIFY_BLINK_MS) % 2 == 0;
+            if (on != blink_on || now - last_led_ms >= LED_REFRESH_MS) {
+                blink_on = on;
+                const float v = on ? 1.0f : 0.0f;
+                status_led_set_now(v, v, v, LED_BRIGHTNESS);
+                last_led_ms = now;
+            }
+        } else if (s_led_ok) {
+            if (identify_since_ms >= 0) {
+                // Identify over: back to the air quality color, or off without data.
+                identify_since_ms = -1;
+                led_level = -1;
+                status_led_set_now(0.0f, 0.0f, 0.0f, 0.0f);
+                last_led_ms = now;
+            }
+            if (level >= 0 && level != led_level) {
+                led_level = level;
+                status_led_set(k_level_colors[level][0], k_level_colors[level][1], k_level_colors[level][2],
+                               LED_BRIGHTNESS);
+                last_led_ms = now;
+            } else if (now - last_led_ms >= LED_REFRESH_MS) {
+                status_led_refresh();
+                last_led_ms = now;
+            }
         }
 
         // The OLED did not answer at boot: keep retrying (late power-up, loose wire...).
@@ -295,6 +355,7 @@ static void local_ui_task(void *arg)
                     err = draw_screen(screen);      // fresh frame before turning on
                     drawn = screen;
                     last_redraw_ms = now;
+                    last_settings_ms = now;         // sh1106_set_power(true) sends them
                 }
                 if (err == ESP_OK) {
                     err = sh1106_set_power(oled_on);
@@ -303,6 +364,10 @@ static void local_ui_task(void *arg)
                 err = draw_screen(screen);
                 drawn = screen;
                 last_redraw_ms = now;
+                if (err == ESP_OK && now - last_settings_ms >= OLED_SETTINGS_REFRESH_MS) {
+                    last_settings_ms = now;
+                    err = sh1106_set_power(true);
+                }
             }
             if (err != ESP_OK) {
                 // Loose wire or the panel lost power (and with it its settings):
@@ -321,6 +386,10 @@ static void local_ui_task(void *arg)
                      s_oled_ok ? "ok" : "missing", oled_on ? "on" : "off", startup, presence,
                      radar_seen ? (t.moving || t.still ? "target" : "no-target") : "no-data",
                      led_level, isnan(pm25) ? -1 : (int)lroundf(pm25), screen.matter_connected);
+            // Internal RAM: free now / lowest ever / largest block (RAM headroom check).
+            ESP_LOGI(TAG, "heap: free=%u min=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
             if (radar_seen) {
                 ESP_LOGI(TAG, "radar: moving=%d %ucm still=%d %ucm, %lld ms ago", t.moving, t.moving_cm, t.still,
                          t.still_cm, (long long)(now - t.timestamp_ms));

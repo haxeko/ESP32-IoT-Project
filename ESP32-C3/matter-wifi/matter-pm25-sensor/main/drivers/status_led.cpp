@@ -78,6 +78,24 @@ esp_err_t status_led_init(int gpio, int led_count)
     return ESP_OK;
 }
 
+void status_led_set_now(float red, float green, float blue, float brightness)
+{
+    if (s_strip == NULL) {
+        return;
+    }
+    s_current[0] = red * brightness;
+    s_current[1] = green * brightness;
+    s_current[2] = blue * brightness;
+    show(s_current);
+}
+
+void status_led_refresh(void)
+{
+    if (s_strip != NULL) {
+        show(s_current);
+    }
+}
+
 void status_led_set(float red, float green, float blue, float brightness)
 {
     if (s_strip == NULL) {

@@ -18,6 +18,7 @@
 #include <esp_log.h>
 #include <esp_matter.h>
 #include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <esp_timer.h>
 #include <nvs.h>
 #include <nvs_flash.h>
@@ -113,6 +114,23 @@ static std::atomic<bool> s_matter_started{false};
 static uint16_t s_air_quality_endpoint_id;
 static std::atomic<bool> s_factory_reset_started{false};
 
+// esp_matter::factory_reset() only schedules the reset on the Matter thread
+// (which takes a few seconds). If the device has not restarted after this
+// long, the reset was lost (e.g. Matter event queue full): erase NVS directly.
+static constexpr uint64_t kFactoryResetFallbackUs = 20 * 1000 * 1000;
+
+static void erase_nvs_and_restart()
+{
+    ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_flash_erase());
+    esp_restart();
+}
+
+static void factory_reset_fallback_cb(void *arg)
+{
+    ESP_LOGE(TAG, "Factory reset did not complete, erasing NVS");
+    erase_nvs_and_restart();
+}
+
 // Erases the Wi-Fi credentials and the Matter fabrics, then restarts. Can be
 // called from any task; only the first call does something.
 static void start_factory_reset(const char *reason)
@@ -123,13 +141,19 @@ static void start_factory_reset(const char *reason)
     ESP_LOGW(TAG, "Factory reset requested by %s", reason);
     local_ui_set_reset(LOCAL_UI_RESET_RUNNING, 0);
     if (s_matter_started) {
+        static esp_timer_handle_t s_fallback_timer;
+        esp_timer_create_args_t timer_args = {};
+        timer_args.callback = factory_reset_fallback_cb;
+        timer_args.name = "factory_reset";
+        if (esp_timer_create(&timer_args, &s_fallback_timer) == ESP_OK) {
+            esp_timer_start_once(s_fallback_timer, kFactoryResetFallbackUs);
+        }
         esp_matter::factory_reset();    // restarts the device when done
         return;
     }
     // esp_matter::factory_reset() needs a running Matter stack, and a broken
     // Matter storage may be why it is not running: erase it directly.
-    ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_flash_erase());
-    esp_restart();
+    erase_nvs_and_restart();
 }
 
 #if CONFIG_FACTORY_RESET_BUTTON_GPIO >= 0
@@ -204,8 +228,9 @@ static endpoint_t *create_air_quality_sensor(node_t *node)
     VerifyOrReturnValue(endpoint != nullptr, nullptr);
 
     // AirQuality: enable all optional levels so that every AirQualityEnum value is allowed.
-    // These features only set FeatureMap bits, so set them directly (the feature helper
-    // names differ between esp-matter releases).
+    // These features only set FeatureMap bits, so set them directly: esp-matter v1.4
+    // declares the helpers as mod/vpoor/xpoor but defines them as moderate/very_poor/
+    // extremely_poor, so they do not link.
     cluster_t *air_quality_cluster = cluster::get(endpoint, AirQuality::Id);
     attribute_t *feature_map = attribute::get(air_quality_cluster, Globals::Attributes::FeatureMap::Id);
     VerifyOrReturnValue(feature_map != nullptr, nullptr);
@@ -239,11 +264,13 @@ static void save_boot_count(uint8_t count)
 }
 
 // Counts quick power cycles. Returns true when a factory reset was requested.
-// Only real power-on resets count, so crashes, OTA updates or flashing never
-// trigger a factory reset.
+// Only power-on resets count, so crashes, OTA updates or flashing never
+// trigger a factory reset, and they clear the count. A brown-out (a quick
+// unplug/replug can cause one) neither counts nor clears it.
 static bool check_factory_reset_boot_count()
 {
-    if (esp_reset_reason() != ESP_RST_POWERON) {
+    const esp_reset_reason_t reason = esp_reset_reason();
+    if (reason != ESP_RST_POWERON && reason != ESP_RST_BROWNOUT) {
         save_boot_count(0);
         return false;
     }
@@ -253,13 +280,16 @@ static bool check_factory_reset_boot_count()
         nvs_get_u8(handle, kNvsBootCountKey, &count);
         nvs_close(handle);
     }
-    count++;
-    ESP_LOGI(TAG, "Quick power cycle %u/%u", count, kFactoryResetBootCount);
+    if (reason == ESP_RST_POWERON && count < kFactoryResetBootCount) {
+        count++;
+        ESP_LOGI(TAG, "Quick power cycle %u/%u", count, kFactoryResetBootCount);
+        save_boot_count(count);
+    }
     if (count >= kFactoryResetBootCount) {
-        save_boot_count(0);
+        // The count stays until the reset is done: it ends with a software
+        // restart, which clears it, and a power cut before that retries it.
         return true;
     }
-    save_boot_count(count);
 
     // Staying powered on long enough clears the counter.
     static esp_timer_handle_t timer;
@@ -303,10 +333,20 @@ static void update_matter_status()
     local_ui_set_matter_connected(online && subscriptions > 0);
 }
 
+// Task watchdog user for the Matter thread (CONFIG_ESP_TASK_WDT_PANIC): if the
+// thread stops running the lambda below, the device restarts instead of
+// staying off Matter while the local UI still looks alive.
+static esp_task_wdt_user_handle_t s_matter_wdt;
+
 // Subscriptions start and end without a device event, so also poll.
 static void matter_status_timer_cb(void *arg)
 {
-    chip::DeviceLayer::SystemLayer().ScheduleLambda([]() { update_matter_status(); });
+    chip::DeviceLayer::SystemLayer().ScheduleLambda([]() {
+        update_matter_status();
+        if (s_matter_wdt != NULL) {
+            esp_task_wdt_reset_user(s_matter_wdt);
+        }
+    });
 }
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
@@ -337,11 +377,41 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     update_matter_status();
 }
 
-// This callback is invoked when clients interact with the Identify Cluster.
+// How long the LEDs blink for an Identify TriggerEffect command (0 = stop).
+static uint32_t identify_effect_ms(uint8_t effect_id)
+{
+    switch (static_cast<Identify::EffectIdentifierEnum>(effect_id)) {
+    case Identify::EffectIdentifierEnum::kBlink:
+        return 1000;
+    case Identify::EffectIdentifierEnum::kOkay:
+        return 2000;
+    case Identify::EffectIdentifierEnum::kChannelChange:
+        return 8000;
+    case Identify::EffectIdentifierEnum::kBreathe:
+        return 15000;
+    default:    // kFinishEffect, kStopEffect
+        return 0;
+    }
+}
+
+// Identify cluster (IdentifyType "visible indicator", set by esp-matter for this
+// device type): the LEDs blink while a controller identifies the device.
+// Runs on the Matter thread.
 static esp_err_t app_identification_cb(identification::callback_type_t type, uint16_t endpoint_id, uint8_t effect_id,
                                        uint8_t effect_variant, void *priv_data)
 {
     ESP_LOGI(TAG, "Identification callback: type: %u, effect: %u, variant: %u", type, effect_id, effect_variant);
+    switch (type) {
+    case identification::callback_type_t::START:
+        local_ui_identify(LOCAL_UI_IDENTIFY_FOREVER);    // until STOP
+        break;
+    case identification::callback_type_t::STOP:
+        local_ui_identify(0);
+        break;
+    case identification::callback_type_t::EFFECT:
+        local_ui_identify(identify_effect_ms(effect_id));
+        break;
+    }
     return ESP_OK;
 }
 
@@ -380,7 +450,14 @@ static esp_err_t start_matter()
         .name = "matter_status",
     };
     if (esp_timer_create(&timer_args, &s_status_timer) == ESP_OK) {
-        esp_timer_start_periodic(s_status_timer, 5 * 1000 * 1000);
+        // The timer feeds the Matter thread's watchdog: only watch it when the timer runs.
+        if (esp_task_wdt_add_user("matter", &s_matter_wdt) != ESP_OK) {
+            s_matter_wdt = NULL;    // task watchdog disabled in menuconfig
+        }
+        if (esp_timer_start_periodic(s_status_timer, 5 * 1000 * 1000) != ESP_OK && s_matter_wdt != NULL) {
+            esp_task_wdt_delete_user(s_matter_wdt);
+            s_matter_wdt = NULL;
+        }
     }
     return ESP_OK;
 }
