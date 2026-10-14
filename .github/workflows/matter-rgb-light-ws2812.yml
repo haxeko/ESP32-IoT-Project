@@ -20,6 +20,9 @@ jobs:
         working-directory: ESP32-C3/matter-wifi/matter-rgb-light-ws2812
     steps:
       - uses: actions/checkout@v4
+      - name: Host tests (LED bar driver, color conversions)
+        shell: bash
+        run: test/host/run.sh
       - name: Build (esp32c3)
         shell: bash
         run: |

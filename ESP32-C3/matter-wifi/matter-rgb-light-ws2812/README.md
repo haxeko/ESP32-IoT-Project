@@ -25,7 +25,7 @@ Thiết bị dùng device type **Extended Color Light (0x010D)** dạng **đèn 
 - **Màu đọc theo cách nào cũng đúng**: Matter lưu màu theo 2 cách (Hue/Saturation và XY) và mỗi lệnh chỉ cập nhật một cách. Khi màu đã đứng yên 0,3 giây, đèn ghi cùng màu đó vào cách còn lại.
 - **Màu trắng**: chọn ở tâm bánh xe màu (độ bão hòa 0), đèn bật cả 3 màu R, G, B bằng nhau.
 - **Tắt rồi bật lại** (từ app hoặc nút BOOT): đèn sáng lại ngay đúng số LED và màu như trước khi tắt. Hiệu ứng "sáng dần từ mức thấp nhất" của Matter khi Bật được bỏ qua, vì trên dải LED này mức thấp nhất là 1 LED và sẽ trông như đèn nháy tắt một lần. Khi Tắt, dải LED thu ngắn rất nhanh về 1 LED rồi tắt.
-- **Mất điện / rút nguồn**: có điện lại thì đèn khôi phục bật/tắt, độ sáng và màu như trước khi mất điện. Bật/tắt được lưu vào flash ngay; độ sáng và màu được lưu khi giá trị đã đứng yên **3 giây** (giống ví dụ `light` của Espressif, tránh ghi flash ở mỗi bước chuyển sáng/màu). Nếu rút điện trong vòng 3 giây sau khi vừa chỉnh độ sáng/màu thì lần chỉnh đó không được nhớ.
+- **Mất điện / rút nguồn**: có điện lại thì đèn khôi phục bật/tắt, độ sáng và màu như trước khi mất điện. Bật/tắt được lưu vào flash ngay; độ sáng và màu được lưu khi giá trị đã đứng yên **3 giây** (giống ví dụ `light` của Espressif, tránh ghi flash ở mỗi bước chuyển sáng/màu). Nếu rút điện trong vòng 3 giây sau khi vừa chỉnh độ sáng/màu thì lần chỉnh đó không được nhớ. Nếu vùng lưu trữ NVS hỏng không đọc được (đầy, hoặc do firmware khác ghi), đèn tự xóa vùng này và khởi động như đèn mới để có thể ghép lại, thay vì chạy mà không lưu được gì.
 - **Nhận dạng (Identify)**: nút "Nhận dạng" trong Apple Home / Home Assistant làm cả dải LED nháy (0,5 s sáng, 0,5 s tắt) bằng màu hiện tại, kể cả khi đèn đang tắt.
 - Lần đầu khởi động (chưa có gì lưu): đèn bật, 100 % (30 LED), màu trắng.
 
@@ -153,9 +153,25 @@ Khi xóa thiết bị khỏi tất cả ứng dụng, thiết bị tự mở l�
 
 | File | Nội dung |
 |---|---|
-| `main/app_main.cpp` | Tạo node Matter, endpoint Extended Color Light dạng RGB (Hue/Saturation + XY) |
+| `main/app_main.cpp` | Khởi tạo NVS, tạo node Matter, endpoint Extended Color Light dạng RGB (Hue/Saturation + XY) |
 | `main/device_info.cpp` | Manufacturer / Model / tên / số serial (Basic Information) |
 | `main/app_driver.cpp` | Nhận thay đổi OnOff / LevelControl / ColorControl từ Matter, Identify, nút BOOT |
 | `main/led_bar.c` | Điều khiển WS2812 qua RMT (`espressif/led_strip`): số LED sáng theo độ sáng, cường độ cố định 30 %, nháy Identify; chỉ gửi dữ liệu ra LED khi hình ảnh thay đổi |
 | `main/color_convert.c` | Đổi Hue/Saturation, XY sang RGB và ngược lại |
 | `main/Kconfig.projbuild` | Tùy chọn: Manufacturer/Model, GPIO, số LED, mức 30 %, chiều sáng, chân nút |
+| `test/host/` | Test chạy trên máy tính (không cần ESP32): driver dải LED và đổi màu |
+
+## Kiểm thử
+
+```bash
+test/host/run.sh      # chỉ cần gcc; CI chạy bước này trước khi build firmware
+```
+
+Test kiểm tra: số LED theo từng mức độ sáng (bảng ở trên), cường độ cố định 30 %, chỉ refresh khi hình ảnh đổi, không nháy tắt khi Bật (hiệu ứng fade-in của Matter), nháy Identify, chiều sáng ngược, dải LED khởi tạo lỗi; đổi màu Hue/Saturation ↔ RGB ↔ XY (các màu chuẩn sRGB; sai số khứ hồi Hue/Saturation → XY → Hue/Saturation đo được 1/254).
+
+## Giới hạn đã biết và lưu ý trước khi bán
+
+- **Device type**: chuẩn Matter bắt buộc Extended Color Light có *Color Temperature*. Bản này cố ý bỏ nhiệt độ màu (đèn chỉ RGB, xem mục Apple Home ở trên), nên đèn chạy được với các app nhưng **không qua được bài test chứng nhận (conformance)**. Muốn chứng nhận CSA thì phải bật lại Color Temperature (đèn mô phỏng màu trắng bằng RGB).
+- **Chứng chỉ test**: DAC/PAI, Vendor ID `0xFFF1`, Product ID `0x8000` và mã ghép nối `20202021` / `3840` là dữ liệu test của esp-matter, **mọi đèn giống nhau**. Hàng bán ra cần mã riêng cho từng đèn và chứng chỉ thật (công cụ `esp-matter-mfg-tool`, phân vùng `esp_secure_cert` và `fctry` đã có sẵn trong `partitions.csv`).
+- **Bảo mật**: chưa bật Secure Boot, Flash Encryption, NVS Encryption; console Matter (`CONFIG_ENABLE_CHIP_SHELL`) mở trên cổng USB. Nên tắt shell và bật mã hóa ở bản phát hành.
+- **OTA**: chưa bật rollback (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`). Nếu một bản OTA lỗi ngay khi khởi động, đèn không tự quay về bản cũ, phải nạp lại qua USB.
