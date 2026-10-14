@@ -1,0 +1,5 @@
+# Debug build: CHIP shell + OpenThread CLI on the UART0 console ("matter esp ot_cli <command>").
+# Applied after sdkconfig.defaults and sdkconfig.defaults.esp32h2, see README "Bản build debug".
+CONFIG_ENABLE_CHIP_SHELL=y
+CONFIG_OPENTHREAD_CLI=y
+CONFIG_OPENTHREAD_DIAG=y

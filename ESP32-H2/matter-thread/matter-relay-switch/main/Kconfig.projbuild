@@ -1,0 +1,81 @@
+menu "Relay Configuration"
+
+    config RELAY_GPIO
+        int "Relay GPIO number"
+        range 0 27
+        default 4
+        help
+            GPIO that drives the relay module. Avoid the ESP32-H2 strapping pins
+            (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25; on the DevKitM-1, GPIO8 is the RGB LED
+            and GPIO9 the BOOT button), the flash pins (GPIO15-GPIO21),
+            GPIO23/GPIO24 (UART0 console RX/TX; the ROM and bootloader log on GPIO24
+            at every boot, which would chatter the relay) and GPIO26/GPIO27
+            (USB D-/D+; using either as a GPIO disables the USB-Serial-JTAG console).
+
+            GPIO4 (default) is the JTAG MTCK pad: from any hardware reset until the app
+            configures it (~0.5 s: ROM, bootloader, startup) its internal ~45 kOhm
+            pull-up is on. With an active-high relay driver, fit a <=10 kOhm pull-down
+            from the relay input (or MOSFET gate) to GND, or the relay may pulse ON at
+            power-up. GPIO0/1/5/10-14/22 have no reset pull-up.
+
+    config RELAY_ACTIVE_LEVEL
+        int "Relay active level (1 = active-high, 0 = active-low)"
+        range 0 1
+        default 1
+        help
+            Level written to the relay GPIO to turn the relay ON.
+            Many cheap optocoupled relay boards are active-low: set 0 for those.
+
+    config STATUS_LED_ENABLE
+        bool "Status LED on the on-board WS2812 (GPIO8)"
+        default y
+        help
+            ESP32-H2-DevKitM-1 has an addressable RGB LED on GPIO8: green while the relay
+            is ON, blue blinks for Matter Identify, red for factory reset.
+            Disable on custom boards without it (Identify then reports no indicator).
+
+endmenu
+
+menu "Thread Diagnostics"
+
+    config THREAD_DIAG_LOG
+        bool "Log Thread addresses and SRP state until commissioned"
+        default y
+        help
+            Every 10 s, until commissioning completes, log the Thread role, IPv6 addresses
+            (link-local / mesh-local / OMR), on-mesh prefixes from the Border Router and
+            the SRP host/service registration state. Helps find why a phone cannot reach
+            the device after BLE provisioning. Stops once the device is commissioned.
+
+endmenu
+
+menu "Device Identity"
+
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+        help
+            Shown as Manufacturer in Apple Home. At most 32 characters (checked at build time).
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName)"
+        default "ESP32-H2"
+        help
+            Shown as Model in Apple Home. At most 32 characters (checked at build time).
+
+    config DEVICE_HARDWARE_VERSION_STRING
+        string "Hardware version (Basic Information HardwareVersionString)"
+        default "ESP32-H2-DevKitM-1 v1.0"
+        help
+            Human-readable hardware revision, shown as "Hardware" in Home Assistant.
+            Replaces the SDK default "TEST_VERSION". At most 64 characters.
+
+    config SERIAL_NUMBER_PREFIX
+        string "Serial number prefix"
+        default ""
+        help
+            The serial number is the factory eFuse MAC address (esptool "BASE MAC"), 12 uppercase hex digits,
+            unique per chip and unchanged by OTA and erase-flash. This prefix is prepended to it, e.g. "RLY-" gives
+            "RLY-744DBDA1B2C3". At most 20 characters (checked at build time).
+
+endmenu
