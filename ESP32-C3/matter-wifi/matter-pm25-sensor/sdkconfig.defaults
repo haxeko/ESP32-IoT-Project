@@ -69,3 +69,14 @@ CONFIG_BLE_DEVICE_NAME_PREFIX="AirQuality-"
 CONFIG_CHIP_PROJECT_CONFIG="main/chip_project_config.h"
 CONFIG_ENABLE_COMMISSIONABLE_DEVICE_TYPE=y
 CONFIG_DEVICE_TYPE=44
+
+# Task watchdog: restart the device when the Matter thread or one of the
+# application tasks (PM sensor, radar, local UI) stops running for 30 s,
+# instead of staying stuck (they feed it, see app_main.cpp and the drivers).
+# Rollback: CONFIG_ESP_TASK_WDT_PANIC=n only prints a warning.
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+
+# Interaction Model message pretty-printing only feeds debug logs that are not
+# compiled in: turn it off (less flash and CPU per request, same behavior).
+CONFIG_CHIP_CONFIG_IM_PRETTY_PRINT=n

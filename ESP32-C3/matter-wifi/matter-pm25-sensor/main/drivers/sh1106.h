@@ -28,7 +28,9 @@ typedef enum {
 // Can be called again after a failure to retry (e.g. the panel powered up late).
 esp_err_t sh1106_init(int sda_pin, int scl_pin, uint8_t address, bool rotate_180);
 
-// Panel on/off (display sleep). The frame buffer is kept.
+// Panel on/off (display sleep). The frame buffer is kept. Turning it on also
+// sends the panel settings again, in case the panel lost power (and them)
+// meanwhile; calling it again while on refreshes them.
 esp_err_t sh1106_set_power(bool on);
 
 // Drawing happens in a RAM frame buffer; sh1106_flush() sends it to the panel.

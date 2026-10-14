@@ -12,8 +12,9 @@ import sys
 from PIL import ImageFont
 
 ASCII = ''.join(chr(c) for c in range(0x20, 0x7F))
-# Extra glyphs needed by the Vietnamese labels on the screen.
-VIETNAMESE = 'ĐđÁÉÔỐỰỲ'
+# Extra glyphs needed by the Vietnamese texts on the screen (air quality
+# labels, "Đang đo...", factory reset screens).
+VIETNAMESE = 'ĐđÁÉÔỐỰỲ' + 'ẠẶẾỊạặ'
 
 # (C name, TTF index in argv, pixel size, characters)
 FONTS = [

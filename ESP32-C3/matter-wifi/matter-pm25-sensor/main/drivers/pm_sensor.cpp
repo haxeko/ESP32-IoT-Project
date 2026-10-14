@@ -11,11 +11,11 @@
 
 #include <driver/uart.h>
 #include <esp_log.h>
+#include <esp_task_wdt.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <math.h>
-#include <string.h>
 
 #include "pm_sensor.h"
 
@@ -170,7 +170,7 @@ static void report_average(pm_accumulator_t *acc)
         .pm2_5 = roundf(acc->pm2_5 / acc->count),
         .pm10 = roundf(acc->pm10 / acc->count),
     };
-    memset(acc, 0, sizeof(*acc));
+    *acc = {};
     ESP_LOGI(TAG, "PM1.0=%.0f PM2.5=%.0f PM10=%.0f ug/m3", data.pm1_0, data.pm2_5, data.pm10);
     s_config.cb(&data, s_config.user_data);
 }
@@ -196,12 +196,17 @@ static void pm_sensor_task(void *arg)
 #else
     int64_t last_report_ms = cycle_start_ms;
     int64_t last_sample_ms = cycle_start_ms;
+    int64_t last_setup_ms = cycle_start_ms;
     bool reported_invalid = false;
 #endif
 
     sensor_setup();
 
+    // Restart the device if this task ever stops (stale values are worse).
+    esp_task_wdt_add(NULL);
+
     while (true) {
+        esp_task_wdt_reset();
         int len = uart_read_bytes(PM_SENSOR_UART_NUM, rx, sizeof(rx), pdMS_TO_TICKS(200));
         int64_t now_ms = esp_timer_get_time() / 1000;
 
@@ -231,6 +236,11 @@ static void pm_sensor_task(void *arg)
                 continue;
             }
 #else
+            if (now_ms - last_sample_ms > DATA_TIMEOUT_MS) {
+                // First frame after a silence: the sensor was (re)started, so
+                // skip its warm-up readings again.
+                cycle_start_ms = now_ms;
+            }
             last_sample_ms = now_ms;
 #endif
             if (now_ms - cycle_start_ms < WARMUP_MS) {
@@ -266,11 +276,17 @@ static void pm_sensor_task(void *arg)
         if (acc.count > 0) {
             reported_invalid = false;
             report_average(&acc);
-        } else if (!reported_invalid && now_ms - last_sample_ms > DATA_TIMEOUT_MS) {
-            reported_invalid = true;
-            report_invalid();
-            // The sensor may have been unplugged or reset; send setup commands again.
-            sensor_setup();
+        } else if (now_ms - last_sample_ms > DATA_TIMEOUT_MS) {
+            if (!reported_invalid) {
+                reported_invalid = true;
+                report_invalid();
+            }
+            // The sensor may have been unplugged, reset or left asleep: keep
+            // sending the setup commands while it is silent.
+            if (now_ms - last_setup_ms >= DATA_TIMEOUT_MS) {
+                last_setup_ms = now_ms;
+                sensor_setup();
+            }
         }
 #endif
     }
@@ -296,16 +312,17 @@ esp_err_t pm_sensor_init(const pm_sensor_config_t *config)
         return err;
     }
     err = uart_param_config(PM_SENSOR_UART_NUM, &uart_config);
-    if (err != ESP_OK) {
-        return err;
+    if (err == ESP_OK) {
+        err = uart_set_pin(PM_SENSOR_UART_NUM, config->tx_pin, config->rx_pin, UART_PIN_NO_CHANGE,
+                           UART_PIN_NO_CHANGE);
     }
-    err = uart_set_pin(PM_SENSOR_UART_NUM, config->tx_pin, config->rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    if (err != ESP_OK) {
-        return err;
+    if (err == ESP_OK &&
+        xTaskCreate(pm_sensor_task, "pm_sensor", PM_SENSOR_TASK_STACK, NULL, PM_SENSOR_TASK_PRIO, NULL) != pdPASS) {
+        err = ESP_ERR_NO_MEM;
     }
-
-    if (xTaskCreate(pm_sensor_task, "pm_sensor", PM_SENSOR_TASK_STACK, NULL, PM_SENSOR_TASK_PRIO, NULL) != pdPASS) {
-        return ESP_ERR_NO_MEM;
+    if (err != ESP_OK) {
+        uart_driver_delete(PM_SENSOR_UART_NUM);
+        return err;
     }
     ESP_LOGI(TAG, "PM sensor on UART%d, RX=GPIO%d TX=GPIO%d", PM_SENSOR_UART_NUM, config->rx_pin, config->tx_pin);
     return ESP_OK;

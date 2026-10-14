@@ -17,20 +17,19 @@
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_matter.h>
-#include <esp_matter_ota.h>
 #include <esp_system.h>
+#include <esp_task_wdt.h>
 #include <esp_timer.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 #include <nvs.h>
 #include <nvs_flash.h>
 
-
 #include <atomic>
+#include <iterator>
 #include <math.h>
 
 // drivers implemented by this example
 #include <device_info.h>
+#include <drivers/button.h>
 #include <drivers/pm_sensor.h>
 #include <local_ui.h>
 
@@ -46,11 +45,36 @@ static constexpr float kPmMaxMeasuredValue = 1000.0f;
 
 // GPIO9 (BOOT button) is the OLED SCL line, so factory reset is done by
 // powering the device on kFactoryResetBootCount times in a row, each time for
-// less than kFactoryResetWindowUs.
+// less than kFactoryResetWindowUs...
 static constexpr uint8_t kFactoryResetBootCount = 5;
 static constexpr uint64_t kFactoryResetWindowUs = 10 * 1000 * 1000;
 static constexpr char kNvsNamespace[] = "app";
 static constexpr char kNvsBootCountKey[] = "boot_count";
+
+// ...or with a button on CONFIG_FACTORY_RESET_BUTTON_GPIO: hold it for
+// kResetButtonHoldMs, then release it. The OLED counts down from
+// kResetButtonShowMs on, so a short press shows nothing; releasing the button
+// before the end cancels, and a button stuck down never resets.
+static constexpr uint32_t kResetButtonShowMs = 1000;
+static constexpr uint32_t kResetButtonHoldMs = 5000;
+
+#if CONFIG_FACTORY_RESET_BUTTON_GPIO >= 0
+static_assert(CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_RX_PIN &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_TX_PIN &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_OLED_SDA_PIN &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_OLED_SCL_PIN &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_STATUS_LED_GPIO &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_RX_PIN &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_TX_PIN,
+              "The factory reset button GPIO is already used");
+#if CONFIG_IDF_TARGET_ESP32C3
+// Pressed during a reset, a strapping pin changes the boot mode.
+static_assert(CONFIG_FACTORY_RESET_BUTTON_GPIO != 2 && CONFIG_FACTORY_RESET_BUTTON_GPIO != 8 &&
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != 9 &&
+              (CONFIG_FACTORY_RESET_BUTTON_GPIO < 11 || CONFIG_FACTORY_RESET_BUTTON_GPIO > 19),
+              "Factory reset button: GPIO2/8/9 are strapping pins, GPIO11-17 flash, GPIO18-19 USB");
+#endif
+#endif
 
 // Matter AirQuality value sent for each level of the OLED/LEDs, and how
 // Apple Home shows it:
@@ -59,16 +83,21 @@ static constexpr char kNvsBootCountKey[] = "boot_count";
 //   KHÔNG TỐT   -> Moderate      (HomeKit: Inferior)
 //   KÉM         -> Poor          (HomeKit: Poor)
 //   CỰC KỲ KÉM  -> ExtremelyPoor (HomeKit: Poor)
+// No value (NAN) -> Unknown.
 static AirQuality::AirQualityEnum pm25_to_air_quality(float pm25)
 {
-    static const AirQuality::AirQualityEnum k_level_to_matter[] = {
+    static constexpr AirQuality::AirQualityEnum k_level_to_matter[] = {
         AirQuality::AirQualityEnum::kGood,
         AirQuality::AirQualityEnum::kFair,
         AirQuality::AirQualityEnum::kModerate,
         AirQuality::AirQualityEnum::kPoor,
         AirQuality::AirQualityEnum::kExtremelyPoor,
     };
-    return k_level_to_matter[local_ui_pm25_level(pm25)];
+    const int level = local_ui_pm25_level(pm25);
+    if (level < 0 || level >= (int)std::size(k_level_to_matter)) {
+        return AirQuality::AirQualityEnum::kUnknown;
+    }
+    return k_level_to_matter[level];
 }
 
 // Must be called from the Matter thread.
@@ -83,6 +112,71 @@ static void update_measured_value(uint16_t endpoint_id, uint32_t cluster_id, uin
 // start) the sensor, OLED, LEDs and radar keep working locally.
 static std::atomic<bool> s_matter_started{false};
 static uint16_t s_air_quality_endpoint_id;
+static std::atomic<bool> s_factory_reset_started{false};
+
+// esp_matter::factory_reset() only schedules the reset on the Matter thread
+// (which takes a few seconds). If the device has not restarted after this
+// long, the reset was lost (e.g. Matter event queue full): erase NVS directly.
+static constexpr uint64_t kFactoryResetFallbackUs = 20 * 1000 * 1000;
+
+static void erase_nvs_and_restart()
+{
+    ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_flash_erase());
+    esp_restart();
+}
+
+static void factory_reset_fallback_cb(void *arg)
+{
+    ESP_LOGE(TAG, "Factory reset did not complete, erasing NVS");
+    erase_nvs_and_restart();
+}
+
+// Erases the Wi-Fi credentials and the Matter fabrics, then restarts. Can be
+// called from any task; only the first call does something.
+static void start_factory_reset(const char *reason)
+{
+    if (s_factory_reset_started.exchange(true)) {
+        return;
+    }
+    ESP_LOGW(TAG, "Factory reset requested by %s", reason);
+    local_ui_set_reset(LOCAL_UI_RESET_RUNNING, 0);
+    if (s_matter_started) {
+        static esp_timer_handle_t s_fallback_timer;
+        esp_timer_create_args_t timer_args = {};
+        timer_args.callback = factory_reset_fallback_cb;
+        timer_args.name = "factory_reset";
+        if (esp_timer_create(&timer_args, &s_fallback_timer) == ESP_OK) {
+            esp_timer_start_once(s_fallback_timer, kFactoryResetFallbackUs);
+        }
+        esp_matter::factory_reset();    // restarts the device when done
+        return;
+    }
+    // esp_matter::factory_reset() needs a running Matter stack, and a broken
+    // Matter storage may be why it is not running: erase it directly.
+    erase_nvs_and_restart();
+}
+
+#if CONFIG_FACTORY_RESET_BUTTON_GPIO >= 0
+// Runs in the esp_timer task.
+static void reset_button_cb(uint32_t held_ms, bool released, void *user_data)
+{
+    if (s_factory_reset_started) {
+        return;
+    }
+    if (released) {
+        if (held_ms >= kResetButtonHoldMs) {
+            start_factory_reset("the button");
+        } else {
+            local_ui_set_reset(LOCAL_UI_RESET_NONE, 0);    // released too early: cancelled
+        }
+    } else if (held_ms >= kResetButtonHoldMs) {
+        local_ui_set_reset(LOCAL_UI_RESET_RELEASE, 0);
+    } else if (held_ms >= kResetButtonShowMs) {
+        // Whole seconds left, rounded up: 4, 3, 2, 1.
+        local_ui_set_reset(LOCAL_UI_RESET_HOLD, (int)((kResetButtonHoldMs - held_ms + 999) / 1000));
+    }
+}
+#endif
 
 static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data)
 {
@@ -97,17 +191,20 @@ static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data
     const uint16_t endpoint_id = s_air_quality_endpoint_id;
 
     // schedule the attribute update so that we can report it from matter thread
-    chip::DeviceLayer::SystemLayer().ScheduleLambda([endpoint_id, d]() {
-        float pm2_5 = d.valid ? d.pm2_5 : NAN;
+    CHIP_ERROR err = chip::DeviceLayer::SystemLayer().ScheduleLambda([endpoint_id, d]() {
+        // MeasuredValue must stay within [MinMeasuredValue, MaxMeasuredValue].
+        const float pm2_5 = d.valid ? fminf(fmaxf(d.pm2_5, 0.0f), kPmMaxMeasuredValue) : NAN;
 
         update_measured_value(endpoint_id, Pm25ConcentrationMeasurement::Id,
                               Pm25ConcentrationMeasurement::Attributes::MeasuredValue::Id, pm2_5);
 
-        AirQuality::AirQualityEnum air_quality = d.valid ? pm25_to_air_quality(pm2_5)
-                                                         : AirQuality::AirQualityEnum::kUnknown;
-        esp_matter_attr_val_t val = esp_matter_enum8(chip::to_underlying(air_quality));
+        esp_matter_attr_val_t val = esp_matter_enum8(chip::to_underlying(pm25_to_air_quality(pm2_5)));
         attribute::update(endpoint_id, AirQuality::Id, AirQuality::Attributes::AirQuality::Id, &val);
     });
+    if (err != CHIP_NO_ERROR) {
+        // Matter event queue full: this value is lost, the next one is sent normally.
+        ESP_LOGW(TAG, "Failed to schedule the Matter update, err:%" CHIP_ERROR_FORMAT, err.Format());
+    }
 }
 
 // Adds the Numeric Measurement feature (MeasuredValue in µg/m³) to a concentration measurement cluster.
@@ -131,8 +228,9 @@ static endpoint_t *create_air_quality_sensor(node_t *node)
     VerifyOrReturnValue(endpoint != nullptr, nullptr);
 
     // AirQuality: enable all optional levels so that every AirQualityEnum value is allowed.
-    // These features only set FeatureMap bits, so set them directly (the feature helper
-    // names differ between esp-matter releases).
+    // These features only set FeatureMap bits, so set them directly: esp-matter v1.4
+    // declares the helpers as mod/vpoor/xpoor but defines them as moderate/very_poor/
+    // extremely_poor, so they do not link.
     cluster_t *air_quality_cluster = cluster::get(endpoint, AirQuality::Id);
     attribute_t *feature_map = attribute::get(air_quality_cluster, Globals::Attributes::FeatureMap::Id);
     VerifyOrReturnValue(feature_map != nullptr, nullptr);
@@ -166,11 +264,13 @@ static void save_boot_count(uint8_t count)
 }
 
 // Counts quick power cycles. Returns true when a factory reset was requested.
-// Only real power-on resets count, so crashes, OTA updates or flashing never
-// trigger a factory reset.
+// Only power-on resets count, so crashes, OTA updates or flashing never
+// trigger a factory reset, and they clear the count. A brown-out (a quick
+// unplug/replug can cause one) neither counts nor clears it.
 static bool check_factory_reset_boot_count()
 {
-    if (esp_reset_reason() != ESP_RST_POWERON) {
+    const esp_reset_reason_t reason = esp_reset_reason();
+    if (reason != ESP_RST_POWERON && reason != ESP_RST_BROWNOUT) {
         save_boot_count(0);
         return false;
     }
@@ -180,13 +280,16 @@ static bool check_factory_reset_boot_count()
         nvs_get_u8(handle, kNvsBootCountKey, &count);
         nvs_close(handle);
     }
-    count++;
-    ESP_LOGI(TAG, "Quick power cycle %u/%u", count, kFactoryResetBootCount);
+    if (reason == ESP_RST_POWERON && count < kFactoryResetBootCount) {
+        count++;
+        ESP_LOGI(TAG, "Quick power cycle %u/%u", count, kFactoryResetBootCount);
+        save_boot_count(count);
+    }
     if (count >= kFactoryResetBootCount) {
-        save_boot_count(0);
+        // The count stays until the reset is done: it ends with a software
+        // restart, which clears it, and a power cut before that retries it.
         return true;
     }
-    save_boot_count(count);
 
     // Staying powered on long enough clears the counter.
     static esp_timer_handle_t timer;
@@ -230,10 +333,20 @@ static void update_matter_status()
     local_ui_set_matter_connected(online && subscriptions > 0);
 }
 
+// Task watchdog user for the Matter thread (CONFIG_ESP_TASK_WDT_PANIC): if the
+// thread stops running the lambda below, the device restarts instead of
+// staying off Matter while the local UI still looks alive.
+static esp_task_wdt_user_handle_t s_matter_wdt;
+
 // Subscriptions start and end without a device event, so also poll.
 static void matter_status_timer_cb(void *arg)
 {
-    chip::DeviceLayer::SystemLayer().ScheduleLambda([]() { update_matter_status(); });
+    chip::DeviceLayer::SystemLayer().ScheduleLambda([]() {
+        update_matter_status();
+        if (s_matter_wdt != NULL) {
+            esp_task_wdt_reset_user(s_matter_wdt);
+        }
+    });
 }
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
@@ -264,11 +377,41 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     update_matter_status();
 }
 
-// This callback is invoked when clients interact with the Identify Cluster.
+// How long the LEDs blink for an Identify TriggerEffect command (0 = stop).
+static uint32_t identify_effect_ms(uint8_t effect_id)
+{
+    switch (static_cast<Identify::EffectIdentifierEnum>(effect_id)) {
+    case Identify::EffectIdentifierEnum::kBlink:
+        return 1000;
+    case Identify::EffectIdentifierEnum::kOkay:
+        return 2000;
+    case Identify::EffectIdentifierEnum::kChannelChange:
+        return 8000;
+    case Identify::EffectIdentifierEnum::kBreathe:
+        return 15000;
+    default:    // kFinishEffect, kStopEffect
+        return 0;
+    }
+}
+
+// Identify cluster (IdentifyType "visible indicator", set by esp-matter for this
+// device type): the LEDs blink while a controller identifies the device.
+// Runs on the Matter thread.
 static esp_err_t app_identification_cb(identification::callback_type_t type, uint16_t endpoint_id, uint8_t effect_id,
                                        uint8_t effect_variant, void *priv_data)
 {
     ESP_LOGI(TAG, "Identification callback: type: %u, effect: %u, variant: %u", type, effect_id, effect_variant);
+    switch (type) {
+    case identification::callback_type_t::START:
+        local_ui_identify(LOCAL_UI_IDENTIFY_FOREVER);    // until STOP
+        break;
+    case identification::callback_type_t::STOP:
+        local_ui_identify(0);
+        break;
+    case identification::callback_type_t::EFFECT:
+        local_ui_identify(identify_effect_ms(effect_id));
+        break;
+    }
     return ESP_OK;
 }
 
@@ -307,15 +450,40 @@ static esp_err_t start_matter()
         .name = "matter_status",
     };
     if (esp_timer_create(&timer_args, &s_status_timer) == ESP_OK) {
-        esp_timer_start_periodic(s_status_timer, 5 * 1000 * 1000);
+        // The timer feeds the Matter thread's watchdog: only watch it when the timer runs.
+        if (esp_task_wdt_add_user("matter", &s_matter_wdt) != ESP_OK) {
+            s_matter_wdt = NULL;    // task watchdog disabled in menuconfig
+        }
+        if (esp_timer_start_periodic(s_status_timer, 5 * 1000 * 1000) != ESP_OK && s_matter_wdt != NULL) {
+            esp_task_wdt_delete_user(s_matter_wdt);
+            s_matter_wdt = NULL;
+        }
     }
     return ESP_OK;
 }
 
+// Initializes the default NVS partition. A partition without free pages, or
+// written by a newer NVS format, can only be erased: otherwise Matter could
+// never start (and could not be factory reset either) until the device is
+// reflashed. Erasing it is a factory reset: fabrics and Wi-Fi are forgotten.
+static void init_nvs()
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS partition unusable (%s), erasing it", esp_err_to_name(err));
+        err = nvs_flash_erase();
+        if (err == ESP_OK) {
+            err = nvs_flash_init();
+        }
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(err));
+    }
+}
+
 extern "C" void app_main()
 {
-    /* Initialize the ESP NVS layer */
-    nvs_flash_init();
+    init_nvs();
 
     ESP_LOGI(TAG, "%s %s, firmware %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME,
              esp_app_get_description()->version);
@@ -325,7 +493,7 @@ extern "C" void app_main()
     /* The sensor, OLED, WS2812 and LD2410 work locally, before and without Matter */
     esp_err_t err = local_ui_init();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start local UI, err:%d", err);
+        ESP_LOGE(TAG, "Failed to start local UI: %s", esp_err_to_name(err));
     }
 
     pm_sensor_config_t pm_config = {
@@ -337,17 +505,22 @@ extern "C" void app_main()
     };
     err = pm_sensor_init(&pm_config);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize PM sensor driver, err:%d", err);
+        ESP_LOGE(TAG, "Failed to initialize PM sensor driver: %s", esp_err_to_name(err));
     }
 
     /* Matter is optional for the local functions: on failure, keep running without it */
     if (start_matter() != ESP_OK) {
         ESP_LOGE(TAG, "Matter is not running; the device keeps working locally");
-        return;
     }
 
+    /* Factory reset, once Matter has started or failed to */
     if (factory_reset_requested) {
-        ESP_LOGW(TAG, "Factory reset requested by %u quick power cycles", kFactoryResetBootCount);
-        esp_matter::factory_reset();
+        start_factory_reset("quick power cycles");
     }
+#if CONFIG_FACTORY_RESET_BUTTON_GPIO >= 0
+    err = button_init(CONFIG_FACTORY_RESET_BUTTON_GPIO, reset_button_cb, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize the factory reset button: %s", esp_err_to_name(err));
+    }
+#endif
 }
