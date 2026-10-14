@@ -36,6 +36,10 @@ Nếu luồng Matter hoặc một task của thiết bị (cảm biến PM, rada
 
 ### Sơ đồ nối dây
 
+![Sơ đồ đấu dây: ESP32-C3 SuperMini, PMS5003, LD2410C, OLED SH1106, LED WS2812B và nút factory reset](docs/wiring.png)
+
+Hình minh họa, không theo tỉ lệ. Thứ tự chân của OLED và LD2410 khác nhau giữa các hãng và phiên bản: nối theo chữ in trên mạch, không theo vị trí chân trong hình.
+
 | Thiết bị | Chân | ESP32-C3 |
 |---|---|---|
 | PMS5003 | TX | **GPIO20** |
@@ -249,6 +253,7 @@ python3 tools/gen_fonts.py Roboto-Regular.ttf Roboto-Bold.ttf > main/ui/fonts.c
 ```
 matter-pm25-sensor/
 ├── CMakeLists.txt
+├── docs/wiring.png            # Sơ đồ đấu dây
 ├── partitions.csv
 ├── sdkconfig.defaults
 ├── main/
