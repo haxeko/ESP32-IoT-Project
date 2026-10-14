@@ -81,18 +81,26 @@ docker run --rm -v "$PWD":/project -w /project espressif/esp-matter:release-v1.6
 
 ### File firmware
 
-Mỗi lần `idf.py build` tạo thêm 2 file trong `build/`, tên có **hậu tố là phiên bản firmware**:
+Mỗi lần `idf.py build` tạo thêm 3 file trong `build/`, tên có **hậu tố là phiên bản firmware**:
 
-| File | Dùng khi |
-|---|---|
-| `matter_rgb_light_ws2812_esp32c3_<phiên bản>.bin` | Cập nhật, giữ ghép nối và Wi-Fi: nạp tại `0x20000` (hoặc dùng cho OTA) |
-| `matter_rgb_light_ws2812_esp32c3_merged_<phiên bản>.bin` | Nạp mới hoàn toàn: một file tại `0x0` (xóa ghép nối và Wi-Fi) |
+| File | Dùng khi | Nạp tại | Ghép nối, Wi-Fi |
+|---|---|---|---|
+| `matter_rgb_light_ws2812_esp32c3_update_<phiên bản>.bin` | Cập nhật đèn đang dùng qua USB | `0x1D000` | Giữ nguyên |
+| `matter_rgb_light_ws2812_esp32c3_merged_<phiên bản>.bin` | Đèn mới, hoặc muốn xóa sạch | `0x0` | Bị xóa |
+| `matter_rgb_light_ws2812_esp32c3_<phiên bản>.bin` | Chỉ có app: nguồn để tạo file OTA Matter | (OTA) | Giữ nguyên |
+
+```bash
+# Cập nhật, giữ ghép nối (thay <phiên bản>)
+esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x1d000 build/matter_rgb_light_ws2812_esp32c3_update_<phiên bản>.bin
+```
+
+File `update` gồm vùng OTA data (để trống) và app: đèn luôn khởi động bản vừa nạp, kể cả khi trước đó một bản OTA Matter đã chuyển sang phân vùng `ota_1`. Nếu chỉ nạp app tại `0x20000` trong trường hợp đó, đèn vẫn chạy bản OTA cũ. Không nạp file nào vào `0x10000`: đó là vùng NVS (ghép nối và Wi-Fi).
 
 Ví dụ: `matter_rgb_light_ws2812_esp32c3_merged_1.0.2610131432.bin`.
 
 Phiên bản có dạng `1.0.<thời điểm build UTC yyMMddHHmm>` và được lấy lúc CMake cấu hình. Khi build lại trong cùng thư mục, chạy `idf.py fullclean` trước để có phiên bản mới (CI luôn build mới nên mỗi lần đều có phiên bản riêng).
 
-Mỗi lần push, GitHub Actions build sẵn firmware, artifact tên `matter_rgb_light_ws2812-esp32c3-<phiên bản>` chứa 2 file trên.
+Mỗi lần push, GitHub Actions chạy test và build sẵn firmware, artifact tên `matter_rgb_light_ws2812-esp32c3-<phiên bản>` chứa 3 file trên.
 
 Log và console Matter chạy qua **cổng USB có sẵn** của ESP32-C3 (USB-Serial-JTAG), nạp firmware cũng qua cổng này. Nếu không nạp được, giữ nút BOOT, nhấn RST, rồi nhả BOOT.
 

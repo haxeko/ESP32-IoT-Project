@@ -32,21 +32,31 @@ set(EXTRA_COMPONENT_DIRS
 project(matter_rgb_light_ws2812)
 
 # Every build also writes copies of the firmware named with the version:
-#   build/matter_rgb_light_ws2812_esp32c3_<version>.bin         app image (OTA, or flash at 0x20000)
-#   build/matter_rgb_light_ws2812_esp32c3_merged_<version>.bin  bootloader + partitions + app (flash at 0x0)
+#   build/matter_rgb_light_ws2812_esp32c3_<version>.bin         app image (source of a Matter OTA image)
+#   build/matter_rgb_light_ws2812_esp32c3_update_<version>.bin  OTA data + app, flash at 0x1D000: USB update that
+#                                                                keeps Wi-Fi and Matter pairing (NVS not touched)
+#   build/matter_rgb_light_ws2812_esp32c3_merged_<version>.bin  bootloader + partitions + app, flash at 0x0: new
+#                                                                device (it also erases NVS: Wi-Fi and pairing)
 idf_build_get_property(fw_build_dir BUILD_DIR)
 idf_component_get_property(fw_esptool_cmd esptool_py ESPTOOLPY_CMD)
+partition_table_get_partition_info(fw_otadata_offset "--partition-type data --partition-subtype ota" "offset")
+partition_table_get_partition_info(fw_app_offset "--partition-boot-default" "offset")
+if(NOT fw_otadata_offset OR NOT fw_app_offset)
+    message(FATAL_ERROR "partitions.csv needs an otadata partition and an app partition")
+endif()
 set(FW_BIN_PREFIX "${CMAKE_PROJECT_NAME}_${IDF_TARGET}")
 add_custom_target(versioned_bins ALL
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_PROJECT_NAME}.bin" "${FW_BIN_PREFIX}_${PROJECT_VER}.bin"
+    # The initial (empty) OTA data makes the bootloader start ota_0, where the app is written, even after a
+    # Matter OTA update has switched to ota_1; writing only the app at 0x20000 would then not be used.
+    COMMAND ${fw_esptool_cmd} --chip ${IDF_TARGET} merge-bin --target-offset ${fw_otadata_offset}
+            -o "${FW_BIN_PREFIX}_update_${PROJECT_VER}.bin"
+            ${fw_otadata_offset} ota_data_initial.bin ${fw_app_offset} "${CMAKE_PROJECT_NAME}.bin"
     COMMAND ${fw_esptool_cmd} --chip ${IDF_TARGET} merge-bin -o "${FW_BIN_PREFIX}_merged_${PROJECT_VER}.bin" "@flash_args"
     WORKING_DIRECTORY "${fw_build_dir}"
-    COMMENT "Firmware ${PROJECT_VER}: ${FW_BIN_PREFIX}_${PROJECT_VER}.bin, ${FW_BIN_PREFIX}_merged_${PROJECT_VER}.bin"
+    COMMENT "Firmware ${PROJECT_VER}: ${FW_BIN_PREFIX}_[update_|merged_]${PROJECT_VER}.bin"
     VERBATIM)
-add_dependencies(versioned_bins gen_project_binary bootloader partition_table_bin)
-if(TARGET blank_ota_data)
-    add_dependencies(versioned_bins blank_ota_data)
-endif()
+add_dependencies(versioned_bins gen_project_binary bootloader partition_table_bin blank_ota_data)
 
 idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-Os;-DCHIP_HAVE_CONFIG_H;-Wno-overloaded-virtual" APPEND)
 idf_build_set_property(C_COMPILE_OPTIONS "-Os" APPEND)
