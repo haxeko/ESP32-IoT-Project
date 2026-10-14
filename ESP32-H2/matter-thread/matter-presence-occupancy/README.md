@@ -31,8 +31,8 @@ Logic phát hiện giữ nguyên như các bản LD2410 khác trong repo:
 
 | LD2410 | ESP32-H2 |
 |---|---|
-| TX | **GPIO4** |
-| RX | **GPIO5** |
+| TX | **GPIO11** |
+| RX | **GPIO12** |
 | VCC | **5V** |
 | GND | GND |
 
@@ -40,7 +40,7 @@ LD2410 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng
 
 | Chức năng | Chân |
 |---|---|
-| Radar LD2410 (UART1) | RX = GPIO4, TX = GPIO5 |
+| Radar LD2410 (UART1) | RX = GPIO11, TX = GPIO12 |
 | LED RGB WS2812 trên board | GPIO8 |
 | Nút BOOT: bấm đúp = chế độ ghép nối, giữ 5 s = factory reset | GPIO9 |
 
@@ -139,8 +139,8 @@ Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 
 | Tuỳ chọn | Mặc định | Ý nghĩa |
 |---|---|---|
-| ESP32-H2 UART RX pin | 4 | Nối với TX của LD2410 |
-| ESP32-H2 UART TX pin | 5 | Nối với RX của LD2410 |
+| ESP32-H2 UART RX pin | 11 | Nối với TX của LD2410 |
+| ESP32-H2 UART TX pin | 12 | Nối với RX của LD2410 |
 | Only count targets closer than | 0 (tắt) | Bỏ qua mục tiêu xa hơn khoảng cách này (cm) |
 | Default hold time | 30 s | HoldTime lúc mới nạp / sau factory reset. Đổi trong app thì giá trị mới được lưu lại |
 | Report unoccupied when the radar sends nothing for | 10 s | Coi radar mất kết nối sau khoảng thời gian này |

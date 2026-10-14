@@ -22,7 +22,7 @@ menu "Presence Sensor Configuration"
     config LD2410_UART_RX_PIN
         int "ESP32-H2 UART RX pin (connect to LD2410 TX)"
         range 0 27
-        default 4
+        default 11
         help
             Avoid the strapping pins (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25),
             the flash pins (GPIO15-GPIO21) and the console UART pins
@@ -31,7 +31,7 @@ menu "Presence Sensor Configuration"
     config LD2410_UART_TX_PIN
         int "ESP32-H2 UART TX pin (connect to LD2410 RX)"
         range 0 27
-        default 5
+        default 12
 
     config PRESENCE_MAX_DISTANCE_CM
         int "Only count targets closer than (cm, 0 = use the radar's own gates)"
