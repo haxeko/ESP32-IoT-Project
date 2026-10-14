@@ -32,9 +32,19 @@ CONFIG_ENABLE_WIFI_STATION=n
 # Size: shared __riscv_save/restore routines for function prologues/epilogues (about 12-16 KB less flash)
 CONFIG_COMPILER_SAVE_RESTORE_LIBCALLS=y
 
-# Relay on GPIO4, active-high (fit a pull-down on the relay input, see RELAY_GPIO help)
-CONFIG_RELAY_GPIO=4
+# Relay on GPIO10, active-high (fit a pull-down on the relay input, see RELAY_GPIO help)
+CONFIG_RELAY_GPIO=10
 CONFIG_RELAY_ACTIVE_LEVEL=1
 
-# On-board WS2812 LED (GPIO8): relay state, Identify, factory reset
+# Button to GND on GPIO4: 1 click = toggle, 3 clicks = pairing, hold 5 s = factory reset
+CONFIG_BUTTON_GPIO=4
+
+# Single-colour status LED on GPIO5, lit at HIGH: relay state, pairing/Identify blinks, factory reset
 CONFIG_STATUS_LED_ENABLE=y
+CONFIG_STATUS_LED_GPIO=5
+CONFIG_STATUS_LED_ACTIVE_LEVEL=1
+
+# Mechanical wall switch to GND on GPIO25, idles HIGH (internal pull-up): every flip toggles the relay
+CONFIG_WALL_SWITCH_ENABLE=y
+CONFIG_WALL_SWITCH_GPIO=25
+CONFIG_WALL_SWITCH_MODE_TOGGLE=y

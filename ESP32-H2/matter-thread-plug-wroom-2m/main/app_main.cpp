@@ -109,7 +109,7 @@ static void ota_check_pending_verify()
 }
 #endif // CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
 
-/* Blue blinking while the device can be commissioned. The window status stays "open" from the first advertisement
+/* LED blinking while the device can be commissioned. The window status stays "open" from the first advertisement
  * until commissioning completes, fails for good or times out: PASE closes only the advertisement (and posts
  * kCommissioningWindowClosed) while commissioning goes on. */
 static void app_pairing_led_update()
@@ -205,7 +205,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     }
 }
 
-/* Runs on the CHIP task: Identify commands blink the status LED blue */
+/* Runs on the CHIP task: Identify commands blink the status LED */
 static esp_err_t app_identification_cb(identification::callback_type_t type, uint16_t endpoint_id, uint8_t effect_id,
                                        uint8_t effect_variant, void *priv_data)
 {
@@ -264,10 +264,12 @@ extern "C" void app_main()
 {
     esp_err_t err = ESP_OK;
 
-    /* Relay on GPIO4 (CONFIG_RELAY_GPIO) first: it needs nothing from NVS and ends the reset pull-up window sooner.
-     * BOOT button (GPIO9): click = toggle, hold 5 s = factory reset */
+    /* Relay on GPIO10 (CONFIG_RELAY_GPIO) and status LED on GPIO5 first: they need nothing from NVS and end the
+     * floating window at reset sooner. Button (GPIO4): 1 click = toggle, 3 clicks = pairing, hold 5 s = factory reset.
+     * Wall switch (GPIO25): every flip toggles the relay */
     app_driver_handle_t relay_handle = app_driver_relay_init();
     app_driver_button_init();
+    app_driver_wall_switch_init();
 
     nvs_flash_init();
 

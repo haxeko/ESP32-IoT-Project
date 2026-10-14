@@ -37,8 +37,11 @@ CONFIG_ENABLE_CHIP_SHELL=n
 # Only a few dynamic endpoints are needed
 CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=2
 
-# Button
+# Button (GPIO4): 1 click = toggle, 3 clicks = pairing, hold 5 s = factory reset.
+# Clicks of a series may be up to 300 ms apart (and each later press up to 300 ms long);
+# a single click acts 300 ms after release
 CONFIG_BUTTON_PERIOD_TIME_MS=20
+CONFIG_BUTTON_SHORT_PRESS_TIME_MS=300
 CONFIG_BUTTON_LONG_PRESS_TIME_MS=5000
 
 # Vendor/product name, hardware version and MAC-based serial number (main/device_info.cpp).

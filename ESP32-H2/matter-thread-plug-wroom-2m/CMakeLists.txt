@@ -1,4 +1,5 @@
-# ESP32-H2-WROOM-03 (2 MB flash) Matter over Thread plug (On/Off Plug-in Unit), relay on GPIO4
+# ESP32-H2-WROOM-03 (2 MB flash) Matter over Thread plug (On/Off Plug-in Unit): relay GPIO10, button GPIO4,
+# status LED GPIO5, wall switch GPIO25
 cmake_minimum_required(VERSION 3.5)
 
 if(NOT DEFINED ENV{ESP_MATTER_PATH})

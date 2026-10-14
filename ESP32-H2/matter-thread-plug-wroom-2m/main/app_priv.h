@@ -12,15 +12,22 @@
 
 typedef void *app_driver_handle_t;
 
-/** Configure the relay GPIO (CONFIG_RELAY_GPIO) as output and init the status LED. Power-on, brownout and
- *  system resets start with the relay OFF; a CPU-only reset (esp_restart(), OTA apply, factory reset, panic)
- *  keeps the current relay level until app_driver_relay_set_defaults() applies the stored OnOff value, unless
- *  the previous boot never reached app_driver_relay_boot_done() (startup crash loop: relay OFF). */
+/** Configure the relay GPIO (CONFIG_RELAY_GPIO, GPIO10) as output and the status LED (CONFIG_STATUS_LED_GPIO,
+ *  GPIO5). Power-on, brownout and system resets start with the relay OFF; a CPU-only reset (esp_restart(), OTA
+ *  apply, factory reset, panic) keeps the current relay level until app_driver_relay_set_defaults() applies the
+ *  stored OnOff value, unless the previous boot never reached app_driver_relay_boot_done() (startup crash loop:
+ *  relay OFF). */
 app_driver_handle_t app_driver_relay_init();
 
-/** Initialize the BOOT button (GPIO9): short press toggles the relay, double click opens the commissioning window
- *  (pairing, LED blinks blue), hold 5 s then release: 3 red LED blinks and factory reset. */
+/** Initialize the button (CONFIG_BUTTON_GPIO, GPIO4, to GND): 1 click toggles the relay, 3 clicks open the
+ *  commissioning window (pairing, LED blinks), hold 5 s (LED flashes fast) then release: 3 LED blinks and factory
+ *  reset. */
 app_driver_handle_t app_driver_button_init();
+
+/** Initialize the wall switch input (CONFIG_WALL_SWITCH_GPIO, GPIO25, to GND, idles HIGH): every debounced flip
+ *  (or each press, CONFIG_WALL_SWITCH_MODE_MOMENTARY) toggles the relay. The position at boot changes nothing.
+ *  No-op when CONFIG_WALL_SWITCH_ENABLE is off. */
+void app_driver_wall_switch_init();
 
 /** Apply an attribute change coming from Matter to the hardware. */
 esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle, uint16_t endpoint_id, uint32_t cluster_id,
@@ -32,14 +39,14 @@ esp_err_t app_driver_relay_set_defaults(uint16_t endpoint_id);
 /** Mark startup as complete (call right after app_driver_relay_set_defaults()). */
 void app_driver_relay_boot_done();
 
-/** Matter Identify on the status LED (blue blinks). blinks = 0 blinks until app_driver_identify_stop().
+/** Matter Identify on the status LED (0.5 s blinks). blinks = 0 blinks until app_driver_identify_stop().
  *  CHIP task only. No-ops when CONFIG_STATUS_LED_ENABLE is off. */
 void app_driver_identify_start(uint16_t blinks);
 void app_driver_identify_stop();
 /** Identify FinishEffect: let the blink in progress finish, then stop. CHIP task only. */
 void app_driver_identify_finish();
 
-/** Pairing indication: blink the status LED blue while the device can be commissioned (commissioning window open or
+/** Pairing indication: blink the status LED while the device can be commissioned (commissioning window open or
  *  commissioning in progress); false = back to the relay indication. CHIP task only. */
 void app_driver_pairing_indicate(bool pairing);
 

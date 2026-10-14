@@ -1,6 +1,7 @@
 #include <esp_attr.h>
 #include <esp_log.h>
 #include <esp_rom_sys.h>
+#include <esp_timer.h>
 #include <driver/gpio.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -16,11 +17,7 @@
 #include <platform/CHIPDeviceLayer.h>
 
 #include <button_gpio.h>
-#include <device.h>
 #include <iot_button.h>
-#if CONFIG_STATUS_LED_ENABLE
-#include <led_driver.h>
-#endif
 
 using namespace chip::app::Clusters;
 using namespace esp_matter;
@@ -29,12 +26,33 @@ static const char *TAG = "app_driver";
 extern uint16_t relay_endpoint_id;
 
 static constexpr gpio_num_t k_relay_gpio = (gpio_num_t)CONFIG_RELAY_GPIO;
+static constexpr gpio_num_t k_button_gpio = (gpio_num_t)CONFIG_BUTTON_GPIO;
+
+/* One job per pin. An sdkconfig from an older build keeps its old pins (relay on GPIO4 = the button pin now):
+ * delete sdkconfig (and sdkconfig.debug) and rebuild to take the pins from sdkconfig.defaults*. */
+#define APP_PIN_CONFLICT_MSG " (old sdkconfig? delete it and rebuild)"
+static_assert(CONFIG_BUTTON_GPIO != CONFIG_RELAY_GPIO, "BUTTON_GPIO = RELAY_GPIO" APP_PIN_CONFLICT_MSG);
+#if CONFIG_STATUS_LED_ENABLE
+static constexpr gpio_num_t k_led_gpio = (gpio_num_t)CONFIG_STATUS_LED_GPIO;
+static_assert(CONFIG_STATUS_LED_GPIO != CONFIG_RELAY_GPIO && CONFIG_STATUS_LED_GPIO != CONFIG_BUTTON_GPIO,
+              "STATUS_LED_GPIO = RELAY_GPIO or BUTTON_GPIO" APP_PIN_CONFLICT_MSG);
+#endif
+#if CONFIG_WALL_SWITCH_ENABLE
+static constexpr gpio_num_t k_switch_gpio = (gpio_num_t)CONFIG_WALL_SWITCH_GPIO;
+static_assert(CONFIG_WALL_SWITCH_GPIO != CONFIG_RELAY_GPIO && CONFIG_WALL_SWITCH_GPIO != CONFIG_BUTTON_GPIO,
+              "WALL_SWITCH_GPIO = RELAY_GPIO or BUTTON_GPIO" APP_PIN_CONFLICT_MSG);
+#if CONFIG_STATUS_LED_ENABLE
+static_assert(CONFIG_WALL_SWITCH_GPIO != CONFIG_STATUS_LED_GPIO, "WALL_SWITCH_GPIO = STATUS_LED_GPIO" APP_PIN_CONFLICT_MSG);
+#endif
+#endif
 
 #if CONFIG_STATUS_LED_ENABLE
-static led_driver_handle_t s_led_handle = NULL;
 /* CHIP task only (Identify callbacks, commissioning events, attribute updates) */
 static bool s_identifying = false;
 static bool s_pairing = false;
+/* Fast flashing while the button is held past the factory reset time (esp_timer task) */
+static esp_timer_handle_t s_reset_flash_timer = nullptr;
+static constexpr uint64_t k_reset_flash_period_us = 100 * 1000;
 #endif
 
 /* Written in the esp_timer (button) task, read in the CHIP and factory reset tasks */
@@ -49,33 +67,31 @@ static bool s_relay_on = false;
 static RTC_NOINIT_ATTR uint32_t s_boot_pending;
 static constexpr uint32_t k_boot_pending_magic = 0x52454C59; /* "RELY" */
 
-/* Status LED colors (hue): relay ON = green, pairing and Identify = blue (blinking), factory reset = red */
-static constexpr uint16_t k_hue_relay_on = 120;
-static constexpr uint16_t k_hue_identify = 240;
-static constexpr uint16_t k_hue_reset = 0;
-
-static void app_driver_led_set(bool on, uint16_t hue)
+/* Status LED (single colour): on = relay ON, 0.5 s blinks = pairing or Identify,
+ * fast flashing = button held for factory reset (release now), 3 blinks = factory reset starting */
+static void app_driver_led_set(bool on)
 {
 #if CONFIG_STATUS_LED_ENABLE
-    if (s_led_handle) {
-        led_driver_set_hue(s_led_handle, hue);
-        led_driver_set_power(s_led_handle, on);
-    }
+    gpio_set_level(k_led_gpio, on ? CONFIG_STATUS_LED_ACTIVE_LEVEL : !CONFIG_STATUS_LED_ACTIVE_LEVEL);
 #endif
 }
 
 #if CONFIG_STATUS_LED_ENABLE
-/* CHIP task only. armed_cb (esp_timer task, priority 22) can run during the write, and its own red write can be
- * rejected while our refresh is in flight. Re-check afterwards so the solid red "release now" cue is the last write. */
-static void app_driver_led_set_unless_reset(bool on, uint16_t hue)
+/* CHIP task only. If armed_cb (esp_timer task, priority 22) runs between the check and the write, the next
+ * factory reset flash (<= 100 ms) overwrites it: a GPIO write is atomic and cannot be lost half-way. */
+static void app_driver_led_set_unless_reset(bool on)
 {
-    if (s_factory_reset_armed) {
-        return;
+    if (!s_factory_reset_armed) {
+        app_driver_led_set(on);
     }
-    app_driver_led_set(on, hue);
-    if (s_factory_reset_armed) {
-        app_driver_led_set(true, k_hue_reset);
-    }
+}
+
+/* esp_timer task, while the button is held past the factory reset time */
+static void app_driver_reset_flash_cb(void *arg)
+{
+    static bool s_phase = false;
+    s_phase = !s_phase;
+    app_driver_led_set(s_phase);
 }
 #endif
 
@@ -85,21 +101,17 @@ static esp_err_t app_driver_relay_set_power(bool on)
     ESP_LOGI(TAG, "Relay (GPIO%d) -> %s", (int)k_relay_gpio, on ? "ON" : "OFF");
     s_relay_on = on;
 #if CONFIG_STATUS_LED_ENABLE
-    /* The hue is green outside pairing, Identify and factory reset, so one refresh is enough */
-    if (s_led_handle && !s_factory_reset_armed && !s_identifying && !s_pairing) {
-        led_driver_set_power(s_led_handle, on);
-        if (s_factory_reset_armed) {
-            /* armed_cb preempted us mid-write: restore the solid red "release now" indication */
-            app_driver_led_set(true, k_hue_reset);
-        }
+    /* The LED shows the relay outside pairing, Identify and factory reset */
+    if (!s_identifying && !s_pairing) {
+        app_driver_led_set_unless_reset(on);
     }
 #endif
     return gpio_set_level(k_relay_gpio, level);
 }
 
-static void app_driver_button_toggle_cb(void *arg, void *data)
+/* Button click or wall switch (esp_timer task): flip the OnOff attribute. Works without a Matter network. */
+static void app_driver_relay_toggle(const char *source)
 {
-    ESP_LOGI(TAG, "Toggle button pressed");
     /* Read-modify-write on the CHIP task: atomic with controller On/Off/Toggle commands,
      * and the esp_timer task never blocks on the CHIP lock or the NVS write */
     CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork([](intptr_t) {
@@ -113,13 +125,19 @@ static void app_driver_button_toggle_cb(void *arg, void *data)
         attribute::update(relay_endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val);
     });
     if (err != CHIP_NO_ERROR) {
-        ESP_LOGW(TAG, "Toggle ignored, Matter stack not ready: %" CHIP_ERROR_FORMAT, err.Format());
+        ESP_LOGW(TAG, "%s ignored, Matter stack not ready: %" CHIP_ERROR_FORMAT, source, err.Format());
     }
+}
+
+static void app_driver_button_toggle_cb(void *arg, void *data)
+{
+    ESP_LOGI(TAG, "Button (GPIO%d): 1 click, toggle relay", (int)k_button_gpio);
+    app_driver_relay_toggle("Button toggle");
 }
 
 static void app_driver_button_pairing_cb(void *arg, void *data)
 {
-    ESP_LOGI(TAG, "Pairing button pressed");
+    ESP_LOGI(TAG, "Button (GPIO%d): 3 clicks, pairing mode", (int)k_button_gpio);
     CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork([](intptr_t) {
         chip::Server &server = chip::Server::GetInstance();
         chip::CommissioningWindowManager &cwm = server.GetCommissioningWindowManager();
@@ -150,11 +168,14 @@ static void app_driver_button_pairing_cb(void *arg, void *data)
 
 static void app_driver_factory_reset_task(void *arg)
 {
-    /* 3 red blinks confirm the reset, then erase all Matter/Thread data and reboot */
+    /* A short dark pause after the fast flashing, then 3 blinks confirm the reset: erase all Matter/Thread data
+     * and reboot */
+    app_driver_led_set(false);
+    vTaskDelay(pdMS_TO_TICKS(500));
     for (int i = 0; i < 3; i++) {
-        app_driver_led_set(true, k_hue_reset);
+        app_driver_led_set(true);
         vTaskDelay(pdMS_TO_TICKS(250));
-        app_driver_led_set(false, k_hue_reset);
+        app_driver_led_set(false);
         vTaskDelay(pdMS_TO_TICKS(250));
     }
     ESP_LOGI(TAG, "Starting factory reset");
@@ -167,8 +188,12 @@ static void app_driver_button_factory_reset_armed_cb(void *arg, void *data)
     if (!s_factory_reset_armed) {
         s_factory_reset_armed = true;
         ESP_LOGI(TAG, "Factory reset triggered. Release the button to start factory reset.");
-        /* Solid red: release now */
-        app_driver_led_set(true, k_hue_reset);
+#if CONFIG_STATUS_LED_ENABLE
+        /* Fast flashing: release now */
+        if (s_reset_flash_timer) {
+            esp_timer_start_periodic(s_reset_flash_timer, k_reset_flash_period_us);
+        }
+#endif
     }
 }
 
@@ -176,6 +201,11 @@ static void app_driver_button_factory_reset_release_cb(void *arg, void *data)
 {
     if (s_factory_reset_armed && !s_factory_reset_started) {
         s_factory_reset_started = true;
+#if CONFIG_STATUS_LED_ENABLE
+        if (s_reset_flash_timer) {
+            esp_timer_stop(s_reset_flash_timer);
+        }
+#endif
         /* Blink from a task: button callbacks run in the esp_timer task and must not block */
         if (xTaskCreate(app_driver_factory_reset_task, "factory_reset", 4096, NULL, 5, NULL) != pdPASS) {
             ESP_LOGE(TAG, "Failed to create factory reset task, resetting now");
@@ -185,9 +215,9 @@ static void app_driver_button_factory_reset_release_cb(void *arg, void *data)
 }
 
 #if CONFIG_STATUS_LED_ENABLE
-/* Pairing and Identify: blue blinks on the CHIP SystemLayer timer, so they and the relay LED writes are serialised on
+/* Pairing and Identify: 0.5 s blinks on the CHIP SystemLayer timer, so they and the relay LED writes are serialised on
  * the CHIP task. The factory reset path (esp_timer task, factory_reset task) also writes the LED; the CHIP-side writes
- * re-check s_factory_reset_armed afterwards. Priority: factory reset (red) > Identify / pairing (blue) > relay (green). */
+ * skip it once s_factory_reset_armed is set. Priority: factory reset > Identify / pairing (blinking) > relay (on/off). */
 static bool s_blink_phase = false;
 static uint16_t s_blinks_left = 0; /* Identify only. 0 = blink until STOP */
 
@@ -197,7 +227,7 @@ static void app_driver_blink_cb(chip::System::Layer *, void *)
         return;
     }
     s_blink_phase = !s_blink_phase;
-    app_driver_led_set_unless_reset(s_blink_phase, k_hue_identify);
+    app_driver_led_set_unless_reset(s_blink_phase);
     if (s_identifying && !s_blink_phase && s_blinks_left && --s_blinks_left == 0) {
         app_driver_identify_stop();
         return;
@@ -214,7 +244,7 @@ static void app_driver_blink_refresh()
         s_blink_phase = false;
         app_driver_blink_cb(nullptr, nullptr);
     } else {
-        app_driver_led_set_unless_reset(s_relay_on, k_hue_relay_on);
+        app_driver_led_set_unless_reset(s_relay_on);
     }
 }
 
@@ -229,7 +259,7 @@ void app_driver_identify_stop()
 {
     if (s_identifying) {
         s_identifying = false;
-        /* Pairing still active: keep blinking blue */
+        /* Pairing still active: keep blinking */
         app_driver_blink_refresh();
     } else if (!s_pairing) {
         chip::DeviceLayer::SystemLayer().CancelTimer(app_driver_blink_cb, nullptr);
@@ -252,7 +282,7 @@ void app_driver_pairing_indicate(bool pairing)
     if (pairing == s_pairing) {
         return;
     }
-    ESP_LOGI(TAG, "Pairing LED %s", pairing ? "on (blinking blue)" : "off");
+    ESP_LOGI(TAG, "Pairing LED %s", pairing ? "on (blinking)" : "off");
     s_pairing = pairing;
     if (!s_identifying) {
         app_driver_blink_refresh();
@@ -320,15 +350,22 @@ app_driver_handle_t app_driver_relay_init()
     gpio_config(&io_conf);
 
 #if CONFIG_STATUS_LED_ENABLE
-    led_driver_config_t led_cfg = led_driver_get_config();
-    s_led_handle = led_driver_init(&led_cfg);
-    if (s_led_handle) {
-        /* Drop the per-update "led set r:g:b" INFO lines */
-        esp_log_level_set("led_driver_ws2812", ESP_LOG_WARN);
-        /* Dim green while the relay is ON */
-        led_driver_set_hue(s_led_handle, k_hue_relay_on);
-        led_driver_set_saturation(s_led_handle, 100);
-        led_driver_set_brightness(s_led_handle, 20);
+    /* LED off until app_driver_relay_set_power() below shows the relay state */
+    app_driver_led_set(false);
+    gpio_config_t led_conf = {
+        .pin_bit_mask = 1ULL << k_led_gpio,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&led_conf);
+    const esp_timer_create_args_t flash_args = {
+        .callback = app_driver_reset_flash_cb,
+        .name = "reset_flash",
+    };
+    if (esp_timer_create(&flash_args, &s_reset_flash_timer) != ESP_OK) {
+        s_reset_flash_timer = nullptr;
     }
 #endif
 
@@ -340,18 +377,89 @@ app_driver_handle_t app_driver_button_init()
 {
     button_handle_t handle = NULL;
     const button_config_t btn_cfg = {0};
-    const button_gpio_config_t btn_gpio_cfg = button_driver_get_config();
+    /* Push button to GND: active low, internal pull-up */
+    const button_gpio_config_t btn_gpio_cfg = {
+        .gpio_num = k_button_gpio,
+        .active_level = 0,
+    };
 
     if (iot_button_new_gpio_device(&btn_cfg, &btn_gpio_cfg, &handle) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create button device");
         return NULL;
     }
 
+    /* Clicks are counted until the button stays released for CONFIG_BUTTON_SHORT_PRESS_TIME_MS, so a single click
+     * acts that long after release. 2 clicks or 4+ clicks do nothing. */
     iot_button_register_cb(handle, BUTTON_SINGLE_CLICK, NULL, app_driver_button_toggle_cb, NULL);
-    /* Double click: open the commissioning window (pairing mode), LED blinks blue until commissioned or timed out */
-    iot_button_register_cb(handle, BUTTON_DOUBLE_CLICK, NULL, app_driver_button_pairing_cb, NULL);
-    /* Hold CONFIG_BUTTON_LONG_PRESS_TIME_MS (5 s): LED turns red; release: 3 red blinks, then factory reset */
+    /* 3 clicks: open the commissioning window (pairing mode), LED blinks until commissioned or timed out */
+    button_event_args_t triple_click = {};
+    triple_click.multiple_clicks.clicks = 3;
+    iot_button_register_cb(handle, BUTTON_MULTIPLE_CLICK, &triple_click, app_driver_button_pairing_cb, NULL);
+    /* Hold CONFIG_BUTTON_LONG_PRESS_TIME_MS (5 s): LED flashes fast; release: 3 blinks, then factory reset */
     iot_button_register_cb(handle, BUTTON_LONG_PRESS_START, NULL, app_driver_button_factory_reset_armed_cb, NULL);
     iot_button_register_cb(handle, BUTTON_PRESS_UP, NULL, app_driver_button_factory_reset_release_cb, NULL);
     return (app_driver_handle_t)handle;
+}
+
+#if CONFIG_WALL_SWITCH_ENABLE
+/* Wall switch, polled in the esp_timer task: a new level counts once it has held for 5 samples (40-50 ms), which
+ * filters contact bounce and short spikes picked up by the cable. */
+static constexpr uint32_t k_switch_poll_ms = 10;
+static constexpr uint8_t k_switch_stable_samples = 5;
+static int s_switch_level = -1;     /* debounced level, -1 until the first stable reading after boot */
+static int s_switch_candidate = -1; /* last raw level */
+static uint8_t s_switch_samples = 0; /* consecutive samples at s_switch_candidate */
+
+static void app_driver_wall_switch_poll_cb(void *arg)
+{
+    const int level = gpio_get_level(k_switch_gpio);
+    if (level != s_switch_candidate) {
+        s_switch_candidate = level;
+        s_switch_samples = 0;
+    }
+    if (level == s_switch_level || ++s_switch_samples < k_switch_stable_samples) {
+        return;
+    }
+    const bool first = s_switch_level < 0;
+    s_switch_level = level;
+    if (first) {
+        /* Position at boot is only the reference: the relay keeps its restored state */
+        ESP_LOGI(TAG, "Wall switch (GPIO%d) at boot: %s", (int)k_switch_gpio, level ? "HIGH (open)" : "LOW (closed)");
+        return;
+    }
+#if CONFIG_WALL_SWITCH_MODE_MOMENTARY
+    if (level) {
+        /* Push switch released */
+        return;
+    }
+#endif
+    ESP_LOGI(TAG, "Wall switch (GPIO%d) -> %s, toggle relay", (int)k_switch_gpio,
+             level ? "HIGH (open)" : "LOW (closed)");
+    app_driver_relay_toggle("Wall switch");
+}
+#endif // CONFIG_WALL_SWITCH_ENABLE
+
+void app_driver_wall_switch_init()
+{
+#if CONFIG_WALL_SWITCH_ENABLE
+    /* Switch to GND: idles HIGH on the internal pull-up, LOW while closed */
+    gpio_config_t io_conf = {
+        .pin_bit_mask = 1ULL << k_switch_gpio,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_conf);
+
+    const esp_timer_create_args_t args = {
+        .callback = app_driver_wall_switch_poll_cb,
+        .name = "wall_switch",
+    };
+    esp_timer_handle_t timer = nullptr;
+    if (esp_timer_create(&args, &timer) != ESP_OK ||
+        esp_timer_start_periodic(timer, k_switch_poll_ms * 1000) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start the wall switch timer");
+    }
+#endif
 }

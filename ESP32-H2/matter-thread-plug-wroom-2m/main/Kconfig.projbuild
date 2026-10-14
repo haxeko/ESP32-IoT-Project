@@ -3,20 +3,20 @@ menu "Relay Configuration"
     config RELAY_GPIO
         int "Relay GPIO number"
         range 0 27
-        default 4
+        default 10
         help
             GPIO that drives the relay module. Avoid the ESP32-H2 strapping pins
-            (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25; on the DevKitM-1, GPIO8 is the RGB LED
-            and GPIO9 the BOOT button), the flash pins (GPIO15-GPIO21),
+            (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25), the flash pins (GPIO15-GPIO21),
             GPIO23/GPIO24 (UART0 console RX/TX; the ROM and bootloader log on GPIO24
             at every boot, which would chatter the relay) and GPIO26/GPIO27
             (USB D-/D+; using either as a GPIO disables the USB-Serial-JTAG console).
 
-            GPIO4 (default) is the JTAG MTCK pad: from any hardware reset until the app
-            configures it (~0.5 s: ROM, bootloader, startup) its internal ~45 kOhm
-            pull-up is on. With an active-high relay driver, fit a <=10 kOhm pull-down
-            from the relay input (or MOSFET gate) to GND, or the relay may pulse ON at
-            power-up. GPIO0/1/5/10-14/22 have no reset pull-up.
+            GPIO10 (default) has no internal pull-up or pull-down from reset until the app
+            configures it (~0.5 s: ROM, bootloader, startup). With an active-high relay driver
+            (NPN/MOSFET), fit a <=10 kOhm pull-down from the relay input (or gate) to GND so the
+            relay stays OFF while the pin floats. GPIO4 (JTAG MTCK) has a ~45 kOhm pull-up
+            during that window: avoid it for an active-high relay. GPIO0/1/5/10-14/22 have
+            no reset pull-up.
 
     config RELAY_ACTIVE_LEVEL
         int "Relay active level (1 = active-high, 0 = active-low)"
@@ -26,13 +26,79 @@ menu "Relay Configuration"
             Level written to the relay GPIO to turn the relay ON.
             Many cheap optocoupled relay boards are active-low: set 0 for those.
 
+    config BUTTON_GPIO
+        int "Button GPIO number"
+        range 0 27
+        default 4
+        help
+            Push button between this GPIO and GND (internal pull-up enabled, pressed = LOW;
+            an external 10 kOhm pull-up to 3V3 is recommended).
+            1 click: toggle the relay. 3 quick clicks: open the commissioning window (pairing).
+            Hold 5 s (LED flashes fast), then release: factory reset.
+
     config STATUS_LED_ENABLE
-        bool "Status LED on the on-board WS2812 (GPIO8)"
+        bool "Status LED"
         default y
         help
-            ESP32-H2-DevKitM-1 has an addressable RGB LED on GPIO8: green while the relay
-            is ON, blue blinks for Matter Identify, red for factory reset.
-            Disable on custom boards without it (Identify then reports no indicator).
+            Single-colour LED on STATUS_LED_GPIO: on while the relay is ON, blinks (0.5 s)
+            while pairing or for Matter Identify, flashes fast while the button is held for
+            factory reset. Disable on boards without it (Identify then reports no indicator).
+
+    config STATUS_LED_GPIO
+        int "Status LED GPIO number"
+        depends on STATUS_LED_ENABLE
+        range 0 27
+        default 5
+        help
+            GPIO that drives the status LED (through a series resistor, e.g. 1 kOhm).
+
+    config STATUS_LED_ACTIVE_LEVEL
+        int "Status LED active level (1 = lit at HIGH, 0 = lit at LOW)"
+        depends on STATUS_LED_ENABLE
+        range 0 1
+        default 1
+        help
+            1: LED anode on the GPIO (through the resistor), cathode to GND.
+            0: LED cathode on the GPIO, anode to 3V3.
+
+    config WALL_SWITCH_ENABLE
+        bool "Wall switch input"
+        default y
+        help
+            Mechanical switch between WALL_SWITCH_GPIO and GND. The input idles HIGH (internal
+            pull-up), the closed switch pulls it LOW. The relay works from the switch with or
+            without a Matter network. The switch position at boot never changes the relay.
+
+    config WALL_SWITCH_GPIO
+        int "Wall switch GPIO number"
+        depends on WALL_SWITCH_ENABLE
+        range 0 27
+        default 25
+        help
+            GPIO25 (default) is a strapping pin (JTAG signal source), read only when the
+            JTAG_SEL_ENABLE eFuse is burned (not by default), so the switch position at
+            power-up does not matter. For a long cable to the switch, add an external
+            4.7-10 kOhm pull-up to 3V3 and 100 nF to GND at the pin.
+
+    choice WALL_SWITCH_MODE
+        prompt "Wall switch type"
+        depends on WALL_SWITCH_ENABLE
+        default WALL_SWITCH_MODE_TOGGLE
+        help
+            How the switch input drives the relay.
+
+        config WALL_SWITCH_MODE_TOGGLE
+            bool "Rocker switch (stays in position): every flip toggles the relay"
+            help
+                Both HIGH -> LOW and LOW -> HIGH toggle the relay, so the switch keeps working
+                after the relay was changed from the app, whatever position it is in.
+
+        config WALL_SWITCH_MODE_MOMENTARY
+            bool "Momentary push switch (springs back): each press toggles the relay"
+            help
+                Only HIGH -> LOW (press) toggles the relay; the release is ignored.
+
+    endchoice
 
 endmenu
 
