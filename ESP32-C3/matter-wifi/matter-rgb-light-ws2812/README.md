@@ -2,7 +2,7 @@
 
 Đèn RGB chuẩn **Matter over Wi-Fi** chạy trên ESP32-C3 (SuperMini), dùng dải **30 LED WS2812** nối vào **GPIO4**. Thêm trực tiếp vào Apple Home, Google Home, Home Assistant, SmartThings, Alexa...
 
-Thiết bị dùng device type **Extended Color Light (0x010D)**: bật/tắt, độ sáng, màu (Hue/Saturation, XY) và nhiệt độ màu.
+Thiết bị dùng device type **Extended Color Light (0x010D)** dạng **đèn RGB thuần**: bật/tắt, độ sáng và màu (Hue/Saturation, XY), **không có nhiệt độ màu** vì dải WS2812 chỉ có LED R, G, B, không có kênh trắng. Cách dựng giống thư viện `MatterColorLight` của Espressif (Arduino-ESP32) cho LED RGB.
 
 ## Cách đèn hoạt động
 
@@ -22,8 +22,8 @@ Thiết bị dùng device type **Extended Color Light (0x010D)**: bật/tắt, �
 - **Tắt** trong app thì tắt hết 30 LED.
 - **Màu** chọn trong app được áp cho mọi LED đang sáng, sau đó nhân với 30 %. Ví dụ đỏ = RGB(77, 0, 0), trắng = RGB(77, 77, 77).
 - **Trạng thái trong app luôn khớp đèn**: mỗi khi bật/tắt, độ sáng hay màu thay đổi, đèn tăng *DataVersion* của cluster tương ứng như chuẩn Matter yêu cầu. esp-matter 1.6 bỏ sót việc này khi chính đèn đổi giá trị trong lúc chạy lệnh, khiến Apple Home giữ màu cũ trong bộ nhớ đệm: thanh kéo hiện màu cũ và màu vừa chọn không được lưu vào các ô màu gần đây.
-- **Màu đọc theo cách nào cũng đúng**: Matter lưu màu theo 3 cách (Hue/Saturation, XY, nhiệt độ màu) và mỗi lệnh chỉ cập nhật một cách. Khi màu đã đứng yên 0,3 giây, đèn ghi cùng màu đó vào các cách còn lại.
-- **Dải trắng**: 2000 K đến 6500 K.
+- **Màu đọc theo cách nào cũng đúng**: Matter lưu màu theo 2 cách (Hue/Saturation và XY) và mỗi lệnh chỉ cập nhật một cách. Khi màu đã đứng yên 0,3 giây, đèn ghi cùng màu đó vào cách còn lại.
+- **Màu trắng**: chọn ở tâm bánh xe màu (độ bão hòa 0), đèn bật cả 3 màu R, G, B bằng nhau.
 - **Tắt rồi bật lại** (từ app hoặc nút BOOT): đèn sáng lại ngay đúng số LED và màu như trước khi tắt. Hiệu ứng "sáng dần từ mức thấp nhất" của Matter khi Bật được bỏ qua, vì trên dải LED này mức thấp nhất là 1 LED và sẽ trông như đèn nháy tắt một lần. Khi Tắt, dải LED thu ngắn rất nhanh về 1 LED rồi tắt.
 - **Mất điện / rút nguồn**: có điện lại thì đèn khôi phục bật/tắt, độ sáng và màu như trước khi mất điện. Bật/tắt được lưu vào flash ngay; độ sáng và màu được lưu khi giá trị đã đứng yên **3 giây** (giống ví dụ `light` của Espressif, tránh ghi flash ở mỗi bước chuyển sáng/màu). Nếu rút điện trong vòng 3 giây sau khi vừa chỉnh độ sáng/màu thì lần chỉnh đó không được nhớ.
 - **Nhận dạng (Identify)**: nút "Nhận dạng" trong Apple Home / Home Assistant làm cả dải LED nháy (0,5 s sáng, 0,5 s tắt) bằng màu hiện tại, kể cả khi đèn đang tắt.
@@ -111,6 +111,17 @@ Log và console Matter chạy qua **cổng USB có sẵn** của ESP32-C3 (USB-S
 
 Thiết bị đã ghép nối từ trước sẽ thấy Manufacturer/Model mới sau khi nạp firmware mới. Một số app (Apple Home) lưu tạm thông tin cũ, có thể cần xóa rồi thêm lại đèn mới hiện tên mới.
 
+## Hàng ô màu trong Apple Home
+
+Hàng ô màu dưới thanh độ sáng là **giao diện của app Home**, Apple tự quản lý. Matter không có thuộc tính nào để đèn đặt số ô hay màu trong từng ô. Đèn chỉ quyết định nó khai báo khả năng gì:
+
+- Đèn khai báo cả **nhiệt độ màu** (bản firmware trước): app Home thêm các ô **trắng ấm / trắng lạnh** và tab *Nhiệt độ* vào hàng ô.
+- Đèn chỉ khai báo **màu** (bản này): app Home chỉ dùng **ô màu**. Ô ngoài cùng bên phải (viền cầu vồng) mở bánh xe để chọn màu; các ô còn lại là màu đã chọn/đã lưu.
+
+Sửa một ô: nhấn giữ đèn, chạm một ô màu, chọn *Sửa*, chọn màu mới rồi *Xong*; ô đó lưu màu mới.
+
+**Sau khi nạp bản này lên đèn đã ghép từ firmware cũ**, Apple Home vẫn nhớ đèn có nhiệt độ màu. Cần **xóa đèn khỏi app Home, giữ nút BOOT 5 giây rồi nhả để reset, rồi thêm lại** để Apple đọc lại khả năng mới (Espressif cũng ghi chú phải ghép lại khi bỏ nhiệt độ màu).
+
 ## Ghép nối
 
 Thiết bị được ghép bằng **Bluetooth** như các thiết bị Matter Wi-Fi thông thường: điện thoại gửi tên/mật khẩu Wi-Fi (2.4 GHz) cho đèn qua BLE.
@@ -142,9 +153,9 @@ Khi xóa thiết bị khỏi tất cả ứng dụng, thiết bị tự mở l�
 
 | File | Nội dung |
 |---|---|
-| `main/app_main.cpp` | Tạo node Matter, endpoint Extended Color Light |
+| `main/app_main.cpp` | Tạo node Matter, endpoint Extended Color Light dạng RGB (Hue/Saturation + XY) |
 | `main/device_info.cpp` | Manufacturer / Model / tên / số serial (Basic Information) |
 | `main/app_driver.cpp` | Nhận thay đổi OnOff / LevelControl / ColorControl từ Matter, Identify, nút BOOT |
 | `main/led_bar.c` | Điều khiển WS2812 qua RMT (`espressif/led_strip`): số LED sáng theo độ sáng, cường độ cố định 30 %, nháy Identify; chỉ gửi dữ liệu ra LED khi hình ảnh thay đổi |
-| `main/color_convert.c` | Đổi Hue/Saturation, XY, nhiệt độ màu sang RGB và ngược lại |
+| `main/color_convert.c` | Đổi Hue/Saturation, XY sang RGB và ngược lại |
 | `main/Kconfig.projbuild` | Tùy chọn: Manufacturer/Model, GPIO, số LED, mức 30 %, chiều sáng, chân nút |

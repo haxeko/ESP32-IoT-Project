@@ -107,6 +107,50 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
     return err;
 }
 
+/* Extended Color Light (0x010D) built like esp-matter's extended_color_light::create(), but the Color Control
+ * cluster only has the Hue/Saturation and XY features. A WS2812 strip is RGB only: it has no white channel, so
+ * there is no color temperature to tune. Matter 1.5 has no plain color light device type and esp-matter's
+ * extended_color_light always adds Color Temperature; Espressif's Arduino MatterColorLight (for RGB LEDs) builds
+ * the same HS + XY endpoint. Without Color Temperature, Apple Home shows the light as a color light only: no
+ * white-temperature presets in the color row and no Temperature wheel. */
+static endpoint_t *create_rgb_light(node_t *node, extended_color_light::config_t *config)
+{
+    endpoint_t *endpoint = endpoint::create(node, ENDPOINT_FLAG_NONE, nullptr);
+    VerifyOrReturnValue(endpoint != nullptr, nullptr);
+    VerifyOrReturnValue(cluster::descriptor::create(endpoint, &config->descriptor, CLUSTER_FLAG_SERVER), nullptr);
+    VerifyOrReturnValue(endpoint::add_device_type(endpoint, extended_color_light::get_device_type_id(),
+                                                  extended_color_light::get_device_type_version()) == ESP_OK,
+                        nullptr);
+
+    cluster_t *identify = cluster::identify::create(endpoint, &config->identify, CLUSTER_FLAG_SERVER);
+    VerifyOrReturnValue(identify != nullptr, nullptr);
+    cluster::identify::command::create_trigger_effect(identify);
+    cluster::groups::create(endpoint, &config->groups, CLUSTER_FLAG_SERVER);
+
+    cluster_t *on_off = cluster::on_off::create(endpoint, &config->on_off, CLUSTER_FLAG_SERVER);
+    VerifyOrReturnValue(on_off != nullptr, nullptr);
+    cluster::on_off::feature::lighting::add(on_off, &config->on_off_lighting);
+
+    cluster_t *level_control = cluster::level_control::create(endpoint, &config->level_control, CLUSTER_FLAG_SERVER);
+    VerifyOrReturnValue(level_control != nullptr, nullptr);
+    cluster::level_control::feature::on_off::add(level_control);
+    cluster::level_control::feature::lighting::add(level_control, &config->level_control_lighting);
+
+    cluster_t *scenes_management =
+        cluster::scenes_management::create(endpoint, &config->scenes_management, CLUSTER_FLAG_SERVER);
+    VerifyOrReturnValue(scenes_management != nullptr, nullptr);
+    cluster::scenes_management::command::create_copy_scene(scenes_management);
+
+    cluster_t *color_control = cluster::color_control::create(endpoint, &config->color_control, CLUSTER_FLAG_SERVER);
+    VerifyOrReturnValue(color_control != nullptr, nullptr);
+    cluster::color_control::attribute::create_remaining_time(color_control, 0);
+    /* Hue/saturation is what Apple Home uses for colors; XY is what other controllers often use */
+    cluster::color_control::feature::hue_saturation::config_t hue_saturation_config;
+    cluster::color_control::feature::hue_saturation::add(color_control, &hue_saturation_config);
+    cluster::color_control::feature::xy::add(color_control, &config->color_control_xy);
+    return endpoint;
+}
+
 extern "C" void app_main()
 {
     esp_err_t err = nvs_flash_init();
@@ -132,7 +176,7 @@ extern "C" void app_main()
     ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
     device_info_add_attributes(node);
 
-    /* Extended Color Light: on/off, brightness, hue/saturation, XY and color temperature */
+    /* RGB light: on/off, brightness, hue/saturation and XY color, no color temperature (see create_rgb_light) */
     extended_color_light::config_t light_config;
     /* Null StartUp* values: after a power cut, restore the last on/off, brightness and color from NVS */
     light_config.on_off.on_off = DEFAULT_POWER;
@@ -145,25 +189,13 @@ extern "C" void app_main()
     light_config.color_control.color_mode = chip::to_underlying(ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation);
     light_config.color_control.enhanced_color_mode =
         chip::to_underlying(ColorControl::EnhancedColorModeEnum::kCurrentHueAndCurrentSaturation);
-    light_config.color_control_color_temperature.start_up_color_temperature_mireds = nullptr;
-    /* White range 6500 K .. 2000 K (the defaults, 1..65279 mireds, are the spec limits, not a real light) */
-    light_config.color_control_color_temperature.color_temp_physical_min_mireds = 153;
-    light_config.color_control_color_temperature.color_temp_physical_max_mireds = 500;
-    light_config.color_control_color_temperature.couple_color_temp_to_level_min_mireds = 153;
     light_config.identify.identify_type = chip::to_underlying(Identify::IdentifyTypeEnum::kLightOutput);
 
-    endpoint_t *endpoint = extended_color_light::create(node, &light_config, ENDPOINT_FLAG_NONE, nullptr);
-    ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create extended color light endpoint"));
+    endpoint_t *endpoint = create_rgb_light(node, &light_config);
+    ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create RGB light endpoint"));
 
     light_endpoint_id = endpoint::get_id(endpoint);
     ESP_LOGI(TAG, "Light created with endpoint_id %d", light_endpoint_id);
-
-    /* Hue/saturation is what Apple Home uses for RGB colors */
-    cluster_t *color_control = cluster::get(endpoint, ColorControl::Id);
-    cluster::color_control::feature::hue_saturation::config_t hue_saturation_config;
-    hue_saturation_config.current_hue = 0;
-    hue_saturation_config.current_saturation = 0;
-    cluster::color_control::feature::hue_saturation::add(color_control, &hue_saturation_config);
 
     /* Level and color move in many small steps during a transition: store them in flash only once the value has
      * settled (CONFIG_ESP_MATTER_DEFERRED_ATTR_PERSISTENCE_TIME_MS, 3 s) instead of at every step. OnOff is still
@@ -177,7 +209,6 @@ extern "C" void app_main()
         {ColorControl::Id, ColorControl::Attributes::CurrentSaturation::Id},
         {ColorControl::Id, ColorControl::Attributes::CurrentX::Id},
         {ColorControl::Id, ColorControl::Attributes::CurrentY::Id},
-        {ColorControl::Id, ColorControl::Attributes::ColorTemperatureMireds::Id},
     };
     for (const auto &d : deferred) {
         attribute::set_deferred_persistence(attribute::get(light_endpoint_id, d.cluster_id, d.attribute_id));

@@ -235,6 +235,18 @@ esp_err_t app_driver_light_set_defaults(uint16_t endpoint_id)
     if (read_attr(endpoint_id, ColorControl::Id, ColorControl::Attributes::ColorMode::Id, &val)) {
         set_color_mode(val.val.u8);
     }
+    /* Older firmware also had Color Temperature. A stored "color temperature" ColorMode is not valid any more for
+     * this RGB-only light (controllers reject a ColorMode that ColorCapabilities does not list): show white in
+     * hue/saturation mode instead. */
+    if (s_color.mode == ColorControl::ColorModeEnum::kColorTemperatureMireds) {
+        constexpr uint8_t hs = chip::to_underlying(ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation);
+        s_color.mode = ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation;
+        s_color.sat = 0;
+        set_color_attr_quietly(ColorControl::Attributes::CurrentSaturation::Id, esp_matter_uint8(0));
+        set_color_attr_quietly(ColorControl::Attributes::ColorMode::Id, esp_matter_enum8(hs));
+        set_color_attr_quietly(ColorControl::Attributes::EnhancedColorMode::Id, esp_matter_enum8(hs));
+        ESP_LOGI(TAG, "Color temperature mode from older firmware -> white (hue/saturation)");
+    }
 
     uint8_t level = DEFAULT_BRIGHTNESS;
     if (read_attr(endpoint_id, LevelControl::Id, LevelControl::Attributes::CurrentLevel::Id, &val) &&
