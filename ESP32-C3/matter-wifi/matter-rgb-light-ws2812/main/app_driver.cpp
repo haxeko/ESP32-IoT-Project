@@ -6,6 +6,9 @@
 
 #include <esp_matter.h>
 
+#include <app/reporting/reporting.h>
+#include <platform/CHIPDeviceLayer.h>
+
 #include <button_gpio.h>
 #include <iot_button.h>
 
@@ -46,6 +49,49 @@ static void apply_color()
 {
     rgb_t c = current_rgb();
     led_bar_set_rgb(c.r, c.g, c.b);
+}
+
+/* Color Control stores the color three ways (hue/saturation, XY, color temperature) and a command only updates
+ * the one it uses; the other attributes keep old values. A controller that sets the color one way and reads it
+ * back another way (Apple Home) then shows a stale color, and does not add the chosen color to its recent
+ * colors. Once the color has settled, write the same color into the other representations too. ColorMode is
+ * left as it is and the app callback is not called: the LEDs already show this color. */
+static constexpr uint32_t k_color_sync_delay_ms = 300;
+
+/* Matter thread, stack lock held */
+static void set_color_attr_quietly(uint32_t attribute_id, esp_matter_attr_val_t val)
+{
+    attribute_t *attribute = attribute::get(light_endpoint_id, ColorControl::Id, attribute_id);
+    if (attribute && attribute::set_val(attribute, &val, false /* no app callback */) == ESP_OK) {
+        MatterReportingAttributeChangeCallback(light_endpoint_id, ColorControl::Id, attribute_id);
+    }
+}
+
+static void color_sync_cb(chip::System::Layer *layer, void *context)
+{
+    rgb_t c = current_rgb();
+    if (s_color.mode != ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation) {
+        color_to_hue_sat(c, &s_color.hue, &s_color.sat);
+        set_color_attr_quietly(ColorControl::Attributes::CurrentHue::Id, esp_matter_uint8(s_color.hue));
+        set_color_attr_quietly(ColorControl::Attributes::CurrentSaturation::Id, esp_matter_uint8(s_color.sat));
+    }
+    if (s_color.mode != ColorControl::ColorModeEnum::kCurrentXAndCurrentY) {
+        color_to_xy(c, &s_color.x, &s_color.y);
+        set_color_attr_quietly(ColorControl::Attributes::CurrentX::Id, esp_matter_uint16(s_color.x));
+        set_color_attr_quietly(ColorControl::Attributes::CurrentY::Id, esp_matter_uint16(s_color.y));
+    }
+    ESP_LOGI(TAG, "Color mode %u: hue %u sat %u, xy %u/%u, %u mireds", chip::to_underlying(s_color.mode), s_color.hue,
+             s_color.sat, s_color.x, s_color.y, s_color.mireds);
+}
+
+/* Matter thread, stack lock held. Restarted on every step, so it runs once after a transition has finished. */
+static void schedule_color_sync()
+{
+    CHIP_ERROR err = chip::DeviceLayer::SystemLayer().StartTimer(
+        chip::System::Clock::Milliseconds32(k_color_sync_delay_ms), color_sync_cb, nullptr);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "color sync timer: %" CHIP_ERROR_FORMAT, err.Format());
+    }
 }
 
 static void set_color_mode(uint8_t mode)
@@ -91,6 +137,7 @@ static void update_color(uint32_t attribute_id, const esp_matter_attr_val_t *val
         return;
     }
     apply_color();
+    schedule_color_sync();
 }
 
 esp_err_t app_driver_attribute_update(uint16_t endpoint_id, uint32_t cluster_id, uint32_t attribute_id,
@@ -199,6 +246,9 @@ esp_err_t app_driver_light_set_defaults(uint16_t endpoint_id)
 
     rgb_t c = current_rgb();
     led_bar_set_state(on, level, c.r, c.g, c.b);
+
+    /* Devices paired with older firmware may have stale values in the other color representations */
+    schedule_color_sync();
     return ESP_OK;
 }
 

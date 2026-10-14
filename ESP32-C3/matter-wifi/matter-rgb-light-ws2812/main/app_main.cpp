@@ -137,6 +137,10 @@ extern "C" void app_main()
     light_config.color_control.enhanced_color_mode =
         chip::to_underlying(ColorControl::EnhancedColorModeEnum::kCurrentHueAndCurrentSaturation);
     light_config.color_control_color_temperature.start_up_color_temperature_mireds = nullptr;
+    /* White range 6500 K .. 2000 K (the defaults, 1..65279 mireds, are the spec limits, not a real light) */
+    light_config.color_control_color_temperature.color_temp_physical_min_mireds = 153;
+    light_config.color_control_color_temperature.color_temp_physical_max_mireds = 500;
+    light_config.color_control_color_temperature.couple_color_temp_to_level_min_mireds = 153;
     light_config.identify.identify_type = chip::to_underlying(Identify::IdentifyTypeEnum::kLightOutput);
 
     endpoint_t *endpoint = extended_color_light::create(node, &light_config, ENDPOINT_FLAG_NONE, nullptr);

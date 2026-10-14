@@ -21,6 +21,8 @@ Thiết bị dùng device type **Extended Color Light (0x010D)**: bật/tắt, �
   Công thức: `số LED = round(CurrentLevel × 30 / 254)`, tối thiểu 1 LED khi đèn bật.
 - **Tắt** trong app thì tắt hết 30 LED.
 - **Màu** chọn trong app được áp cho mọi LED đang sáng, sau đó nhân với 30 %. Ví dụ đỏ = RGB(77, 0, 0), trắng = RGB(77, 77, 77).
+- **Màu hiển thị trong app luôn khớp màu đèn**: Matter lưu màu theo 3 cách (Hue/Saturation, XY, nhiệt độ màu) và mỗi lệnh chỉ cập nhật một cách. Khi màu đã đứng yên 0,3 giây, đèn tự ghi cùng màu đó vào các cách còn lại, nên app đọc theo cách nào cũng thấy đúng màu (Apple Home hiện đúng màu trên thanh kéo và nhớ màu vừa chọn).
+- **Dải trắng**: 2000 K đến 6500 K.
 - **Tắt rồi bật lại** (từ app hoặc nút BOOT): đèn sáng lại ngay đúng số LED và màu như trước khi tắt. Hiệu ứng "sáng dần từ mức thấp nhất" của Matter khi Bật được bỏ qua, vì trên dải LED này mức thấp nhất là 1 LED và sẽ trông như đèn nháy tắt một lần. Khi Tắt, dải LED thu ngắn rất nhanh về 1 LED rồi tắt.
 - **Mất điện / rút nguồn**: có điện lại thì đèn khôi phục bật/tắt, độ sáng và màu như trước khi mất điện. Bật/tắt được lưu vào flash ngay; độ sáng và màu được lưu khi giá trị đã đứng yên **3 giây** (giống ví dụ `light` của Espressif, tránh ghi flash ở mỗi bước chuyển sáng/màu). Nếu rút điện trong vòng 3 giây sau khi vừa chỉnh độ sáng/màu thì lần chỉnh đó không được nhớ.
 - **Nhận dạng (Identify)**: nút "Nhận dạng" trong Apple Home / Home Assistant làm cả dải LED nháy (0,5 s sáng, 0,5 s tắt) bằng màu hiện tại, kể cả khi đèn đang tắt.
@@ -143,5 +145,5 @@ Khi xóa thiết bị khỏi tất cả ứng dụng, thiết bị tự mở l�
 | `main/device_info.cpp` | Manufacturer / Model / tên / số serial (Basic Information) |
 | `main/app_driver.cpp` | Nhận thay đổi OnOff / LevelControl / ColorControl từ Matter, Identify, nút BOOT |
 | `main/led_bar.c` | Điều khiển WS2812 qua RMT (`espressif/led_strip`): số LED sáng theo độ sáng, cường độ cố định 30 %, nháy Identify; chỉ gửi dữ liệu ra LED khi hình ảnh thay đổi |
-| `main/color_convert.c` | Đổi Hue/Saturation, XY, nhiệt độ màu sang RGB |
+| `main/color_convert.c` | Đổi Hue/Saturation, XY, nhiệt độ màu sang RGB và ngược lại |
 | `main/Kconfig.projbuild` | Tùy chọn: Manufacturer/Model, GPIO, số LED, mức 30 %, chiều sáng, chân nút |

@@ -105,3 +105,55 @@ rgb_t color_from_mireds(uint16_t mireds)
     rgb_t out = {clamp_u8(r), clamp_u8(g), clamp_u8(b)};
     return out;
 }
+
+void color_to_hue_sat(rgb_t c, uint8_t *hue, uint8_t *sat)
+{
+    uint8_t mx = c.r > c.g ? (c.r > c.b ? c.r : c.b) : (c.g > c.b ? c.g : c.b);
+    uint8_t mn = c.r < c.g ? (c.r < c.b ? c.r : c.b) : (c.g < c.b ? c.g : c.b);
+    float d = (float)(mx - mn);
+    if (mx == 0 || d == 0.0f) {
+        *hue = 0;
+        *sat = 0;
+        return;
+    }
+    float h;
+    if (mx == c.r) {
+        h = fmodf(((float)c.g - (float)c.b) / d, 6.0f);
+    } else if (mx == c.g) {
+        h = ((float)c.b - (float)c.r) / d + 2.0f;
+    } else {
+        h = ((float)c.r - (float)c.g) / d + 4.0f;
+    }
+    h *= 60.0f;
+    if (h < 0.0f) {
+        h += 360.0f;
+    }
+    /* Matter hue 0..254 covers 0..360 degrees; 360 degrees is hue 0 again */
+    uint32_t mh = (uint32_t)(h * 254.0f / 360.0f + 0.5f);
+    *hue = (uint8_t)(mh >= 254 ? 0 : mh);
+    *sat = clamp_u8(d / (float)mx * 254.0f);
+}
+
+static float srgb_to_linear(uint8_t v)
+{
+    float c = (float)v / 255.0f;
+    return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
+}
+
+void color_to_xy(rgb_t c, uint16_t *x, uint16_t *y)
+{
+    float r = srgb_to_linear(c.r), g = srgb_to_linear(c.g), b = srgb_to_linear(c.b);
+    /* linear sRGB (D65) -> XYZ */
+    float X = 0.4124f * r + 0.3576f * g + 0.1805f * b;
+    float Y = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+    float Z = 0.0193f * r + 0.1192f * g + 0.9505f * b;
+    float sum = X + Y + Z;
+    float fx = 0.3127f, fy = 0.3290f; /* black: report the D65 white point */
+    if (sum > 0.0f) {
+        fx = X / sum;
+        fy = Y / sum;
+    }
+    float vx = fx * 65536.0f + 0.5f, vy = fy * 65536.0f + 0.5f;
+    *x = (uint16_t)(vx > 65279.0f ? 65279.0f : vx);
+    *y = (uint16_t)(vy > 65279.0f ? 65279.0f : vy);
+}
