@@ -3,6 +3,7 @@
 #include <atomic>
 
 #include <esp_log.h>
+#include <esp_timer.h>
 
 #include <app/clusters/fan-control-server/CodegenIntegration.h>
 #include <app/clusters/fan-control-server/FanControlCluster.h>
@@ -43,10 +44,17 @@ bool s_on_requested; /* the controller write being processed is FanMode On/Smart
 /* Any task */
 std::atomic<bool> s_started{false};        /* esp_matter::start() has returned: the CHIP task takes work */
 std::atomic<bool> s_write_scheduled{false}; /* a write_state() is queued on the CHIP task */
+esp_timer_handle_t s_retry_timer;           /* retries a write_state() that could not be queued */
 
+void schedule_write();
+
+/* A controller change for the fan task. When it cannot be queued, the cluster (which already took the new value)
+ * is set back to what the fan does. */
 void post(fan_cmd_type_t type, uint8_t arg)
 {
-    fan_ctrl_post_type(type, arg, FAN_SRC_MATTER);
+    if (!fan_ctrl_post_type(type, arg, FAN_SRC_MATTER)) {
+        schedule_write();
+    }
 }
 
 /* Controller changes, called by FanControlCluster on the CHIP task */
@@ -146,9 +154,18 @@ void schedule_write()
         return;
     }
     if (chip::DeviceLayer::PlatformMgr().ScheduleWork(write_state) != CHIP_NO_ERROR) {
+        /* CHIP event queue full: try again shortly, or the cluster would stay out of date until the next change */
         s_write_scheduled = false;
-        ESP_LOGW(TAG, "Failed to schedule the Matter update");
+        ESP_LOGW(TAG, "Failed to schedule the Matter update, retrying");
+        if (s_retry_timer) {
+            esp_timer_start_once(s_retry_timer, 500 * 1000);
+        }
     }
+}
+
+void retry_cb(void *)
+{
+    schedule_write();
 }
 
 /* Fan task, after every command (also unchanged ones: a 45 % write must still snap to 33 %) */
@@ -242,6 +259,13 @@ void fan_matter_post_update(uint16_t endpoint_id, uint32_t cluster_id, uint32_t 
 
 void fan_matter_start()
 {
+    const esp_timer_create_args_t args = {
+        .callback = retry_cb,
+        .name = "fan_matter_retry",
+    };
+    if (esp_timer_create(&args, &s_retry_timer) != ESP_OK) {
+        s_retry_timer = nullptr;
+    }
     s_started = true;
     schedule_write();
 }

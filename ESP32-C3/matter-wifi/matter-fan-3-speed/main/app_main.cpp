@@ -3,6 +3,7 @@
 #include <esp_ota_ops.h>
 #include <esp_system.h>
 #include <esp_timer.h>
+#include <nvs.h>
 #include <nvs_flash.h>
 
 #include <esp_matter.h>
@@ -261,19 +262,31 @@ static void app_open_pairing()
     }
 }
 
+/* If the Matter stack cannot complete a factory reset (not running), erase what it would erase (Matter configuration
+ * and fabrics, esp-matter attributes, Wi-Fi) and restart. The fan state and the learned remote buttons are kept. */
+static void factory_reset_fallback_cb(void *)
+{
+    ESP_LOGE(TAG, "Factory reset did not complete, erasing the Matter and Wi-Fi data");
+    static const char *const k_namespaces[] = {"chip-config", "chip-counters", "CHIP_KVS", "esp_matter_kvs",
+                                               "nvs.net80211"};
+    for (const char *ns : k_namespaces) {
+        nvs_handle_t handle;
+        if (nvs_open(ns, NVS_READWRITE, &handle) == ESP_OK) {
+            nvs_erase_all(handle);
+            nvs_commit(handle);
+            nvs_close(handle);
+        }
+    }
+    esp_restart();
+}
+
 /* Hold 5 s + release (factory reset task). Erases Wi-Fi and the Matter pairings, then restarts. The fan state and
  * the learned remote buttons are kept. */
 static void app_factory_reset()
 {
-    /* If the Matter stack cannot do it (not running), erase the NVS partition after a while and restart */
     static esp_timer_handle_t s_fallback;
     const esp_timer_create_args_t args = {
-        .callback =
-            [](void *) {
-                ESP_LOGE(TAG, "Factory reset did not complete, erasing NVS");
-                nvs_flash_erase();
-                esp_restart();
-            },
+        .callback = factory_reset_fallback_cb,
         .name = "reset_fallback",
     };
     if (s_fallback == nullptr && esp_timer_create(&args, &s_fallback) == ESP_OK) {

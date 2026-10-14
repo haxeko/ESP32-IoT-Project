@@ -154,22 +154,18 @@ bool ir_code_equal(const ir_code_t *a, const ir_code_t *b)
 
 bool ir_press_filter_accept(ir_press_filter_t *filter, ir_frame_t frame, const ir_code_t *code, uint32_t now_ms)
 {
-    switch (frame) {
-    case IR_FRAME_REPEAT:
-        if (filter->active && now_ms - filter->last_ms < IR_PRESS_GAP_MS) {
-            filter->last_ms = now_ms;
-        }
-        return false;
-    case IR_FRAME_CODE:
-        if (filter->active && ir_code_equal(code, &filter->last) && now_ms - filter->last_ms < IR_PRESS_GAP_MS) {
-            filter->last_ms = now_ms;
-            return false;
-        }
-        filter->last = *code;
-        filter->last_ms = now_ms;
-        filter->active = true;
-        return true;
-    default:
+    if (frame != IR_FRAME_CODE && frame != IR_FRAME_REPEAT) {
+        return false; /* noise does not extend a press */
+    }
+    /* Any frame closer than IR_PRESS_GAP_MS to the previous one belongs to the press in progress: repeats of a held
+     * button, a press sent 2-3 times, and remotes that send two different frames per press (e.g. Sharp: the frame,
+     * then its inverted copy) */
+    const bool same_press = filter->active && now_ms - filter->last_ms < IR_PRESS_GAP_MS;
+    filter->active = true;
+    filter->last_ms = now_ms;
+    if (same_press || frame == IR_FRAME_REPEAT) {
         return false;
     }
+    filter->last = *code;
+    return true;
 }

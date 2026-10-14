@@ -54,12 +54,27 @@ constexpr bool pins_usable()
     return true;
 }
 
+/* GPIO20/21 are UART0 RX/TX: the log console (and the ROM boot messages on GPIO21) */
+constexpr bool pins_off_console()
+{
+#if CONFIG_ESP_CONSOLE_UART && CONFIG_ESP_CONSOLE_UART_NUM == 0
+    for (int pin : k_used_pins) {
+        if (pin == 20 || pin == 21) {
+            return false;
+        }
+    }
+#endif
+    return true;
+}
+
 } // namespace
 
 static_assert(pins_distinct(), "Two functions use the same GPIO: check menuconfig -> Fan Relays / IR Receiver / "
                                "Buttons / Status LED");
 static_assert(pins_usable(), "GPIO11-17 (SPI flash) and GPIO18/19 (USB) cannot be used: check menuconfig -> Fan "
                              "Relays / IR Receiver / Buttons / Status LED");
+static_assert(pins_off_console(), "GPIO20/21 carry the UART0 log console: check menuconfig -> Fan Relays / IR "
+                                  "Receiver / Buttons / Status LED (or move the console to USB-Serial-JTAG)");
 
 /* ---- Fan state ---- */
 
@@ -89,10 +104,12 @@ const gpio_num_t k_speed_gpio[FAN_SPEED_COUNT] = {
 constexpr gpio_num_t k_swing_gpio = (gpio_num_t)CONFIG_FAN_RELAY_SWING_GPIO;
 constexpr int64_t k_dead_time_us = CONFIG_FAN_RELAY_DEAD_TIME_MS * 1000LL;
 
-/* Store the state once it has not changed for this long (a few quick presses on the remote = one flash write) */
+/* Store the state once it has not changed for this long (a few quick presses on the remote = one flash write).
+ * esp_restart() (OTA, factory reset) stores a younger change at once, see fan_ctrl_shutdown(). */
 constexpr uint32_t k_save_delay_ms = 3000;
 
-/* A start that did not last this long counts as a crash: the next start keeps the fan off */
+/* A panic, watchdog or brownout reset of a start younger than this counts as a crash loop: the next start keeps
+ * the fan off */
 constexpr uint64_t k_boot_ok_delay_us = 30 * 1000 * 1000ULL;
 constexpr uint32_t k_boot_pending_magic = 0x46414E31; /* "FAN1" */
 
@@ -106,7 +123,8 @@ QueueHandle_t s_queue;
 fan_listener_t s_listener;
 esp_timer_handle_t s_boot_ok_timer;
 
-/* Survives software resets and panics (not power-on): set while a start is younger than k_boot_ok_delay_us */
+/* Survives software resets, panics and watchdogs (not power-on): set while a start is younger than
+ * k_boot_ok_delay_us, cleared by a deliberate esp_restart() */
 RTC_NOINIT_ATTR uint32_t s_boot_pending;
 
 } // namespace
@@ -130,13 +148,28 @@ static int relay_level(bool closed)
     return closed ? CONFIG_FAN_RELAY_ACTIVE_LEVEL : !CONFIG_FAN_RELAY_ACTIVE_LEVEL;
 }
 
+/* Fan task only: wait until FAN_RELAY_DEAD_TIME_MS have passed since a speed relay was released. vTaskDelay(n) can
+ * return after only n - 1 full ticks, so check the microsecond clock again. */
+static void wait_dead_time()
+{
+    constexpr int64_t tick_us = portTICK_PERIOD_MS * 1000;
+    for (;;) {
+        const int64_t left_us = s_speed_released_us + k_dead_time_us - esp_timer_get_time();
+        if (left_us <= 0) {
+            return;
+        }
+        vTaskDelay((TickType_t)((left_us + tick_us - 1) / tick_us));
+    }
+}
+
 /* Fan task only. Break before make: one speed relay at a time, and FAN_RELAY_DEAD_TIME_MS between releasing one
  * and closing another (also across a quick off -> on), so two motor taps are never on the mains together. */
 static void relays_apply(const fan_state_t &st)
 {
     const bool swing = fan_state_swing_running(&st);
 
-    /* Oscillation stops first and starts last, never without the fan motor */
+    /* The oscillation relay opens before the fan is switched off and closes after it is switched on. A speed change
+     * does not interrupt it: the fan coasts for the dead time only. */
     if (!swing && s_phys_swing) {
         gpio_set_level(k_swing_gpio, relay_level(false));
         s_phys_swing = false;
@@ -148,10 +181,7 @@ static void relays_apply(const fan_state_t &st)
             s_phys_speed = 0;
         }
         if (st.speed) {
-            const int64_t wait_us = s_speed_released_us + k_dead_time_us - esp_timer_get_time();
-            if (wait_us > 0) {
-                vTaskDelay(pdMS_TO_TICKS((wait_us + 999) / 1000) + 1);
-            }
+            wait_dead_time();
             gpio_set_level(k_speed_gpio[st.speed - 1], relay_level(true));
             s_phys_speed = st.speed;
         }
@@ -205,12 +235,8 @@ static bool load_state(fan_state_t *st)
     return true;
 }
 
-/* Fan task only */
-static void save_state(const fan_state_t &st)
+static esp_err_t write_record(const fan_state_t &st)
 {
-    if (st.speed == s_saved.speed && st.last_speed == s_saved.last_speed && st.swing == s_saved.swing) {
-        return;
-    }
     const StoredState stored = {k_state_version, st.speed, st.last_speed, (uint8_t)st.swing};
     nvs_handle_t handle;
     esp_err_t err = nvs_open(k_nvs_namespace, NVS_READWRITE, &handle);
@@ -223,9 +249,19 @@ static void save_state(const fan_state_t &st)
     }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to store the fan state: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+/* Fan task only (and fan_ctrl_init before the task starts) */
+static void save_state(const fan_state_t &st)
+{
+    if (st.speed == s_saved.speed && st.last_speed == s_saved.last_speed && st.swing == s_saved.swing) {
         return;
     }
-    s_saved = st;
+    if (write_record(st) == ESP_OK) {
+        s_saved = st;
+    }
 }
 
 fan_state_t fan_ctrl_get_state()
@@ -293,16 +329,42 @@ static void boot_ok_cb(void *)
     s_boot_pending = 0;
 }
 
+/* esp_restart() (OTA update, factory reset, ...), from the restarting task: a deliberate restart, not a crash.
+ * Also stores a change younger than the save delay, so the restart does not revert it. Not called on panics,
+ * watchdogs or brownouts. */
+static void fan_ctrl_shutdown()
+{
+    s_boot_pending = 0;
+    write_record(fan_ctrl_get_state());
+}
+
+static bool reset_may_be_crash(esp_reset_reason_t reason)
+{
+    switch (reason) {
+    case ESP_RST_PANIC:
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:
+    case ESP_RST_BROWNOUT: /* the supply dipped, maybe because of the relays */
+        return true;
+    default:
+        return false;
+    }
+}
+
 void fan_ctrl_init()
 {
     relays_init();
 
-    /* Power-on reset: RTC memory holds garbage, never a crash loop. Brownout: the supply dipped, maybe because of
-     * the relays: counts as a crash when the previous start was younger than 30 s. */
+    /* Crash loop: a panic, watchdog or brownout reset while the previous start was younger than 30 s (power-on resets
+     * leave garbage in RTC memory and are never a crash) */
     const esp_reset_reason_t reason = esp_reset_reason();
-    const bool crashed = reason != ESP_RST_POWERON && s_boot_pending == k_boot_pending_magic;
+    const bool crashed = reset_may_be_crash(reason) && s_boot_pending == k_boot_pending_magic;
     const bool power_cut = reason == ESP_RST_POWERON || reason == ESP_RST_BROWNOUT;
     s_boot_pending = k_boot_pending_magic;
+    if (esp_register_shutdown_handler(fan_ctrl_shutdown) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register the shutdown handler");
+    }
     const esp_timer_create_args_t timer_args = {
         .callback = boot_ok_cb,
         .name = "fan_boot_ok",
@@ -329,6 +391,8 @@ void fan_ctrl_init()
     (void)power_cut;
     s_state = st;
     log_state(st, why);
+    /* Kept off at this start: store it, so a later software restart does not switch the fan back on */
+    save_state(st);
 
     s_queue = xQueueCreate(16, sizeof(Msg));
     if (s_queue == NULL || xTaskCreate(fan_task, "fan", 4096, NULL, 6, NULL) != pdPASS) {

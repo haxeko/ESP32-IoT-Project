@@ -31,7 +31,7 @@ menu "Fan Relays"
         default 7
         help
             Relay that powers the oscillation (swing) motor. It is closed only while the fan runs
-            and oscillation is on.
+            and oscillation is on; a speed change does not interrupt it.
 
     config FAN_RELAY_ACTIVE_LEVEL
         int "Relay active level (1 = active-high, 0 = active-low)"
@@ -58,8 +58,8 @@ menu "Fan Behavior"
         default FAN_POWER_ON_RESTORE
         help
             State of the fan when mains power comes back. Software restarts (OTA update, factory
-            reset, crash) always restore the last state, unless the previous start crashed within
-            30 s (then the fan starts off).
+            reset, crash) always restore the last state, except after a panic, watchdog or brownout
+            reset that hit a start younger than 30 s (then the fan starts off).
 
         config FAN_POWER_ON_RESTORE
             bool "Restore the last state (speed and oscillation)"

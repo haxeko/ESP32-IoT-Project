@@ -26,7 +26,7 @@ Firmware ESP-IDF + [esp-matter](https://github.com/espressif/esp-matter) cho **E
 ### Đảo gió (trục xoay)
 
 - Relay trục xoay chỉ đóng **khi quạt đang chạy và đảo gió đang bật**. Tắt quạt thì động cơ trục xoay dừng theo, nhưng trạng thái đảo gió được nhớ: bật quạt lại là quạt đảo gió tiếp.
-- Trục xoay dừng trước và chạy sau động cơ quạt.
+- Tắt quạt thì trục xoay dừng trước, bật quạt thì trục xoay chạy sau. Lúc đổi số trục xoay vẫn chạy (motor quạt chỉ trôi theo quán tính trong 200 ms chờ đổi số).
 - Trên Matter, đảo gió được đưa ra **hai** điều khiển, cả hai cùng bật/tắt relay trục xoay và luôn hiển thị cùng một trạng thái:
 
 | Điều khiển Matter | Apple Home (dưới thanh tốc độ) | Home Assistant | Đảo gió bật khi |
@@ -39,8 +39,8 @@ Firmware ESP-IDF + [esp-matter](https://github.com/espressif/esp-matter) cho **E
 ### Mất điện, khởi động lại
 
 - **Mất điện rồi có điện lại**: quạt quay về trạng thái cuối (số và đảo gió), chỉ chậm khoảng 0,5 s sau khi cấp điện, không cần chờ Wi-Fi. Đổi được thành "luôn tắt khi có điện lại" trong menuconfig (`FAN_POWER_ON_STATE`); khi đó số và đảo gió vẫn được nhớ cho lần bật tiếp theo.
-- **Khởi động lại mềm** (OTA, factory reset, crash, watchdog): luôn khôi phục trạng thái cuối. Nếu lần khởi động trước bị crash (hoặc sụt áp) trong vòng 30 s sau khi khởi động, quạt khởi động ở trạng thái **tắt**, để một lỗi lặp lúc khởi động (ví dụ nguồn yếu sụt áp mỗi khi relay đóng) không bật tắt motor liên tục.
-- Trạng thái quạt được ghi vào flash khi đã đứng yên **3 giây** (nhấn remote liên tục nhiều lần chỉ ghi một lần). Rút điện trong 3 giây sau khi vừa đổi thì lần đổi đó không được nhớ.
+- **Khởi động lại mềm** (OTA, factory reset, crash, watchdog): luôn khôi phục trạng thái cuối. Riêng khi thiết bị bị crash, watchdog hoặc sụt áp trong vòng **30 s** sau khi khởi động, lần khởi động sau quạt ở trạng thái **tắt** (và lưu luôn trạng thái tắt), để một lỗi lặp lúc khởi động (ví dụ nguồn yếu sụt áp mỗi khi relay đóng) không bật tắt motor liên tục.
+- Trạng thái quạt được ghi vào flash khi đã đứng yên **3 giây**, và ngay trước mỗi lần khởi động lại mềm (OTA, factory reset). Rút điện trong 3 giây sau khi vừa đổi thì lần đổi đó không được nhớ.
 
 ## Phần cứng
 

@@ -46,8 +46,8 @@ typedef enum {
 /** Frames with fewer pulses are ignored unless they are NEC (noise, e.g. from lamps, gives short bursts) */
 #define IR_SHAPE_MIN_PULSES 8
 
-/** Frames of the same code closer than this belong to the same button press (a held button repeats its
- *  frame every 40-120 ms, and many remotes send each press 2-3 times) */
+/** Frames closer than this belong to the same button press: a held button repeats its frame every 40-120 ms, many
+ *  remotes send each press 2-3 times, some send two different frames per press */
 #define IR_PRESS_GAP_MS 220
 
 /** Convert RMT RX symbols to pulses. Each symbol is rmt_symbol_word_t.val: bits 0-14 duration0, bit 15 level0,
@@ -64,14 +64,14 @@ bool ir_code_equal(const ir_code_t *a, const ir_code_t *b);
 
 /** Separates button presses from the repeats of a held button. */
 typedef struct {
-    ir_code_t last;
-    uint32_t last_ms;
+    ir_code_t last;   /**< first code of the current press */
+    uint32_t last_ms; /**< time of the last frame of the current press */
     bool active;
 } ir_press_filter_t;
 
-/** Returns true when the frame starts a new button press: a code different from the previous one, or the
- *  same code after IR_PRESS_GAP_MS without frames. Repeats (NEC repeat frames, the same code sooner) only
- *  extend the current press. */
+/** Returns true when the frame is the first code of a new button press: IR_PRESS_GAP_MS or more after the
+ *  previous frame. Every frame of a press (repeats, NEC repeat frames, other frames of the same press) only extends
+ *  it; noise (IR_FRAME_NONE) is ignored. */
 bool ir_press_filter_accept(ir_press_filter_t *filter, ir_frame_t frame, const ir_code_t *code, uint32_t now_ms);
 
 #ifdef __cplusplus

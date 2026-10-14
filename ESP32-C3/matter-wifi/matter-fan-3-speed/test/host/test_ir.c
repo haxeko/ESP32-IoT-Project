@@ -232,19 +232,31 @@ static void test_press_filter(void)
     CHECK(!ir_press_filter_accept(&f, IR_FRAME_REPEAT, NULL, 1210)); /* held */
     CHECK(!ir_press_filter_accept(&f, IR_FRAME_REPEAT, NULL, 1320));
     CHECK(!ir_press_filter_accept(&f, IR_FRAME_CODE, &a, 1500));   /* within the gap of the last repeat */
-    CHECK(ir_press_filter_accept(&f, IR_FRAME_CODE, &a, 1500 + IR_PRESS_GAP_MS)); /* new press */
-    CHECK(ir_press_filter_accept(&f, IR_FRAME_CODE, &b, 1800));    /* another button */
-    CHECK(ir_press_filter_accept(&f, IR_FRAME_CODE, &a, 1850));
-    CHECK(!ir_press_filter_accept(&f, IR_FRAME_NONE, NULL, 1900));
+    CHECK(!ir_press_filter_accept(&f, IR_FRAME_NONE, NULL, 1600)); /* noise does not extend the press... */
+    CHECK(ir_press_filter_accept(&f, IR_FRAME_CODE, &a, 1500 + IR_PRESS_GAP_MS)); /* ...so this is a new press */
+    CHECK(ir_press_filter_accept(&f, IR_FRAME_CODE, &b, 1720 + IR_PRESS_GAP_MS)); /* another button, after a gap */
+    CHECK(ir_code_equal(&f.last, &b));
+
+    /* Remotes sending two different frames per press (Sharp: frame, inverted frame), held: one press only */
+    memset(&f, 0, sizeof(f));
+    CHECK(ir_press_filter_accept(&f, IR_FRAME_CODE, &a, 3000));
+    for (uint32_t t = 3040; t < 4000; t += 40) {
+        CHECK(!ir_press_filter_accept(&f, IR_FRAME_CODE, ((t / 40) % 2) ? &b : &a, t));
+    }
+    CHECK(ir_code_equal(&f.last, &a));
+    CHECK(ir_press_filter_accept(&f, IR_FRAME_CODE, &a, 4200));
 
     /* A repeat frame never starts a press, even long after */
     memset(&f, 0, sizeof(f));
     CHECK(!ir_press_filter_accept(&f, IR_FRAME_REPEAT, NULL, 5000));
+    CHECK(!ir_press_filter_accept(&f, IR_FRAME_CODE, &a, 5100)); /* still the same (half-received) press */
+    CHECK(ir_press_filter_accept(&f, IR_FRAME_CODE, &a, 5100 + IR_PRESS_GAP_MS));
 
     /* Millisecond counter wrap-around */
     memset(&f, 0, sizeof(f));
     CHECK(ir_press_filter_accept(&f, IR_FRAME_CODE, &a, 0xFFFFFFF0u));
     CHECK(!ir_press_filter_accept(&f, IR_FRAME_CODE, &a, 0x40u));
+    CHECK(ir_press_filter_accept(&f, IR_FRAME_CODE, &b, 0x40u + IR_PRESS_GAP_MS));
 }
 
 static void test_table(void)
