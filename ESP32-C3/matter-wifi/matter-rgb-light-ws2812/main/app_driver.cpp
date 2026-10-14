@@ -63,6 +63,8 @@ static void set_color_attr_quietly(uint32_t attribute_id, esp_matter_attr_val_t 
 {
     attribute_t *attribute = attribute::get(light_endpoint_id, ColorControl::Id, attribute_id);
     if (attribute && attribute::set_val(attribute, &val, false /* no app callback */) == ESP_OK) {
+        /* No POST_UPDATE callback here, so bump the DataVersion ourselves (see app_attribute_update_cb) */
+        cluster::increase_data_version(cluster::get(light_endpoint_id, ColorControl::Id));
         MatterReportingAttributeChangeCallback(light_endpoint_id, ColorControl::Id, attribute_id);
     }
 }

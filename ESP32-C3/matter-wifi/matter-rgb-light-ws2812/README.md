@@ -21,7 +21,8 @@ Thiết bị dùng device type **Extended Color Light (0x010D)**: bật/tắt, �
   Công thức: `số LED = round(CurrentLevel × 30 / 254)`, tối thiểu 1 LED khi đèn bật.
 - **Tắt** trong app thì tắt hết 30 LED.
 - **Màu** chọn trong app được áp cho mọi LED đang sáng, sau đó nhân với 30 %. Ví dụ đỏ = RGB(77, 0, 0), trắng = RGB(77, 77, 77).
-- **Màu hiển thị trong app luôn khớp màu đèn**: Matter lưu màu theo 3 cách (Hue/Saturation, XY, nhiệt độ màu) và mỗi lệnh chỉ cập nhật một cách. Khi màu đã đứng yên 0,3 giây, đèn tự ghi cùng màu đó vào các cách còn lại, nên app đọc theo cách nào cũng thấy đúng màu (Apple Home hiện đúng màu trên thanh kéo và nhớ màu vừa chọn).
+- **Trạng thái trong app luôn khớp đèn**: mỗi khi bật/tắt, độ sáng hay màu thay đổi, đèn tăng *DataVersion* của cluster tương ứng như chuẩn Matter yêu cầu. esp-matter 1.6 bỏ sót việc này khi chính đèn đổi giá trị trong lúc chạy lệnh, khiến Apple Home giữ màu cũ trong bộ nhớ đệm: thanh kéo hiện màu cũ và màu vừa chọn không được lưu vào các ô màu gần đây.
+- **Màu đọc theo cách nào cũng đúng**: Matter lưu màu theo 3 cách (Hue/Saturation, XY, nhiệt độ màu) và mỗi lệnh chỉ cập nhật một cách. Khi màu đã đứng yên 0,3 giây, đèn ghi cùng màu đó vào các cách còn lại.
 - **Dải trắng**: 2000 K đến 6500 K.
 - **Tắt rồi bật lại** (từ app hoặc nút BOOT): đèn sáng lại ngay đúng số LED và màu như trước khi tắt. Hiệu ứng "sáng dần từ mức thấp nhất" của Matter khi Bật được bỏ qua, vì trên dải LED này mức thấp nhất là 1 LED và sẽ trông như đèn nháy tắt một lần. Khi Tắt, dải LED thu ngắn rất nhanh về 1 LED rồi tắt.
 - **Mất điện / rút nguồn**: có điện lại thì đèn khôi phục bật/tắt, độ sáng và màu như trước khi mất điện. Bật/tắt được lưu vào flash ngay; độ sáng và màu được lưu khi giá trị đã đứng yên **3 giây** (giống ví dụ `light` của Espressif, tránh ghi flash ở mỗi bước chuyển sáng/màu). Nếu rút điện trong vòng 3 giây sau khi vừa chỉnh độ sáng/màu thì lần chỉnh đó không được nhớ.

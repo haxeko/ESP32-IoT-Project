@@ -93,6 +93,15 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
 
     if (type == PRE_UPDATE) {
         err = app_driver_attribute_update(endpoint_id, cluster_id, attribute_id, val);
+    } else if (type == POST_UPDATE) {
+        /* The Matter spec requires a new cluster DataVersion whenever an attribute of the cluster changes. esp-matter
+         * 1.6 only increases it for writes from a controller and for attribute::update()/report(), not when a cluster
+         * server changes its own attributes while running a command (On/Off, Level Control, Color Control all write
+         * through emberAfWriteAttribute). Controllers that cache clusters by DataVersion, like Apple Home, then skip
+         * the cluster when they resubscribe and keep showing old values: the color slider showed a stale color and
+         * the chosen color was never confirmed, so it was not added to the recent colors. POST_UPDATE runs only when
+         * the value really changed, before the change is reported. */
+        cluster::increase_data_version(cluster::get(endpoint_id, cluster_id));
     }
 
     return err;
