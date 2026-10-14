@@ -107,12 +107,16 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
     return err;
 }
 
-/* Extended Color Light (0x010D) built like esp-matter's extended_color_light::create(), but the Color Control
- * cluster only has the Hue/Saturation and XY features. A WS2812 strip is RGB only: it has no white channel, so
- * there is no color temperature to tune. Matter 1.5 has no plain color light device type and esp-matter's
- * extended_color_light always adds Color Temperature; Espressif's Arduino MatterColorLight (for RGB LEDs) builds
- * the same HS + XY endpoint. Without Color Temperature, Apple Home shows the light as a color light only: no
- * white-temperature presets in the color row and no Temperature wheel. */
+/* Extended Color Light (0x010D) built like esp-matter's extended_color_light::add()
+ * (components/esp_matter/data_model/legacy/esp_matter_endpoint.cpp), but the Color Control cluster has the
+ * Hue/Saturation and XY features instead of Color Temperature and XY. When updating esp-matter, compare with
+ * extended_color_light::add(): every cluster, feature and command it creates must be created here too.
+ *
+ * A WS2812 strip is RGB only: it has no white channel, so there is no color temperature to tune. Without Color
+ * Temperature, Apple Home shows the light as a color light only: no white-temperature presets in the color row and
+ * no Temperature wheel. Espressif's Arduino MatterColorLight (for RGB LEDs) builds the same HS + XY endpoint.
+ * Note: the Extended Color Light device type lists Color Temperature as mandatory, so this endpoint does not pass
+ * Matter device-type conformance tests (see README). */
 static endpoint_t *create_rgb_light(node_t *node, extended_color_light::config_t *config)
 {
     endpoint_t *endpoint = endpoint::create(node, ENDPOINT_FLAG_NONE, nullptr);
@@ -123,31 +127,42 @@ static endpoint_t *create_rgb_light(node_t *node, extended_color_light::config_t
                         nullptr);
 
     cluster_t *identify = cluster::identify::create(endpoint, &config->identify, CLUSTER_FLAG_SERVER);
-    VerifyOrReturnValue(identify != nullptr, nullptr);
-    cluster::identify::command::create_trigger_effect(identify);
-    cluster::groups::create(endpoint, &config->groups, CLUSTER_FLAG_SERVER);
+    VerifyOrReturnValue(identify && cluster::identify::command::create_trigger_effect(identify), nullptr);
+    VerifyOrReturnValue(cluster::groups::create(endpoint, &config->groups, CLUSTER_FLAG_SERVER), nullptr);
 
     cluster_t *on_off = cluster::on_off::create(endpoint, &config->on_off, CLUSTER_FLAG_SERVER);
-    VerifyOrReturnValue(on_off != nullptr, nullptr);
-    cluster::on_off::feature::lighting::add(on_off, &config->on_off_lighting);
+    VerifyOrReturnValue(on_off, nullptr);
+    VerifyOrReturnValue(cluster::on_off::feature::lighting::add(on_off, &config->on_off_lighting) == ESP_OK, nullptr);
+    /* on_off::create() only adds the Off command: without On and Toggle, controllers cannot switch the light on */
+    VerifyOrReturnValue(cluster::on_off::command::create_on(on_off) && cluster::on_off::command::create_toggle(on_off),
+                        nullptr);
 
     cluster_t *level_control = cluster::level_control::create(endpoint, &config->level_control, CLUSTER_FLAG_SERVER);
-    VerifyOrReturnValue(level_control != nullptr, nullptr);
-    cluster::level_control::feature::on_off::add(level_control);
-    cluster::level_control::feature::lighting::add(level_control, &config->level_control_lighting);
+    VerifyOrReturnValue(level_control, nullptr);
+    VerifyOrReturnValue(cluster::level_control::feature::on_off::add(level_control) == ESP_OK, nullptr);
+    VerifyOrReturnValue(
+        cluster::level_control::feature::lighting::add(level_control, &config->level_control_lighting) == ESP_OK,
+        nullptr);
 
     cluster_t *scenes_management =
         cluster::scenes_management::create(endpoint, &config->scenes_management, CLUSTER_FLAG_SERVER);
-    VerifyOrReturnValue(scenes_management != nullptr, nullptr);
-    cluster::scenes_management::command::create_copy_scene(scenes_management);
+    VerifyOrReturnValue(scenes_management, nullptr);
+    VerifyOrReturnValue(cluster::scenes_management::command::create_copy_scene(scenes_management) &&
+                            cluster::scenes_management::command::create_copy_scene_response(scenes_management),
+                        nullptr);
 
     cluster_t *color_control = cluster::color_control::create(endpoint, &config->color_control, CLUSTER_FLAG_SERVER);
-    VerifyOrReturnValue(color_control != nullptr, nullptr);
-    cluster::color_control::attribute::create_remaining_time(color_control, 0);
+    VerifyOrReturnValue(color_control, nullptr);
+    VerifyOrReturnValue(cluster::color_control::attribute::create_remaining_time(color_control, 0), nullptr);
     /* Hue/saturation is what Apple Home uses for colors; XY is what other controllers often use */
     cluster::color_control::feature::hue_saturation::config_t hue_saturation_config;
-    cluster::color_control::feature::hue_saturation::add(color_control, &hue_saturation_config);
-    cluster::color_control::feature::xy::add(color_control, &config->color_control_xy);
+    VerifyOrReturnValue(cluster::color_control::feature::hue_saturation::add(color_control, &hue_saturation_config) ==
+                            ESP_OK,
+                        nullptr);
+    VerifyOrReturnValue(cluster::color_control::feature::xy::add(color_control, &config->color_control_xy) == ESP_OK,
+                        nullptr);
+    /* StopMoveStep is mandatory as soon as one color feature is supported; the features do not add it */
+    VerifyOrReturnValue(cluster::color_control::command::create_stop_move_step(color_control), nullptr);
     return endpoint;
 }
 
