@@ -16,7 +16,6 @@ using namespace chip::app::Clusters;
 using namespace esp_matter;
 
 static const char *TAG = "app_driver";
-extern uint16_t light_endpoint_id;
 
 /* Matter Level Control: values above MaxLevel (254) mean "null" */
 static constexpr uint8_t k_max_level = 254;
@@ -275,14 +274,34 @@ esp_err_t app_driver_light_init()
     return err;
 }
 
-static void button_toggle_cb(void *arg, void *data)
+/* Matter thread, stack lock held */
+static void toggle_work(intptr_t)
 {
-    /* The LED driver mirrors the OnOff attribute, so no data-model read (and no stack lock) is needed here */
+    /* The LED driver mirrors the OnOff attribute, so no data-model read is needed */
     esp_matter_attr_val_t val = esp_matter_bool(!led_bar_get_power());
-    ESP_LOGI(TAG, "Button: turn %s", val.val.b ? "on" : "off");
-    /* update() takes the stack lock, runs the attribute callback (drives the LEDs), stores and reports the value */
+    ESP_LOGI(TAG, "Local control: turn %s", val.val.b ? "on" : "off");
+    /* update() runs the attribute callback (drives the LEDs), stores and reports the value */
     attribute::update(light_endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val);
 }
+
+void app_driver_light_toggle()
+{
+    /* Callers like the button run in the esp_timer task, which also runs the timers of Wi-Fi, BLE and the LED
+     * driver: never wait there for the Matter stack lock (held for a long time during commissioning crypto).
+     * ScheduleWork() only queues the toggle for the Matter thread, and fails cleanly before the stack runs. */
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork(toggle_work);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "Toggle dropped: %" CHIP_ERROR_FORMAT, err.Format());
+    }
+}
+
+#if CONFIG_APP_BUTTON_GPIO >= 0
+/* esp_timer task (button driver) */
+static void button_toggle_cb(void *arg, void *data)
+{
+    app_driver_light_toggle();
+}
+#endif
 
 void *app_driver_button_init()
 {
@@ -302,7 +321,9 @@ void *app_driver_button_init()
         ESP_LOGE(TAG, "Failed to create button on GPIO%d", CONFIG_APP_BUTTON_GPIO);
         return NULL;
     }
-    iot_button_register_cb(handle, BUTTON_SINGLE_CLICK, NULL, button_toggle_cb, NULL);
+    if (iot_button_register_cb(handle, BUTTON_SINGLE_CLICK, NULL, button_toggle_cb, NULL) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register the button toggle");
+    }
     return handle;
 #else
     return NULL;

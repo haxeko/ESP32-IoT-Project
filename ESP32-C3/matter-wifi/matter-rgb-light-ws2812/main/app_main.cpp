@@ -166,12 +166,25 @@ static endpoint_t *create_rgb_light(node_t *node, extended_color_light::config_t
     return endpoint;
 }
 
-extern "C" void app_main()
+/* Neither esp-matter nor the Matter stack initialize NVS. A partition with no free page or written by a newer NVS
+ * format cannot be used at all: erase it like the ESP-IDF examples do, so the device starts as new and can be
+ * commissioned again instead of running without storage. */
+static void init_nvs()
 {
     esp_err_t err = nvs_flash_init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS partition cannot be used (%s), erasing it", esp_err_to_name(err));
+        err = nvs_flash_erase();
+        if (err == ESP_OK) {
+            err = nvs_flash_init();
+        }
     }
+    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(err)));
+}
+
+extern "C" void app_main()
+{
+    init_nvs();
 
     /* WS2812 x30 on GPIO4. The light keeps working as a Matter device even if the strip fails to init. */
     app_driver_light_init();
@@ -229,7 +242,7 @@ extern "C" void app_main()
         attribute::set_deferred_persistence(attribute::get(light_endpoint_id, d.cluster_id, d.attribute_id));
     }
 
-    err = esp_matter::start(app_event_cb);
+    esp_err_t err = esp_matter::start(app_event_cb);
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
 
     /* Restore the last on/off, brightness and color persisted in NVS */
