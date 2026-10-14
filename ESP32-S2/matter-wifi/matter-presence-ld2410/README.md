@@ -38,16 +38,29 @@ Các thiết bị Matter Wi-Fi thường nhận thông tin Wi-Fi từ điện th
 
 ### Bước 1: cài Wi-Fi
 
-1. Cấp nguồn cho thiết bị lần đầu. LED nháy nhanh, thiết bị phát Wi-Fi tên **`Presence-XXXX`** (4 số cuối của địa chỉ MAC), không có mật khẩu.
+1. Cấp nguồn cho thiết bị lần đầu. Trong **10 giây đầu**, LED nháy theo nhóm để báo lý do của lần khởi động trước (xem [Chẩn đoán](#chẩn-đoán-khi-thiết-bị-tự-khởi-động-lại)). Sau đó LED nháy nhanh và thiết bị phát Wi-Fi tên **`Presence-XXXX`** (4 số cuối của địa chỉ MAC), không có mật khẩu.
 2. Dùng điện thoại kết nối vào mạng đó. Trang cài đặt thường tự mở. Nếu không, mở trình duyệt và vào **http://192.168.4.1**.
-3. Chọn mạng Wi-Fi nhà (**2.4 GHz**), nhập mật khẩu, bấm **Kết nối**.
+3. Nhập tên mạng Wi-Fi nhà (**2.4 GHz**) và mật khẩu, bấm **Kết nối**. Muốn chọn từ danh sách thì bấm **Tìm các mạng Wi-Fi xung quanh**. Thiết bị không tự quét lúc khởi động, vì trên board yếu, việc quét có thể làm chip khởi động lại.
 4. Thiết bị thử kết nối trước. Nếu sai mật khẩu, trang báo lỗi để nhập lại. Nếu thành công, thiết bị lưu lại rồi khởi động lại, mạng `Presence-XXXX` biến mất và LED chuyển sang nháy chậm.
 
 > **Không thấy hoặc không vào được mạng `Presence-XXXX`?** Nhiều board ESP32-S2 nhỏ (LOLIN S2 Mini...) bị lỗi Wi-Fi khi phát ở công suất mặc định ~20 dBm do anten và mạch nguồn 3.3V yếu. Firmware vì vậy giới hạn công suất phát ở **8.5 dBm** (`menuconfig` → *Wi-Fi Setup* → *Maximum Wi-Fi transmit power*). Nếu vẫn không được: đặt điện thoại gần thiết bị, cắm nguồn USB tốt, tắt "Wi-Fi riêng tư / địa chỉ MAC ngẫu nhiên" nếu điện thoại báo lỗi, và xem log (`idf.py monitor`): dòng `Phone ... joined the setup network` cho biết điện thoại đã vào được mạng cài đặt.
 
 #### Chẩn đoán khi thiết bị tự khởi động lại
 
-Firmware lưu lý do của 8 lần khởi động gần nhất (mất điện, **BROWNOUT** = sụt áp, **CRASH**, watchdog...) và tóm tắt lần crash cuối. Thông tin này hiện ở dòng chữ xám cuối trang cài đặt và trong log. Nếu không mở được trang lẫn log, hãy đưa board vào chế độ nạp (giữ nút 0, bấm RST) rồi đọc ra hai file sau và gửi cho người phát triển:
+Firmware lưu lý do của 8 lần khởi động gần nhất (mất điện, **BROWNOUT** = sụt áp, **CRASH**, watchdog...) và tóm tắt lần crash cuối (core dump trong flash).
+
+Khi chưa có Wi-Fi, trong 10 giây trước khi bật sóng, LED báo lý do của lần khởi động trước. Mỗi chu kỳ 3 giây gồm N lần nháy:
+
+| LED nháy | Lần khởi động trước |
+|---|---|
+| 1 lần | Bình thường (cắm điện, nút RST, khởi động lại có chủ đích) |
+| 2 lần | **Sụt áp** (brownout): nguồn 3.3V tụt khi chip phát sóng. Thường do nguồn USB yếu hoặc board thiếu tụ lọc. Lần sau firmware tự giảm công suất phát xuống 2 dBm |
+| 3 lần | **Crash** phần mềm |
+| 4 lần | **Watchdog**: một tác vụ bị treo |
+
+Trong 10 giây đó, cổng USB cũng hiện ổn định để mở log. Thông tin cũng hiện ở dòng chữ xám cuối trang cài đặt. Đổi thời gian này trong `menuconfig` → *Wi-Fi Setup* → *Show the last reset reason...*, đặt `0` để tắt.
+
+Nếu không mở được trang lẫn log, hãy đưa board vào chế độ nạp (giữ nút 0, bấm RST) rồi đọc ra hai file sau và gửi cho người phát triển. Kèm theo file `.elf` của đúng bản firmware (artifact `-debug` trên GitHub Actions) thì có thể giải mã chính xác dòng code bị crash:
 
 ```bash
 python -m esptool --chip esp32s2 -p COMx read-flash 0x10000 0xC000 nvs.bin
@@ -66,7 +79,7 @@ Muốn cài sẵn Wi-Fi lúc build thì đặt `CONFIG_DEFAULT_WIFI_SSID` / `CON
 
 Google Home, Home Assistant, SmartThings làm tương tự: điện thoại ở cùng mạng Wi-Fi, chọn thêm thiết bị Matter rồi nhập mã. Home Assistant hiện thêm mục **Hold time** để chỉnh thời gian giữ trạng thái.
 
-Chế độ ghép nối mở sẵn khi thiết bị chưa thuộc ứng dụng nào. Nếu bạn xóa thiết bị khỏi tất cả ứng dụng, chế độ ghép nối tự mở lại trong 5 phút, giữ nguyên Wi-Fi. Sau 5 phút mà chưa thêm được, chỉ cần rút điện cắm lại.
+Chế độ ghép nối mở trong **15 phút** sau khi thiết bị khởi động mà chưa thuộc ứng dụng nào (LED nháy chậm). Nếu bạn xóa thiết bị khỏi tất cả ứng dụng, chế độ ghép nối tự mở lại trong 5 phút, giữ nguyên Wi-Fi. Khi LED ngừng nháy chậm mà thiết bị chưa được thêm, nghĩa là chế độ ghép nối đã đóng: rút điện cắm lại để mở lại.
 
 > Firmware dùng chứng chỉ test (VID `0xFFF1`, PID `0x8000`, passcode `20202021`, discriminator `3840`) nên chỉ hợp với mục đích DIY. Để làm sản phẩm thật, hãy tạo DAC/passcode riêng bằng `esp-matter-mfg-tool`.
 
@@ -81,25 +94,30 @@ Chế độ ghép nối mở sẵn khi thiết bị chưa thuộc ứng dụng n
 
 | LED | Trạng thái |
 |---|---|
+| Nháy theo nhóm 1–4 lần, 10 giây đầu | Chưa có Wi-Fi: lý do của lần khởi động trước (xem *Chẩn đoán*) |
 | Nháy nhanh | Chưa có Wi-Fi, đang phát mạng cài đặt `Presence-XXXX` |
-| Nháy chậm (1 giây sáng, 1 giây tắt) | Đã có Wi-Fi, chờ thêm vào ứng dụng Matter |
-| Sáng / tắt | Đã ghép nối. Sáng khi radar thấy người (tức thì, không có HoldTime), tiện để chỉnh vị trí đặt radar |
+| Nháy chậm (1 giây sáng, 1 giây tắt) | Đã có Wi-Fi, chế độ ghép nối đang mở, chờ thêm vào ứng dụng Matter |
+| Sáng / tắt | Ngoài các trường hợp trên. Sáng khi radar thấy người (tức thì, không có HoldTime), tiện để chỉnh vị trí đặt radar |
 | Nháy nhanh vài giây | Ứng dụng yêu cầu *Identify* (xác định thiết bị) |
 
 ### Factory reset
 
 **Giữ nút BOOT (GPIO0) 5 giây.** Thiết bị xóa Wi-Fi và toàn bộ thông tin ghép nối Matter, khởi động lại rồi phát mạng cài đặt `Presence-XXXX` như lúc mới.
 
+- Nút chỉ có tác dụng khi thiết bị đã có Wi-Fi. Lúc đang ở trang cài đặt thì chưa có gì để xóa, nên nút bị tắt.
+- Chỉ tính lần nhấn bắt đầu sau khi nút đã được nhả. Nếu chân GPIO0 bị kéo xuống thấp ngay từ lúc khởi động (nút kẹt, đấu nhầm), thiết bị không tự reset liên tục.
+
 ## Phần mềm
 
 Yêu cầu: **ESP-IDF v6.0.2** và **esp-matter `release/v1.6`** (giống CI). Cách dễ nhất là dùng Docker image của Espressif:
 
 ```bash
-cd ESP32-S2/matter-wifi/matter-presence-ld2410
-docker run --rm -it -v $PWD/../../..:/project -w /project/ESP32-S2/matter-wifi/matter-presence-ld2410 \
-    espressif/esp-matter:release-v1.6.1_idf_v6.0.2 \
-    bash -c 'git config --global --add safe.directory "*" && idf.py set-target esp32s2 && idf.py build'
+# chạy ở thư mục gốc của repo (cần cả lịch sử git để đánh số phiên bản)
+docker run --rm -it -v $PWD:/project espressif/esp-matter:release-v1.6.1_idf_v6.0.2 \
+    bash -c 'git config --global --add safe.directory "*" && cd /project/ESP32-S2/matter-wifi/matter-presence-ld2410 && idf.py set-target esp32s2 && idf.py build'
 ```
+
+Image tự nạp môi trường ESP-IDF và esp-matter, rồi chuyển về thư mục esp-matter, nên lệnh phải `cd` vào thư mục dự án (tùy chọn `-w` của Docker không có tác dụng).
 
 Hoặc cài trực tiếp:
 
@@ -122,7 +140,23 @@ idf.py menuconfig          # (tùy chọn)
 idf.py build
 ```
 
-Mỗi lần push, GitHub Actions build firmware và đính kèm file `matter_presence_ld2410_merged.bin` (nạp ở địa chỉ `0x0`).
+Build tạo ra:
+
+| File trong `build/` | Dùng để |
+|---|---|
+| `matter_presence_ld2410-<phiên bản>.bin` | Nạp một lần ở địa chỉ `0x0` (bootloader + bảng phân vùng + firmware) |
+| `matter_presence_ld2410-ota.bin` | Cập nhật qua Matter OTA (phục vụ từ một OTA provider) |
+| `matter_presence_ld2410.bin` | Chỉ phần firmware, nạp ở `0x20000` |
+
+Mỗi lần push, GitHub Actions chạy host test, build firmware và đính kèm các file trên (artifact `matter_presence_ld2410-<phiên bản>`), cùng file `.elf`/`.map` (artifact `...-debug`) để giải mã địa chỉ crash.
+
+### Host test
+
+Phần logic không phụ thuộc phần cứng (đọc frame LD2410, quyết định có người, trả lời DNS của trang cài đặt, giải mã form và kiểm tra tên/mật khẩu Wi-Fi) là C thuần trong `main/`. Chạy test trên máy tính, chỉ cần gcc (hoặc clang qua `CC=clang`):
+
+```bash
+test/host/run.sh
+```
 
 ### Nạp firmware
 
@@ -136,7 +170,9 @@ Board có chip USB-UART (CP2102/CH340, ví dụ ESP32-S2-Saola-1): log mặc đ�
 
 ### RAM
 
-ESP32-S2 có 320 KB SRAM, ít hơn ESP32-C3. Bù lại ESP32-S2 không có Bluetooth nên Matter không phải chạy BLE. Firmware tự dùng **PSRAM** nếu có (ESP32-S2FN4R2 trên LOLIN S2 Mini, module WROVER), và vẫn chạy được trên chip không có PSRAM. Các cluster Matter không dùng đến đã bị tắt trong `sdkconfig.defaults` để tiết kiệm RAM và flash.
+ESP32-S2 có 320 KB SRAM, ít hơn ESP32-C3. Bù lại ESP32-S2 không có Bluetooth nên Matter không phải chạy BLE. Firmware tự dùng **PSRAM** nếu có (ESP32-S2FN4R2 trên LOLIN S2 Mini, module WROVER). Firmware vẫn khởi động trên chip không có PSRAM, nhưng **chưa được kiểm chứng** là đủ RAM cho việc ghép nối Matter, nên nên dùng chip có PSRAM.
+
+Các cluster Matter không dùng đến đã bị tắt trong `sdkconfig.defaults` để tiết kiệm RAM và flash. Bộ nhớ của trang cài đặt Wi-Fi chỉ được cấp khi cần. Log in lượng RAM trống khi khởi động, sau khi ghép nối xong và mỗi 10 phút (`diag: Heap: internal free ... (lowest ...)`), để theo dõi trên thiết bị thật.
 
 ### Cấu hình (`idf.py menuconfig`)
 
@@ -152,13 +188,16 @@ ESP32-S2 có 320 KB SRAM, ít hơn ESP32-C3. Bù lại ESP32-S2 không có Bluet
 | Status LED is on when the pin is high | bật | Tắt nếu LED sáng ở mức thấp |
 | Factory reset button pin | 0 | Nút BOOT, giữ 5 giây để reset. `-1` để tắt |
 
+Khi build, firmware kiểm tra các chân của LD2410, LED và nút: các chân phải khác nhau và dùng được trên ESP32-S2. Không được dùng GPIO19/20 (cổng USB đang dùng cho log), GPIO26–32 (flash và PSRAM), hay GPIO46 làm ngõ ra. Nếu sai, build báo lỗi rõ ràng.
+
 *Wi-Fi Setup*:
 
 | Tùy chọn | Mặc định | Ý nghĩa |
 |---|---|---|
+| Show the last reset reason before the setup page starts | 10 s | Thời gian LED báo lý do khởi động lại trước khi bật sóng. `0` để tắt |
 | Maximum Wi-Fi transmit power | 34 (8.5 dBm) | Đơn vị 0,25 dBm. Board tốt có thể tăng lên 52 (13 dBm) hoặc 78 (19.5 dBm) để xa hơn |
-| Setup access point name prefix | `Presence-` | Tên mạng cài đặt là `<prefix><4 số cuối MAC>` |
-| Setup access point password | (trống) | Để trống: mạng mở. Hoặc 8–63 ký tự |
+| Setup access point name prefix | `Presence-` | Tên mạng cài đặt là `<prefix><4 số cuối MAC>`, tối đa 28 ký tự |
+| Setup access point password | (trống) | Để trống: mạng mở. Hoặc 8–63 ký tự (build kiểm tra) |
 
 ### Thông tin thiết bị và phiên bản firmware
 
@@ -168,7 +207,7 @@ ESP32-S2 có 320 KB SRAM, ít hơn ESP32-C3. Bù lại ESP32-S2 không có Bluet
 | Kiểu máy (Model) | `ESP32S2 LD2410` | `menuconfig` → *Device Information* |
 | Tên thiết bị khi ghép nối | `Presence Sensor` | `menuconfig` → *Device Information* |
 | Số serial | Địa chỉ MAC Wi-Fi, ví dụ `7CDFA1E2F3A4` | Tự động, riêng cho từng chip |
-| Firmware | `1.0.<số commit>`, ví dụ `1.0.33` | Tự động |
+| Firmware | `1.0.<số commit>`, ví dụ `1.0.40` | Tự động |
 
 Phiên bản firmware **tự tăng sau mỗi commit**. Số cuối là số commit của repo (`git rev-list --count HEAD`), và cũng được dùng làm số phiên bản Matter (SoftwareVersion) cho OTA. Khi ra bản lớn, sửa `FIRMWARE_VERSION_BASE` trong `CMakeLists.txt`, ví dụ từ `1.0` thành `1.1`.
 
@@ -179,16 +218,22 @@ Phiên bản firmware **tự tăng sau mỗi commit**. Số cuối là số comm
 
 ```
 matter-presence-ld2410/
-├── CMakeLists.txt
-├── partitions.csv
+├── CMakeLists.txt            # Phiên bản firmware, file nạp đặt tên theo phiên bản
+├── partitions.csv            # 2 phân vùng OTA, NVS, core dump
 ├── sdkconfig.defaults
-└── main/
-    ├── app_main.cpp          # Matter node, endpoint Occupancy Sensor, radar -> occupancy
-    ├── wifi_setup.cpp        # Trang cài Wi-Fi (access point + captive portal)
-    ├── device_info.cpp       # Manufacturer / Model / Serial (Basic Information)
-    ├── Kconfig.projbuild     # Cấu hình chân và tham số
-    └── drivers/
-        ├── ld2410.cpp        # Radar LD2410 (UART1, 256000 baud)
-        ├── status_led.cpp    # LED trạng thái
-        └── reset_button.cpp  # Nút factory reset
+├── main/
+│   ├── app_main.cpp          # Matter node, endpoint Occupancy Sensor, radar -> occupancy, kiểm tra chân
+│   ├── presence.c            # Quyết định có người / radar còn dữ liệu (C thuần, có host test)
+│   ├── wifi_setup.cpp        # Trang cài Wi-Fi (access point + captive portal)
+│   ├── captive_dns.c         # Trả lời DNS của trang cài đặt (C thuần, có host test)
+│   ├── portal_form.c         # Giải mã form, kiểm tra tên/mật khẩu Wi-Fi (C thuần, có host test)
+│   ├── diag.cpp              # Lý do khởi động lại, tóm tắt core dump, log RAM
+│   ├── device_info.cpp       # Manufacturer / Model / Serial (Basic Information)
+│   ├── Kconfig.projbuild     # Cấu hình chân và tham số
+│   └── drivers/
+│       ├── ld2410.cpp        # Radar LD2410 (UART1, 256000 baud)
+│       ├── ld2410_parser.c   # Đọc frame LD2410 (C thuần, có host test)
+│       ├── status_led.cpp    # LED trạng thái
+│       └── reset_button.cpp  # Nút factory reset
+└── test/host/                # Host test: run.sh
 ```
