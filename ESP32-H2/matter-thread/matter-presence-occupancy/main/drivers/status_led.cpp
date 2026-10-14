@@ -19,9 +19,7 @@
 #include <led_strip.h>
 #endif
 
-static std::atomic<status_led_mode_t> s_mode{STATUS_LED_COMMISSIONING};
-static std::atomic<bool> s_present{false};
-static std::atomic<bool> s_radar_fault{false};
+static std::atomic<status_led_mode_t> s_mode{STATUS_LED_OFF};
 static std::atomic<bool> s_identify{false};
 
 #if !CONFIG_STATUS_LED_TYPE_NONE
@@ -35,8 +33,6 @@ typedef struct {
 
 static constexpr color_t kOff = {0, 0, 0};
 static constexpr color_t kBlue = {0, 0, 255};
-static constexpr color_t kGreen = {0, 255, 0};
-static constexpr color_t kRed = {255, 0, 0};
 static constexpr color_t kWhite = {255, 255, 255};
 
 static uint32_t s_ticks; // only touched by the status_led timer callback
@@ -100,14 +96,11 @@ static color_t current_color()
     if (s_identify) {
         return (s_ticks % 2) ? kWhite : kOff;            // 5 Hz
     }
-    if (s_radar_fault) {
-        return ((s_ticks / 5) % 2) ? kRed : kOff;        // 1 Hz
-    }
     switch (s_mode.load()) {
-    case STATUS_LED_COMMISSIONING:
+    case STATUS_LED_PAIRING:
         return ((s_ticks / 10) % 2) ? kBlue : kOff;      // 0.5 Hz
-    case STATUS_LED_PRESENCE:
-        return s_present ? kGreen : kOff;
+    case STATUS_LED_OFF:
+        return kOff;
     }
     return kOff;
 }
@@ -151,16 +144,6 @@ esp_err_t status_led_init(void)
 void status_led_set_mode(status_led_mode_t mode)
 {
     s_mode = mode;
-}
-
-void status_led_set_presence(bool present)
-{
-    s_present = present;
-}
-
-void status_led_set_radar_fault(bool fault)
-{
-    s_radar_fault = fault;
 }
 
 void status_led_set_identify(bool identify)
