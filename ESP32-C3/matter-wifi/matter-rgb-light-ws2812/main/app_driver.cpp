@@ -6,7 +6,6 @@
 
 #include <esp_matter.h>
 
-#include <app/reporting/reporting.h>
 #include <platform/CHIPDeviceLayer.h>
 
 #include <button_gpio.h>
@@ -57,15 +56,11 @@ static void apply_color()
  * left as it is and the app callback is not called: the LEDs already show this color. */
 static constexpr uint32_t k_color_sync_delay_ms = 300;
 
-/* Matter thread, stack lock held */
-static void set_color_attr_quietly(uint32_t attribute_id, esp_matter_attr_val_t val)
+/* Stack lock held. report() stores the value without calling the app callback and, only if it changed, bumps the
+ * cluster DataVersion and reports it to subscribed controllers. */
+static void report_color_attr(uint32_t attribute_id, esp_matter_attr_val_t val)
 {
-    attribute_t *attribute = attribute::get(light_endpoint_id, ColorControl::Id, attribute_id);
-    if (attribute && attribute::set_val(attribute, &val, false /* no app callback */) == ESP_OK) {
-        /* No POST_UPDATE callback here, so bump the DataVersion ourselves (see app_attribute_update_cb) */
-        cluster::increase_data_version(cluster::get(light_endpoint_id, ColorControl::Id));
-        MatterReportingAttributeChangeCallback(light_endpoint_id, ColorControl::Id, attribute_id);
-    }
+    attribute::report(light_endpoint_id, ColorControl::Id, attribute_id, &val);
 }
 
 static void color_sync_cb(chip::System::Layer *layer, void *context)
@@ -73,13 +68,13 @@ static void color_sync_cb(chip::System::Layer *layer, void *context)
     rgb_t c = current_rgb();
     if (s_color.mode != ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation) {
         color_to_hue_sat(c, &s_color.hue, &s_color.sat);
-        set_color_attr_quietly(ColorControl::Attributes::CurrentHue::Id, esp_matter_uint8(s_color.hue));
-        set_color_attr_quietly(ColorControl::Attributes::CurrentSaturation::Id, esp_matter_uint8(s_color.sat));
+        report_color_attr(ColorControl::Attributes::CurrentHue::Id, esp_matter_uint8(s_color.hue));
+        report_color_attr(ColorControl::Attributes::CurrentSaturation::Id, esp_matter_uint8(s_color.sat));
     }
     if (s_color.mode != ColorControl::ColorModeEnum::kCurrentXAndCurrentY) {
         color_to_xy(c, &s_color.x, &s_color.y);
-        set_color_attr_quietly(ColorControl::Attributes::CurrentX::Id, esp_matter_uint16(s_color.x));
-        set_color_attr_quietly(ColorControl::Attributes::CurrentY::Id, esp_matter_uint16(s_color.y));
+        report_color_attr(ColorControl::Attributes::CurrentX::Id, esp_matter_uint16(s_color.x));
+        report_color_attr(ColorControl::Attributes::CurrentY::Id, esp_matter_uint16(s_color.y));
     }
     ESP_LOGI(TAG, "Color mode %u: hue %u sat %u, xy %u/%u, %u mireds", chip::to_underlying(s_color.mode), s_color.hue,
              s_color.sat, s_color.x, s_color.y, s_color.mireds);
@@ -241,9 +236,9 @@ esp_err_t app_driver_light_set_defaults(uint16_t endpoint_id)
         constexpr uint8_t hs = chip::to_underlying(ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation);
         s_color.mode = ColorControl::ColorModeEnum::kCurrentHueAndCurrentSaturation;
         s_color.sat = 0;
-        set_color_attr_quietly(ColorControl::Attributes::CurrentSaturation::Id, esp_matter_uint8(0));
-        set_color_attr_quietly(ColorControl::Attributes::ColorMode::Id, esp_matter_enum8(hs));
-        set_color_attr_quietly(ColorControl::Attributes::EnhancedColorMode::Id, esp_matter_enum8(hs));
+        report_color_attr(ColorControl::Attributes::CurrentSaturation::Id, esp_matter_uint8(0));
+        report_color_attr(ColorControl::Attributes::ColorMode::Id, esp_matter_enum8(hs));
+        report_color_attr(ColorControl::Attributes::EnhancedColorMode::Id, esp_matter_enum8(hs));
         ESP_LOGI(TAG, "Color temperature mode from older firmware -> white (hue/saturation)");
     }
 

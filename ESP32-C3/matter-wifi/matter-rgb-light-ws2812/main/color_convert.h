@@ -16,7 +16,7 @@ typedef struct {
 rgb_t color_from_hue_sat(uint8_t hue, uint8_t sat);
 
 /** Matter Color Control CurrentX/CurrentY (0..65279, CIE 1931 x/y * 65536) -> full-scale RGB. */
-rgb_t color_from_xy(uint16_t x, uint16_t y);
+rgb_t color_from_xy(uint16_t cx, uint16_t cy);
 
 /** Matter Color Control ColorTemperatureMireds -> full-scale RGB (white point of that temperature). */
 rgb_t color_from_mireds(uint16_t mireds);

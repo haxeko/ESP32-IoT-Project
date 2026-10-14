@@ -18,6 +18,7 @@ static const char *TAG = "led_bar";
 #define FADE_IN_MAX_HOLD     (1500 * 1000) /* us: safety limit for the hold */
 
 static led_strip_handle_t s_strip;
+static StaticSemaphore_t s_lock_buf;
 static SemaphoreHandle_t s_lock;
 static esp_timer_handle_t s_identify_timer;
 static esp_timer_handle_t s_hold_timer;
@@ -150,8 +151,8 @@ static void identify_timer_cb(void *arg)
 
 esp_err_t led_bar_init(void)
 {
-    s_lock = xSemaphoreCreateMutex();
-    ESP_RETURN_ON_FALSE(s_lock, ESP_ERR_NO_MEM, TAG, "no mem for lock");
+    /* Static mutex: it cannot fail, so the API stays usable even if the steps below fail */
+    s_lock = xSemaphoreCreateMutexStatic(&s_lock_buf);
 
     const esp_timer_create_args_t timer_args = {
         .callback = identify_timer_cb,

@@ -38,8 +38,6 @@ CONFIG_PARTITION_TABLE_OFFSET=0xC000
 # Enable chip shell
 CONFIG_ENABLE_CHIP_SHELL=y
 
-CONFIG_ENABLE_WIFI_AP=n
-
 #enable lwIP route hooks
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
 CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
@@ -52,9 +50,6 @@ CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
-
-# Enable HKDF in mbedtls
-CONFIG_MBEDTLS_HKDF_C=y
 
 # Increase LwIP IPv6 address number to 6 (MAX_FABRIC + 1)
 # unique local addresses for fabrics(MAX_FABRIC), a link local address(1)
