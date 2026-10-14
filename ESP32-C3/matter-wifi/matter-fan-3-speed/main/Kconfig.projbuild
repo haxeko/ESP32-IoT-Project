@@ -1,0 +1,219 @@
+menu "Fan Relays"
+
+    config FAN_RELAY_SPEED1_GPIO
+        int "Speed 1 (low) relay GPIO"
+        range 0 21
+        default 3
+        help
+            Relay that powers the low-speed tap of the fan motor.
+            Only one speed relay is ever closed at a time, with FAN_RELAY_DEAD_TIME_MS between
+            releasing one and closing the next. Wire the speed relays as an interlock chain as well
+            (see README), so two motor taps can never be powered together even by a fault.
+
+            Good ESP32-C3 pins for relays: GPIO0, 1, 3, 4, 5, 7, 10 (no internal pull-up at reset,
+            so an active-high relay driver stays off while the chip boots). Avoid the strapping pins
+            GPIO2/8/9, GPIO6 (pull-up at reset), the flash pins GPIO11-17, USB GPIO18/19 and
+            GPIO20/21 (UART0: the ROM prints on GPIO21 at every boot).
+
+    config FAN_RELAY_SPEED2_GPIO
+        int "Speed 2 (medium) relay GPIO"
+        range 0 21
+        default 4
+
+    config FAN_RELAY_SPEED3_GPIO
+        int "Speed 3 (high) relay GPIO"
+        range 0 21
+        default 5
+
+    config FAN_RELAY_SWING_GPIO
+        int "Oscillation (swing motor) relay GPIO"
+        range 0 21
+        default 7
+        help
+            Relay that powers the oscillation (swing) motor. It is closed only while the fan runs
+            and oscillation is on.
+
+    config FAN_RELAY_ACTIVE_LEVEL
+        int "Relay active level (1 = active-high, 0 = active-low)"
+        range 0 1
+        default 1
+        help
+            Level written to a relay GPIO to close the relay. Many cheap optocoupled relay boards
+            are active-low: set 0 for those.
+
+    config FAN_RELAY_DEAD_TIME_MS
+        int "Dead time between two speed relays (ms)"
+        range 50 2000
+        default 200
+        help
+            When the speed changes, the old speed relay is released and the new one is closed only
+            after this time, so the contact of the old relay has opened (and its arc is gone) first.
+
+endmenu
+
+menu "Fan Behavior"
+
+    choice FAN_POWER_ON_STATE
+        prompt "After a power cut"
+        default FAN_POWER_ON_RESTORE
+        help
+            State of the fan when mains power comes back. Software restarts (OTA update, factory
+            reset, crash) always restore the last state, unless the previous start crashed within
+            30 s (then the fan starts off).
+
+        config FAN_POWER_ON_RESTORE
+            bool "Restore the last state (speed and oscillation)"
+
+        config FAN_POWER_ON_OFF
+            bool "Stay off (speed and oscillation are kept for the next On)"
+
+    endchoice
+
+    config FAN_ON_RESUMES_LAST_SPEED
+        bool "Matter FanMode On resumes the last speed"
+        default y
+        help
+            A controller that writes FanMode = On (or Smart) turns the fan on at the speed it had
+            before it was turned off, like the power button of the remote, instead of the speed 3
+            (High) that the Matter specification asks for. Writes of FanMode = On while the fan is
+            already running leave the speed unchanged.
+
+    config FAN_MATTER_ROCKING
+        bool "Oscillation as Matter Rocking (Apple Home 'Oscillate')"
+        default y
+        help
+            Fan Control Rocking feature (RockSupport = left-right). Apple Home shows it as an
+            Oscillate switch, Home Assistant as Oscillate. Turns the swing relay on and off.
+
+    config FAN_MATTER_AIRFLOW_DIRECTION
+        bool "Oscillation on the Matter AirflowDirection (Apple Home 'Rotation direction') button"
+        default y
+        help
+            Fan Control AirflowDirection feature, used as a second oscillation switch:
+            Reverse = oscillation on, Forward = oscillation off. Apple Home shows it as the
+            rotation direction button under the speed slider, Home Assistant as Direction.
+            Both features drive the same swing relay and always show the same state.
+
+endmenu
+
+menu "IR Receiver"
+
+    config IR_RX_GPIO
+        int "IR receiver (VS1838B / TSOP38238) output GPIO"
+        range -1 21
+        default 10
+        help
+            Data output of a 38 kHz IR receiver module, powered from 3.3 V. -1 disables the IR
+            receiver. The remote buttons are learned on the device (triple click on the button),
+            see README. Any IR protocol is accepted: NEC frames are decoded, other remotes are
+            matched by the shape of their frames.
+
+    config IR_LEARN_TIMEOUT_S
+        int "IR learning: give up after this many seconds without input"
+        range 10 300
+        default 30
+
+endmenu
+
+menu "Buttons"
+
+    config APP_BUTTON_GPIO
+        int "Main button GPIO (active low)"
+        range -1 21
+        default 9
+        help
+            Click: fan on/off. Double click: open pairing (commissioning window). Triple click:
+            learn the IR remote. Hold 5 s, then release: factory reset.
+            GPIO9 is the BOOT button of ESP32-C3 boards; an external push button to GND can be
+            wired in parallel (keep it released while powering up, or the chip enters download mode).
+            -1 disables the button.
+
+    config BUTTON_SPEED_GPIO
+        int "Speed button GPIO (active low, -1 = none)"
+        range -1 21
+        default -1
+        help
+            Optional push button to GND: each click selects the next speed (1 -> 2 -> 3 -> 1),
+            turns the fan on when it is off. GPIO0 or GPIO1 are free on the ESP32-C3 SuperMini.
+
+    config BUTTON_SWING_GPIO
+        int "Oscillation button GPIO (active low, -1 = none)"
+        range -1 21
+        default -1
+        help
+            Optional push button to GND: each click toggles oscillation.
+
+endmenu
+
+menu "Status LED"
+
+    choice STATUS_LED_TYPE
+        prompt "Status LED"
+        default STATUS_LED_TYPE_GPIO
+        help
+            Blinks while pairing, for Matter Identify, while learning the IR remote and for
+            factory reset; flashes briefly when an IR command is received.
+
+        config STATUS_LED_TYPE_NONE
+            bool "None"
+
+        config STATUS_LED_TYPE_GPIO
+            bool "Single-color LED on a GPIO (ESP32-C3 SuperMini blue LED)"
+
+        config STATUS_LED_TYPE_WS2812
+            bool "WS2812 RGB LED (ESP32-C3-DevKitM-1)"
+
+    endchoice
+
+    config STATUS_LED_GPIO
+        int "Status LED GPIO"
+        depends on !STATUS_LED_TYPE_NONE
+        range 0 21
+        default 8
+        help
+            ESP32-C3 SuperMini: blue LED on GPIO8 (active-low). ESP32-C3-DevKitM-1: WS2812 on GPIO8.
+
+    config STATUS_LED_ACTIVE_LEVEL
+        int "Status LED active level (1 = active-high, 0 = active-low)"
+        depends on STATUS_LED_TYPE_GPIO
+        range 0 1
+        default 0
+
+    config STATUS_LED_SHOW_RUNNING
+        bool "Keep the LED dimly on while the fan runs"
+        depends on !STATUS_LED_TYPE_NONE
+        default n
+        help
+            Off by default so the LED stays dark at night.
+
+endmenu
+
+menu "Device Information"
+
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+        help
+            Shown as Manufacturer in Apple Home. At most 32 characters (checked at build time).
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName)"
+        default "Smart Fan"
+        help
+            Shown as Model in Apple Home. At most 32 characters (checked at build time).
+
+    config DEVICE_DISPLAY_NAME
+        string "Device name (Basic Information NodeLabel / ProductLabel)"
+        default "Smart Fan"
+        help
+            Default name that controllers show when the device is added, and the name advertised
+            before pairing (DNS-SD). At most 32 characters. It can be renamed in the app.
+
+    config DEVICE_HARDWARE_VERSION_STRING
+        string "Hardware version (Basic Information HardwareVersionString)"
+        default "ESP32-C3 SuperMini"
+        help
+            Human-readable hardware revision, shown as "Hardware" in Home Assistant.
+            At most 64 characters (checked at build time).
+
+endmenu

@@ -1,0 +1,67 @@
+name: Build matter-fan-3-speed
+
+on:
+  push:
+    paths:
+      - 'ESP32-C3/matter-wifi/matter-fan-3-speed/**'
+      - '.github/workflows/matter-fan-3-speed.yml'
+  pull_request:
+    paths:
+      - 'ESP32-C3/matter-wifi/matter-fan-3-speed/**'
+      - '.github/workflows/matter-fan-3-speed.yml'
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ESP32-C3/matter-wifi/matter-fan-3-speed
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Fan logic and IR decoder tests
+        run: test/host/run.sh
+
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/esp-matter:release-v1.6.1_idf_v6.0.2
+    defaults:
+      run:
+        working-directory: ESP32-C3/matter-wifi/matter-fan-3-speed
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # On pull_request, build the PR head commit rather than the synthetic merge commit.
+          # Empty on push/dispatch: default ref.
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Build (esp32c3)
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          pushd $IDF_PATH && . ./export.sh && popd
+          pushd $ESP_MATTER_PATH && . ./export.sh && popd
+          idf.py set-target esp32c3
+          idf.py build
+          # Firmware version (also the name of the complete flash image the build creates)
+          echo "FW_VERSION=$(python3 -c "import json; print(json.load(open('build/project_description.json'))['project_version'])")" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matter_fan_3speed-${{ env.FW_VERSION }}
+          if-no-files-found: error
+          path: |
+            ESP32-C3/matter-wifi/matter-fan-3-speed/build/matter_fan_3speed-${{ env.FW_VERSION }}.bin
+            ESP32-C3/matter-wifi/matter-fan-3-speed/build/matter_fan_3speed-ota.bin
+            ESP32-C3/matter-wifi/matter-fan-3-speed/build/matter_fan_3speed.bin
+            ESP32-C3/matter-wifi/matter-fan-3-speed/build/bootloader/bootloader.bin
+            ESP32-C3/matter-wifi/matter-fan-3-speed/build/partition_table/partition-table.bin
+            ESP32-C3/matter-wifi/matter-fan-3-speed/build/ota_data_initial.bin
+            ESP32-C3/matter-wifi/matter-fan-3-speed/build/flash_args
+      # ELF/map decode panic addresses from a CI-flashed device
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matter_fan_3speed-${{ env.FW_VERSION }}-debug
+          path: |
+            ESP32-C3/matter-wifi/matter-fan-3-speed/build/matter_fan_3speed.elf
+            ESP32-C3/matter-wifi/matter-fan-3-speed/build/matter_fan_3speed.map
