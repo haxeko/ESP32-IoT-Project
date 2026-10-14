@@ -6,11 +6,11 @@ menu "Device Information"
 
     config DEVICE_PRODUCT_NAME
         string "Model (Basic Information ProductName)"
-        default "ESP32H2 LD2410"
+        default "H2 Occupancy"
 
     config DEVICE_DISPLAY_NAME
         string "Device name (Basic Information NodeLabel / ProductLabel)"
-        default "Presence Sensor"
+        default "Occupancy Sensor"
         help
             Default name that controllers show when the device is added.
             Max 32 characters. It can be renamed later in the app.
