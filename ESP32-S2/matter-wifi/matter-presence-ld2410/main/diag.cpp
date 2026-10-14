@@ -86,11 +86,6 @@ void diag_record_boot(void)
     }
 }
 
-bool diag_last_reset_was_brownout(void)
-{
-    return s_resets[0] == ESP_RST_BROWNOUT;
-}
-
 int diag_last_reset_blinks(void)
 {
     switch (s_resets[0]) {

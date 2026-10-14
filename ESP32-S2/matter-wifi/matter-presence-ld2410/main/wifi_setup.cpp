@@ -22,7 +22,6 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
-#include <dhcpserver/dhcpserver.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <lwip/inet.h>
@@ -52,6 +51,7 @@ static constexpr int kMaxConnectRetries = 3;
 static constexpr uint64_t kConnectTimeoutUs = 20 * 1000 * 1000;
 static constexpr uint64_t kRestartDelayUs = 5 * 1000 * 1000;
 static constexpr size_t kMaxFormSize = 256;
+static constexpr uint32_t kStatusLogPeriodMs = 10 * 1000;
 
 enum class ConnectState { kIdle, kConnecting, kConnected, kFailed };
 
@@ -87,17 +87,12 @@ bool wifi_setup_is_provisioned(void)
     return provisioned;
 }
 
-// Lowest power the driver accepts (2 dBm), used after a brownout reset.
-static constexpr int8_t kMinTxPower = 8;
-
 void wifi_setup_limit_tx_power(void)
 {
-    // A brownout means the board's 3.3 V supply sagged, usually while the
-    // radio was transmitting: retry with the lowest power.
-    const int8_t power = diag_last_reset_was_brownout() ? kMinTxPower : CONFIG_WIFI_MAX_TX_POWER;
-    esp_err_t err = esp_wifi_set_max_tx_power(power);
+    esp_err_t err = esp_wifi_set_max_tx_power(CONFIG_WIFI_MAX_TX_POWER);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Wi-Fi TX power limited to %d.%02d dBm", power / 4, (power % 4) * 25);
+        ESP_LOGI(TAG, "Wi-Fi TX power limited to %d.%02d dBm", CONFIG_WIFI_MAX_TX_POWER / 4,
+                 (CONFIG_WIFI_MAX_TX_POWER % 4) * 25);
     } else {
         ESP_LOGW(TAG, "Failed to set Wi-Fi TX power: %s", esp_err_to_name(err));
     }
@@ -461,31 +456,6 @@ static void start_web_server()
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, redirect_handler);
 }
 
-// Phones need a DNS server from DHCP to detect the captive portal (and some
-// refuse a network without one). Hand out the AP itself, plus the portal URL
-// (DHCP option 114) for phones that support it.
-static void configure_dhcp_server()
-{
-    const esp_netif_ip_info_t &ip_info = s_ap_ip;
-    static char s_portal_uri[32]; // the DHCP server keeps the pointer
-    snprintf(s_portal_uri, sizeof(s_portal_uri), "http://" IPSTR "/", IP2STR(&ip_info.ip));
-
-    esp_netif_dns_info_t dns = {};
-    dns.ip.type = ESP_IPADDR_TYPE_V4;
-    dns.ip.u_addr.ip4.addr = ip_info.ip.addr;
-    uint8_t offer_dns = OFFER_DNS;
-
-    esp_netif_dhcps_stop(s_ap_netif);
-    esp_netif_set_dns_info(s_ap_netif, ESP_NETIF_DNS_MAIN, &dns);
-    esp_netif_dhcps_option(s_ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer_dns, sizeof(offer_dns));
-    esp_netif_dhcps_option(s_ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, s_portal_uri,
-                           strlen(s_portal_uri));
-    esp_err_t err = esp_netif_dhcps_start(s_ap_netif);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "DHCP server failed to start: %s", esp_err_to_name(err));
-    }
-}
-
 // ---------------------------------------------------------------------------
 
 void wifi_setup_run_portal(void)
@@ -526,29 +496,36 @@ void wifi_setup_run_portal(void)
     ap.ap.max_connection = 4;
     strlcpy((char *)ap.ap.password, CONFIG_WIFI_SETUP_AP_PASSWORD, sizeof(ap.ap.password));
     ap.ap.authmode = ap.ap.password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
-    ap.ap.pmf_cfg.required = false;
 
+    // The same radio start as firmware 1.0.34, the last one whose access point
+    // was seen on a LOLIN S2 Mini: default bandwidth, power save and DHCP
+    // server (which already hands out the AP address as DNS server).
     // No automatic scan: scanning transmits on every channel, and on weak
     // boards that is enough to reset the chip. The SSID is typed in, or the
     // user asks for a scan from the page.
     esp_wifi_set_storage(WIFI_STORAGE_RAM);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
-    // 20 MHz channel and no modem sleep: the most compatible settings for phones.
-    esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW20);
     ESP_ERROR_CHECK(esp_wifi_start());
-    esp_wifi_set_ps(WIFI_PS_NONE);
     wifi_setup_limit_tx_power();
 
     esp_netif_get_ip_info(s_ap_netif, &s_ap_ip);
-    configure_dhcp_server();
 
     start_web_server();
     xTaskCreate(dns_task, "dns", 4096, NULL, 5, NULL);
 
     ESP_LOGW(TAG, "Wi-Fi setup: join \"%s\" and open http://" IPSTR, ssid, IP2STR(&s_ap_ip.ip));
 
+    // A status line every few seconds, so that a serial monitor opened at any
+    // time shows the access point is up, how many phones joined and why the
+    // board last reset.
     while (true) {
-        vTaskDelay(portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(kStatusLogPeriodMs));
+        wifi_sta_list_t stations = {};
+        esp_wifi_ap_get_sta_list(&stations);
+        char report[512];
+        diag_get_report(report, sizeof(report));
+        ESP_LOGI(TAG, "Setup network \"%s\" on, %d phone(s) joined. %s", ssid, stations.num, report);
+        diag_log_heap();
     }
 }

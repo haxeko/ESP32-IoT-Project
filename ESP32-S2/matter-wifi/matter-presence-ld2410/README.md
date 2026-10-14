@@ -54,11 +54,11 @@ Khi chưa có Wi-Fi, trong 10 giây trước khi bật sóng, LED báo lý do c�
 | LED nháy | Lần khởi động trước |
 |---|---|
 | 1 lần | Bình thường (cắm điện, nút RST, khởi động lại có chủ đích) |
-| 2 lần | **Sụt áp** (brownout): nguồn 3.3V tụt khi chip phát sóng. Thường do nguồn USB yếu hoặc board thiếu tụ lọc. Lần sau firmware tự giảm công suất phát xuống 2 dBm |
+| 2 lần | **Sụt áp** (brownout): nguồn 3.3V tụt khi chip phát sóng. Thường do nguồn USB yếu, cáp dài hoặc board thiếu tụ lọc |
 | 3 lần | **Crash** phần mềm |
 | 4 lần | **Watchdog**: một tác vụ bị treo |
 
-Trong 10 giây đó, cổng USB cũng hiện ổn định để mở log. Thông tin cũng hiện ở dòng chữ xám cuối trang cài đặt. Đổi thời gian này trong `menuconfig` → *Wi-Fi Setup* → *Show the last reset reason...*, đặt `0` để tắt.
+Trong 10 giây đó, cổng USB cũng hiện ổn định để mở log. Khi mạng cài đặt đang bật, log in mỗi 10 giây một dòng `Setup network ... on, N phone(s) joined` kèm lịch sử khởi động lại. Thông tin cũng hiện ở dòng chữ xám cuối trang cài đặt. Đổi thời gian này trong `menuconfig` → *Wi-Fi Setup* → *Show the last reset reason...*, đặt `0` để tắt.
 
 Nếu không mở được trang lẫn log, hãy đưa board vào chế độ nạp (giữ nút 0, bấm RST) rồi đọc ra hai file sau và gửi cho người phát triển. Kèm theo file `.elf` của đúng bản firmware (artifact `-debug` trên GitHub Actions) thì có thể giải mã chính xác dòng code bị crash:
 
