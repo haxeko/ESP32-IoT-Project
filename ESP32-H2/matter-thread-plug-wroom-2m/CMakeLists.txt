@@ -62,14 +62,14 @@ set(EXTRA_COMPONENT_DIRS
     "${ESP_MATTER_PATH}/device_hal/device"
     ${extra_components_dirs_append})
 
-project(matter_plug_wroom_2m)
+project(matter_relay_h2)
 
 idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-Os;-DCHIP_HAVE_CONFIG_H;-Wno-overloaded-virtual" APPEND)
 idf_build_set_property(C_COMPILE_OPTIONS "-Os" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-security" APPEND)
 
 # Complete flash image named after the firmware version, so the files of different builds can be told apart:
-#   build/matter_plug_wroom_2m-1.0.2610131450.bin   bootloader + partition table + app, flash at 0x0
+#   build/matter_relay_h2-1.0.2610131450.bin   bootloader + partition table + app, flash at 0x0
 #                                                  (same content as "idf.py merge-bin")
 # Regenerated on every build; images left from earlier versions are removed at configure time.
 idf_build_get_property(fw_build_dir BUILD_DIR)

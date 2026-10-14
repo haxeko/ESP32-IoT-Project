@@ -18,8 +18,8 @@ typedef void *app_driver_handle_t;
  *  the previous boot never reached app_driver_relay_boot_done() (startup crash loop: relay OFF). */
 app_driver_handle_t app_driver_relay_init();
 
-/** Initialize the BOOT button (GPIO9): short press toggles the relay,
- *  hold 5 s then release: 3 red LED blinks and factory reset. */
+/** Initialize the BOOT button (GPIO9): short press toggles the relay, double click opens the commissioning window
+ *  (pairing, LED blinks blue), hold 5 s then release: 3 red LED blinks and factory reset. */
 app_driver_handle_t app_driver_button_init();
 
 /** Apply an attribute change coming from Matter to the hardware. */
@@ -38,6 +38,10 @@ void app_driver_identify_start(uint16_t blinks);
 void app_driver_identify_stop();
 /** Identify FinishEffect: let the blink in progress finish, then stop. CHIP task only. */
 void app_driver_identify_finish();
+
+/** Pairing indication: blink the status LED blue while the device can be commissioned (commissioning window open or
+ *  commissioning in progress); false = back to the relay indication. CHIP task only. */
+void app_driver_pairing_indicate(bool pairing);
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 /* ESP32-H2 runs OpenThread on its own 802.15.4 radio (no RCP, no host) */

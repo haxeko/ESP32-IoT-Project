@@ -36,18 +36,18 @@ jobs:
           echo "FW_VERSION=$(python3 -c "import json; print(json.load(open('build/project_description.json'))['project_version'])")" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
-          name: matter_plug_wroom_2m-${{ env.FW_VERSION }}
+          name: matter_relay_h2-${{ env.FW_VERSION }}
           if-no-files-found: error
           path: |
-            ESP32-H2/matter-thread-plug-wroom-2m/build/matter_plug_wroom_2m-${{ env.FW_VERSION }}.bin
-            ESP32-H2/matter-thread-plug-wroom-2m/build/matter_plug_wroom_2m.bin
+            ESP32-H2/matter-thread-plug-wroom-2m/build/matter_relay_h2-${{ env.FW_VERSION }}.bin
+            ESP32-H2/matter-thread-plug-wroom-2m/build/matter_relay_h2.bin
             ESP32-H2/matter-thread-plug-wroom-2m/build/bootloader/bootloader.bin
             ESP32-H2/matter-thread-plug-wroom-2m/build/partition_table/partition-table.bin
             ESP32-H2/matter-thread-plug-wroom-2m/build/flash_args
       # ELF/map decode silent-assert and panic addresses from a CI-flashed device
       - uses: actions/upload-artifact@v4
         with:
-          name: matter_plug_wroom_2m-${{ env.FW_VERSION }}-debug
+          name: matter_relay_h2-${{ env.FW_VERSION }}-debug
           path: |
-            ESP32-H2/matter-thread-plug-wroom-2m/build/matter_plug_wroom_2m.elf
-            ESP32-H2/matter-thread-plug-wroom-2m/build/matter_plug_wroom_2m.map
+            ESP32-H2/matter-thread-plug-wroom-2m/build/matter_relay_h2.elf
+            ESP32-H2/matter-thread-plug-wroom-2m/build/matter_relay_h2.map

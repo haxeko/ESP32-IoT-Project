@@ -109,6 +109,14 @@ static void ota_check_pending_verify()
 }
 #endif // CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
 
+/* Blue blinking while the device can be commissioned. The window status stays "open" from the first advertisement
+ * until commissioning completes, fails for good or times out: PASE closes only the advertisement (and posts
+ * kCommissioningWindowClosed) while commissioning goes on. */
+static void app_pairing_led_update()
+{
+    app_driver_pairing_indicate(chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen());
+}
+
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
     switch (event->Type) {
@@ -136,6 +144,8 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete");
         thread_diag_stop();
+        /* The window manager may handle this event after us: do not wait for its cleanup */
+        app_driver_pairing_indicate(false);
         break;
 
     case chip::DeviceLayer::DeviceEventType::kServerReady:
@@ -143,18 +153,22 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
         if (chip::Server::GetInstance().GetFabricTable().FabricCount() > 0) {
             thread_diag_stop();
         }
+        app_pairing_led_update();
         break;
 
     case chip::DeviceLayer::DeviceEventType::kFailSafeTimerExpired:
         ESP_LOGI(TAG, "Commissioning failed, fail safe timer expired");
+        app_pairing_led_update();
         break;
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningWindowOpened:
         ESP_LOGI(TAG, "Commissioning window opened");
+        app_pairing_led_update();
         break;
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningWindowClosed:
         ESP_LOGI(TAG, "Commissioning window closed");
+        app_pairing_led_update();
         break;
 
     case chip::DeviceLayer::DeviceEventType::kFabricRemoved: {

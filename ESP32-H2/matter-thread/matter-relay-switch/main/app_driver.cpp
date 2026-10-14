@@ -11,6 +11,8 @@
 #include <app_priv.h>
 #include <common_macros.h>
 #include <esp_matter.h>
+#include <app/server/CommissioningWindowManager.h>
+#include <app/server/Server.h>
 #include <platform/CHIPDeviceLayer.h>
 
 #include <button_gpio.h>
@@ -30,8 +32,9 @@ static constexpr gpio_num_t k_relay_gpio = (gpio_num_t)CONFIG_RELAY_GPIO;
 
 #if CONFIG_STATUS_LED_ENABLE
 static led_driver_handle_t s_led_handle = NULL;
-/* CHIP task only (Identify callbacks, attribute updates) */
+/* CHIP task only (Identify callbacks, commissioning events, attribute updates) */
 static bool s_identifying = false;
+static bool s_pairing = false;
 #endif
 
 /* Written in the esp_timer (button) task, read in the CHIP and factory reset tasks */
@@ -46,7 +49,7 @@ static bool s_relay_on = false;
 static RTC_NOINIT_ATTR uint32_t s_boot_pending;
 static constexpr uint32_t k_boot_pending_magic = 0x52454C59; /* "RELY" */
 
-/* Status LED colors (hue): relay ON = green, Identify = blue, factory reset = red */
+/* Status LED colors (hue): relay ON = green, pairing and Identify = blue (blinking), factory reset = red */
 static constexpr uint16_t k_hue_relay_on = 120;
 static constexpr uint16_t k_hue_identify = 240;
 static constexpr uint16_t k_hue_reset = 0;
@@ -82,8 +85,8 @@ static esp_err_t app_driver_relay_set_power(bool on)
     ESP_LOGI(TAG, "Relay (GPIO%d) -> %s", (int)k_relay_gpio, on ? "ON" : "OFF");
     s_relay_on = on;
 #if CONFIG_STATUS_LED_ENABLE
-    /* The hue is green outside Identify and factory reset, so one refresh is enough */
-    if (s_led_handle && !s_factory_reset_armed && !s_identifying) {
+    /* The hue is green outside pairing, Identify and factory reset, so one refresh is enough */
+    if (s_led_handle && !s_factory_reset_armed && !s_identifying && !s_pairing) {
         led_driver_set_power(s_led_handle, on);
         if (s_factory_reset_armed) {
             /* armed_cb preempted us mid-write: restore the solid red "release now" indication */
@@ -111,6 +114,37 @@ static void app_driver_button_toggle_cb(void *arg, void *data)
     });
     if (err != CHIP_NO_ERROR) {
         ESP_LOGW(TAG, "Toggle ignored, Matter stack not ready: %" CHIP_ERROR_FORMAT, err.Format());
+    }
+}
+
+static void app_driver_button_pairing_cb(void *arg, void *data)
+{
+    ESP_LOGI(TAG, "Pairing button pressed");
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork([](intptr_t) {
+        chip::Server &server = chip::Server::GetInstance();
+        chip::CommissioningWindowManager &cwm = server.GetCommissioningWindowManager();
+        if (cwm.IsCommissioningWindowOpen()) {
+            ESP_LOGI(TAG, "Commissioning window already open");
+            return;
+        }
+        /* Not commissioned yet: BLE + DNS-SD, as at first boot. Commissioned: BLE has been shut down
+         * (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING), so advertise on the Thread network only. That is enough to add
+         * the device to a second controller (Apple Home, Google Home, ...) with its original QR / pairing code. */
+        const bool commissioned = server.GetFabricTable().FabricCount() > 0;
+        CHIP_ERROR err = cwm.OpenBasicCommissioningWindow(
+            chip::System::Clock::Seconds32(CHIP_DEVICE_CONFIG_DISCOVERY_TIMEOUT_SECS),
+            commissioned ? chip::CommissioningWindowAdvertisement::kDnssdOnly
+                         : chip::CommissioningWindowAdvertisement::kAllSupported);
+        if (err == CHIP_NO_ERROR) {
+            ESP_LOGI(TAG, "Commissioning window opened for %d s (%s)", CHIP_DEVICE_CONFIG_DISCOVERY_TIMEOUT_SECS,
+                     commissioned ? "Thread/DNS-SD" : "BLE + DNS-SD");
+        } else {
+            /* e.g. a commissioning (fail-safe) still in progress */
+            ESP_LOGW(TAG, "Failed to open commissioning window: %" CHIP_ERROR_FORMAT, err.Format());
+        }
+    });
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "Pairing ignored, Matter stack not ready: %" CHIP_ERROR_FORMAT, err.Format());
     }
 }
 
@@ -151,42 +185,54 @@ static void app_driver_button_factory_reset_release_cb(void *arg, void *data)
 }
 
 #if CONFIG_STATUS_LED_ENABLE
-/* Identify: blue blinks on the CHIP SystemLayer timer, so Identify and relay LED writes are serialised on the CHIP
- * task. The factory reset path (esp_timer task, factory_reset task) also writes the LED; the CHIP-side writes
- * re-check s_factory_reset_armed afterwards. */
+/* Pairing and Identify: blue blinks on the CHIP SystemLayer timer, so they and the relay LED writes are serialised on
+ * the CHIP task. The factory reset path (esp_timer task, factory_reset task) also writes the LED; the CHIP-side writes
+ * re-check s_factory_reset_armed afterwards. Priority: factory reset (red) > Identify / pairing (blue) > relay (green). */
 static bool s_blink_phase = false;
-static uint16_t s_blinks_left = 0; /* 0 = blink until STOP */
+static uint16_t s_blinks_left = 0; /* Identify only. 0 = blink until STOP */
 
-static void app_driver_identify_blink_cb(chip::System::Layer *, void *)
+static void app_driver_blink_cb(chip::System::Layer *, void *)
 {
-    if (!s_identifying || s_factory_reset_armed) {
+    if ((!s_identifying && !s_pairing) || s_factory_reset_armed) {
         return;
     }
     s_blink_phase = !s_blink_phase;
     app_driver_led_set_unless_reset(s_blink_phase, k_hue_identify);
-    if (!s_blink_phase && s_blinks_left && --s_blinks_left == 0) {
+    if (s_identifying && !s_blink_phase && s_blinks_left && --s_blinks_left == 0) {
         app_driver_identify_stop();
         return;
     }
-    chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Milliseconds32(500), app_driver_identify_blink_cb,
+    chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Milliseconds32(500), app_driver_blink_cb,
                                                 nullptr);
+}
+
+/* Start blinking from the ON half, or go back to the relay indication when nothing needs the blink any more */
+static void app_driver_blink_refresh()
+{
+    chip::DeviceLayer::SystemLayer().CancelTimer(app_driver_blink_cb, nullptr);
+    if (s_identifying || s_pairing) {
+        s_blink_phase = false;
+        app_driver_blink_cb(nullptr, nullptr);
+    } else {
+        app_driver_led_set_unless_reset(s_relay_on, k_hue_relay_on);
+    }
 }
 
 void app_driver_identify_start(uint16_t blinks)
 {
-    chip::DeviceLayer::SystemLayer().CancelTimer(app_driver_identify_blink_cb, nullptr);
     s_identifying = true;
     s_blinks_left = blinks;
-    s_blink_phase = false;
-    app_driver_identify_blink_cb(nullptr, nullptr);
+    app_driver_blink_refresh();
 }
 
 void app_driver_identify_stop()
 {
-    chip::DeviceLayer::SystemLayer().CancelTimer(app_driver_identify_blink_cb, nullptr);
     if (s_identifying) {
         s_identifying = false;
-        app_driver_led_set_unless_reset(s_relay_on, k_hue_relay_on);
+        /* Pairing still active: keep blinking blue */
+        app_driver_blink_refresh();
+    } else if (!s_pairing) {
+        chip::DeviceLayer::SystemLayer().CancelTimer(app_driver_blink_cb, nullptr);
     }
 }
 
@@ -200,10 +246,23 @@ void app_driver_identify_finish()
         app_driver_identify_stop();
     }
 }
+
+void app_driver_pairing_indicate(bool pairing)
+{
+    if (pairing == s_pairing) {
+        return;
+    }
+    ESP_LOGI(TAG, "Pairing LED %s", pairing ? "on (blinking blue)" : "off");
+    s_pairing = pairing;
+    if (!s_identifying) {
+        app_driver_blink_refresh();
+    }
+}
 #else
 void app_driver_identify_start(uint16_t blinks) {}
 void app_driver_identify_stop() {}
 void app_driver_identify_finish() {}
+void app_driver_pairing_indicate(bool pairing) {}
 #endif // CONFIG_STATUS_LED_ENABLE
 
 esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle, uint16_t endpoint_id, uint32_t cluster_id,
@@ -289,6 +348,8 @@ app_driver_handle_t app_driver_button_init()
     }
 
     iot_button_register_cb(handle, BUTTON_SINGLE_CLICK, NULL, app_driver_button_toggle_cb, NULL);
+    /* Double click: open the commissioning window (pairing mode), LED blinks blue until commissioned or timed out */
+    iot_button_register_cb(handle, BUTTON_DOUBLE_CLICK, NULL, app_driver_button_pairing_cb, NULL);
     /* Hold CONFIG_BUTTON_LONG_PRESS_TIME_MS (5 s): LED turns red; release: 3 red blinks, then factory reset */
     iot_button_register_cb(handle, BUTTON_LONG_PRESS_START, NULL, app_driver_button_factory_reset_armed_cb, NULL);
     iot_button_register_cb(handle, BUTTON_PRESS_UP, NULL, app_driver_button_factory_reset_release_cb, NULL);

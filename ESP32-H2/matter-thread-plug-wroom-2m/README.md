@@ -10,8 +10,9 @@ Kiểm tra dung lượng flash của module: `esptool --chip esp32h2 -p COM5 fla
 |---|---|
 | Relay (active-high mặc định) | **GPIO4** |
 | Nút BOOT, nhấn ngắn: bật/tắt relay | GPIO9 |
+| Nút BOOT, nhấn đúp (2 lần nhanh): mở chế độ ghép nối 15 phút, LED nháy xanh dương | GPIO9 |
 | Nút BOOT, giữ 5 s (LED chuyển đỏ) rồi thả: LED nháy đỏ 3 lần, factory reset | GPIO9 |
-| LED RGB WS2812 (nếu mạch có): xanh lá khi relay ON, nháy xanh dương khi Identify | GPIO8 |
+| LED RGB WS2812 (nếu mạch có): xanh lá khi relay ON, nháy xanh dương khi đang ghép nối hoặc Identify | GPIO8 |
 
 Module WROOM-03 không có sẵn nút và LED: mạch cần nút BOOT trên GPIO9 (kéo lên 10 kΩ, nhấn xuống GND), nút EN để reset, và USB-UART nối GPIO24 (TX) / GPIO23 (RX) hoặc USB nối GPIO26 (D−) / GPIO27 (D+) để nạp. Không có LED thì tắt `STATUS_LED_ENABLE`.
 
@@ -23,6 +24,7 @@ Module WROOM-03 không có sẵn nút và LED: mạch cần nút BOOT trên GPIO
   - Kiểu máy: **ESP32-H2**
   - Phần cứng: **ESP32-H2-WROOM-03**
   - Số sê-ri: **địa chỉ MAC gốc** của chip (eFuse, giống dòng `MAC` của esptool), 12 ký tự hex in hoa, ví dụ `744DBD616AD4`. Mỗi chip một số riêng, không đổi khi `erase-flash`.
+- **Ghép nối:** LED nháy xanh dương suốt lúc thiết bị chờ ghép nối (cửa sổ ghép nối mở, kể cả sau khi bật nguồn lần đầu hoặc sau factory reset) và trong lúc đang ghép; ghép xong thì LED tắt (về lại hiển thị relay: xanh lá nếu relay đang ON). Hết 15 phút không ai ghép thì LED cũng tắt; nhấn đúp BOOT để mở lại.
 - **Identify:** nút *Identify* trong Home Assistant (hoặc lệnh Identify của app khác) làm LED nháy xanh dương để nhận ra thiết bị.
 - **Xoá khỏi hệ cuối cùng:** khi thiết bị bị xoá khỏi hệ Matter cuối cùng (Apple Home / HA / Aqara), nó tự factory reset (relay OFF) và mở lại cửa sổ ghép nối BLE 15 phút với mã QR gốc.
 - Thiết bị chạy dạng **FTD** (Full Thread Device): cấp nguồn lưới nên có thể làm Thread Router, giúp mở rộng mạng mesh.
@@ -89,22 +91,22 @@ Mỗi lần build tự tạo trong `build/` một file firmware đầy đủ man
 
 | File | Dùng để |
 |---|---|
-| `matter_plug_wroom_2m-<phiên bản>.bin` | nạp một lần ở địa chỉ `0x0` (bootloader + bảng phân vùng + app). Xoá cả vùng NVS nên phải ghép nối lại |
-| `matter_plug_wroom_2m.bin` | file app, dùng với `idf.py flash` / `write-flash @flash_args` (giữ ghép nối) |
+| `matter_relay_h2-<phiên bản>.bin` | nạp một lần ở địa chỉ `0x0` (bootloader + bảng phân vùng + app). Xoá cả vùng NVS nên phải ghép nối lại |
+| `matter_relay_h2.bin` | file app, dùng với `idf.py flash` / `write-flash @flash_args` (giữ ghép nối) |
 
 ```bash
 esptool --chip esp32h2 -p COM5 erase-flash
-esptool --chip esp32h2 -p COM5 write-flash 0x0 build/matter_plug_wroom_2m-1.0.2610131450.bin
+esptool --chip esp32h2 -p COM5 write-flash 0x0 build/matter_relay_h2-1.0.2610131450.bin
 ```
 
 (cú pháp esptool v5, có sẵn trong ESP-IDF v6; esptool v4.x dùng `esptool.py ... write_flash`; trên trình duyệt dùng esptool.js, Flash Address `0x0`). Muốn giữ ghép nối thì nạp bằng `idf.py flash`, hoặc `write-flash @flash_args` trong thư mục `build/`.
 
-**Đừng nạp file này vào module 4 MB và ngược lại** (dự án 4 MB tạo file `matter_relay_h2-<phiên bản>.bin`).
+**Đừng nạp file này vào module 4 MB và ngược lại.** Hai dự án tạo file cùng tên `matter_relay_h2-<phiên bản>.bin`, nên giữ file của mỗi bản trong thư mục riêng để khỏi nhầm.
 
 GitHub Actions (`.github/workflows/matter-plug-wroom-2m.yml` ở gốc repo) tự build và upload, tên artifact cũng có phiên bản:
 
-- `matter_plug_wroom_2m-<phiên bản>`: file `matter_plug_wroom_2m-<phiên bản>.bin` (nạp ở `0x0`), cùng `flash_args`, `bootloader/`, `partition_table/`, `matter_plug_wroom_2m.bin` để nạp bằng `write-flash @flash_args`;
-- `matter_plug_wroom_2m-<phiên bản>-debug`: file `.elf`/`.map` để giải mã địa chỉ khi thiết bị crash.
+- `matter_relay_h2-<phiên bản>`: file `matter_relay_h2-<phiên bản>.bin` (nạp ở `0x0`), cùng `flash_args`, `bootloader/`, `partition_table/`, `matter_relay_h2.bin` để nạp bằng `write-flash @flash_args`;
+- `matter_relay_h2-<phiên bản>-debug`: file `.elf`/`.map` để giải mã địa chỉ khi thiết bị crash.
 
 Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 
@@ -122,7 +124,7 @@ Sau khi sửa `sdkconfig.defaults*` (kể cả `sdkconfig.defaults.debug`), xoá
 
 ## Phiên bản firmware
 
-Mỗi lần build, firmware tự có phiên bản mới dạng `1.0.<yyMMddHHmm>` (giờ build theo UTC). Ví dụ `1.0.2610131450` là bản build lúc 14:50 UTC ngày 13/10/2026. Xem ở Apple Home (phụ kiện → cài đặt → **Firmware**) hoặc dòng `App version:` trong log khởi động. Tên file firmware đầy đủ cũng là phiên bản này: `matter_plug_wroom_2m-1.0.2610131450.bin`.
+Mỗi lần build, firmware tự có phiên bản mới dạng `1.0.<yyMMddHHmm>` (giờ build theo UTC). Ví dụ `1.0.2610131450` là bản build lúc 14:50 UTC ngày 13/10/2026. Xem ở Apple Home (phụ kiện → cài đặt → **Firmware**) hoặc dòng `App version:` trong log khởi động. Tên file firmware đầy đủ cũng là phiên bản này: `matter_relay_h2-1.0.2610131450.bin`.
 
 - Build local: commit mới (hoặc checkout) sẽ tự cấu hình lại và lấy phiên bản mới ở lần build sau. Chỉ sửa file thì phiên bản không đổi cho tới lần cấu hình lại (`idf.py reconfigure` hoặc `fullclean`). GitHub Actions luôn build từ đầu nên mỗi lần chạy đều có phiên bản mới. Đổi `FW_VERSION_MAJOR_MINOR` trong `CMakeLists.txt` khi muốn tăng số chính.
 
@@ -146,9 +148,9 @@ chip-tool onoff toggle 0x7283 1
 chip-tool basicinformation read serial-number 0x7283 0
 ```
 
-Sau khi bật nguồn, thiết bị quảng bá BLE nhanh trong 30 s rồi chuyển sang chậm (log `bleAdv Timeout : Start slow advertisement`, chu kỳ 500 ms). Đây là bình thường: thiết bị vẫn chờ ghép nối, cứ quét QR như bình thường. Cửa sổ ghép nối mở 15 phút; hết thời gian thì rút điện cắm lại.
+Sau khi bật nguồn, thiết bị quảng bá BLE nhanh trong 30 s rồi chuyển sang chậm (log `bleAdv Timeout : Start slow advertisement`, chu kỳ 500 ms). Đây là bình thường: thiết bị vẫn chờ ghép nối, cứ quét QR như bình thường. Cửa sổ ghép nối mở 15 phút (LED nháy xanh dương); hết thời gian thì LED tắt, nhấn đúp BOOT (hoặc rút điện cắm lại) để mở lại.
 
-Thêm vào hệ thứ hai (ví dụ đã có Home Assistant, muốn thêm Apple Home): mã QR gốc không dùng lại được khi thiết bị đã ghép. Dùng chức năng chia sẻ của hệ đang quản lý (HA: *Share device*; Apple Home: *Bật chế độ ghép nối*) để lấy mã mới. Chuyển sang mạng Thread khác: giữ BOOT 5 s để factory reset trước.
+Thêm vào hệ thứ hai (ví dụ đã có Home Assistant, muốn thêm Apple Home): nhấn đúp BOOT, LED nháy xanh dương, rồi trong 15 phút quét mã QR gốc (hoặc nhập mã ghép nối gốc) ở hệ mới. Lúc này thiết bị chỉ quảng bá qua mạng Thread (BLE đã tắt sau lần ghép đầu), nên điện thoại/hub của hệ mới phải thấy được mạng Thread đó (cùng Border Router hoặc cùng mạng LAN với Border Router). Cũng có thể dùng chức năng chia sẻ của hệ đang quản lý (HA: *Share device*; Apple Home: *Bật chế độ ghép nối*) để lấy mã mới. Chuyển sang mạng Thread khác: giữ BOOT 5 s để factory reset trước.
 
 > Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại.
 

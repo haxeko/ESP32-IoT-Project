@@ -10,8 +10,9 @@ Dự án này cần **flash 4 MB** (ESP32-H2-DevKitM-1 / ESP32-H2-MINI-1 bản 4
 |---|---|
 | Relay (active-high mặc định) | **GPIO4** |
 | Nút BOOT, nhấn ngắn: bật/tắt relay | GPIO9 |
+| Nút BOOT, nhấn đúp (2 lần nhanh): mở chế độ ghép nối 15 phút, LED nháy xanh dương | GPIO9 |
 | Nút BOOT, giữ 5 s (LED chuyển đỏ) rồi thả: LED nháy đỏ 3 lần, factory reset | GPIO9 |
-| LED RGB WS2812 trên board: xanh lá khi relay ON, nháy xanh dương khi Identify | GPIO8 |
+| LED RGB WS2812 trên board: xanh lá khi relay ON, nháy xanh dương khi đang ghép nối hoặc Identify | GPIO8 |
 
 - **Trạng thái relay sau mất điện:** relay quay về trạng thái cuối cùng (Matter `StartUpOnOff` = null). Home Assistant đổi được trong mục *Power-on behavior* (luôn tắt / luôn bật / đảo / trạng thái cuối).
 - **Khởi động lại mềm** (OTA, factory reset, crash, watchdog): relay giữ nguyên mức, không bị tắt rồi bật lại. Nếu thiết bị khởi động lại liên tục trước khi Matter chạy xong (lỗi lặp lúc khởi động), relay về OFF để tải không bị giữ ON mà không điều khiển được. Cắm điện lần đầu hoặc sụt áp thì relay bắt đầu từ OFF rồi mới khôi phục trạng thái cuối.
@@ -21,6 +22,7 @@ Dự án này cần **flash 4 MB** (ESP32-H2-DevKitM-1 / ESP32-H2-MINI-1 bản 4
   - Kiểu máy: **ESP32-H2**
   - Phần cứng: **ESP32-H2-DevKitM-1 v1.0**
   - Số sê-ri: **địa chỉ MAC gốc** của chip (eFuse, giống dòng `BASE MAC` của esptool), 12 ký tự hex in hoa, ví dụ `744DBDA1B2C3`. Mỗi chip một số riêng, không đổi khi OTA hay `erase-flash`.
+- **Ghép nối:** LED nháy xanh dương suốt lúc thiết bị chờ ghép nối (cửa sổ ghép nối mở, kể cả sau khi bật nguồn lần đầu hoặc sau factory reset) và trong lúc đang ghép; ghép xong thì LED tắt (về lại hiển thị relay: xanh lá nếu relay đang ON). Hết 15 phút không ai ghép thì LED cũng tắt; nhấn đúp BOOT để mở lại.
 - **Identify:** nút *Identify* trong Home Assistant (hoặc lệnh Identify của app khác) làm LED nháy xanh dương để nhận ra thiết bị.
 - **Xoá khỏi hệ cuối cùng:** khi thiết bị bị xoá khỏi hệ Matter cuối cùng (Apple Home / HA / Aqara), nó tự factory reset (relay OFF) và mở lại cửa sổ ghép nối BLE 15 phút với mã QR gốc.
 - Thiết bị chạy dạng **FTD** (Full Thread Device): cấp nguồn lưới nên có thể làm Thread Router, giúp mở rộng mạng mesh.
@@ -150,9 +152,9 @@ chip-tool onoff toggle 0x7283 1
 chip-tool basicinformation read serial-number 0x7283 0
 ```
 
-Sau khi bật nguồn, thiết bị quảng bá BLE nhanh trong 30 s rồi chuyển sang chậm (log `bleAdv Timeout : Start slow advertisement`, chu kỳ 500 ms). Đây là bình thường: thiết bị vẫn chờ ghép nối, cứ quét QR như bình thường. Cửa sổ ghép nối mở 15 phút; hết thời gian thì rút điện cắm lại.
+Sau khi bật nguồn, thiết bị quảng bá BLE nhanh trong 30 s rồi chuyển sang chậm (log `bleAdv Timeout : Start slow advertisement`, chu kỳ 500 ms). Đây là bình thường: thiết bị vẫn chờ ghép nối, cứ quét QR như bình thường. Cửa sổ ghép nối mở 15 phút (LED nháy xanh dương); hết thời gian thì LED tắt, nhấn đúp BOOT (hoặc rút điện cắm lại) để mở lại.
 
-Thêm vào hệ thứ hai (ví dụ đã có Home Assistant, muốn thêm Apple Home): mã QR gốc không dùng lại được khi thiết bị đã ghép. Dùng chức năng chia sẻ của hệ đang quản lý (HA: *Share device*; Apple Home: *Bật chế độ ghép nối*) để lấy mã mới. Chuyển sang mạng Thread khác: giữ BOOT 5 s để factory reset trước.
+Thêm vào hệ thứ hai (ví dụ đã có Home Assistant, muốn thêm Apple Home): nhấn đúp BOOT, LED nháy xanh dương, rồi trong 15 phút quét mã QR gốc (hoặc nhập mã ghép nối gốc) ở hệ mới. Lúc này thiết bị chỉ quảng bá qua mạng Thread (BLE đã tắt sau lần ghép đầu), nên điện thoại/hub của hệ mới phải thấy được mạng Thread đó (cùng Border Router hoặc cùng mạng LAN với Border Router). Cũng có thể dùng chức năng chia sẻ của hệ đang quản lý (HA: *Share device*; Apple Home: *Bật chế độ ghép nối*) để lấy mã mới. Chuyển sang mạng Thread khác: giữ BOOT 5 s để factory reset trước.
 
 > Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại.
 
