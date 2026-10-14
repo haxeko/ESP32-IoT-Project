@@ -1,0 +1,148 @@
+menu "Device Information"
+
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName)"
+        default "PM5003"
+
+    config DEVICE_DISPLAY_NAME
+        string "Device name (Basic Information NodeLabel / ProductLabel)"
+        default "Air Quality Sensor"
+        help
+            Default name that controllers show when the device is added.
+            Max 32 characters. It can be renamed later in the app.
+
+endmenu
+
+menu "PM2.5 Sensor Configuration"
+
+    choice PM_SENSOR_MODEL
+        prompt "PM sensor model"
+        default PM_SENSOR_MODEL_PMS
+        help
+            UART particulate matter sensor connected to the ESP32-C3.
+
+        config PM_SENSOR_MODEL_PMS
+            bool "Plantower PMS5003 / PMS7003 / PMSA003"
+
+        config PM_SENSOR_MODEL_SDS011
+            bool "Nova Fitness SDS011 / SDS021"
+    endchoice
+
+    config PM_SENSOR_UART_RX_PIN
+        int "UART RX pin (connect to sensor TX)"
+        default 20
+
+    config PM_SENSOR_UART_TX_PIN
+        int "UART TX pin (connect to sensor RX)"
+        default 21
+
+    config PM_SENSOR_PMS_PERIOD_SEC
+        int "PMS measurement period (seconds, 0 = continuous)"
+        depends on PM_SENSOR_MODEL_PMS
+        range 0 3600
+        default 300
+        help
+            When non-zero, the PMS sensor sleeps (fan and laser off) between
+            measurements: it is woken up, warmed up for 30 seconds, sampled
+            for 5 seconds and put back to sleep. This greatly extends its life.
+            Values below 60 are treated as 60.
+
+    config PM_SENSOR_REPORT_INTERVAL_SEC
+        int "Report interval in continuous mode (seconds)"
+        range 1 3600
+        default 10
+        help
+            In continuous mode, samples received from the sensor are averaged
+            over this interval and then published.
+
+    config PM_SENSOR_SDS011_WORK_PERIOD_MIN
+        int "SDS011 working period (minutes, 0 = continuous)"
+        depends on PM_SENSOR_MODEL_SDS011
+        range 0 30
+        default 0
+        help
+            In periodic mode the SDS011 sleeps and wakes up every N minutes,
+            runs the fan for 30 seconds and sends one measurement. This
+            greatly extends the life of the laser and fan.
+
+endmenu
+
+menu "Local Display and Indicators"
+
+    config OLED_SDA_PIN
+        int "OLED I2C SDA pin"
+        default 8
+
+    config OLED_SCL_PIN
+        int "OLED I2C SCL pin"
+        default 9
+
+    config OLED_I2C_ADDRESS
+        hex "OLED I2C address"
+        default 0x3C
+
+    config OLED_ROTATE_180
+        bool "Rotate OLED 180 degrees"
+        default y
+
+    config STATUS_LED_GPIO
+        int "WS2812 data pin"
+        default 10
+
+    config STATUS_LED_COUNT
+        int "Number of WS2812 LEDs"
+        range 1 64
+        default 6
+
+    config STATUS_LED_BRIGHTNESS
+        int "WS2812 brightness (%)"
+        range 1 100
+        default 50
+
+    config LD2410_UART_RX_PIN
+        int "LD2410 UART RX pin (connect to radar TX)"
+        default 3
+
+    config LD2410_UART_TX_PIN
+        int "LD2410 UART TX pin (connect to radar RX)"
+        default 4
+
+    config PRESENCE_DISTANCE_CM
+        int "Turn the OLED on when someone is closer than (cm)"
+        range 30 600
+        default 120
+
+    config PRESENCE_HOLD_SEC
+        int "Keep the OLED on after the person leaves (seconds)"
+        range 0 3600
+        default 60
+
+    config RADAR_TIMEOUT_SEC
+        int "Ignore radar data older than (seconds)"
+        range 1 300
+        default 30
+
+endmenu
+
+menu "Factory Reset Button"
+
+    config FACTORY_RESET_BUTTON_GPIO
+        int "Button GPIO (-1 = no button)"
+        range -1 21
+        default 7
+        help
+            Push button between this GPIO and GND (the internal pull-up is
+            used). Hold it for 5 seconds, until the OLED says to release it,
+            then release it: the device erases its Wi-Fi and Matter pairing
+            and restarts, ready to be paired again. Releasing it earlier
+            cancels.
+
+            Free on an ESP32-C3 with this wiring: GPIO0, 1, 5, 6, 7. Do not
+            use a strapping pin (GPIO2, 8, 9), the flash pins (GPIO11 to 17)
+            or the USB pins (GPIO18, 19).
+
+endmenu
