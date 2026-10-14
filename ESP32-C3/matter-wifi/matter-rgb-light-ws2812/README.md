@@ -2,7 +2,7 @@
 
 Đèn RGB chuẩn **Matter over Wi-Fi** chạy trên ESP32-C3 (SuperMini), dùng dải **30 LED WS2812** nối vào **GPIO4**. Thêm trực tiếp vào Apple Home, Google Home, Home Assistant, SmartThings, Alexa...
 
-Thiết bị dùng device type **Extended Color Light (0x010D)** dạng **đèn RGB thuần**: bật/tắt, độ sáng và màu (Hue/Saturation, XY), **không có nhiệt độ màu** vì dải WS2812 chỉ có LED R, G, B, không có kênh trắng. Cách dựng giống thư viện `MatterColorLight` của Espressif (Arduino-ESP32) cho LED RGB.
+Thiết bị dùng device type **Extended Color Light (0x010D)** đúng chuẩn Matter: bật/tắt, độ sáng, màu (Hue/Saturation, XY) và **nhiệt độ màu trắng 2000–6500 K**. Dải WS2812 chỉ có LED R, G, B, không có LED trắng, nên các màu trắng được pha từ R, G, B.
 
 ## Cách đèn hoạt động
 
@@ -22,8 +22,8 @@ Thiết bị dùng device type **Extended Color Light (0x010D)** dạng **đèn 
 - **Tắt** trong app thì tắt hết 30 LED.
 - **Màu** chọn trong app được áp cho mọi LED đang sáng, sau đó nhân với 30 %. Ví dụ đỏ = RGB(77, 0, 0), trắng = RGB(77, 77, 77).
 - **Trạng thái trong app luôn khớp đèn**: mỗi khi bật/tắt, độ sáng hay màu thay đổi, đèn tăng *DataVersion* của cluster tương ứng như chuẩn Matter yêu cầu. esp-matter 1.6 bỏ sót việc này khi chính đèn đổi giá trị trong lúc chạy lệnh, khiến Apple Home giữ màu cũ trong bộ nhớ đệm: thanh kéo hiện màu cũ và màu vừa chọn không được lưu vào các ô màu gần đây.
-- **Màu đọc theo cách nào cũng đúng**: Matter lưu màu theo 2 cách (Hue/Saturation và XY) và mỗi lệnh chỉ cập nhật một cách. Khi màu đã đứng yên 0,3 giây, đèn ghi cùng màu đó vào cách còn lại.
-- **Màu trắng**: chọn ở tâm bánh xe màu (độ bão hòa 0), đèn bật cả 3 màu R, G, B bằng nhau.
+- **Màu đọc theo cách nào cũng đúng**: Matter lưu màu theo 3 cách (Hue/Saturation, XY, nhiệt độ màu) và mỗi lệnh chỉ cập nhật một cách. Khi màu đã đứng yên 0,3 giây, đèn ghi cùng màu đó vào Hue/Saturation và XY (ví dụ chọn 2700 K thì Hue/Saturation và XY cũng là màu trắng ấm đó).
+- **Màu trắng**: chọn ở tâm bánh xe màu (độ bão hòa 0, cả 3 màu R, G, B bằng nhau), hoặc chọn nhiệt độ màu từ 2000 K (trắng ấm, ngả cam) đến 6500 K (trắng lạnh) ở tab *Nhiệt độ* hay ô trắng của Apple Home. Đèn pha màu trắng đó từ R, G, B (công thức đường cong vật đen Tanner Helland), nên trắng ấm không trong như đèn có LED trắng thật.
 - **Tắt rồi bật lại** (từ app hoặc nút BOOT): đèn sáng lại ngay đúng số LED và màu như trước khi tắt. Hiệu ứng "sáng dần từ mức thấp nhất" của Matter khi Bật được bỏ qua, vì trên dải LED này mức thấp nhất là 1 LED và sẽ trông như đèn nháy tắt một lần. Khi Tắt, dải LED thu ngắn rất nhanh về 1 LED rồi tắt.
 - **Mất điện / rút nguồn**: có điện lại thì đèn khôi phục bật/tắt, độ sáng và màu như trước khi mất điện. Bật/tắt được lưu vào flash ngay; độ sáng và màu được lưu khi giá trị đã đứng yên **3 giây** (giống ví dụ `light` của Espressif, tránh ghi flash ở mỗi bước chuyển sáng/màu). Nếu rút điện trong vòng 3 giây sau khi vừa chỉnh độ sáng/màu thì lần chỉnh đó không được nhớ. Nếu vùng lưu trữ NVS hỏng không đọc được (đầy, hoặc do firmware khác ghi), đèn tự xóa vùng này và khởi động như đèn mới để có thể ghép lại, thay vì chạy mà không lưu được gì.
 - **Nhận dạng (Identify)**: nút "Nhận dạng" trong Apple Home / Home Assistant làm cả dải LED nháy (0,5 s sáng, 0,5 s tắt) bằng màu hiện tại, kể cả khi đèn đang tắt.
@@ -121,14 +121,11 @@ Thiết bị đã ghép nối từ trước sẽ thấy Manufacturer/Model mới
 
 ## Hàng ô màu trong Apple Home
 
-Hàng ô màu dưới thanh độ sáng là **giao diện của app Home**, Apple tự quản lý. Matter không có thuộc tính nào để đèn đặt số ô hay màu trong từng ô. Đèn chỉ quyết định nó khai báo khả năng gì:
-
-- Đèn khai báo cả **nhiệt độ màu** (bản firmware trước): app Home thêm các ô **trắng ấm / trắng lạnh** và tab *Nhiệt độ* vào hàng ô.
-- Đèn chỉ khai báo **màu** (bản này): app Home chỉ dùng **ô màu**. Ô ngoài cùng bên phải (viền cầu vồng) mở bánh xe để chọn màu; các ô còn lại là màu đã chọn/đã lưu.
+Hàng ô màu dưới thanh độ sáng là **giao diện của app Home**, Apple tự quản lý. Matter không có thuộc tính nào để đèn đặt số ô hay màu trong từng ô. Đèn chỉ quyết định nó khai báo khả năng gì: đèn này khai báo cả **màu** và **nhiệt độ màu** (bắt buộc với device type Extended Color Light), nên app Home có ô màu, ô **trắng ấm / trắng lạnh** và tab *Nhiệt độ*. Ô ngoài cùng bên phải (viền cầu vồng) mở bánh xe để chọn màu.
 
 Sửa một ô: nhấn giữ đèn, chạm một ô màu, chọn *Sửa*, chọn màu mới rồi *Xong*; ô đó lưu màu mới.
 
-**Sau khi nạp bản này lên đèn đã ghép từ firmware cũ**, Apple Home vẫn nhớ đèn có nhiệt độ màu. Cần **xóa đèn khỏi app Home, giữ nút BOOT 5 giây rồi nhả để reset, rồi thêm lại** để Apple đọc lại khả năng mới (Espressif cũng ghi chú phải ghép lại khi bỏ nhiệt độ màu).
+**Đèn đã ghép với firmware chỉ RGB** (bản không có nhiệt độ màu, từ 1.0.2610140424 đến 1.0.2610141656): Apple Home có thể vẫn nhớ đèn không có nhiệt độ màu. Nếu sau khi cập nhật không thấy ô trắng và tab *Nhiệt độ*, hãy **xóa đèn khỏi app Home, giữ nút BOOT 5 giây rồi nhả để reset, rồi thêm lại**.
 
 ## Ghép nối
 
@@ -161,7 +158,7 @@ Khi xóa thiết bị khỏi tất cả ứng dụng, thiết bị tự mở l�
 
 | File | Nội dung |
 |---|---|
-| `main/app_main.cpp` | Khởi tạo NVS, tạo node Matter, endpoint Extended Color Light dạng RGB (Hue/Saturation + XY) |
+| `main/app_main.cpp` | Khởi tạo NVS, tạo node Matter, endpoint Extended Color Light (Hue/Saturation, XY, nhiệt độ màu 2000–6500 K) |
 | `main/device_info.cpp` | Manufacturer / Model / tên / số serial (Basic Information) |
 | `main/app_driver.cpp` | Nhận thay đổi OnOff / LevelControl / ColorControl từ Matter, Identify, nút BOOT |
 | `main/led_bar.c` | Điều khiển WS2812 qua RMT (`espressif/led_strip`): số LED sáng theo độ sáng, cường độ cố định 30 %, nháy Identify; chỉ gửi dữ liệu ra LED khi hình ảnh thay đổi |
@@ -179,7 +176,6 @@ Test kiểm tra: số LED theo từng mức độ sáng (bảng ở trên), cư�
 
 ## Giới hạn đã biết và lưu ý trước khi bán
 
-- **Device type**: chuẩn Matter bắt buộc Extended Color Light có *Color Temperature*. Bản này cố ý bỏ nhiệt độ màu (đèn chỉ RGB, xem mục Apple Home ở trên), nên đèn chạy được với các app nhưng **không qua được bài test chứng nhận (conformance)**. Muốn chứng nhận CSA thì phải bật lại Color Temperature (đèn mô phỏng màu trắng bằng RGB).
 - **Chứng chỉ test**: DAC/PAI, Vendor ID `0xFFF1`, Product ID `0x8000` và mã ghép nối `20202021` / `3840` là dữ liệu test của esp-matter, **mọi đèn giống nhau**. Hàng bán ra cần mã riêng cho từng đèn và chứng chỉ thật (công cụ `esp-matter-mfg-tool`, phân vùng `esp_secure_cert` và `fctry` đã có sẵn trong `partitions.csv`).
 - **Bảo mật**: chưa bật Secure Boot, Flash Encryption, NVS Encryption; console Matter (`CONFIG_ENABLE_CHIP_SHELL`) mở trên cổng USB. Nên tắt shell và bật mã hóa ở bản phát hành.
 - **OTA**: chưa bật rollback (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`). Nếu một bản OTA lỗi ngay khi khởi động, đèn không tự quay về bản cũ, phải nạp lại qua USB.
