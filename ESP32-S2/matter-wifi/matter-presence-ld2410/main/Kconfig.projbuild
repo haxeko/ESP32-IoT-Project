@@ -72,15 +72,16 @@ endmenu
 menu "Wi-Fi Setup"
 
     config DIAG_BOOT_WINDOW_SEC
-        int "Show the last reset reason before the setup page starts (seconds)"
+        int "Show the last reset reason before the radio starts (seconds)"
         range 0 60
         default 10
         help
-            While Wi-Fi is not configured, the LED first blinks the reason of
-            the previous reset (1 normal, 2 brownout, 3 crash, 4 watchdog) and
-            the log repeats the reset history, before the radio starts. This
-            diagnoses boards that reset as soon as they transmit. 0 starts the
-            setup page at once.
+            Before the radio starts, the LED blinks the reason of the previous
+            reset (1 normal, 2 brownout, 3 crash, 4 watchdog) and the log
+            repeats the reset history: always while Wi-Fi is not configured,
+            and once Wi-Fi is set, only after a brownout, crash or watchdog
+            reset. This diagnoses boards that reset as soon as they transmit.
+            0 starts the radio at once.
 
     config WIFI_MAX_TX_POWER
         int "Maximum Wi-Fi transmit power (unit 0.25 dBm)"

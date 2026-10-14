@@ -49,7 +49,7 @@ Các thiết bị Matter Wi-Fi thường nhận thông tin Wi-Fi từ điện th
 
 Firmware lưu lý do của 8 lần khởi động gần nhất (mất điện, **BROWNOUT** = sụt áp, **CRASH**, watchdog...) và tóm tắt lần crash cuối (core dump trong flash).
 
-Khi chưa có Wi-Fi, trong 10 giây trước khi bật sóng, LED báo lý do của lần khởi động trước. Mỗi chu kỳ 3 giây gồm N lần nháy:
+Trong 10 giây trước khi bật sóng, LED báo lý do của lần khởi động trước: luôn luôn khi chưa có Wi-Fi, và khi đã có Wi-Fi thì chỉ sau một lần sụt áp, crash hoặc watchdog (cắm điện bình thường thì chạy ngay). Mỗi chu kỳ 3 giây gồm N lần nháy:
 
 | LED nháy | Lần khởi động trước |
 |---|---|
@@ -58,7 +58,9 @@ Khi chưa có Wi-Fi, trong 10 giây trước khi bật sóng, LED báo lý do c�
 | 3 lần | **Crash** phần mềm |
 | 4 lần | **Watchdog**: một tác vụ bị treo |
 
-Trong 10 giây đó, cổng USB cũng hiện ổn định để mở log. Khi mạng cài đặt đang bật, log in mỗi 10 giây một dòng `Setup network ... on, N phone(s) joined` kèm lịch sử khởi động lại. Thông tin cũng hiện ở dòng chữ xám cuối trang cài đặt. Đổi thời gian này trong `menuconfig` → *Wi-Fi Setup* → *Show the last reset reason...*, đặt `0` để tắt.
+Gặp **2 lần** (sụt áp) liên tục: dùng cáp USB ngắn, cục sạc 5V tốt, hoặc gắn thêm tụ 100–470 µF giữa chân 3V3 và GND. Nếu vẫn bị, có thể tắt cơ chế reset khi sụt áp: `menuconfig` → *Component config → Power Supplier → Brownout Detector* → bỏ *Hardware brownout detect & reset* (`CONFIG_ESP_BROWNOUT_DET=n`), và hạ `CONFIG_ESP_PHY_MAX_WIFI_TX_POWER` xuống 10. Rủi ro: chip chạy tiếp khi điện áp tụt, nên lúc đó có thể treo hoặc lỗi khi đang ghi flash. Muốn bật lại thì đặt lại `CONFIG_ESP_BROWNOUT_DET=y`.
+
+Trong 10 giây đó, cổng USB cũng hiện ổn định để mở log. Khi mạng cài đặt đang bật, log in mỗi 10 giây một dòng `Setup network ... on, N phone(s) joined` kèm lịch sử khởi động lại. Thông tin cũng hiện ở dòng chữ xám cuối trang cài đặt. Đổi thời gian này trong `menuconfig` → *Wi-Fi Setup* → *Show the last reset reason before the radio starts*, đặt `0` để tắt.
 
 Nếu không mở được trang lẫn log, hãy đưa board vào chế độ nạp (giữ nút 0, bấm RST) rồi đọc ra hai file sau và gửi cho người phát triển. Kèm theo file `.elf` của đúng bản firmware (artifact `-debug` trên GitHub Actions) thì có thể giải mã chính xác dòng code bị crash:
 

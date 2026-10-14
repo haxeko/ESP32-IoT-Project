@@ -341,10 +341,11 @@ static void factory_reset_cb()
     }
 }
 
-// While Wi-Fi is not configured, before the radio starts: the LED blinks the
-// previous reset reason (1 normal, 2 brownout, 3 crash, 4 watchdog) and the
-// log repeats the reset history, so a board that resets as soon as its radio
-// transmits can still be diagnosed without tools.
+// Before the radio starts (always while Wi-Fi is not configured, otherwise
+// only after a brownout, crash or watchdog reset): the LED blinks the previous
+// reset reason (1 normal, 2 brownout, 3 crash, 4 watchdog) and the log repeats
+// the reset history, so a board that resets as soon as its radio transmits
+// can still be diagnosed without tools.
 static void show_last_reset()
 {
     const int seconds = CONFIG_DIAG_BOOT_WINDOW_SEC;
@@ -383,6 +384,9 @@ extern "C" void app_main()
         // Nothing to reset yet: the button is only enabled once Wi-Fi is set.
         status_led_set_mode(STATUS_LED_WIFI_SETUP);
         wifi_setup_run_portal(); // restarts once Wi-Fi is configured
+    }
+    if (diag_last_reset_blinks() > 1) {
+        show_last_reset(); // a normal power-on starts at once
     }
     err = reset_button_init(CONFIG_RESET_BUTTON_GPIO, kFactoryResetHoldMs, factory_reset_cb);
     if (err != ESP_OK) {
