@@ -12,6 +12,18 @@ on:
   workflow_dispatch:
 
 jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ESP32-S2/matter-wifi/matter-presence-ld2410
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: LD2410 parser, presence and setup portal tests
+        run: test/host/run.sh
+
   build:
     runs-on: ubuntu-latest
     container: espressif/esp-matter:release-v1.6.1_idf_v6.0.2
@@ -22,6 +34,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # the firmware version is the git commit count
+          # On pull_request, build the PR head commit rather than the synthetic merge commit.
+          # Empty on push/dispatch: default ref.
+          ref: ${{ github.event.pull_request.head.sha }}
       - name: Build (esp32s2)
         shell: bash
         run: |
@@ -30,14 +45,24 @@ jobs:
           pushd $ESP_MATTER_PATH && . ./export.sh && popd
           idf.py set-target esp32s2
           idf.py build
-          idf.py merge-bin -o matter_presence_ld2410_merged.bin
+          # Firmware version (also the name of the complete flash image the build creates)
+          echo "FW_VERSION=$(python3 -c "import json; print(json.load(open('build/project_description.json'))['project_version'])")" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
-          name: matter_presence_ld2410-esp32s2
+          name: matter_presence_ld2410-${{ env.FW_VERSION }}
+          if-no-files-found: error
           path: |
+            ESP32-S2/matter-wifi/matter-presence-ld2410/build/matter_presence_ld2410-${{ env.FW_VERSION }}.bin
+            ESP32-S2/matter-wifi/matter-presence-ld2410/build/matter_presence_ld2410-ota.bin
             ESP32-S2/matter-wifi/matter-presence-ld2410/build/matter_presence_ld2410.bin
             ESP32-S2/matter-wifi/matter-presence-ld2410/build/bootloader/bootloader.bin
             ESP32-S2/matter-wifi/matter-presence-ld2410/build/partition_table/partition-table.bin
             ESP32-S2/matter-wifi/matter-presence-ld2410/build/ota_data_initial.bin
             ESP32-S2/matter-wifi/matter-presence-ld2410/build/flash_args
-            ESP32-S2/matter-wifi/matter-presence-ld2410/build/matter_presence_ld2410_merged.bin
+      # ELF/map to decode panic addresses and core dumps from a device
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matter_presence_ld2410-${{ env.FW_VERSION }}-debug
+          path: |
+            ESP32-S2/matter-wifi/matter-presence-ld2410/build/matter_presence_ld2410.elf
+            ESP32-S2/matter-wifi/matter-presence-ld2410/build/matter_presence_ld2410.map

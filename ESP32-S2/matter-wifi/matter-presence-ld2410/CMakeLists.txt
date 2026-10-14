@@ -52,3 +52,24 @@ idf_build_set_property(C_COMPILE_OPTIONS "-Os" APPEND)
 # For RISCV chips, project_include.cmake sets -Wno-format, but does not clear various
 # flags that depend on -Wformat
 idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-security" APPEND)
+
+# Complete flash image named after the firmware version, so the files of different builds can be told apart:
+#   build/matter_presence_ld2410-1.0.40.bin   bootloader + partition table + otadata + app, flash at 0x0
+#                                             (same content as "idf.py merge-bin")
+# Regenerated on every build; images left from earlier versions are removed at configure time.
+# The app image (matter_presence_ld2410.bin) and the Matter OTA image (matter_presence_ld2410-ota.bin)
+# keep their usual names.
+idf_build_get_property(fw_build_dir BUILD_DIR)
+idf_build_get_property(fw_python PYTHON)
+idf_build_get_property(fw_target IDF_TARGET)
+set(FW_IMAGE "${fw_build_dir}/${CMAKE_PROJECT_NAME}-${PROJECT_VER}.bin")
+file(GLOB fw_stale_images "${fw_build_dir}/${CMAKE_PROJECT_NAME}-[0-9]*.bin")
+if(fw_stale_images)
+    file(REMOVE ${fw_stale_images})
+endif()
+add_custom_target(versioned_image ALL
+    COMMAND ${fw_python} -m esptool --chip ${fw_target} merge-bin -o "${FW_IMAGE}" @flash_args
+    WORKING_DIRECTORY "${fw_build_dir}"
+    COMMENT "Firmware ${PROJECT_VER}: ${FW_IMAGE}"
+    VERBATIM)
+add_dependencies(versioned_image gen_project_binary bootloader partition_table_bin blank_ota_data)

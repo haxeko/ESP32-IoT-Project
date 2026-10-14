@@ -39,6 +39,12 @@ CONFIG_LWIP_IPV6_NUM_ADDRESSES=6
 
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
+# Also build a Matter OTA image (build/matter_presence_ld2410-ota.bin) to serve from an OTA provider
+CONFIG_CHIP_OTA_IMAGE_BUILD=y
+
+# Unattended mains device: reboot if a task starves IDLE for more than 5 s
+# instead of only logging. The reset is recorded by main/diag.cpp (LED: 4 blinks).
+CONFIG_ESP_TASK_WDT_PANIC=y
 
 # Save a core dump to flash on a crash: its summary is shown in the log and on
 # the Wi-Fi setup page (main/diag.cpp), and the full dump can be read back with
