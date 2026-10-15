@@ -39,7 +39,7 @@ Trong phòng không có ai, radar vẫn nhận được "năng lượng" từ qu
 Ngưỡng mới của mỗi gate = **năng lượng nền cao nhất + 10**, nhưng:
 
 - không bao giờ thấp hơn **mặc định của nhà sản xuất** (chuyển động `50,50,40,30,20,15,15,15,15`, đứng yên `–,–,40,40,30,30,20,20,20`): việc học chỉ làm radar **bớt nhạy** ở vùng có nhiễu, không làm nhạy hơn. Học lại trong phòng yên tĩnh sẽ đưa ngưỡng về gần mặc định;
-- tối đa **100**: vùng đó bị bỏ qua (người đứng ở khoảng cách đó sẽ không được phát hiện);
+- tối đa **90** (đổi trong menuconfig): ngưỡng 100 sẽ làm radar bỏ qua hẳn vùng đó, người ngồi yên ở khoảng cách đó không còn được phát hiện. Ví dụ học khi quạt trần đang quay: vùng có quạt lên tới 90 chứ không lên 100;
 - ngưỡng **đứng yên của gate 0 và 1** không chỉnh được trên LD2410, giữ nguyên.
 
 Ví dụ log:
@@ -234,6 +234,7 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 | Delay before recording | 10 s | Thời gian để rời phòng sau khi chọn Learning |
 | Recording time | 30 s | Thời gian ghi năng lượng nền của phòng trống |
 | Margin above the recorded noise | 10 | Ngưỡng mới = năng lượng nền cao nhất + giá trị này |
+| Highest learned threshold | 90 | Ngưỡng học được không vượt quá giá trị này (100 = bỏ qua hẳn vùng đó) |
 
 *Thread Diagnostics*: `THREAD_DIAG_LOG` (bật mặc định) in khối chẩn đoán Thread ra log mỗi 10 s cho tới khi ghép nối xong.
 

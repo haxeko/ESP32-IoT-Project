@@ -30,7 +30,7 @@ bool quiet_learn_run(quiet_learn_cancelled_cb_t cancelled);
 
 // New threshold per gate: recorded noise peak + margin, at least the factory
 // default (learning only makes the radar less sensitive, where the room is
-// noisy) and at most 100 (gate ignored). The still thresholds of gates 0 and 1
+// noisy) and at most CONFIG_LD2410_LEARN_MAX_THRESHOLD, so no gate is ignored. The still thresholds of gates 0 and 1
 // cannot be set on the LD2410 and are kept.
 void quiet_learn_compute_thresholds(const ld2410_capture_t *noise, const ld2410_thresholds_t *current,
                                     uint8_t margin, ld2410_thresholds_t *out);
