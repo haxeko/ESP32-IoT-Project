@@ -1,0 +1,229 @@
+menu "Device Information"
+
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+        help
+            Shown as Manufacturer by Apple Home, Google Home, Home Assistant... Max 32 characters.
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName)"
+        default "Vibe Lift Lamp"
+        help
+            Shown as Model. Max 32 characters.
+
+    config DEVICE_DISPLAY_NAME
+        string "Device name (Basic Information NodeLabel / ProductLabel)"
+        default "Vibe Lift Lamp"
+        help
+            Default name that controllers show when the device is added.
+            Max 32 characters. It can be renamed later in the app.
+
+endmenu
+
+menu "WS2812 RGB Light"
+
+    config LED_GPIO
+        int "WS2812 data GPIO"
+        range 0 21
+        default 4
+        help
+            GPIO connected to DIN of the first WS2812.
+
+    config LED_COUNT
+        int "Number of WS2812 LEDs"
+        range 1 1024
+        default 30
+
+    config LED_FIXED_BRIGHTNESS_PERCENT
+        int "Fixed intensity of every lit LED (%)"
+        range 1 100
+        default 30
+        help
+            Each lit LED always shines at this intensity. The brightness set from
+            Matter (0-100 %) does not dim the LEDs: it sets the height of the lamp, and
+            the LEDs the moving part exposes are lit (100 % = all LEDs, 50 % = half).
+
+    config LED_FILL_REVERSE
+        bool "Light LEDs from the end of the strip"
+        default n
+        help
+            By default LEDs are lit starting at the first LED (next to DIN), which must
+            be at the bottom of the travel (exposed first when the lamp opens). Say y if
+            the strip is mounted with DIN at the top.
+
+endmenu
+
+menu "Lift motor (step motor)"
+
+    config MOTOR_ENABLED
+        bool "Step motor moves the upper part"
+        default y
+        help
+            A step motor driver (TMC2209, A4988, DRV8825: STEP/DIR/EN inputs) moves the
+            lamp's upper part on a lead screw, with an end stop at the closed position.
+            Without it the LEDs follow the brightness like a plain light.
+
+    if MOTOR_ENABLED
+
+    config MOTOR_STEP_GPIO
+        int "STEP GPIO"
+        range 0 21
+        default 5
+
+    config MOTOR_DIR_GPIO
+        int "DIR GPIO"
+        range 0 21
+        default 6
+
+    config MOTOR_EN_GPIO
+        int "EN GPIO (active low, -1 = not connected)"
+        range -1 21
+        default 7
+        help
+            Turns the driver output off while the lamp is not homed, and at rest when
+            "Driver off at rest" is set. Put a 10 kOhm pull-up to 3.3 V on it so the
+            driver stays off while the ESP32-C3 boots.
+
+    config MOTOR_ENDSTOP_GPIO
+        int "End stop GPIO"
+        range 0 21
+        default 3
+        help
+            Switch to GND, pressed when the lamp is closed. The internal pull-up is on;
+            an external 10 kOhm pull-up to 3.3 V is better with long wires.
+
+    config MOTOR_ENDSTOP_NC
+        bool "End stop is normally closed (NC)"
+        default y
+        help
+            NC (recommended): the contact opens when pressed, so a broken wire reads as
+            "pressed" and homing stops with an error instead of driving into the base.
+            Say n for a normally open (NO) contact.
+
+    config MOTOR_DIR_INVERT
+        bool "Invert the direction"
+        default n
+        help
+            Say y if the lamp moves down when it should open.
+
+    config MOTOR_STEPS_PER_REV
+        int "Full steps per motor revolution"
+        range 20 1000
+        default 200
+        help
+            200 for a 1.8 degree motor (NEMA17), 400 for 0.9 degree.
+
+    config MOTOR_MICROSTEPS
+        int "Microsteps per full step"
+        range 1 256
+        default 8
+        help
+            Must match the driver: TMC2209 with MS1 and MS2 low (module default) = 8.
+
+    config MOTOR_LEAD_UM
+        int "Lead screw travel per revolution (um)"
+        range 100 100000
+        default 8000
+        help
+            T8 lead screw: 8000 (8 mm per turn, 4 starts) or 2000 (2 mm per turn,
+            self-locking).
+
+    config MOTOR_TRAVEL_MM
+        int "Travel from closed to fully open (mm)"
+        range 5 2000
+        default 150
+        help
+            Length of the strip part that the upper part can expose: the LEDs are
+            spread over this travel.
+
+    config MOTOR_SPEED_MM_S
+        int "Speed (mm/s)"
+        range 1 200
+        default 10
+        help
+            Limited to 10000 steps/s by the firmware.
+
+    config MOTOR_ACCEL_MM_S2
+        int "Acceleration (mm/s^2)"
+        range 1 2000
+        default 20
+
+    config MOTOR_HOMING_SPEED_MM_S
+        int "Homing speed (mm/s)"
+        range 1 100
+        default 8
+        help
+            Speed towards the end stop at boot. The second, precise touch runs at a
+            quarter of it.
+
+    config MOTOR_IDLE_OFF_MS
+        int "Driver off at rest after (ms, 0 = keep holding)"
+        range 0 600000
+        default 0
+        help
+            0 keeps the motor energised at rest (holding torque). With a self-locking
+            lead screw (2 mm per turn) the driver can be turned off to save power and
+            heat, e.g. 2000. With an 8 mm lead the upper part may slide down when off.
+
+    endif
+
+endmenu
+
+menu "Wi-Fi"
+
+    config APP_WIFI_POWER_SAVE_OFF
+        bool "Keep the Wi-Fi radio awake once commissioned (no power save)"
+        default y
+        help
+            ESP-IDF lets the Wi-Fi radio sleep between beacons by default (modem sleep, WIFI_PS_MIN_MODEM):
+            multicast frames wait for the next DTIM beacon and can get lost with some routers. Matter
+            controllers find the light with multicast (mDNS, IPv6 neighbor discovery), so a sleeping radio
+            can make the light show "No Response". The light is mains powered: keep the radio awake. Applied
+            once BLE is off (after commissioning, or at boot when already commissioned). Uses a few tens of
+            mA more.
+            Say n to keep the ESP-IDF default (modem sleep).
+
+    choice APP_WIFI_TX_POWER
+        prompt "Maximum Wi-Fi transmit power"
+        default APP_WIFI_TX_POWER_20
+        help
+            Many ESP32-C3 SuperMini boards have a poorly tuned antenna: at full power their Wi-Fi connection
+            fails or keeps dropping, and lowering the transmit power (usually to 8.5 dBm) fixes it. A lower
+            power also means less range: keep the router close enough.
+
+        config APP_WIFI_TX_POWER_20
+            bool "20 dBm (ESP-IDF default)"
+        config APP_WIFI_TX_POWER_15
+            bool "15 dBm"
+        config APP_WIFI_TX_POWER_13
+            bool "13 dBm"
+        config APP_WIFI_TX_POWER_11
+            bool "11 dBm"
+        config APP_WIFI_TX_POWER_8_5
+            bool "8.5 dBm (ESP32-C3 SuperMini fix)"
+    endchoice
+
+    config APP_WIFI_TX_POWER_QUARTER_DBM
+        int
+        default 60 if APP_WIFI_TX_POWER_15
+        default 52 if APP_WIFI_TX_POWER_13
+        default 44 if APP_WIFI_TX_POWER_11
+        default 34 if APP_WIFI_TX_POWER_8_5
+        default 80
+        help
+            Value for esp_wifi_set_max_tx_power(), in 0.25 dBm. 80 (20 dBm) leaves the ESP-IDF default.
+
+endmenu
+
+menu "Button"
+
+    config APP_BUTTON_GPIO
+        int "Button GPIO (active low)"
+        range -1 21
+        default 9
+        help
+            Short press: toggle the light. Hold 5 s, then release: factory reset.
+            GPIO9 is the BOOT button on ESP32-C3 boards (SuperMini, DevKitM-1). -1 disables the button.
+
+endmenu
