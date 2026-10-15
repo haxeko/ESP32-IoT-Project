@@ -97,20 +97,22 @@ static int relay_level(bool closed)
 }
 
 /* Wait until FAN_RELAY_DEAD_TIME_MS have passed since a speed relay was released. vTaskDelay(n) can return after
- * only n - 1 full ticks, so check the microsecond clock again. */
-static void wait_dead_time()
+ * only n - 1 full ticks, so check the microsecond clock again. Returns true when it had to wait. */
+static bool wait_dead_time()
 {
     constexpr int64_t tick_us = portTICK_PERIOD_MS * 1000;
+    bool waited = false;
     for (;;) {
         const int64_t left_us = s_speed_released_us + k_dead_time_us - esp_timer_get_time();
         if (left_us <= 0) {
-            return;
+            return waited;
         }
         vTaskDelay((TickType_t)((left_us + tick_us - 1) / tick_us));
+        waited = true;
     }
 }
 
-void relays_apply(uint8_t speed, bool swing)
+uint8_t relays_apply(uint8_t speed, bool swing, bool (*cancel_close)(void))
 {
     if (speed > FAN_SPEED_COUNT) {
         speed = FAN_SPEED_COUNT;
@@ -129,12 +131,16 @@ void relays_apply(uint8_t speed, bool swing)
             s_phys_speed = 0;
         }
         if (speed) {
-            wait_dead_time();
-            gpio_set_level(k_speed_gpio[speed - 1], relay_level(true));
-            s_phys_speed = speed;
+            /* Only a command that came in during the dead time cancels the close */
+            if (wait_dead_time() && cancel_close != nullptr && cancel_close()) {
+                ESP_LOGD(TAG, "Speed %u relay not closed: newer command waiting", speed);
+            } else {
+                gpio_set_level(k_speed_gpio[speed - 1], relay_level(true));
+                s_phys_speed = speed;
+            }
         }
     }
-    if (swing && !s_phys_swing) {
+    if (swing && !s_phys_swing && s_phys_speed) {
         gpio_set_level(k_swing_gpio, relay_level(true));
         s_phys_swing = true;
     }
@@ -145,6 +151,7 @@ void relays_apply(uint8_t speed, bool swing)
             ESP_LOGI(TAG, "Relays: all speed relays open, oscillation %s", s_phys_swing ? "closed" : "open");
         }
     }
+    return s_phys_speed;
 }
 
 void relays_init()

@@ -307,6 +307,7 @@ Mỗi lần build, firmware tự có phiên bản dạng `1.0.<yyMMddHHmm>` (gi�
 
 - Mỗi bản build tạo thêm `build/matter_fan_3speed-ota.bin` để đưa vào một OTA provider (ví dụ `chip-ota-provider-app`).
 - **Rollback**: image mới khởi động ở trạng thái chờ xác nhận, và chỉ được xác nhận khi đã kết nối Wi-Fi liên tục 60 s mà vẫn còn các ghép nối. Image mới crash hoặc khởi động lại trước đó thì bootloader tự quay về bản cũ.
+- Bản ghi trạng thái quạt và mã remote trong NVS chỉ được thêm trường ở cuối; từ bản này trở đi, firmware đọc được cả bản ghi do bản mới hơn ghi (rollback không mất dữ liệu). Rollback từ bản này về các bản cũ hơn (trước khi có gió tự nhiên) thì bản cũ không đọc được bản ghi mới: quạt khởi động như lần đầu và phải học lại remote.
 
 ## Ghép nối
 
@@ -326,7 +327,7 @@ Tạo ảnh QR: `https://project-chip.github.io/connectedhomeip/qrcode.html?data
 3. Home Assistant / Google Home / SmartThings / Alexa: *Add Matter device*, quét cùng mã. Google/SmartThings/Alexa cần bật chế độ cho thiết bị chưa chứng nhận (developer/test) theo hướng dẫn của từng hãng.
 
 - **Thêm vào hệ thứ hai** (ví dụ đã có Apple Home, muốn thêm Home Assistant): nhấn đúp BOOT, LED nháy xanh dương, rồi trong 15 phút thêm thiết bị ở hệ mới bằng mã gốc ở trên (điện thoại cùng mạng Wi-Fi với quạt). Hoặc dùng chức năng chia sẻ của hệ đang quản lý (Apple Home: *Bật chế độ ghép nối*; HA: *Share device*).
-- **Xoá khỏi hệ cuối cùng**: quạt tự factory reset và mở lại cửa sổ ghép nối BLE 15 phút với mã gốc. Quạt vẫn chạy như trước, mã remote vẫn còn.
+- **Xoá khỏi hệ cuối cùng**: quạt tự factory reset và mở lại cửa sổ ghép nối BLE 15 phút với mã gốc. Nếu lúc đó đang mở chế độ ghép nối (để thêm vào hệ khác) thì quạt chờ cửa sổ ghép nối đóng: có hệ mới ghép vào thì giữ nguyên, không có thì factory reset. Quạt vẫn chạy như trước, mã remote vẫn còn.
 - Mọi mạch nạp firmware này dùng **chung mã ghép nối**: có nhiều mạch thì ghép **từng mạch một**.
 - Firmware dùng chứng chỉ test (VID `0xFFF1`, PID `0x8000`), chỉ hợp cho DIY.
 

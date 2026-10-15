@@ -92,6 +92,36 @@ static void app_pairing_led_update()
     status_led_pairing(chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen());
 }
 
+/* CHIP task: the device had a fabric during this start. Tells "the last fabric was removed" apart from a failed first
+ * commissioning, whose AddNOC is reverted with the same fabric removal. */
+static bool s_had_fabric = false;
+
+/* CHIP task. Last fabric gone and no commissioning window open: start over like a new device, with a fresh 15 min BLE
+ * commissioning window (Wi-Fi credentials are erased too, so it can join another network). The fan keeps running.
+ * Checked when a fabric is removed, and again when a window open at that time closes (e.g. the fan was removed from
+ * its last ecosystem while pairing mode was on). The 1 s delay lets the RemoveFabric response go out first. */
+static void app_check_last_fabric_removed()
+{
+    chip::Server &server = chip::Server::GetInstance();
+    if (!s_had_fabric || server.GetFabricTable().FabricCount() > 0 ||
+        server.GetCommissioningWindowManager().IsCommissioningWindowOpen()) {
+        return;
+    }
+    s_had_fabric = false;
+    CHIP_ERROR err = chip::DeviceLayer::SystemLayer().StartTimer(
+        chip::System::Clock::Milliseconds32(1000),
+        [](chip::System::Layer *, void *) {
+            if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
+                ESP_LOGW(TAG, "Last fabric removed, factory reset");
+                esp_matter::factory_reset();
+            }
+        },
+        nullptr);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Failed to schedule factory reset, err:%" CHIP_ERROR_FORMAT, err.Format());
+    }
+}
+
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
     switch (event->Type) {
@@ -114,11 +144,13 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete");
+        s_had_fabric = true;
         /* The window manager may handle this event after us: do not wait for its cleanup */
         status_led_pairing(false);
         break;
 
     case chip::DeviceLayer::DeviceEventType::kServerReady:
+        s_had_fabric = chip::Server::GetInstance().GetFabricTable().FabricCount() > 0;
         app_pairing_led_update();
 #if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
         ota_start_confirm_count();
@@ -128,6 +160,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     case chip::DeviceLayer::DeviceEventType::kFailSafeTimerExpired:
         ESP_LOGI(TAG, "Commissioning failed, fail safe timer expired");
         app_pairing_led_update();
+        app_check_last_fabric_removed();
         break;
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningWindowOpened:
@@ -138,32 +171,13 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     case chip::DeviceLayer::DeviceEventType::kCommissioningWindowClosed:
         ESP_LOGI(TAG, "Commissioning window closed");
         app_pairing_led_update();
+        app_check_last_fabric_removed();
         break;
 
-    case chip::DeviceLayer::DeviceEventType::kFabricRemoved: {
+    case chip::DeviceLayer::DeviceEventType::kFabricRemoved:
         ESP_LOGI(TAG, "Fabric removed successfully");
-        chip::Server &server = chip::Server::GetInstance();
-        /* The window is still open when a failed first commissioning reverts its AddNOC: leave that path alone */
-        if (server.GetFabricTable().FabricCount() == 0 &&
-            !server.GetCommissioningWindowManager().IsCommissioningWindowOpen()) {
-            /* Last fabric gone: start over like a new device, with a fresh 15 min BLE commissioning window (Wi-Fi
-             * credentials are erased too, so it can join another network). The fan keeps running. The 1 s delay
-             * lets the RemoveFabric response go out first. */
-            CHIP_ERROR err = chip::DeviceLayer::SystemLayer().StartTimer(
-                chip::System::Clock::Milliseconds32(1000),
-                [](chip::System::Layer *, void *) {
-                    if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
-                        ESP_LOGW(TAG, "Last fabric removed, factory reset");
-                        esp_matter::factory_reset();
-                    }
-                },
-                nullptr);
-            if (err != CHIP_NO_ERROR) {
-                ESP_LOGE(TAG, "Failed to schedule factory reset, err:%" CHIP_ERROR_FORMAT, err.Format());
-            }
-        }
+        app_check_last_fabric_removed();
         break;
-    }
 
     case chip::DeviceLayer::DeviceEventType::kBLEDeinitialized:
         ESP_LOGI(TAG, "BLE deinitialized and memory reclaimed");
@@ -338,8 +352,12 @@ extern "C" void app_main()
 
     const esp_err_t err = esp_matter::start(app_event_cb);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start Matter (%s): running without Matter", esp_err_to_name(err));
-        return;
+        if (!esp_matter::is_started()) {
+            ESP_LOGE(TAG, "Failed to start Matter (%s): running without Matter", esp_err_to_name(err));
+            return;
+        }
+        /* The stack runs; only a later step (endpoint id bookkeeping in NVS) failed */
+        ESP_LOGW(TAG, "Matter started with an error: %s", esp_err_to_name(err));
     }
 
     /* Write the fan state into the Fan Control cluster, then follow controllers */

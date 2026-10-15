@@ -1,5 +1,6 @@
 #include <ir_rx.h>
 
+#include <stdlib.h>
 #include <string.h>
 
 #include <driver/gpio.h>
@@ -62,6 +63,8 @@ struct StoredCodes {
 };
 constexpr uint32_t k_codes_version = 2;
 constexpr size_t k_codes_v1_functions = 7;
+/* Longest record accepted from a newer firmware (functions appended) */
+constexpr size_t k_codes_max_size = 1024;
 constexpr const char *k_nvs_namespace = "fan";
 constexpr const char *k_nvs_key_codes = "ir_codes";
 
@@ -138,17 +141,35 @@ static void load_codes()
     if (nvs_open(k_nvs_namespace, NVS_READONLY, &handle) != ESP_OK) {
         return;
     }
-    StoredCodes stored;
-    memset(&stored, 0, sizeof(stored));
-    size_t len = sizeof(stored);
-    const esp_err_t err = nvs_get_blob(handle, k_nvs_key_codes, &stored, &len);
+    /* Read the whole record, whatever its length: a newer firmware may have stored more functions (e.g. before an OTA
+     * rollback to this one). Functions are only appended, so the ones this firmware knows come first. */
+    size_t len = 0;
+    esp_err_t err = nvs_get_blob(handle, k_nvs_key_codes, NULL, &len);
+    uint8_t *buf = NULL;
+    if (err == ESP_OK && len >= sizeof(uint32_t) && len <= k_codes_max_size) {
+        buf = (uint8_t *)malloc(len);
+        err = buf ? nvs_get_blob(handle, k_nvs_key_codes, buf, &len) : ESP_ERR_NO_MEM;
+    } else if (err == ESP_OK) {
+        err = ESP_ERR_NVS_INVALID_LENGTH;
+    }
     nvs_close(handle);
     if (err != ESP_OK) {
+        if (err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "Learned remote buttons not loaded: %s", esp_err_to_name(err));
+        }
+        free(buf);
         return;
     }
+    StoredCodes stored;
+    memset(&stored, 0, sizeof(stored));
+    memcpy(&stored, buf, len < sizeof(stored) ? len : sizeof(stored));
+    free(buf);
     const bool v1 = stored.version == 1 && len == sizeof(uint32_t) + k_codes_v1_functions * sizeof(ir_code_t);
-    if (v1 || (stored.version == k_codes_version && len == sizeof(stored))) {
+    if (v1 || (stored.version >= k_codes_version && len >= sizeof(stored))) {
         s_table = stored.table; /* v1: the functions it did not have stay zero (not learned) */
+    } else {
+        ESP_LOGW(TAG, "Unknown remote buttons record (version %lu, %u bytes): ignored", (unsigned long)stored.version,
+                 (unsigned)len);
     }
 }
 

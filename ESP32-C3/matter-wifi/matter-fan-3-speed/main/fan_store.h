@@ -1,7 +1,8 @@
 #pragma once
 
 /* Fan state in NVS: namespace "fan" (shared with the learned IR codes), key "state". A factory reset keeps it.
- * Record version 2 (speed, last speed, oscillation, natural wind); version 1 (no natural wind) still loads. */
+ * Record version 2 (speed, last speed, oscillation, natural wind); version 1 (no natural wind) still loads, and so do
+ * longer records of a newer version (fields are only ever appended). */
 
 #include <esp_err.h>
 

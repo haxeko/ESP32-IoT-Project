@@ -1,5 +1,7 @@
 #include <fan_store.h>
 
+#include <string.h>
+
 #include <esp_log.h>
 #include <nvs.h>
 
@@ -7,7 +9,9 @@ static const char *TAG = "fan_store";
 
 namespace {
 
-/* Layout stored as is: keep it. Version 1 was the first 4 bytes (no natural byte). */
+/* Layout stored as is: keep it. Records are append-only: a newer firmware may add fields at the end (and a higher
+ * version), never change the existing ones, so an older firmware still reads what it knows, e.g. after an OTA
+ * rollback. Version 1 was the first 4 bytes (no natural byte). */
 struct StoredState {
     uint8_t version;
     uint8_t speed;
@@ -19,6 +23,7 @@ static_assert(sizeof(StoredState) == 5, "NVS record layout changed");
 
 constexpr uint8_t k_state_version = 2;
 constexpr size_t k_state_v1_size = 4;
+constexpr size_t k_state_max_size = 64; /* longest record accepted from a newer firmware */
 constexpr const char *k_nvs_namespace = "fan";
 constexpr const char *k_nvs_key_state = "state";
 
@@ -30,15 +35,20 @@ bool fan_store_load(fan_state_t *state)
     if (nvs_open(k_nvs_namespace, NVS_READONLY, &handle) != ESP_OK) {
         return false; /* nothing stored yet */
     }
-    StoredState stored = {};
-    size_t len = sizeof(stored);
-    const esp_err_t err = nvs_get_blob(handle, k_nvs_key_state, &stored, &len);
+    uint8_t buf[k_state_max_size];
+    size_t len = sizeof(buf);
+    const esp_err_t err = nvs_get_blob(handle, k_nvs_key_state, buf, &len);
     nvs_close(handle);
-    if (err != ESP_OK) {
+    if (err != ESP_OK || len == 0) {
+        if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "Fan state not loaded: %s", esp_err_to_name(err));
+        }
         return false;
     }
+    StoredState stored = {};
+    memcpy(&stored, buf, len < sizeof(stored) ? len : sizeof(stored));
     const bool v1 = stored.version == 1 && len == k_state_v1_size; /* before natural wind: off */
-    if (!v1 && (stored.version != k_state_version || len != sizeof(stored))) {
+    if (!v1 && (stored.version < k_state_version || len < sizeof(stored))) {
         ESP_LOGW(TAG, "Unknown fan state record (version %u, %u bytes): ignored", stored.version, (unsigned)len);
         return false;
     }

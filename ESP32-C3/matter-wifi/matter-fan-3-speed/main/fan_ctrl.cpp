@@ -39,7 +39,7 @@ constexpr uint32_t k_boot_pending_magic = 0x46414E31; /* "FAN1" */
 portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 fan_state_t s_state;   /* written by the fan task (and fan_ctrl_init), guarded by s_lock */
 uint8_t s_drive_speed; /* speed relay the fan task drives (natural wind varies it), guarded by s_lock */
-fan_state_t s_saved;   /* fan task only: last state written to NVS */
+fan_state_t s_saved;   /* last state written to NVS: written by the fan task, read by the shutdown handler, s_lock */
 QueueHandle_t s_queue;
 fan_listener_t s_listener;
 esp_timer_handle_t s_boot_ok_timer;
@@ -66,16 +66,27 @@ static const char *src_name(fan_src_t src)
     }
 }
 
-/* Fan task only (and fan_ctrl_init before the task starts) */
-static void save_state(const fan_state_t &st)
+static bool same_state(const fan_state_t &a, const fan_state_t &b)
 {
-    if (st.speed == s_saved.speed && st.last_speed == s_saved.last_speed && st.swing == s_saved.swing &&
-        st.natural == s_saved.natural) {
-        return;
+    return a.speed == b.speed && a.last_speed == b.last_speed && a.swing == b.swing && a.natural == b.natural;
+}
+
+/* Fan task only (and fan_ctrl_init before the task starts). Returns false when the write failed. */
+static bool save_state(const fan_state_t &st)
+{
+    taskENTER_CRITICAL(&s_lock);
+    const fan_state_t saved = s_saved;
+    taskEXIT_CRITICAL(&s_lock);
+    if (same_state(st, saved)) {
+        return true;
     }
-    if (fan_store_write(&st) == ESP_OK) {
-        s_saved = st;
+    if (fan_store_write(&st) != ESP_OK) {
+        return false;
     }
+    taskENTER_CRITICAL(&s_lock);
+    s_saved = st;
+    taskEXIT_CRITICAL(&s_lock);
+    return true;
 }
 
 fan_state_t fan_ctrl_get_state()
@@ -158,11 +169,16 @@ static uint8_t drive_speed(const fan_state_t &st)
 
 /* ---- Fan task ---- */
 
+/* A command is queued: a relay about to close may be released by it at once */
+static bool command_waiting()
+{
+    return uxQueueMessagesWaiting(s_queue) > 0;
+}
+
 /* Switch the relays and publish the speed they drive */
 static void drive(const fan_state_t &st)
 {
-    const uint8_t speed = drive_speed(st);
-    relays_apply(speed, fan_state_swing_running(&st));
+    const uint8_t speed = relays_apply(drive_speed(st), fan_state_swing_running(&st), command_waiting);
     taskENTER_CRITICAL(&s_lock);
     s_drive_speed = speed;
     taskEXIT_CRITICAL(&s_lock);
@@ -199,8 +215,8 @@ static void fan_task(void *)
         if (xQueueReceive(s_queue, &msg, wait) != pdTRUE) {
             /* Timeout: store the state, and/or the next step of the natural wind */
             if (save_pending && ticks_left(changed_tick, save_delay) == 0) {
-                save_state(st);
-                save_pending = false;
+                save_pending = !save_state(st);
+                changed_tick = xTaskGetTickCount(); /* a failed write is retried after another delay */
             }
             if (s_natural.active && ticks_left(s_natural.since, s_natural.hold) == 0) {
                 natural_step(st.speed);
@@ -215,12 +231,13 @@ static void fan_task(void *)
             taskENTER_CRITICAL(&s_lock);
             s_state = st;
             taskEXIT_CRITICAL(&s_lock);
-            drive(st);
             log_state(st, src_name(msg.src));
             status_led_running(st.speed > 0);
             save_pending = true;
             changed_tick = xTaskGetTickCount();
         }
+        /* Also when unchanged: completes a relay change a newer command cancelled (no-op otherwise) */
+        drive(st);
         /* Also when unchanged: Matter writes the real state back over a setting the fan did not take */
         notify(st, msg.src, changed);
     }
@@ -237,8 +254,13 @@ static void boot_ok_cb(void *)
 static void fan_ctrl_shutdown()
 {
     s_boot_pending = 0;
-    const fan_state_t st = fan_ctrl_get_state();
-    fan_store_write(&st);
+    taskENTER_CRITICAL(&s_lock);
+    const fan_state_t st = s_state;
+    const fan_state_t saved = s_saved;
+    taskEXIT_CRITICAL(&s_lock);
+    if (!same_state(st, saved)) {
+        fan_store_write(&st);
+    }
 }
 
 static bool reset_may_be_crash(esp_reset_reason_t reason)
