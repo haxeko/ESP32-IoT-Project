@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <esp_err.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -18,17 +17,16 @@
 // and raises the LD2410 thresholds above it, so reflections, fans or curtains
 // in an empty room stop being reported as presence.
 
-// Called from the learning task when it ends: success = new thresholds saved.
-typedef void (*quiet_learn_done_cb_t)(bool success);
+// Polled every 100 ms during the learning: true stops it before anything is
+// written to the radar.
+typedef bool (*quiet_learn_cancelled_cb_t)(void);
 
-// Starts learning in its own task: waits CONFIG_LD2410_LEARN_DELAY_SEC (time to
-// leave the room), records CONFIG_LD2410_LEARN_DURATION_SEC of engineering data,
-// then writes the new thresholds to the radar, which keeps them in its flash.
-// ESP_ERR_INVALID_STATE when a learning is already running.
-esp_err_t quiet_learn_start(quiet_learn_done_cb_t done);
-
-// Stops a running learning before anything is written to the radar.
-void quiet_learn_cancel(void);
+// Runs one learning in the calling task: waits CONFIG_LD2410_LEARN_DELAY_SEC
+// (time to leave the room), records CONFIG_LD2410_LEARN_DURATION_SEC of
+// engineering data, then writes the new thresholds to the radar, which keeps
+// them in its flash. Returns true when new thresholds were saved. Sends radar
+// commands, so no other task may configure the radar meanwhile.
+bool quiet_learn_run(quiet_learn_cancelled_cb_t cancelled);
 
 // New threshold per gate: recorded noise peak + margin, at least the factory
 // default (learning only makes the radar less sensitive, where the room is

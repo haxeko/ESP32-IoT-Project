@@ -47,11 +47,17 @@ static const uint8_t k_cmd_footer[] = { 0x04, 0x03, 0x02, 0x01 };
 // Command words
 static constexpr uint16_t kCmdEnableConfig = 0x00FF;
 static constexpr uint16_t kCmdEndConfig = 0x00FE;
+static constexpr uint16_t kCmdMaxGatesDuration = 0x0060;
 static constexpr uint16_t kCmdReadParams = 0x0061;
 static constexpr uint16_t kCmdEngineeringOn = 0x0062;
 static constexpr uint16_t kCmdEngineeringOff = 0x0063;
 static constexpr uint16_t kCmdGateSensitivity = 0x0064;
+static constexpr uint16_t kCmdReadResolution = 0x00AB;
 static constexpr uint16_t kAckFlag = 0x0100;
+
+// Commands are retried: the radar sometimes misses a request while it is
+// sending a report, and a radar left in configuration mode stops reporting.
+static constexpr int kConfigModeAttempts = 3;
 
 typedef struct {
     uint16_t command; // command word | kAckFlag
@@ -280,10 +286,9 @@ static esp_err_t command(uint16_t cmd, const uint8_t *value, size_t value_len, l
 
 esp_err_t ld2410_config_begin(void)
 {
-    // The radar sometimes misses the first request while it is sending a report.
     static const uint8_t value[] = { 0x01, 0x00 };
     esp_err_t err = ESP_FAIL;
-    for (int attempt = 0; attempt < 3 && err != ESP_OK; attempt++) {
+    for (int attempt = 0; attempt < kConfigModeAttempts && err != ESP_OK; attempt++) {
         err = command(kCmdEnableConfig, value, sizeof(value), NULL);
     }
     return err;
@@ -291,7 +296,11 @@ esp_err_t ld2410_config_begin(void)
 
 esp_err_t ld2410_config_end(void)
 {
-    return command(kCmdEndConfig, NULL, 0, NULL);
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 0; attempt < kConfigModeAttempts && err != ESP_OK; attempt++) {
+        err = command(kCmdEndConfig, NULL, 0, NULL);
+    }
+    return err;
 }
 
 esp_err_t ld2410_set_engineering_mode(bool enable)
@@ -299,7 +308,7 @@ esp_err_t ld2410_set_engineering_mode(bool enable)
     return command(enable ? kCmdEngineeringOn : kCmdEngineeringOff, NULL, 0, NULL);
 }
 
-esp_err_t ld2410_read_thresholds(ld2410_thresholds_t *out)
+esp_err_t ld2410_read_config(ld2410_config_t *out)
 {
     // Return value: 0xAA, highest gate N (8), max moving gate, max still gate,
     // moving thresholds of gates 0..N, still thresholds of gates 0..N, no-one duration (2).
@@ -309,13 +318,27 @@ esp_err_t ld2410_read_thresholds(ld2410_thresholds_t *out)
         return err;
     }
     const size_t gates = (size_t)ack.data[1] + 1;
-    if (ack.len < 4 + 2 * LD2410_GATE_COUNT || ack.data[0] != 0xAA || gates != LD2410_GATE_COUNT) {
+    const size_t duration_pos = 4 + 2 * LD2410_GATE_COUNT;
+    if (ack.len < duration_pos + 2 || ack.data[0] != 0xAA || gates != LD2410_GATE_COUNT) {
         ESP_LOGW(TAG, "Unexpected parameter reply (%u bytes)", ack.len);
         return ESP_ERR_INVALID_RESPONSE;
     }
-    memcpy(out->moving, &ack.data[4], LD2410_GATE_COUNT);
-    memcpy(out->still, &ack.data[4 + LD2410_GATE_COUNT], LD2410_GATE_COUNT);
+    out->max_moving_gate = ack.data[2];
+    out->max_still_gate = ack.data[3];
+    memcpy(out->thresholds.moving, &ack.data[4], LD2410_GATE_COUNT);
+    memcpy(out->thresholds.still, &ack.data[4 + LD2410_GATE_COUNT], LD2410_GATE_COUNT);
+    out->no_one_duration_s = (uint16_t)(ack.data[duration_pos] | (ack.data[duration_pos + 1] << 8));
     return ESP_OK;
+}
+
+esp_err_t ld2410_read_thresholds(ld2410_thresholds_t *out)
+{
+    ld2410_config_t config;
+    esp_err_t err = ld2410_read_config(&config);
+    if (err == ESP_OK) {
+        *out = config.thresholds;
+    }
+    return err;
 }
 
 esp_err_t ld2410_set_gate_thresholds(uint8_t gate, uint8_t moving, uint8_t still)
@@ -330,6 +353,43 @@ esp_err_t ld2410_set_gate_thresholds(uint8_t gate, uint8_t moving, uint8_t still
         0x02, 0x00, still,  0x00, 0x00, 0x00,
     };
     return command(kCmdGateSensitivity, value, sizeof(value), NULL);
+}
+
+esp_err_t ld2410_set_max_gates_and_duration(uint8_t max_moving_gate, uint8_t max_still_gate,
+                                            uint16_t no_one_duration_s)
+{
+    if (max_moving_gate < LD2410_MIN_MAX_GATE || max_moving_gate > LD2410_MAX_MAX_GATE ||
+        max_still_gate < LD2410_MIN_MAX_GATE || max_still_gate > LD2410_MAX_MAX_GATE) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    // Max moving gate word 0x0000 + value (4), max still gate word 0x0001 +
+    // value (4), no-one duration word 0x0002 + value (4)
+    const uint8_t value[LD2410_MAX_CMD_VALUE] = {
+        0x00, 0x00, max_moving_gate, 0x00, 0x00, 0x00,
+        0x01, 0x00, max_still_gate,  0x00, 0x00, 0x00,
+        0x02, 0x00, (uint8_t)(no_one_duration_s & 0xFF), (uint8_t)(no_one_duration_s >> 8), 0x00, 0x00,
+    };
+    return command(kCmdMaxGatesDuration, value, sizeof(value), NULL);
+}
+
+esp_err_t ld2410_read_gate_length(uint16_t *gate_cm)
+{
+    // Return value: resolution (2): 0 = 0.75 m, 1 = 0.2 m
+    ld2410_ack_t ack;
+    esp_err_t err = command(kCmdReadResolution, NULL, 0, &ack);
+    if (err != ESP_OK) {
+        return err;
+    }
+    const uint16_t resolution = ack.len >= 2 ? (uint16_t)(ack.data[0] | (ack.data[1] << 8)) : 0xFFFF;
+    if (resolution == 0) {
+        *gate_cm = 75;
+    } else if (resolution == 1) {
+        *gate_cm = 20;
+    } else {
+        ESP_LOGW(TAG, "Unknown distance resolution %u", resolution);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    return ESP_OK;
 }
 
 void ld2410_capture_start(void)

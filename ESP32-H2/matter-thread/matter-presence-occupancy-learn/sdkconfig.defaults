@@ -26,8 +26,8 @@ CONFIG_ENABLE_CHIP_SHELL=y
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
 CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
 
-# Only a few dynamic endpoints are needed
-CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=2
+# Root, occupancy sensor, Duration and Range (Mode Select) endpoints
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=4
 
 # Manufacturer / Model / Serial number come from main/device_info.cpp
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y

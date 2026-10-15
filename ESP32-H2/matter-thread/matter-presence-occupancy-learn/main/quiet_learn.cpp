@@ -11,14 +11,10 @@
 #include <freertos/task.h>
 #include <sdkconfig.h>
 
-#include <atomic>
-
 #include "quiet_learn.h"
 
 static const char *TAG = "quiet_learn";
 
-static constexpr uint32_t kTaskStack = 4096;
-static constexpr UBaseType_t kTaskPriority = 2;
 static constexpr uint32_t kPollMs = 100;
 // The radar sends about 10 engineering frames per second; fewer than 2 per
 // second means the reports did not come through.
@@ -29,10 +25,6 @@ static constexpr uint32_t kMinFramesPerSec = 2;
 static const uint8_t kFactoryMoving[LD2410_GATE_COUNT] = { 50, 50, 40, 30, 20, 15, 15, 15, 15 };
 static const uint8_t kFactoryStill[LD2410_GATE_COUNT] = { 0, 0, 40, 40, 30, 30, 20, 20, 20 };
 static constexpr int kFirstStillGate = 2;
-
-static std::atomic<bool> s_running{false};
-static std::atomic<bool> s_cancel{false};
-static quiet_learn_done_cb_t s_done;
 
 static uint8_t learned_threshold(uint8_t noise, uint8_t margin, uint8_t factory)
 {
@@ -54,12 +46,15 @@ void quiet_learn_compute_thresholds(const ld2410_capture_t *noise, const ld2410_
 }
 
 // Sleeps ms in kPollMs steps; false when cancelled.
-static bool wait_unless_cancelled(uint32_t ms)
+static bool wait_unless_cancelled(uint32_t ms, quiet_learn_cancelled_cb_t cancelled)
 {
-    for (uint32_t t = 0; t < ms && !s_cancel; t += kPollMs) {
+    for (uint32_t t = 0; t < ms; t += kPollMs) {
+        if (cancelled && cancelled()) {
+            return false;
+        }
         vTaskDelay(pdMS_TO_TICKS(kPollMs));
     }
-    return !s_cancel;
+    return !(cancelled && cancelled());
 }
 
 static void log_thresholds(const ld2410_capture_t *noise, const ld2410_thresholds_t *before,
@@ -112,13 +107,13 @@ static bool apply_thresholds(const ld2410_capture_t *noise)
     return true;
 }
 
-static bool learn()
+bool quiet_learn_run(quiet_learn_cancelled_cb_t cancelled)
 {
     const uint32_t delay_s = CONFIG_LD2410_LEARN_DELAY_SEC;
     const uint32_t duration_s = CONFIG_LD2410_LEARN_DURATION_SEC;
     ESP_LOGI(TAG, "Empty room learning: leave the room, recording starts in %" PRIu32 " s and lasts %" PRIu32 " s",
              delay_s, duration_s);
-    if (!wait_unless_cancelled(delay_s * 1000)) {
+    if (!wait_unless_cancelled(delay_s * 1000, cancelled)) {
         ESP_LOGI(TAG, "Learning cancelled, nothing changed");
         return false;
     }
@@ -139,7 +134,7 @@ static bool learn()
 
     ESP_LOGI(TAG, "Recording the empty room for %" PRIu32 " s", duration_s);
     ld2410_capture_start();
-    const bool completed = wait_unless_cancelled(duration_s * 1000);
+    const bool completed = wait_unless_cancelled(duration_s * 1000, cancelled);
     ld2410_capture_t noise;
     ld2410_capture_stop(&noise);
 
@@ -167,38 +162,4 @@ static bool learn()
         ESP_LOGI(TAG, "Learning done: new thresholds saved in the LD2410 (%" PRIu32 " reports)", noise.frames);
     }
     return saved;
-}
-
-static void learn_task(void *arg)
-{
-    const bool saved = learn();
-    // Report the end first: a new start is refused until s_running is cleared,
-    // so it cannot run while Home Assistant already shows Off.
-    if (s_done) {
-        s_done(saved);
-    }
-    s_running = false;
-    vTaskDelete(NULL);
-}
-
-esp_err_t quiet_learn_start(quiet_learn_done_cb_t done)
-{
-    bool idle = false;
-    if (!s_running.compare_exchange_strong(idle, true)) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    s_cancel = false;
-    s_done = done;
-    if (xTaskCreate(learn_task, "quiet_learn", kTaskStack, NULL, kTaskPriority, NULL) != pdPASS) {
-        s_running = false;
-        return ESP_ERR_NO_MEM;
-    }
-    return ESP_OK;
-}
-
-void quiet_learn_cancel(void)
-{
-    if (s_running) {
-        s_cancel = true;
-    }
 }

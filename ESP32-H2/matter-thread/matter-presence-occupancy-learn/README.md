@@ -1,6 +1,6 @@
 # Matter Presence Sensor + học phòng trống (ESP32-H2 + HLK-LD2410, Thread)
 
-> Bản fork của [`matter-presence-occupancy`](../matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt duy nhất: thêm chức năng **học phòng trống** điều khiển từ Home Assistant, giúp radar bớt báo nhầm có người. Phần cứng, chân nối, ghép nối, LED, nút bấm giống hệt bản gốc.
+> Bản fork của [`matter-presence-occupancy`](../matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 3 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Duration** và **Range** chỉnh thời gian giữ và khoảng cách phát hiện của radar. Phần cứng, chân nối, ghép nối, LED, nút bấm giống hệt bản gốc.
 
 Cảm biến hiện diện chuẩn **Matter over Thread** chạy trên **ESP32-H2** với radar 24 GHz **HLK-LD2410**. Đây là bản chuyển từ Zigbee (`ESP32-H2/zigbee-presence-occupancy`) sang Matter: cùng chip ESP32-H2, cùng radio 802.15.4, nhưng thay Zigbee bằng Thread + Matter. Thêm trực tiếp vào **Apple Home**, Google Home, Home Assistant, SmartThings, Alexa... mà không cần Zigbee coordinator / Zigbee2MQTT.
 
@@ -20,9 +20,9 @@ Radar LD2410 phát hiện được cả người đang ngồi yên (thở, cử 
 Logic phát hiện giữ nguyên như các bản LD2410 khác trong repo:
 
 - **Có người** ngay khi radar thấy mục tiêu đang di chuyển hoặc đứng yên.
-- **Không có người** sau khi radar không thấy ai trong khoảng **HoldTime**. Bộ đếm do cluster Matter xử lý, nên chỉnh HoldTime trong app có tác dụng ngay.
+- **Không có người** sau khi radar không thấy ai trong khoảng **HoldTime**. Bộ đếm do cluster Matter xử lý, nên chỉnh HoldTime trong app có tác dụng ngay. Bản thân LD2410 cũng giữ trạng thái có người thêm một khoảng (**Duration**, xem bên dưới) trước khi báo mất mục tiêu, nên tổng thời gian = Duration + HoldTime.
 - Nếu radar không gửi dữ liệu quá **10 giây** (lỏng dây, mất nguồn), thiết bị báo **không có người** và ghi lỗi vào log. Có dữ liệu lại thì tự hoạt động bình thường.
-- Tuỳ chọn chỉ tính người ở gần hơn một khoảng cách (*Only count targets closer than*). Độ nhạy từng vùng (gate) được chỉnh tự động bằng chức năng **học phòng trống** bên dưới (hoặc bằng app **HLKRadarTool** qua Bluetooth của LD2410B/C).
+- Tuỳ chọn chỉ tính người ở gần hơn một khoảng cách (*Only count targets closer than*). Độ nhạy từng vùng (gate) được chỉnh tự động bằng chức năng **học phòng trống** bên dưới, khoảng cách phát hiện bằng entity **Range** (hoặc bằng app **HLKRadarTool** qua Bluetooth của LD2410B/C).
 
 ## Học phòng trống (giảm báo nhầm)
 
@@ -55,6 +55,32 @@ I quiet_learn: Learning done: new thresholds saved in the LD2410 (300 reports)
 - Chọn **Off** trong lúc đang học: huỷ, không ghi gì vào radar.
 - Radar không trả lời lệnh: không ghi gì, log báo kiểm tra dây **GPIO12 → chân RX của LD2410** (bản gốc chỉ đọc radar nên có thể chưa nối dây này).
 - Thời gian chờ, thời gian ghi và mức +10 chỉnh được trong `menuconfig` → *Empty Room Learning*.
+
+## Duration và Range (thông số của LD2410)
+
+Cũng trong mục *Cấu hình* của thiết bị trên Home Assistant có thêm hai entity dạng select:
+
+| Entity | Thông số LD2410 | Lựa chọn |
+|---|---|---|
+| **Duration** | *Unmanned duration* (no-one duration): radar tiếp tục báo có người thêm khoảng này sau khi mất mục tiêu | `0 s`, `5 s` (mặc định nhà sản xuất), `10 s`, `15 s`, `30 s`, `1 min`, `2 min`, `5 min`, `10 min` |
+| **Range** | *Detection range*: gate xa nhất radar còn xét, đặt cùng lúc cho mục tiêu chuyển động và đứng yên | `1.5 m`, `2.25 m`, `3 m`, `3.75 m`, `4.5 m`, `5.25 m`, `6 m` (gate 2–8, mỗi gate 0,75 m; mặc định 6 m). LD2410B/C đặt độ phân giải 0,2 m thì là `0.4 m` … `1.6 m` |
+
+- Giá trị được ghi vào **bộ nhớ của LD2410** (giữ khi mất điện, khi nạp lại firmware ESP32-H2) rồi đọc lại để kiểm tra; Home Assistant hiển thị giá trị radar thực sự đang giữ. Lúc khởi động firmware đọc thông số của radar (log `radar_ctl: LD2410 settings: ...`).
+- Radar đang giữ một giá trị không có trong danh sách (đặt bằng HLKRadarTool) thì danh sách có thêm đúng giá trị đó, ví dụ `7 s` hoặc `Moving 4.5 m, still 3 m`.
+- **Thời gian từ lúc người rời đi tới khi báo "không có người" ≈ Duration + Hold time.** Ví dụ Duration 5 s + Hold time 30 s → khoảng 35 s. Muốn tắt đèn nhanh hơn thì giảm một trong hai; hay bị báo "không có người" khi ngồi yên lâu thì tăng Duration hoặc Hold time.
+- **Range** do radar xử lý: mục tiêu xa hơn bị bỏ qua hoàn toàn (ví dụ không bắt người ở phòng bên qua vách mỏng). Tuỳ chọn *Only count targets closer than* trong menuconfig thì lọc trong firmware, sau khi radar đã báo.
+- Radar chưa trả lời lệnh (chưa nối dây **GPIO12 → chân RX của LD2410**): thay đổi trong Home Assistant bị bỏ qua, entity giữ giá trị cũ; firmware thử đọc lại radar sau 15 s, 30 s, 1 min... (tối đa 5 min một lần).
+- Đang học phòng trống thì thay đổi Duration/Range được áp dụng ngay sau khi học xong.
+- Mỗi endpoint Matter chỉ có một cluster *Mode Select*, nên Duration và Range nằm trên 2 endpoint riêng (2 và 3) kiểu thiết bị *Mode Select* (0x0027). Apple Home không hỗ trợ kiểu thiết bị này nên vẫn chỉ hiện cảm biến chiếm chỗ (dự kiến theo tài liệu, chưa thử trên thiết bị Apple thật).
+- Thiết bị đã ghép nối với bản fork cũ (chưa có Duration/Range): nếu sau khi nạp firmware mới Home Assistant chưa hiện hai entity này, mở trang thiết bị → *Matter* (⋮) → **Re-interview device**.
+
+Với chip-tool (endpoint 2 = Duration, mode = vị trí trong danh sách trên; endpoint 3 = Range, mode = số gate):
+
+```bash
+chip-tool modeselect read supported-modes 0x7283 2
+chip-tool modeselect change-to-mode 4 0x7283 2    # Duration 30 s
+chip-tool modeselect change-to-mode 6 0x7283 3    # Range gate 6 = 4.5 m
+```
 
 ## Phần cứng
 
@@ -165,7 +191,9 @@ esptool.py --chip esp32h2 -p /dev/ttyUSB0 write_flash 0x0 matter_presence_h2_lea
 
 Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 
-> Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại.
+> File merged ghi đè cả vùng NVS (`0x10000`), tức là **xoá thông tin ghép nối**: sau khi nạp phải thêm lại thiết bị. Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại.
+>
+> Nâng cấp bản fork mà **giữ ghép nối** (thiết bị chưa từng cập nhật OTA): chỉ nạp phần ứng dụng `esptool.py --chip esp32h2 -p /dev/ttyUSB0 write_flash 0x20000 matter_presence_h2_learn.bin` (hoặc `idf.py flash`).
 
 ## Cấu hình (`idf.py menuconfig`)
 
@@ -205,6 +233,27 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 
 *Thread Diagnostics*: `THREAD_DIAG_LOG` (bật mặc định) in khối chẩn đoán Thread ra log mỗi 10 s cho tới khi ghép nối xong.
 
+*Memory Monitor*: `MEM_MONITOR_PERIOD_SEC` (mặc định 600 s, `0` = chỉ khi khởi động) in heap và stack còn trống, xem mục **RAM và flash**.
+
+## RAM và flash
+
+Đo bằng `idf.py size` (ESP-IDF v6.0.2, esp-matter 1.6.1, cấu hình mặc định):
+
+| | Bản ổn định | Fork, chỉ học phòng trống | Fork + Duration/Range |
+|---|---|---|---|
+| Firmware (phân vùng app 1 920 KB) | 1 725 KB, trống 195 KB (10 %) | 1 741 KB, trống 179 KB (9 %) | 1 746 KB, trống 174 KB (9 %) |
+| RAM tĩnh (DIRAM 252 KB) | 166,9 KB (66,2 %) | 168,1 KB (66,7 %) | 169,5 KB (67,3 %) |
+| DIRAM còn trống (vùng dành cho heap) | 85,1 KB | 83,8 KB | 82,5 KB |
+
+Phần thêm Duration/Range tốn khoảng 5 KB flash và 1,4 KB RAM tĩnh. Khi chạy còn thêm task `radar_cfg` thường trực với stack 4 KB (bản trước chỉ tạo task 4 KB trong lúc học) và dữ liệu của 2 endpoint Matter mới. Flash và RAM tĩnh còn dư nhiều; heap thật khi chạy phụ thuộc Matter/Thread/BLE nên chỉ đo được trên thiết bị, bằng log `mem`:
+
+```
+I mem: Heap: <còn trống> bytes free, lowest <thấp nhất> since boot, largest block <khối lớn nhất>
+I mem: Stack unused bytes: CHIP <n> ot_task <n> esp_timer <n> console <n> presence <n> ld2410 <n> radar_cfg <n>
+```
+
+Log in lúc khởi động rồi 10 phút một lần; con số quan trọng là `lowest ... since boot` (heap thấp nhất kể từ khi bật, thường rơi vào lúc ghép nối khi BLE còn chạy). Log chuyển sang cảnh báo `W mem` khi heap thấp nhất dưới 16 KB hoặc một stack còn dưới 512 byte. Trên console còn có lệnh `matter esp diagnostics mem-dump`.
+
 ## Xử lý sự cố: điện thoại không tìm thấy thiết bị
 
 Ghép nối Matter over Thread có 2 giai đoạn:
@@ -240,8 +289,11 @@ matter-presence-occupancy-learn/
 ├── sdkconfig.defaults          # Matter/BLE, tắt các cluster không dùng
 ├── sdkconfig.defaults.esp32h2  # OpenThread (FTD, SRP client), chân radar, LED
 └── main/
-    ├── app_main.cpp            # Matter node, endpoint Occupancy Sensor + Mode Select "Learn empty room", OpenThread
+    ├── app_main.cpp            # Matter node, endpoint Occupancy Sensor, OpenThread
+    ├── radar_control.cpp       # Mode Select "Learn empty room" / "Duration" / "Range", task cấu hình radar
+    ├── radar_settings.cpp      # Danh sách lựa chọn Duration/Range, đọc/ghi thông số LD2410
     ├── quiet_learn.cpp         # Học phòng trống: engineering mode, tính và ghi ngưỡng vào LD2410
+    ├── mem_monitor.cpp         # Log heap / stack định kỳ
     ├── device_info.cpp         # Manufacturer / Model / Serial (Basic Information)
     ├── chip_project_config.h   # Tên thiết bị trong DNS-SD khi chưa ghép nối
     ├── thread_diag.cpp         # Log chẩn đoán Thread/SRP khi chưa ghép nối

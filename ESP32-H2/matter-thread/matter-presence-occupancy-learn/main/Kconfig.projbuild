@@ -145,3 +145,17 @@ menu "Thread Diagnostics"
             the device after BLE provisioning. Stops once the device is commissioned.
 
 endmenu
+
+menu "Memory Monitor"
+
+    config MEM_MONITOR_PERIOD_SEC
+        int "Memory log period (seconds, 0 = only at boot)"
+        range 0 86400
+        default 600
+        help
+            Logs the free heap (now, lowest since boot, largest block) and the
+            unused stack of the main tasks at boot and then at this period,
+            as a warning when the heap drops below 16 KB or a stack below
+            512 bytes.
+
+endmenu

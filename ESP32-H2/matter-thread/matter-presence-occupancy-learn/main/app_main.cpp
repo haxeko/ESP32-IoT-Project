@@ -15,13 +15,13 @@
 // commissioning; afterwards the device talks to the controllers through a
 // Thread Border Router.
 //
-// Empty room learning: a Mode Select cluster on the same endpoint ("Learn
-// empty room": Off / Learning) shows up in Home Assistant as a select entity;
-// Apple Home ignores it. Choosing Learning records the radar's background
-// energy and raises the LD2410 thresholds above it (quiet_learn.cpp); the
-// mode returns to Off when the learning ends.
+// Home Assistant controls of the LD2410 (radar_control.cpp), Mode Select
+// clusters that Home Assistant shows as select entities and Apple Home
+// ignores: "Learn empty room" on the occupancy endpoint (records the radar's
+// background energy and raises the LD2410 thresholds above it, see
+// quiet_learn.cpp), "Duration" (no-one duration) and "Range" (farthest
+// detection gate) on endpoints of their own.
 
-#include <app/clusters/mode-select-server/SupportedModesManager.h>
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
 #include <data_model_provider/clusters/occupancy_sensing/integration.h>
@@ -41,13 +41,13 @@
 #include <platform/ESP32/OpenthreadLauncher.h>
 
 #include <atomic>
-#include <iterator>
 
 #include <device_info.h>
 #include <drivers/ld2410.h>
 #include <drivers/status_led.h>
 #include <drivers/user_button.h>
-#include <quiet_learn.h>
+#include <mem_monitor.h>
+#include <radar_control.h>
 #include <thread_diag.h>
 
 static const char *TAG = "app_main";
@@ -75,12 +75,6 @@ static constexpr uint16_t kHoldTimeMax = 300;
 // Key in the Matter key-value store (erased by a factory reset): set once the
 // default HoldTime from menuconfig has been applied.
 static const char kHoldTimeInitKey[] = "app/hold-init";
-
-// Mode Select cluster for the empty room learning. Home Assistant names the
-// select entity after the Description and lists the mode labels as options.
-static const char kLearnDescription[] = "Learn empty room";
-static constexpr uint8_t kModeOff = 0;
-static constexpr uint8_t kModeLearning = 1;
 
 // Catch pin mistakes from menuconfig at build time. GPIO15-GPIO21 connect the
 // in-package flash of ESP32-H2.
@@ -178,80 +172,6 @@ static void presence_task(void *arg)
             reported = true;
             reported_present = present;
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Empty room learning (Mode Select cluster on the occupancy endpoint)
-
-using ModeOption = ModeSelect::Structs::ModeOptionStruct::Type;
-
-class LearnModesManager : public ModeSelect::SupportedModesManager
-{
-public:
-    LearnModesManager()
-    {
-        mModes[0].label = chip::CharSpan::fromCharString("Off");
-        mModes[0].mode = kModeOff;
-        mModes[1].label = chip::CharSpan::fromCharString("Learning");
-        mModes[1].mode = kModeLearning;
-    }
-
-    ModeOptionsProvider getModeOptionsProvider(chip::EndpointId endpointId) const override
-    {
-        if (endpointId != s_occupancy_endpoint_id) {
-            return ModeOptionsProvider();
-        }
-        return ModeOptionsProvider(std::begin(mModes), std::end(mModes));
-    }
-
-    chip::Protocols::InteractionModel::Status getModeOptionByMode(chip::EndpointId endpointId, uint8_t mode,
-                                                                  const ModeOption **dataPtr) const override
-    {
-        if (endpointId == s_occupancy_endpoint_id) {
-            for (const ModeOption &option : mModes) {
-                if (option.mode == mode) {
-                    *dataPtr = &option;
-                    return chip::Protocols::InteractionModel::Status::Success;
-                }
-            }
-        }
-        return chip::Protocols::InteractionModel::Status::InvalidCommand;
-    }
-
-private:
-    ModeOption mModes[2];
-};
-
-static LearnModesManager s_learn_modes;
-
-// Must run before esp_matter::start(). CurrentMode is persisted, so a learning
-// cut by a power loss would otherwise come back as "Learning".
-static esp_err_t create_learn_mode_select(endpoint_t *endpoint)
-{
-    cluster::mode_select::config_t config;
-    strlcpy(config.description, kLearnDescription, sizeof(config.description));
-    config.current_mode = kModeOff;
-    config.delegate = &s_learn_modes;
-    cluster_t *cluster = cluster::mode_select::create(endpoint, &config, CLUSTER_FLAG_SERVER);
-    VerifyOrReturnError(cluster != nullptr, ESP_FAIL);
-
-    attribute_t *current_mode = attribute::get(cluster, ModeSelect::Attributes::CurrentMode::Id);
-    VerifyOrReturnError(current_mode != nullptr, ESP_FAIL);
-    esp_matter_attr_val_t off = esp_matter_uint8(kModeOff);
-    esp_err_t err = attribute::set_val(current_mode, &off, false);
-    return err == ESP_ERR_NOT_FINISHED ? ESP_OK : err; // NOT_FINISHED: already Off
-}
-
-// Runs in the learning task when it ends: back to Off. report() changes the
-// attribute without calling app_attribute_update_cb.
-static void learn_done_cb(bool saved)
-{
-    esp_matter_attr_val_t off = esp_matter_uint8(kModeOff);
-    esp_err_t err = attribute::report(s_occupancy_endpoint_id, ModeSelect::Id, ModeSelect::Attributes::CurrentMode::Id,
-                                      &off);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set the learning mode back to Off, err:%d", err);
     }
 }
 
@@ -405,26 +325,16 @@ static esp_err_t app_identification_cb(identification::callback_type_t type, uin
     return ESP_OK;
 }
 
-// Runs on the Matter task. CurrentMode of the learning Mode Select cluster is
-// changed by the ChangeToMode command (Home Assistant select entity). HoldTime
+// Runs on the Matter task. The Mode Select clusters of radar_control.cpp are
+// changed by the ChangeToMode command (Home Assistant select entities). HoldTime
 // writes are handled by the Occupancy Sensing cluster itself.
 static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16_t endpoint_id, uint32_t cluster_id,
                                          uint32_t attribute_id, esp_matter_attr_val_t *val, void *priv_data)
 {
-    if (type != attribute::PRE_UPDATE || endpoint_id != s_occupancy_endpoint_id || cluster_id != ModeSelect::Id ||
-        attribute_id != ModeSelect::Attributes::CurrentMode::Id) {
+    if (type != attribute::PRE_UPDATE) {
         return ESP_OK;
     }
-    if (val->val.u8 == kModeLearning) {
-        // An error rejects the change, so the mode stays Off.
-        esp_err_t err = quiet_learn_start(learn_done_cb);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Cannot start the empty room learning, err:%d", err);
-        }
-        return err;
-    }
-    quiet_learn_cancel();
-    return ESP_OK;
+    return radar_control_pre_update(endpoint_id, cluster_id, attribute_id, val);
 }
 
 static esp_err_t start_matter()
@@ -443,8 +353,11 @@ static esp_err_t start_matter()
     s_occupancy_endpoint_id = endpoint::get_id(occupancy_ep);
     ESP_LOGI(TAG, "Occupancy sensor created with endpoint_id %d", s_occupancy_endpoint_id);
 
-    esp_err_t err = create_learn_mode_select(occupancy_ep);
-    VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to create the learning Mode Select cluster, err:%d", err));
+    // The sensor keeps working without the Home Assistant controls.
+    const bool radar_control = radar_control_create(node, occupancy_ep) == ESP_OK;
+    if (!radar_control) {
+        ESP_LOGE(TAG, "Failed to create the LD2410 controls");
+    }
 
     /* OpenThread on the ESP32-H2 native 802.15.4 radio (no RCP, no host) */
     esp_openthread_platform_config_t ot_config = {
@@ -454,9 +367,13 @@ static esp_err_t start_matter()
     };
     set_openthread_platform_config(&ot_config);
 
-    err = esp_matter::start(app_event_cb);
+    esp_err_t err = esp_matter::start(app_event_cb);
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
+
+    if (radar_control && radar_control_start() != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start the radar configuration task");
+    }
 
     /* Log Thread addresses / SRP state until commissioned (see README, troubleshooting) */
     thread_diag_start();
@@ -528,5 +445,9 @@ extern "C" void app_main()
     // Started after Matter so that its first report sees s_matter_started.
     if (xTaskCreate(presence_task, "presence", kPresenceTaskStack, NULL, kPresenceTaskPriority, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create the presence task");
+    }
+
+    if (mem_monitor_start(CONFIG_MEM_MONITOR_PERIOD_SEC) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start the memory log");
     }
 }
