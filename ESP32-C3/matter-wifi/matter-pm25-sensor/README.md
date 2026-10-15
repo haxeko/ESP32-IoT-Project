@@ -166,6 +166,7 @@ File update chỉ ghi vùng chọn phân vùng OTA và firmware, nên vẫn ch�
 |---|---|---|
 | Nhà sản xuất (Manufacturer) | `Haxeko` | `menuconfig` → *Device Information* |
 | Kiểu máy (Model) | `PM5003` | `menuconfig` → *Device Information* |
+| Phần cứng (Hardware) | `ESP32C3-PMS5003` (`ESP32C3-SDS011` khi chọn SDS011) | `menuconfig` → *Device Information* |
 | Tên thiết bị khi ghép nối | `Air Quality Sensor` | `menuconfig` → *Device Information* |
 | Số serial | `<MAC Wi-Fi>`, ví dụ `8ED0B2A8594B` | Tự động, riêng cho từng chip |
 | Tên Bluetooth khi chờ ghép nối | `AirQuality-3840` | `CONFIG_BLE_DEVICE_NAME_PREFIX` trong `sdkconfig.defaults` |
@@ -259,7 +260,7 @@ matter-pm25-sensor/
 ├── main/
 │   ├── chip_project_config.h # Tên/loại thiết bị khi dò tìm ghép nối
 │   ├── app_main.cpp          # Matter node, endpoint Air Quality Sensor, factory reset
-│   ├── device_info.cpp       # Manufacturer / Model (Basic Information)
+│   ├── device_info.cpp       # Manufacturer / Model / Hardware (Basic Information)
 │   ├── local_ui.cpp          # Logic màn hình / LED / radar chạy tại chỗ
 │   ├── Kconfig.projbuild     # Cấu hình chân và tham số
 │   ├── idf_component.yml
