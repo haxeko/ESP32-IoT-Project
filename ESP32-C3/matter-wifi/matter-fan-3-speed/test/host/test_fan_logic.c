@@ -1,7 +1,10 @@
 // Host test of the fan state machine (main/fan_logic.c)
 #include "check.h"
 
+#include <string.h>
+
 #include "fan_logic.h"
+#include "fan_record.h"
 
 static fan_state_t state(uint8_t speed, uint8_t last, bool swing)
 {
@@ -378,6 +381,55 @@ static void test_natural_pattern(void)
     CHECK_EQ(hold_ms, 600000);
 }
 
+// NVS record of the fan state: byte layout, older and newer versions (OTA rollback), invalid records
+static void test_record(void)
+{
+    // Layout: version, speed, last speed, oscillation, natural wind (unchanged since version 2)
+    uint8_t buf[FAN_RECORD_MAX_SIZE];
+    fan_state_t in = { 2, 2, true, true };
+    fan_record_encode(&in, buf);
+    const uint8_t expected[FAN_RECORD_SIZE] = { 2, 2, 2, 1, 1 };
+    CHECK(memcmp(buf, expected, sizeof(expected)) == 0);
+    fan_state_t out = { 0, 1, false, false };
+    CHECK(fan_record_decode(buf, FAN_RECORD_SIZE, &out));
+    CHECK(out.speed == 2 && out.last_speed == 2 && out.swing && out.natural);
+    in = (fan_state_t){ 0, 3, false, false };
+    fan_record_encode(&in, buf);
+    CHECK(fan_record_decode(buf, FAN_RECORD_SIZE, &out));
+    CHECK(out.speed == 0 && out.last_speed == 3 && !out.swing && !out.natural);
+
+    // Version 1 (4 bytes, no natural wind)
+    const uint8_t v1[] = { 1, 3, 3, 1 };
+    out = (fan_state_t){ 0, 1, false, true };
+    CHECK(fan_record_decode(v1, sizeof(v1), &out));
+    CHECK(out.speed == 3 && out.last_speed == 3 && out.swing && !out.natural);
+
+    // A newer, longer record (fields appended): the known fields are read
+    const uint8_t v3[] = { 3, 1, 1, 0, 1, 0xAA, 0xBB, 0xCC };
+    CHECK(fan_record_decode(v3, sizeof(v3), &out));
+    CHECK(out.speed == 1 && out.last_speed == 1 && !out.swing && out.natural);
+
+    // Invalid records leave the state unchanged
+    const fan_state_t before = { 2, 2, true, false };
+    const uint8_t v1_long[] = { 1, 3, 3, 1, 1 };  // version 1 is exactly 4 bytes
+    const uint8_t v2_short[] = { 2, 3, 3, 1 };    // version 2 needs 5 bytes
+    const uint8_t v0[] = { 0, 1, 1, 0, 0 };
+    const uint8_t *bad[] = { v1_long, v2_short, v0 };
+    const size_t bad_len[] = { sizeof(v1_long), sizeof(v2_short), sizeof(v0) };
+    for (unsigned i = 0; i < 3; i++) {
+        out = before;
+        CHECK(!fan_record_decode(bad[i], bad_len[i], &out));
+        CHECK(memcmp(&out, &before, sizeof(out)) == 0);
+    }
+    CHECK(!fan_record_decode(v1, 0, &out));
+    CHECK(!fan_record_decode(NULL, 5, &out));
+
+    // Out-of-range values are sanitized
+    const uint8_t odd[] = { 2, 9, 0, 7, 9 };
+    CHECK(fan_record_decode(odd, sizeof(odd), &out));
+    CHECK(out.speed == 0 && out.last_speed == FAN_DEFAULT_SPEED && out.swing && out.natural);
+}
+
 int main(void)
 {
     test_percent_rules();
@@ -389,5 +441,6 @@ int main(void)
     test_sanitize();
     test_natural();
     test_natural_pattern();
+    test_record();
     return test_result("fan_logic");
 }

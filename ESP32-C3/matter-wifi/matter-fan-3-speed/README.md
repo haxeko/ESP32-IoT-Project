@@ -349,8 +349,8 @@ test/host/run.sh
 
 | Test | Kiểm tra |
 |---|---|
-| `test_fan_logic.c` | số ↔ % khớp với quy tắc Fan Control mà cluster Matter áp dụng (SpeedSetting = làm tròn lên, PercentSetting = làm tròn xuống, FanMode Low/Medium/High); bật/tắt nhớ số cũ, chuyển số vòng, đặt số, relay đảo gió không bao giờ đóng khi quạt tắt (thử mọi trạng thái × mọi lệnh), lệnh Step (wrap, lowest off), dữ liệu lưu bị hỏng; gió tự nhiên độc lập với số (WindSetting không bật quạt, đổi số vẫn giữ gió tự nhiên, tắt quạt vẫn nhớ), nhịp gió tự nhiên (trong khoảng của số đang đặt, motor không dừng, luôn đổi số, thời gian giữ trong giới hạn) |
-| `test_ir.c` | chuyển dữ liệu RMT thành xung (bỏ mức nghỉ đầu khung, gộp đoạn cùng mức, cắt khung quá dài); giải mã NEC với méo của mắt thu và nhiễu thời gian, khung lặp NEC, khung hỏng; mã theo hình dạng (Sony, Samsung) ổn định với nhiễu và khác nhau giữa các nút; lọc nhiễu; giữ nút không lặp lệnh; bảng nút đã học (POWER thành ON khi có nút OFF, học lại chuyển chức năng, nút NATURAL) |
+| `test_fan_logic.c` | số ↔ % khớp với quy tắc Fan Control mà cluster Matter áp dụng (SpeedSetting = làm tròn lên, PercentSetting = làm tròn xuống, FanMode Low/Medium/High); bật/tắt nhớ số cũ, chuyển số vòng, đặt số, relay đảo gió không bao giờ đóng khi quạt tắt (thử mọi trạng thái × mọi lệnh), lệnh Step (wrap, lowest off), dữ liệu lưu bị hỏng; gió tự nhiên độc lập với số (WindSetting không bật quạt, đổi số vẫn giữ gió tự nhiên, tắt quạt vẫn nhớ), nhịp gió tự nhiên (trong khoảng của số đang đặt, motor không dừng, luôn đổi số, thời gian giữ trong giới hạn); bản ghi NVS (bố cục byte, phiên bản 1, bản ghi dài hơn của bản mới, bản ghi hỏng) |
+| `test_ir.c` | chuyển dữ liệu RMT thành xung (bỏ mức nghỉ đầu khung, gộp đoạn cùng mức, cắt khung quá dài); giải mã NEC với méo của mắt thu và nhiễu thời gian, khung lặp NEC, khung hỏng; mã theo hình dạng (Sony, Samsung) ổn định với nhiễu và khác nhau giữa các nút; lọc nhiễu; giữ nút không lặp lệnh; bảng nút đã học (POWER thành ON khi có nút OFF, học lại chuyển chức năng, nút NATURAL); bản ghi mã remote (bố cục, phiên bản 1 có 7 nút, bản ghi dài hơn, bản ghi hỏng) |
 
 Phần relay, Matter, Wi-Fi và BLE vẫn phải thử trên thiết bị thật.
 
@@ -364,11 +364,12 @@ main/app_main.cpp          khởi tạo, node Matter, sự kiện ghép nối/LE
 main/fan_matter.cpp        endpoint Fan, delegate Fan Control <-> task quạt (SpeedSetting, Rocking, Wind)
 main/fan_ctrl.cpp          task quạt: hàng đợi lệnh, gió tự nhiên, lưu trạng thái sau 3 s, chống khởi động lỗi lặp lại
 main/relays.cpp            relay số và relay trục xoay (ngắt trước - đóng sau, thời gian chết), kiểm tra chân GPIO khi build
-main/fan_store.cpp         bản ghi trạng thái quạt trong NVS (phiên bản 2, đọc được phiên bản 1)
+main/fan_store.cpp         đọc/ghi trạng thái quạt trong NVS
+main/fan_record.c          định dạng bản ghi trạng thái quạt: phiên bản 2, đọc được phiên bản 1 và bản ghi mới hơn (thuần C, có test)
 main/fan_logic.c           máy trạng thái quạt (thuần C, có test)
 main/ir_rx.cpp             mắt thu hồng ngoại (RMT), học remote, lưu mã
 main/ir_decode.c           giải mã NEC, mã theo hình dạng khung, lọc lặp phím (thuần C, có test)
-main/ir_table.c            bảng nút remote đã học -> lệnh quạt (thuần C, có test)
+main/ir_table.c            bảng nút remote đã học -> lệnh quạt, định dạng bản ghi mã remote (thuần C, có test)
 main/buttons.cpp           nút BOOT (1/2/3 lần, giữ 5 s), nút số / đảo gió / gió tự nhiên ngoài
 main/status_led.cpp        LED trạng thái (GPIO hoặc WS2812)
 main/device_info.cpp       nhà sản xuất, kiểu máy, tên, phần cứng, số sê-ri (MAC Wi-Fi)

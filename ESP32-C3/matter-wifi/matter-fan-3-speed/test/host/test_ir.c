@@ -325,6 +325,62 @@ static void test_table(void)
     CHECK_EQ(sizeof(ir_table_t), 8 * IR_FUNC_COUNT);
 }
 
+// NVS record of the learned codes: layout, version 1 (7 functions), newer and longer records, invalid records
+static void test_record(void)
+{
+    CHECK_EQ(IR_RECORD_SIZE, 68);
+    ir_table_t t;
+    memset(&t, 0, sizeof(t));
+    for (int i = 0; i < IR_FUNC_COUNT; i++) {
+        ir_code_t c = { IR_PROTO_NEC, 34, 0, 0x1000u + (uint32_t)i };
+        ir_table_assign(&t, i, &c);
+    }
+    uint8_t buf[IR_RECORD_SIZE + 8];
+    ir_record_encode(&t, buf);
+    // Layout: little-endian version, then the codes as stored in the table
+    CHECK(buf[0] == IR_RECORD_VERSION && buf[1] == 0 && buf[2] == 0 && buf[3] == 0);
+    CHECK(memcmp(buf + 4, t.codes, sizeof(t.codes)) == 0);
+    ir_table_t out;
+    memset(&out, 0xFF, sizeof(out));
+    CHECK(ir_record_decode(buf, IR_RECORD_SIZE, &out));
+    CHECK(memcmp(&out, &t, sizeof(t)) == 0);
+
+    // Version 1: 7 functions, NATURAL not learned
+    uint8_t v1[4 + 7 * 8];
+    memcpy(v1, buf, sizeof(v1));
+    v1[0] = 1;
+    memset(&out, 0xFF, sizeof(out));
+    CHECK(ir_record_decode(v1, sizeof(v1), &out));
+    CHECK(memcmp(out.codes, t.codes, 7 * sizeof(ir_code_t)) == 0);
+    CHECK_EQ(out.codes[IR_FUNC_NATURAL].proto, IR_PROTO_NONE);
+    CHECK_EQ(ir_table_count(&out), 7);
+
+    // A newer record with one more function appended: the known ones are read
+    buf[0] = 3;
+    memset(buf + IR_RECORD_SIZE, 0x5A, 8);
+    memset(&out, 0, sizeof(out));
+    CHECK(ir_record_decode(buf, IR_RECORD_SIZE + 8, &out));
+    CHECK(memcmp(&out, &t, sizeof(t)) == 0);
+    buf[0] = IR_RECORD_VERSION;
+
+    // Invalid records leave the table unchanged
+    ir_table_t keep;
+    memset(&keep, 0x33, sizeof(keep));
+    out = keep;
+    CHECK(!ir_record_decode(buf, IR_RECORD_SIZE - 8, &out)); // version 2, too short
+    uint8_t v1_long[4 + 8 * 8];
+    memcpy(v1_long, buf, sizeof(v1_long));
+    v1_long[0] = 1;
+    CHECK(!ir_record_decode(v1_long, sizeof(v1_long), &out)); // version 1 is exactly 7 functions
+    uint8_t v0[IR_RECORD_SIZE];
+    memcpy(v0, buf, sizeof(v0));
+    v0[0] = 0;
+    CHECK(!ir_record_decode(v0, sizeof(v0), &out));
+    CHECK(!ir_record_decode(buf, 3, &out));
+    CHECK(!ir_record_decode(NULL, IR_RECORD_SIZE, &out));
+    CHECK(memcmp(&out, &keep, sizeof(keep)) == 0);
+}
+
 int main(void)
 {
     test_nec();
@@ -332,5 +388,6 @@ int main(void)
     test_rmt_conversion();
     test_press_filter();
     test_table();
+    test_record();
     return test_result("ir");
 }

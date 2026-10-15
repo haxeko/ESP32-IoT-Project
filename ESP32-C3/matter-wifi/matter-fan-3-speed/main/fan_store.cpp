@@ -1,33 +1,14 @@
 #include <fan_store.h>
 
-#include <string.h>
-
 #include <esp_log.h>
 #include <nvs.h>
 
+#include <fan_record.h>
+
 static const char *TAG = "fan_store";
 
-namespace {
-
-/* Layout stored as is: keep it. Records are append-only: a newer firmware may add fields at the end (and a higher
- * version), never change the existing ones, so an older firmware still reads what it knows, e.g. after an OTA
- * rollback. Version 1 was the first 4 bytes (no natural byte). */
-struct StoredState {
-    uint8_t version;
-    uint8_t speed;
-    uint8_t last_speed;
-    uint8_t swing;
-    uint8_t natural;
-};
-static_assert(sizeof(StoredState) == 5, "NVS record layout changed");
-
-constexpr uint8_t k_state_version = 2;
-constexpr size_t k_state_v1_size = 4;
-constexpr size_t k_state_max_size = 64; /* longest record accepted from a newer firmware */
-constexpr const char *k_nvs_namespace = "fan";
-constexpr const char *k_nvs_key_state = "state";
-
-} // namespace
+static constexpr const char *k_nvs_namespace = "fan";
+static constexpr const char *k_nvs_key_state = "state";
 
 bool fan_store_load(fan_state_t *state)
 {
@@ -35,39 +16,32 @@ bool fan_store_load(fan_state_t *state)
     if (nvs_open(k_nvs_namespace, NVS_READONLY, &handle) != ESP_OK) {
         return false; /* nothing stored yet */
     }
-    uint8_t buf[k_state_max_size];
+    /* Read the whole record, whatever its length: a newer firmware may have stored a longer one */
+    uint8_t buf[FAN_RECORD_MAX_SIZE];
     size_t len = sizeof(buf);
     const esp_err_t err = nvs_get_blob(handle, k_nvs_key_state, buf, &len);
     nvs_close(handle);
-    if (err != ESP_OK || len == 0) {
-        if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+    if (err != ESP_OK) {
+        if (err != ESP_ERR_NVS_NOT_FOUND) {
             ESP_LOGW(TAG, "Fan state not loaded: %s", esp_err_to_name(err));
         }
         return false;
     }
-    StoredState stored = {};
-    memcpy(&stored, buf, len < sizeof(stored) ? len : sizeof(stored));
-    const bool v1 = stored.version == 1 && len == k_state_v1_size; /* before natural wind: off */
-    if (!v1 && (stored.version < k_state_version || len < sizeof(stored))) {
-        ESP_LOGW(TAG, "Unknown fan state record (version %u, %u bytes): ignored", stored.version, (unsigned)len);
+    if (!fan_record_decode(buf, len, state)) {
+        ESP_LOGW(TAG, "Unknown fan state record (version %u, %u bytes): ignored", len ? buf[0] : 0, (unsigned)len);
         return false;
     }
-    state->speed = stored.speed;
-    state->last_speed = stored.last_speed;
-    state->swing = stored.swing != 0;
-    state->natural = !v1 && stored.natural != 0;
-    fan_state_sanitize(state);
     return true;
 }
 
 esp_err_t fan_store_write(const fan_state_t *state)
 {
-    const StoredState stored = {k_state_version, state->speed, state->last_speed, (uint8_t)state->swing,
-                                (uint8_t)state->natural};
+    uint8_t buf[FAN_RECORD_SIZE];
+    fan_record_encode(state, buf);
     nvs_handle_t handle;
     esp_err_t err = nvs_open(k_nvs_namespace, NVS_READWRITE, &handle);
     if (err == ESP_OK) {
-        err = nvs_set_blob(handle, k_nvs_key_state, &stored, sizeof(stored));
+        err = nvs_set_blob(handle, k_nvs_key_state, buf, sizeof(buf));
         if (err == ESP_OK) {
             err = nvs_commit(handle);
         }

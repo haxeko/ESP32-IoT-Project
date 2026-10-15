@@ -67,6 +67,35 @@ bool ir_table_command(const ir_table_t *table, int func, fan_cmd_t *cmd)
     }
 }
 
+_Static_assert(sizeof(ir_code_t) == 8 && sizeof(ir_table_t) == 8 * IR_FUNC_COUNT, "NVS record layout changed");
+
+void ir_record_encode(const ir_table_t *table, uint8_t buf[IR_RECORD_SIZE])
+{
+    const uint32_t version = IR_RECORD_VERSION;
+    memcpy(buf, &version, sizeof(version));
+    memcpy(buf + sizeof(version), table->codes, sizeof(table->codes));
+}
+
+bool ir_record_decode(const uint8_t *buf, size_t len, ir_table_t *table)
+{
+    if (buf == NULL || len < sizeof(uint32_t)) {
+        return false;
+    }
+    uint32_t version;
+    memcpy(&version, buf, sizeof(version));
+    size_t functions;
+    if (version == 1 && len == sizeof(version) + IR_RECORD_V1_FUNCTIONS * sizeof(ir_code_t)) {
+        functions = IR_RECORD_V1_FUNCTIONS;
+    } else if (version >= IR_RECORD_VERSION && len >= IR_RECORD_SIZE) {
+        functions = IR_FUNC_COUNT;
+    } else {
+        return false;
+    }
+    memset(table, 0, sizeof(*table));
+    memcpy(table->codes, buf + sizeof(version), functions * sizeof(ir_code_t));
+    return true;
+}
+
 const char *ir_func_name(int func)
 {
     static const char *const names[IR_FUNC_COUNT] = {

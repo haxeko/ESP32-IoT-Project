@@ -9,7 +9,7 @@ OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 FLAGS="-std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -I . -I $MAIN"
 
-$CC $FLAGS -o "$OUT/fan_logic" test_fan_logic.c "$MAIN/fan_logic.c"
+$CC $FLAGS -o "$OUT/fan_logic" test_fan_logic.c "$MAIN/fan_logic.c" "$MAIN/fan_record.c"
 $CC $FLAGS -o "$OUT/ir" test_ir.c "$MAIN/ir_decode.c" "$MAIN/ir_table.c" "$MAIN/fan_logic.c"
 
 status=0

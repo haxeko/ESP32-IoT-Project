@@ -55,16 +55,7 @@ constexpr int64_t k_learn_timeout_us = CONFIG_IR_LEARN_TIMEOUT_S * 1000000LL;
  * next button */
 constexpr int64_t k_learn_quiet_us = 600 * 1000;
 
-/* NVS record of the learned codes. Same namespace as the fan state. Version 1 had 7 functions (no NATURAL): new
- * functions are appended, so an older record is a prefix of the table. */
-struct StoredCodes {
-    uint32_t version;
-    ir_table_t table;
-};
-constexpr uint32_t k_codes_version = 2;
-constexpr size_t k_codes_v1_functions = 7;
-/* Longest record accepted from a newer firmware (functions appended) */
-constexpr size_t k_codes_max_size = 1024;
+/* NVS record of the learned codes (layout: ir_table.h). Same namespace as the fan state. */
 constexpr const char *k_nvs_namespace = "fan";
 constexpr const char *k_nvs_key_codes = "ir_codes";
 
@@ -146,7 +137,7 @@ static void load_codes()
     size_t len = 0;
     esp_err_t err = nvs_get_blob(handle, k_nvs_key_codes, NULL, &len);
     uint8_t *buf = NULL;
-    if (err == ESP_OK && len >= sizeof(uint32_t) && len <= k_codes_max_size) {
+    if (err == ESP_OK && len >= sizeof(uint32_t) && len <= IR_RECORD_MAX_SIZE) {
         buf = (uint8_t *)malloc(len);
         err = buf ? nvs_get_blob(handle, k_nvs_key_codes, buf, &len) : ESP_ERR_NO_MEM;
     } else if (err == ESP_OK) {
@@ -160,29 +151,20 @@ static void load_codes()
         free(buf);
         return;
     }
-    StoredCodes stored;
-    memset(&stored, 0, sizeof(stored));
-    memcpy(&stored, buf, len < sizeof(stored) ? len : sizeof(stored));
-    free(buf);
-    const bool v1 = stored.version == 1 && len == sizeof(uint32_t) + k_codes_v1_functions * sizeof(ir_code_t);
-    if (v1 || (stored.version >= k_codes_version && len >= sizeof(stored))) {
-        s_table = stored.table; /* v1: the functions it did not have stay zero (not learned) */
-    } else {
-        ESP_LOGW(TAG, "Unknown remote buttons record (version %lu, %u bytes): ignored", (unsigned long)stored.version,
-                 (unsigned)len);
+    if (!ir_record_decode(buf, len, &s_table)) {
+        ESP_LOGW(TAG, "Unknown remote buttons record (%u bytes): ignored", (unsigned)len);
     }
+    free(buf);
 }
 
 static void save_codes()
 {
-    StoredCodes stored;
-    memset(&stored, 0, sizeof(stored));
-    stored.version = k_codes_version;
-    stored.table = s_table;
+    uint8_t record[IR_RECORD_SIZE];
+    ir_record_encode(&s_table, record);
     nvs_handle_t handle;
     esp_err_t err = nvs_open(k_nvs_namespace, NVS_READWRITE, &handle);
     if (err == ESP_OK) {
-        err = nvs_set_blob(handle, k_nvs_key_codes, &stored, sizeof(stored));
+        err = nvs_set_blob(handle, k_nvs_key_codes, record, sizeof(record));
         if (err == ESP_OK) {
             err = nvs_commit(handle);
         }
