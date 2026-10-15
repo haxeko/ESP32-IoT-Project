@@ -20,24 +20,6 @@ static const char *TAG = "radar_settings";
 // The radar answers commands again about a second after a restart.
 static constexpr uint32_t kRestartMs = 1000;
 
-// The radar keeps reporting a target for this long after losing it; Matter
-// HoldTime then adds its own delay before the room turns unoccupied. The
-// LD2410 factory default is 5 s.
-const radar_duration_option_t radar_duration_options[RADAR_DURATION_OPTION_COUNT] = {
-    { 0, "0 s" },     { 5, "5 s" },     { 10, "10 s" },   { 15, "15 s" },   { 30, "30 s" },
-    { 60, "1 min" },  { 120, "2 min" }, { 300, "5 min" }, { 600, "10 min" },
-};
-
-int radar_duration_option(uint16_t seconds)
-{
-    for (int i = 0; i < RADAR_DURATION_OPTION_COUNT; i++) {
-        if (radar_duration_options[i].seconds == seconds) {
-            return i;
-        }
-    }
-    return -1;
-}
-
 void radar_format_duration(uint16_t seconds, char *buf, size_t len)
 {
     const unsigned min = seconds / 60;

@@ -15,10 +15,11 @@
 // shows each one as a select entity named after the cluster Description,
 // Apple Home does not show Mode Select.
 //  - "Learn empty room" (Off / Learning) on the occupancy endpoint
-//  - "Duration": no-one duration of the radar, on its own endpoint
 //  - "Range": farthest detection gate (moving and still), on its own endpoint
-//  - "Detection accuracy": gate length 0.75 m or 0.2 m (LD2410B/C), on its own
+//  - "Radar accuracy": gate length 0.75 m or 0.2 m (LD2410B/C), on its own
 //    endpoint
+// The delay before "unoccupied" is set with Matter HoldTime; the radar's own
+// no-one duration is left as stored in the radar.
 // One worker task sends all the radar commands, one session at a time.
 
 // Before esp_matter::start().

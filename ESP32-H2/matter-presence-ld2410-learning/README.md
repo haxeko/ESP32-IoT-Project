@@ -1,6 +1,6 @@
 # Matter Presence Sensor + học phòng trống (ESP32-H2 + HLK-LD2410, Thread)
 
-> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Duration**, **Range** và **Detection accuracy** chỉnh thời gian giữ, khoảng cách phát hiện và độ phân giải của radar. Phần cứng, chân nối, ghép nối, LED, nút bấm giống hệt bản gốc.
+> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 3 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar accuracy** chỉnh khoảng cách phát hiện và độ phân giải của radar; thời gian chờ chỉnh bằng **Hold time**. Tên thiết bị: **Presence Sensor**. Phần cứng, chân nối, ghép nối, LED, nút bấm giống hệt bản gốc.
 
 Cảm biến hiện diện chuẩn **Matter over Thread** chạy trên **ESP32-H2** với radar 24 GHz **HLK-LD2410**. Đây là bản chuyển từ Zigbee (`ESP32-H2/zigbee-presence-occupancy`) sang Matter: cùng chip ESP32-H2, cùng radio 802.15.4, nhưng thay Zigbee bằng Thread + Matter. Thêm trực tiếp vào **Apple Home**, Google Home, Home Assistant, SmartThings, Alexa... mà không cần Zigbee coordinator / Zigbee2MQTT.
 
@@ -20,7 +20,7 @@ Radar LD2410 phát hiện được cả người đang ngồi yên (thở, cử 
 Logic phát hiện giữ nguyên như các bản LD2410 khác trong repo:
 
 - **Có người** ngay khi radar thấy mục tiêu đang di chuyển hoặc đứng yên.
-- **Không có người** sau khi radar không thấy ai trong khoảng **HoldTime**. Bộ đếm do cluster Matter xử lý, nên chỉnh HoldTime trong app có tác dụng ngay. Bản thân LD2410 cũng giữ trạng thái có người thêm một khoảng (**Duration**, xem bên dưới) trước khi báo mất mục tiêu, nên tổng thời gian = Duration + HoldTime.
+- **Không có người** sau khi radar không thấy ai trong khoảng **HoldTime**. Bộ đếm do cluster Matter xử lý, nên chỉnh HoldTime trong app có tác dụng ngay. Bản thân LD2410 cũng giữ trạng thái có người thêm một khoảng (*unmanned duration*, mặc định 5 s) trước khi báo mất mục tiêu, nên tổng thời gian = khoảng đó + HoldTime.
 - Nếu radar không gửi dữ liệu quá **10 giây** (lỏng dây, mất nguồn), thiết bị báo **không có người** và ghi lỗi vào log. Có dữ liệu lại thì tự hoạt động bình thường.
 - Tuỳ chọn chỉ tính người ở gần hơn một khoảng cách (*Only count targets closer than*). Độ nhạy từng vùng (gate) được chỉnh tự động bằng chức năng **học phòng trống** bên dưới, khoảng cách phát hiện bằng entity **Range** (hoặc bằng app **HLKRadarTool** qua Bluetooth của LD2410B/C).
 
@@ -56,33 +56,33 @@ I quiet_learn: Learning done: new thresholds saved in the LD2410 (300 reports)
 - Radar không trả lời lệnh: không ghi gì, log báo kiểm tra dây **GPIO12 → chân RX của LD2410** (bản gốc chỉ đọc radar nên có thể chưa nối dây này).
 - Thời gian chờ, thời gian ghi và mức +10 chỉnh được trong `menuconfig` → *Empty Room Learning*.
 
-## Duration, Range và Detection accuracy (thông số của LD2410)
+## Hold time, Range và Radar accuracy
 
-Cũng trong mục *Cấu hình* của thiết bị trên Home Assistant có thêm ba entity dạng select:
+Trong mục *Cấu hình* của thiết bị trên Home Assistant, các entity xếp theo tên: **Hold time**, **Learn empty room**, **Radar accuracy**, **Range** (Home Assistant luôn xếp theo thứ tự chữ cái, nên tên được chọn để ra đúng thứ tự này).
 
-| Entity | Thông số LD2410 | Lựa chọn |
+| Entity | Ý nghĩa | Lựa chọn |
 |---|---|---|
-| **Duration** | *Unmanned duration* (no-one duration): radar tiếp tục báo có người thêm khoảng này sau khi mất mục tiêu | `0 s`, `5 s` (mặc định nhà sản xuất), `10 s`, `15 s`, `30 s`, `1 min`, `2 min`, `5 min`, `10 min` |
-| **Range** | *Detection range*: gate xa nhất radar còn xét, đặt cùng lúc cho mục tiêu chuyển động và đứng yên | `1.5 m`, `2.25 m`, `3 m`, `3.75 m`, `4.5 m`, `5.25 m`, `6 m` (gate 2–8, mỗi gate 0,75 m; mặc định 6 m). Ở độ phân giải 0,2 m là `0.4 m` … `1.6 m` |
-| **Detection accuracy** | *Distance resolution*: độ dài mỗi gate | `0.75 m` (mặc định nhà sản xuất, xa tới 6 m), `0.2 m` (chỉ LD2410B/C: đo khoảng cách mịn hơn nhưng chỉ xa tới 1,6 m) |
+| **Hold time** | Thời gian giữ "có người" sau khi radar hết thấy người (Matter HoldTime, lưu trong ESP32) | 1–300 s, mặc định 30 s |
+| **Radar accuracy** | *Distance resolution* của LD2410: độ dài mỗi gate | `0.75 m` (mặc định nhà sản xuất, xa tới 6 m), `0.2 m` (chỉ LD2410B/C: đo khoảng cách mịn hơn nhưng chỉ xa tới 1,6 m) |
+| **Range** | *Detection range* của LD2410: gate xa nhất radar còn xét, đặt cùng lúc cho mục tiêu chuyển động và đứng yên | `1.5 m`, `2.25 m`, `3 m`, `3.75 m`, `4.5 m`, `5.25 m`, `6 m` (gate 2–8, mỗi gate 0,75 m; mặc định 6 m). Ở độ phân giải 0,2 m là `0.4 m` … `1.6 m` |
 
-- Giá trị được ghi vào **bộ nhớ của LD2410** (giữ khi mất điện, khi nạp lại firmware ESP32-H2) rồi đọc lại để kiểm tra; Home Assistant hiển thị giá trị radar thực sự đang giữ. Lúc khởi động firmware đọc thông số của radar (log `radar_ctl: LD2410 settings: ...`).
-- Radar đang giữ một giá trị không có trong danh sách (đặt bằng HLKRadarTool) thì danh sách có thêm đúng giá trị đó, ví dụ `7 s` hoặc `Moving 4.5 m, still 3 m`.
-- **Thời gian từ lúc người rời đi tới khi báo "không có người" ≈ Duration + Hold time.** Ví dụ Duration 5 s + Hold time 30 s → khoảng 35 s. Muốn tắt đèn nhanh hơn thì giảm một trong hai; hay bị báo "không có người" khi ngồi yên lâu thì tăng Duration hoặc Hold time.
+- **Thời gian chờ chỉnh bằng Hold time.** Từ lúc người rời đi tới khi báo "không có người" ≈ *unmanned duration* của radar + Hold time. Firmware không đổi *unmanned duration*: radar giữ giá trị đang lưu (mặc định nhà sản xuất 5 s, xem trong log `radar_ctl: LD2410 settings: no-one duration ...`; đổi bằng app HLKRadarTool nếu cần). Muốn đèn tắt nhanh thì giảm Hold time; hay bị báo "không có người" khi ngồi yên thì tăng Hold time.
+- Radar accuracy và Range được ghi vào **bộ nhớ của LD2410** (giữ khi mất điện, khi nạp lại firmware ESP32-H2) rồi đọc lại để kiểm tra; Home Assistant hiển thị giá trị radar thực sự đang giữ. Lúc khởi động firmware đọc thông số của radar (log `radar_ctl: LD2410 settings: ...`).
+- Radar đang giữ gate xa nhất khác nhau cho chuyển động và đứng yên (đặt bằng HLKRadarTool) thì Range có thêm đúng giá trị đó, ví dụ `Moving 4.5 m, still 3 m`.
 - **Range** do radar xử lý: mục tiêu xa hơn bị bỏ qua hoàn toàn (ví dụ không bắt người ở phòng bên qua vách mỏng). Tuỳ chọn *Only count targets closer than* trong menuconfig thì lọc trong firmware, sau khi radar đã báo.
 - Radar chưa trả lời lệnh (chưa nối dây **GPIO12 → chân RX của LD2410**): thay đổi trong Home Assistant bị bỏ qua, entity giữ giá trị cũ; firmware thử đọc lại radar sau 15 s, 30 s, 1 min... (tối đa 5 min một lần).
-- **Detection accuracy**: radar có 9 gate (0–8) nên gate 0,2 m chỉ phủ tới khoảng 1,6 m, hợp với chỗ ngồi gần như bàn làm việc, đầu giường. Đổi độ phân giải thì firmware ghi vào LD2410 rồi **khởi động lại radar** (mất tín hiệu khoảng 1–3 s) và đọc lại; các lựa chọn của Range tự đổi theo (ví dụ `6 m` thành `1.6 m`). Ngưỡng từng gate đã học là cho độ dài gate cũ, nên **học lại phòng trống** sau khi đổi. Radar không trả lời lệnh độ phân giải (LD2410 đời đầu, firmware cũ) thì entity chỉ có `0.75 m`.
-- Đang học phòng trống thì thay đổi Duration/Range/Detection accuracy được áp dụng ngay sau khi học xong.
-- Mỗi endpoint Matter chỉ có một cluster *Mode Select*, nên Duration, Range và Detection accuracy nằm trên 3 endpoint riêng (2, 3 và 4) kiểu thiết bị *Mode Select* (0x0027). Apple Home không hỗ trợ kiểu thiết bị này nên vẫn chỉ hiện cảm biến chiếm chỗ (dự kiến theo tài liệu, chưa thử trên thiết bị Apple thật).
-- Thiết bị đã ghép nối với bản fork cũ: nếu sau khi nạp firmware mới Home Assistant chưa hiện các entity mới, mở trang thiết bị → *Matter* (⋮) → **Re-interview device**.
+- **Radar accuracy**: radar có 9 gate (0–8) nên gate 0,2 m chỉ phủ tới khoảng 1,6 m, hợp với chỗ ngồi gần như bàn làm việc, đầu giường. Đổi độ phân giải thì firmware ghi vào LD2410 rồi **khởi động lại radar** (mất tín hiệu khoảng 1–3 s) và đọc lại; các lựa chọn của Range tự đổi theo (ví dụ `6 m` thành `1.6 m`). Ngưỡng từng gate đã học là cho độ dài gate cũ, nên **học lại phòng trống** sau khi đổi. Radar không trả lời lệnh độ phân giải (LD2410 đời đầu, firmware cũ) thì entity chỉ có `0.75 m`.
+- Đang học phòng trống thì thay đổi Range/Radar accuracy được áp dụng ngay sau khi học xong.
+- Mỗi endpoint Matter chỉ có một cluster *Mode Select*, nên Range và Radar accuracy nằm trên 2 endpoint riêng (2 và 3) kiểu thiết bị *Mode Select* (0x0027). Apple Home không hỗ trợ kiểu thiết bị này nên vẫn chỉ hiện cảm biến chiếm chỗ (dự kiến theo tài liệu, chưa thử trên thiết bị Apple thật).
+- Nâng cấp từ bản có entity Duration mà giữ ghép nối: các endpoint đổi số, nên trong Home Assistant xoá thiết bị rồi thêm lại (hoặc nạp file merged và ghép nối lại) để entity cũ không còn sót.
 
-Với chip-tool (endpoint 2 = Duration, mode = vị trí trong danh sách trên; endpoint 3 = Range, mode = số gate; endpoint 4 = Detection accuracy, mode 0 = 0,75 m, 1 = 0,2 m):
+Với chip-tool (endpoint 2 = Range, mode = số gate; endpoint 3 = Radar accuracy, mode 0 = 0,75 m, 1 = 0,2 m):
 
 ```bash
+chip-tool occupancysensing write hold-time 60 0x7283 1
 chip-tool modeselect read supported-modes 0x7283 2
-chip-tool modeselect change-to-mode 4 0x7283 2    # Duration 30 s
-chip-tool modeselect change-to-mode 6 0x7283 3    # Range gate 6 = 4.5 m
-chip-tool modeselect change-to-mode 1 0x7283 4    # Detection accuracy 0.2 m
+chip-tool modeselect change-to-mode 6 0x7283 2    # Range gate 6 = 4.5 m
+chip-tool modeselect change-to-mode 1 0x7283 3    # Radar accuracy 0.2 m
 ```
 
 ## Phần cứng
@@ -227,7 +227,7 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 | Nhà sản xuất (Manufacturer) | `Haxeko` |
 | Kiểu máy (Model) | `H2 Occupancy` |
 | Phần cứng (Hardware) | `ESP32H2-LD2410` |
-| Tên thiết bị khi ghép nối | `Occupancy Sensor` (cũng là tên DNS-SD; tên Bluetooth là `Occupancy-<discriminator>`, ví dụ `Occupancy-3840`) |
+| Tên thiết bị khi ghép nối | `Presence Sensor` (cũng là tên DNS-SD; tên Bluetooth là `Presence-<discriminator>`, ví dụ `Presence-3840`) |
 | Số serial | Địa chỉ MAC gốc trong eFuse, ví dụ `744DBDA1B2C3`. Tự động, riêng cho từng chip |
 | Firmware | `1.0.<số commit>`, tự tăng sau mỗi commit; cũng là số phiên bản Matter dùng cho OTA |
 
@@ -247,13 +247,13 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 
 Đo bằng `idf.py size` (ESP-IDF v6.0.2, esp-matter 1.6.1, cấu hình mặc định):
 
-| | Bản ổn định | Fork, chỉ học phòng trống | Fork + Duration, Range, Detection accuracy |
+| | Bản ổn định | Fork, chỉ học phòng trống | Fork + Range, Radar accuracy |
 |---|---|---|---|
-| Firmware (phân vùng app 1 920 KB) | 1 725 KB, trống 195 KB (10 %) | 1 741 KB, trống 179 KB (9 %) | 1 747 KB, trống 173 KB (9 %) |
-| RAM tĩnh (DIRAM 252 KB) | 166,9 KB (66,2 %) | 168,1 KB (66,7 %) | 169,9 KB (67,4 %) |
-| DIRAM còn trống (vùng dành cho heap) | 85,1 KB | 83,8 KB | 82,1 KB |
+| Firmware (phân vùng app 1 920 KB) | 1 725 KB, trống 195 KB (10 %) | 1 741 KB, trống 179 KB (9 %) | 1 746 KB, trống 174 KB (9 %) |
+| RAM tĩnh (DIRAM 252 KB) | 166,9 KB (66,2 %) | 168,1 KB (66,7 %) | 169,3 KB (67,2 %) |
+| DIRAM còn trống (vùng dành cho heap) | 85,1 KB | 83,8 KB | 82,7 KB |
 
-Phần thêm Duration, Range và Detection accuracy tốn khoảng 6 KB flash và 1,8 KB RAM tĩnh. Khi chạy còn thêm task `radar_cfg` thường trực với stack 4 KB (bản trước chỉ tạo task 4 KB trong lúc học) và dữ liệu của 3 endpoint Matter mới. Flash và RAM tĩnh còn dư nhiều; heap thật khi chạy phụ thuộc Matter/Thread/BLE nên chỉ đo được trên thiết bị, bằng log `mem`:
+Phần thêm Range và Radar accuracy tốn khoảng 5 KB flash và 1,2 KB RAM tĩnh. Khi chạy còn thêm task `radar_cfg` thường trực với stack 4 KB (bản trước chỉ tạo task 4 KB trong lúc học) và dữ liệu của 2 endpoint Matter mới. Flash và RAM tĩnh còn dư nhiều; heap thật khi chạy phụ thuộc Matter/Thread/BLE nên chỉ đo được trên thiết bị, bằng log `mem`:
 
 ```
 I mem: Heap: <còn trống> bytes free, lowest <thấp nhất> since boot, largest block <khối lớn nhất>
@@ -299,7 +299,7 @@ matter-presence-ld2410-learning/
 ├── sdkconfig.defaults.esp32h2  # OpenThread (FTD, SRP client), chân radar, LED
 └── main/
     ├── app_main.cpp            # Matter node, endpoint Occupancy Sensor, OpenThread
-    ├── radar_control.cpp       # Mode Select "Learn empty room" / "Duration" / "Range" / "Detection accuracy", task cấu hình radar
+    ├── radar_control.cpp       # Mode Select "Learn empty room" / "Range" / "Radar accuracy", task cấu hình radar
     ├── radar_settings.cpp      # Danh sách lựa chọn, đọc/ghi thông số LD2410 (khởi động lại radar khi đổi độ phân giải)
     ├── quiet_learn.cpp         # Học phòng trống: engineering mode, tính và ghi ngưỡng vào LD2410
     ├── mem_monitor.cpp         # Log heap / stack định kỳ

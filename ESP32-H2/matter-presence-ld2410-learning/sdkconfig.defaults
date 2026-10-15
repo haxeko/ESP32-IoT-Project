@@ -26,15 +26,15 @@ CONFIG_ENABLE_CHIP_SHELL=y
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
 CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
 
-# Root, occupancy sensor, Duration, Range and Detection accuracy (Mode Select) endpoints
-CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=5
+# Root, occupancy sensor, Range and Radar accuracy (Mode Select) endpoints
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=4
 
 # Manufacturer / Model / Serial number come from main/device_info.cpp
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 
-# Bluetooth name while waiting for commissioning: "Occupancy-<discriminator>"
+# Bluetooth name while waiting for commissioning: "Presence-<discriminator>"
 # (at most 16 characters in total)
-CONFIG_BLE_DEVICE_NAME_PREFIX="Occupancy-"
+CONFIG_BLE_DEVICE_NAME_PREFIX="Presence-"
 
 # Name and device type in commissionable discovery (DNS-SD "DN" and "DT"),
 # shown by controllers before pairing. 263 = 0x0107 Occupancy Sensor.

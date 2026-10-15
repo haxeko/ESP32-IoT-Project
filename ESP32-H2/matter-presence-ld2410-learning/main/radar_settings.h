@@ -14,24 +14,12 @@
 
 #include <drivers/ld2410.h>
 
-// Options of the "Duration" (LD2410 no-one duration) and "Range" (farthest
-// detection gate) selects in Home Assistant. Each option is a Mode Select
-// mode: the option index for Duration, the gate number for Range. A radar
-// value that matches no option (set with the HLK tool) is shown as one extra
-// option with mode RADAR_MODE_CUSTOM.
+// Options of the "Range" select (farthest detection gate) in Home Assistant:
+// each option is a Mode Select mode, the gate number. Farthest gates that
+// differ between moving and still targets (set with the HLK tool) are shown as
+// one extra option with mode RADAR_MODE_CUSTOM.
 
 #define RADAR_MODE_CUSTOM 100
-
-typedef struct {
-    uint16_t seconds;
-    const char *label;
-} radar_duration_option_t;
-
-#define RADAR_DURATION_OPTION_COUNT 9
-extern const radar_duration_option_t radar_duration_options[RADAR_DURATION_OPTION_COUNT];
-
-// Option index of a no-one duration, -1 when it is not an option.
-int radar_duration_option(uint16_t seconds);
 
 // "45 s", "2 min", "1 min 30 s"
 void radar_format_duration(uint16_t seconds, char *buf, size_t len);

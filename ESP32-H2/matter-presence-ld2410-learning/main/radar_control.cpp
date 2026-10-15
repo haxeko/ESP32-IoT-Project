@@ -45,13 +45,11 @@ static constexpr uint32_t kSyncRetryMaxMs = 5 * 60 * 1000;
 static constexpr uint8_t kLearnOff = 0;
 static constexpr uint8_t kLearnOn = 1;
 
-// Detection accuracy modes: the LD2410 resolution codes
+// Radar accuracy modes: the LD2410 resolution codes
 static constexpr uint8_t kAccuracyCoarse = 0; // 0.75 m gates
 static constexpr uint8_t kAccuracyFine = 1;   // 0.2 m gates
 
 static constexpr size_t kRangeOptionCount = LD2410_MAX_MAX_GATE - LD2410_MIN_MAX_GATE + 1;
-// LD2410 factory no-one duration, shown until the radar has been read
-static constexpr uint16_t kFactoryDurationS = 5;
 
 static constexpr size_t kDistanceLabelLen = 12; // "5.25 m"
 static constexpr size_t kCustomLabelLen = 48;   // "Moving 5.25 m, still 5.25 m"
@@ -71,16 +69,12 @@ struct ModeList {
 
 static ModeOption s_learn_options[2];
 static ModeOption s_accuracy_options[2];
-static ModeOption s_duration_options[RADAR_DURATION_OPTION_COUNT + 1];
 static ModeOption s_range_options[kRangeOptionCount + 1];
 static char s_range_labels[kRangeOptionCount][kDistanceLabelLen];
-static char s_duration_custom_label[kCustomLabelLen];
 static char s_range_custom_label[kCustomLabelLen];
 
 static ModeList s_learn = { chip::kInvalidEndpointId, s_learn_options, 2, 2, nullptr };
 static ModeList s_accuracy = { chip::kInvalidEndpointId, s_accuracy_options, 2, 2, nullptr };
-static ModeList s_duration = { chip::kInvalidEndpointId, s_duration_options, RADAR_DURATION_OPTION_COUNT,
-                               RADAR_DURATION_OPTION_COUNT, s_duration_custom_label };
 static ModeList s_range = { chip::kInvalidEndpointId, s_range_options, kRangeOptionCount, kRangeOptionCount,
                             s_range_custom_label };
 
@@ -166,7 +160,7 @@ public:
 private:
     static const ModeList *find(chip::EndpointId endpointId)
     {
-        for (const ModeList *list : { &s_learn, &s_duration, &s_range, &s_accuracy }) {
+        for (const ModeList *list : { &s_learn, &s_range, &s_accuracy }) {
             if (list->endpoint_id == endpointId) {
                 return list;
             }
@@ -184,9 +178,8 @@ static RadarModesManager s_modes;
 enum LearnState : uint8_t { kLearnIdle, kLearnRequested, kLearnRunning, kLearnCancelling };
 static std::atomic<LearnState> s_learn_state{kLearnIdle};
 
-// Duration (seconds), Range (gate) and Detection accuracy (gate length) chosen
-// in Home Assistant, RADAR_KEEP once taken.
-static std::atomic<int32_t> s_want_duration_s{RADAR_KEEP};
+// Range (gate) and Radar accuracy (gate length) chosen in Home Assistant,
+// RADAR_KEEP once taken.
 static std::atomic<int32_t> s_want_gate{RADAR_KEEP};
 static std::atomic<int32_t> s_want_gate_cm{RADAR_KEEP};
 
@@ -236,16 +229,11 @@ static bool is_range_option(const ld2410_config_t &cfg)
            cfg.max_moving_gate <= LD2410_MAX_MAX_GATE;
 }
 
-// Shows the radar settings in the Duration, Range and Detection accuracy selects.
+// Shows the radar settings in the Range and Radar accuracy selects.
 static void publish(const radar_settings_t &settings)
 {
     const ld2410_config_t &cfg = settings.config;
     const uint16_t gate_cm = settings.gate_cm;
-    const int duration_option = radar_duration_option(cfg.no_one_duration_s);
-    char duration_label[kCustomLabelLen] = "";
-    if (duration_option < 0) {
-        radar_format_duration(cfg.no_one_duration_s, duration_label, sizeof(duration_label));
-    }
     const bool range_option = is_range_option(cfg);
     char range_label[kCustomLabelLen] = "";
     if (!range_option) {
@@ -258,9 +246,6 @@ static void publish(const radar_settings_t &settings)
 
     {
         esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
-        if (set_custom_option(s_duration, duration_option < 0 ? duration_label : nullptr)) {
-            report_supported_modes(s_duration.endpoint_id);
-        }
         const bool labels_changed = set_range_labels(gate_cm);
         if (set_custom_option(s_range, range_option ? nullptr : range_label) || labels_changed) {
             report_supported_modes(s_range.endpoint_id);
@@ -270,7 +255,6 @@ static void publish(const radar_settings_t &settings)
         }
     }
     // report() takes the stack lock itself
-    report_current_mode(s_duration.endpoint_id, duration_option >= 0 ? duration_option : RADAR_MODE_CUSTOM);
     report_current_mode(s_range.endpoint_id, range_option ? cfg.max_moving_gate : RADAR_MODE_CUSTOM);
     report_current_mode(s_accuracy.endpoint_id, gate_cm == LD2410_FINE_GATE_CM ? kAccuracyFine : kAccuracyCoarse);
 }
@@ -343,7 +327,7 @@ static void radar_task(void *arg)
     while (true) {
         // Settings first: a session takes a few seconds at most, a learning minutes.
         const radar_settings_request_t want = {
-            .duration_s = s_want_duration_s.exchange(RADAR_KEEP),
+            .duration_s = RADAR_KEEP,
             .gate = s_want_gate.exchange(RADAR_KEEP),
             .gate_cm = s_want_gate_cm.exchange(RADAR_KEEP),
         };
@@ -392,9 +376,6 @@ esp_err_t radar_control_create(node_t *node, endpoint_t *occupancy_endpoint)
 {
     set_option(s_learn_options[0], "Off", kLearnOff);
     set_option(s_learn_options[1], "Learning", kLearnOn);
-    for (size_t i = 0; i < RADAR_DURATION_OPTION_COUNT; i++) {
-        set_option(s_duration_options[i], radar_duration_options[i].label, (uint8_t)i);
-    }
     set_range_labels(LD2410_DEFAULT_GATE_CM);
     set_option(s_accuracy_options[0], "0.75 m", kAccuracyCoarse);
     set_option(s_accuracy_options[1], "0.2 m", kAccuracyFine);
@@ -410,22 +391,19 @@ esp_err_t radar_control_create(node_t *node, endpoint_t *occupancy_endpoint)
     VerifyOrReturnError(err == ESP_OK || err == ESP_ERR_NOT_FINISHED, err); // NOT_FINISHED: already Off
     s_learn.endpoint_id = endpoint::get_id(occupancy_endpoint);
 
-    // Until the worker has read the radar, Duration and Range show the last
-    // persisted mode, or the LD2410 factory settings.
-    endpoint_t *ep = create_mode_select_endpoint(node, "Duration", (uint8_t)radar_duration_option(kFactoryDurationS));
-    VerifyOrReturnError(ep != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the Duration endpoint"));
-    s_duration.endpoint_id = endpoint::get_id(ep);
-
-    ep = create_mode_select_endpoint(node, "Range", LD2410_MAX_MAX_GATE);
+    // Until the worker has read the radar, Range and Radar accuracy show the
+    // last persisted mode, or the LD2410 factory settings. Home Assistant sorts
+    // the entities by name: Hold time, Learn empty room, Radar accuracy, Range.
+    endpoint_t *ep = create_mode_select_endpoint(node, "Range", LD2410_MAX_MAX_GATE);
     VerifyOrReturnError(ep != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the Range endpoint"));
     s_range.endpoint_id = endpoint::get_id(ep);
 
-    ep = create_mode_select_endpoint(node, "Detection accuracy", kAccuracyCoarse);
-    VerifyOrReturnError(ep != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the Detection accuracy endpoint"));
+    ep = create_mode_select_endpoint(node, "Radar accuracy", kAccuracyCoarse);
+    VerifyOrReturnError(ep != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the Radar accuracy endpoint"));
     s_accuracy.endpoint_id = endpoint::get_id(ep);
 
-    ESP_LOGI(TAG, "Endpoints: Learn empty room %u, Duration %u, Range %u, Detection accuracy %u", s_learn.endpoint_id,
-             s_duration.endpoint_id, s_range.endpoint_id, s_accuracy.endpoint_id);
+    ESP_LOGI(TAG, "Endpoints: Learn empty room %u, Range %u, Radar accuracy %u", s_learn.endpoint_id,
+             s_range.endpoint_id, s_accuracy.endpoint_id);
     return ESP_OK;
 }
 
@@ -454,8 +432,7 @@ esp_err_t radar_control_pre_update(uint16_t endpoint_id, uint32_t cluster_id, ui
             return ESP_ERR_INVALID_STATE;
         }
         request_learning(mode == kLearnOn);
-    } else if (endpoint_id == s_duration.endpoint_id || endpoint_id == s_range.endpoint_id ||
-               endpoint_id == s_accuracy.endpoint_id) {
+    } else if (endpoint_id == s_range.endpoint_id || endpoint_id == s_accuracy.endpoint_id) {
         if (mode == RADAR_MODE_CUSTOM) {
             return ESP_OK; // the radar's own value: nothing to change
         }
@@ -464,10 +441,7 @@ esp_err_t radar_control_pre_update(uint16_t endpoint_id, uint32_t cluster_id, ui
             ESP_LOGW(TAG, "The LD2410 settings have not been read yet, change ignored");
             return ESP_ERR_INVALID_STATE;
         }
-        if (endpoint_id == s_duration.endpoint_id) {
-            VerifyOrReturnError(mode < RADAR_DURATION_OPTION_COUNT, ESP_ERR_INVALID_ARG);
-            s_want_duration_s = radar_duration_options[mode].seconds;
-        } else if (endpoint_id == s_range.endpoint_id) {
+        if (endpoint_id == s_range.endpoint_id) {
             VerifyOrReturnError(mode >= LD2410_MIN_MAX_GATE && mode <= LD2410_MAX_MAX_GATE, ESP_ERR_INVALID_ARG);
             s_want_gate = mode;
         } else {
