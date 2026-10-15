@@ -199,7 +199,7 @@ Ghép nối: tên Bluetooth `VibeLift-3840`, mã QR `MT:Y.K9042C00KA0648G00`, m�
 | `main/lift.c`, `main/lift_map.h` | Độ sáng/bật tắt → độ cao; vị trí thật → số LED lộ ra |
 | `main/led_bar.c` | Dải WS2812: chỉ sáng phần lộ ra (chế độ lift), màu, cường độ cố định, nháy Identify |
 | `main/app_driver.cpp`, `main/app_main.cpp` | Matter: Extended Color Light, nút BOOT, NVS, watchdog (`app_health.cpp`) |
-| `test/host/` | Test trên máy tính: quỹ đạo motor (về đích chính xác, không vượt tốc, không dừng gấp), độ cao ↔ số LED, driver LED, đổi màu, và mô phỏng `stepper.c` + logic của `lift.c` với timer, GPIO, TMC2209, ống che và công tắc giả lập. Tình huống: về gốc từ mọi vị trí, dây công tắc đứt, thiếu motor, mất bước, vật kẹt khi đóng (đo thời gian ép), Bật trong lúc đóng hỏng, mất bước trước khi đóng, ống che bị giữ ở đỉnh, Tắt sát vùng chậm, đếm 3 lần đóng hỏng liên tiếp, nhiễu công tắc. `lift.c` được biên dịch thẳng vào mô phỏng (không chép lại logic). Chạy với 5 cấu hình. |
+| `test/host/` | Test trên máy tính: quỹ đạo motor (về đích chính xác, không vượt tốc, không dừng gấp), độ cao ↔ số LED, driver LED, đổi màu, và mô phỏng `stepper.c` + logic của `lift.c` với timer, GPIO, TMC2209, ống che và công tắc giả lập. Tình huống: về gốc từ mọi vị trí, dây công tắc đứt, thiếu motor, mất bước, vật kẹt khi đóng (đo thời gian ép), Bật trong lúc đóng hỏng, mất bước trước khi đóng, ống che bị giữ ở đỉnh, Tắt sát vùng chậm, đếm 3 lần đóng hỏng liên tiếp, nhiễu công tắc. Mô phỏng chạy thẳng hàm `lift_pass()` của `lift.c` (không chép lại logic). Vòng lặp task và bước khởi động trong `lift_task()` thì không chạy. Chạy với 5 cấu hình. |
 
 ```bash
 test/host/run.sh   # chỉ cần gcc

@@ -477,6 +477,7 @@ uint16_t led_bar_count_for_level(uint8_t level)
 void led_bar_set_exposed(uint16_t count)
 {
     g.exposed = count;
+    g.follow_level = false; /* as led_bar.c: back to lift mode */
 }
 
 void led_bar_follow_level(void)
@@ -499,16 +500,14 @@ void led_bar_set_target_callback(led_bar_target_cb_t cb)
 #undef stepper_move_to
 #undef TAG
 
-/* One pass of the lift task (main/lift.c lift_task()) for the wanted target; before any target only the stepper
- * housekeeping. Given up: the task is parked. */
+/* One pass of the lift task (main/lift.c lift_task()) for the wanted target. Before any target (the firmware starts
+ * with Off), only the stepper housekeeping, none once given up. */
 static void lift_iteration(void)
 {
-    if (s_stopped) {
-        g.next_wait_ms = 250;
-        return;
-    }
     if (!g.has_target) {
-        (void)sim_stepper_poll();
+        if (!s_stopped) {
+            (void)sim_stepper_poll();
+        }
         g.next_wait_ms = stepper_busy() ? 20 : 250;
         return;
     }
@@ -1004,10 +1003,10 @@ static void scenario_obstacle_closing(void)
         CHECK(settle(move_ms(TRAVEL) * 3) >= 0);
     }
     printf("  %d failed closings: %s\n", g.not_closed, s_stopped ? "gave up, motor stopped" : "still trying");
-    CHECK(g.not_closed == 3 && s_stopped && (CONFIG_MOTOR_IDLE_OFF_MS > 0 ? EN_OFF() : en_active()));
+    CHECK(g.not_closed == 3 && s_stopped && g.follow_level && (CONFIG_MOTOR_IDLE_OFF_MS > 0 ? EN_OFF() : en_active()));
     long steps = g.steps;
     lift_move(TRAVEL / 2); /* ignored until a restart */
-    CHECK(settle(1000) >= 0 && g.steps == steps);
+    CHECK(settle(1000) >= 0 && g.steps == steps && g.follow_level);
     check_signals();
 }
 
@@ -1030,7 +1029,7 @@ static void scenario_wire_breaks_after_homing(void)
     CHECK(settle(move_ms(TRAVEL)) >= 0);
 #if CONFIG_MOTOR_ENDSTOP_NC
     /* NC: the broken wire reads pressed far above 0: fault, homing again finds it stuck, motor off */
-    CHECK(g.faults == 1 && g.rehome_err == ESP_ERR_INVALID_STATE && s_stopped);
+    CHECK(g.faults == 1 && g.rehome_err == ESP_ERR_INVALID_STATE && s_stopped && g.follow_level);
     /* stopped where it is: holding (the sleeve must not slide down) unless Driver off at rest is set */
     CHECK(CONFIG_MOTOR_IDLE_OFF_MS > 0 ? EN_OFF() : en_active());
     CHECK(g.max_phys <= TRAVEL / 2 + mm_to_steps(BACKOFF_MM)); /* at most the 3 mm test move up */
@@ -1058,7 +1057,7 @@ static void scenario_wire_breaks_closed(void)
            (double)g.max_phys / STEPS_PER_MM, g.faults, g.rehome_err);
 #if CONFIG_MOTOR_ENDSTOP_NC
     /* It does not release when leaving 0: fault a little above the 3 mm window, homing fails, motor off */
-    CHECK(g.faults == 1 && g.rehome_err == ESP_ERR_INVALID_STATE && s_stopped);
+    CHECK(g.faults == 1 && g.rehome_err == ESP_ERR_INVALID_STATE && s_stopped && g.follow_level);
     CHECK(g.max_phys <= 2 * mm_to_steps(ZERO_WINDOW_MM) + mm_to_steps(BACKOFF_MM));
 #endif
 }
@@ -1165,7 +1164,7 @@ static void scenario_open_while_closing_fails(void)
             } else {
                 /* The bounded search (75 + 13 mm) presses on it again, then backs up 10 mm and stops for good */
                 long rise = TRAVEL / 2 + mm_to_steps(RELEASE_MM); /* moved up since the last zero */
-                CHECK(g.rehome_err == ESP_ERR_NOT_FOUND && s_stopped);
+                CHECK(g.rehome_err == ESP_ERR_NOT_FOUND && s_stopped && g.follow_level);
                 CHECK(press_ms() <= (rise + s_window - mm_to_steps(RELEASE_MM)) * 1000L / HOMING_SPS +
                                          1000L * HOMING_SPS / ACCEL_SPS2 + 500);
                 CHECK(g.phys >= g.obstacle + mm_to_steps(RELEASE_MM) - 1);
@@ -1173,7 +1172,7 @@ static void scenario_open_while_closing_fails(void)
                 long steps = g.steps;
                 g.obstacle = 0;
                 lift_move(TRAVEL / 4); /* ignored until a restart */
-                CHECK(settle(1000) >= 0 && g.steps == steps);
+                CHECK(settle(1000) >= 0 && g.steps == steps && g.follow_level);
             }
             check_signals();
         }
@@ -1208,7 +1207,7 @@ static void scenario_press_time(void)
         CHECK(settle(move_ms(TRAVEL) * 4) >= 0);
         int64_t again = press_ms();
         long rise = from + mm_to_steps(RELEASE_MM); /* moved up since the last zero */
-        CHECK(s_stopped && g.rehome_err == ESP_ERR_NOT_FOUND);
+        CHECK(s_stopped && g.rehome_err == ESP_ERR_NOT_FOUND && g.follow_level);
         CHECK(again <= (rise + s_window - mm_to_steps(RELEASE_MM)) * 1000L / HOMING_SPS +
                            1000L * HOMING_SPS / ACCEL_SPS2 + 500);
         CHECK(g.max_phys <= from && g.phys >= at + mm_to_steps(RELEASE_MM) - 1); /* backed up again */
@@ -1241,7 +1240,8 @@ static void scenario_held_at_top(void)
            (double)after_close / STEPS_PER_MM, (double)g.max_phys / STEPS_PER_MM, g.rehome_err,
            EN_OFF() ? "off" : "on");
     CHECK(g.not_closed == 1 && after_close <= TRAVEL + mm_to_steps(RELEASE_MM));
-    CHECK(g.rehome_err == ESP_ERR_NOT_FOUND && s_stopped && g.max_phys <= TRAVEL + 2 * mm_to_steps(RELEASE_MM));
+    CHECK(g.rehome_err == ESP_ERR_NOT_FOUND && s_stopped && g.follow_level &&
+          g.max_phys <= TRAVEL + 2 * mm_to_steps(RELEASE_MM));
     /* A mechanical stop 12 mm above full open: the extra back-up stalls on it (steps lost), nothing worse */
     if (!ready_at(TRAVEL)) {
         return;
@@ -1255,7 +1255,7 @@ static void scenario_held_at_top(void)
     CHECK(settle(move_ms(TRAVEL) * 4) >= 0);
     printf("  same with a stop 12 mm above full open: %ld steps lost on it (%.1f mm)\n", g.steps_blocked_top,
            (double)g.steps_blocked_top / STEPS_PER_MM);
-    CHECK(s_stopped && g.max_phys == g.top);
+    CHECK(s_stopped && g.follow_level && g.max_phys == g.top);
     check_signals();
 }
 
@@ -1272,12 +1272,6 @@ static bool opening_taken(void)
 static bool touch_above_slow_zone(void)
 {
     return s_close == CLOSE_TOUCH && stepper_position() > mm_to_steps(CLOSE_SLOW_MM) + STEPS_PER_MM / 2;
-}
-
-/* Braking distance (steps) from one speed down to another, at the acceleration */
-static long stop_distance_steps(long from_sps, long to_sps)
-{
-    return from_sps > to_sps ? (from_sps * from_sps - to_sps * to_sps) / (2 * ACCEL_SPS2) : 0;
 }
 
 static bool below_11mm(void)
@@ -1313,10 +1307,10 @@ static void scenario_closing_smooth(void)
     lift_move(TRAVEL);
     CHECK(settle(move_ms(TRAVEL)) >= 0);
     lift_move(0);
-    CHECK(run_until(touch_above_slow_zone, move_ms(TRAVEL)) || mm_to_steps(CLOSE_SLOW_MM) + 2 * STEPS_PER_MM >
-                                                                stop_distance_steps(SPEED_SPS, HOMING_SPS));
+    CHECK(run_until(touch_above_slow_zone, move_ms(TRAVEL)));
     int refused = g.refused;
     long at = stepper_position();
+    CHECK(s_close == CLOSE_TOUCH && at > mm_to_steps(CLOSE_SLOW_MM));
     lift_move(TRAVEL / 2);
     printf("  On at %.1f mm while slowing down for the end stop: %s\n", (double)at / STEPS_PER_MM,
            s_last_target == TRAVEL / 2 ? "taken at once" : "refused");

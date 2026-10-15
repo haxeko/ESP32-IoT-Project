@@ -69,6 +69,9 @@ static int32_t wanted_target(uint32_t want, int32_t travel)
  * to the stepper. Returns the time until the next pass (ms). */
 static uint32_t lift_pass(int32_t target, uint32_t want)
 {
+    if (s_stopped) {
+        return POLL_IDLE_MS; /* given up: no move until a restart */
+    }
     const int32_t travel = stepper_travel_steps();
     if (target != s_last_target) {
         if (!stepper_ready() && !stepper_busy()) {
