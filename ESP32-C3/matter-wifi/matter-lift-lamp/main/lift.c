@@ -32,13 +32,14 @@ static void on_target(bool on, uint8_t level)
     }
 }
 
-#define MAX_NOT_CLOSED 3 /* closings that did not reach the end stop before giving up until a restart */
+#define MAX_NOT_CLOSED 3 /* closings that missed the end stop (none reached it in between) before giving up */
 
-/* The lamp cannot be moved safely: driver off, the LEDs follow the level, until a restart */
+/* The lamp cannot be moved safely: motor stopped (holding if Driver off at rest is 0), the LEDs follow the level,
+ * until a restart */
 static void give_up(const char *why)
 {
-    ESP_LOGE(TAG, "%s: motor off, the LEDs follow the brightness, the lamp does not move until restarted", why);
-    stepper_disable();
+    ESP_LOGE(TAG, "%s: the lamp does not move until restarted, the LEDs follow the brightness", why);
+    stepper_stop();
     led_bar_follow_level();
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY); /* keep the callback's task handle valid */
@@ -63,7 +64,7 @@ static void lift_task(void *arg)
     home_or_give_up();
 
     const int32_t travel = stepper_travel_steps();
-    int32_t last_target = -1;
+    int32_t last_target = -1; /* last target the stepper accepted */
     int not_closed = 0;
     for (;;) {
         uint32_t want = s_want;
@@ -74,15 +75,21 @@ static void lift_task(void *arg)
             target = lift_steps_for_leds(led_bar_count_for_level((uint8_t)want), CONFIG_LED_COUNT, travel);
         }
         if (target != last_target) {
-            if (!stepper_ready()) {
-                /* After a closing that did not reach the end stop: find the closed position again first */
+            if (!stepper_ready() && !stepper_busy()) {
+                /* After a closing that did not reach the end stop (and backed up): find the closed position again
+                 * first. While it still backs up, wait (the move below is refused). */
                 ESP_LOGI(TAG, "Homing again before moving");
                 home_or_give_up();
             }
-            ESP_LOGI(TAG, "%s, level %u: to %ld/%ld steps", on ? "on" : "off", (unsigned)(want & 0xff), (long)target,
-                     (long)travel);
-            stepper_move_to(target);
-            last_target = target;
+            /* Refused while a closing checks the end stop or backs up: tried again at the next poll */
+            if (stepper_move_to(target)) {
+                ESP_LOGI(TAG, "%s, level %u: to %ld/%ld steps", on ? "on" : "off", (unsigned)(want & 0xff),
+                         (long)target, (long)travel);
+                last_target = target;
+            }
+        }
+        if (not_closed && last_target == 0 && stepper_ready() && !stepper_busy() && stepper_position() == 0) {
+            not_closed = 0; /* closed on the end stop */
         }
 
         led_bar_set_exposed(lift_exposed_leds(stepper_position(), CONFIG_LED_COUNT, travel));
@@ -98,9 +105,9 @@ static void lift_task(void *arg)
             last_target = -1; /* go back to the wanted height */
             break;
         case STEPPER_EVENT_NOT_CLOSED:
-            ESP_LOGE(TAG, "Closing did not reach the end stop (something in the way?): backed up 10 mm and let go");
+            ESP_LOGE(TAG, "Closing did not reach the end stop (something in the way?): backed up 10 mm");
             if (++not_closed >= MAX_NOT_CLOSED) {
-                give_up("The lamp did not close several times");
+                give_up("The lamp did not close several times in a row");
             }
             /* Home again at the next command, not now: whatever blocked it may still be there */
             break;
@@ -108,7 +115,8 @@ static void lift_task(void *arg)
             break;
         }
 
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(stepper_busy() ? POLL_MOVING_MS : POLL_IDLE_MS));
+        bool pending = target != last_target; /* refused move: try again soon */
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(stepper_busy() || pending ? POLL_MOVING_MS : POLL_IDLE_MS));
     }
 }
 

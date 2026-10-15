@@ -71,6 +71,10 @@ static int32_t s_rezero_tolerance; /* re-zero this far (1 mm) from 0: steps were
 static int32_t s_window;           /* ZERO_WINDOW_MM in steps */
 static bool s_homed;               /* the position is known (s_lock) */
 static bool s_ready;               /* homed, and no fault since: stepper_move_to() works (s_lock) */
+static int32_t s_close_peak;       /* highest position since the closing began: the sleeve was no higher (s_lock) */
+/* After a closing that missed the end stop: the sleeve is at most this high (it only went down, then backed up),
+ * so homing searches only this far down (plus ZERO_WINDOW_MM). 0: position not lost, search 125 % of the travel. */
+static int32_t s_lost_top; /* (s_lock) */
 
 /* Closing (target 0) runs in phases, driven by stepper_poll() (s_lock) */
 static enum {
@@ -228,6 +232,17 @@ static uint32_t real_sps(uint32_t sps)
     return sps > TICK_HZ / 2 ? TICK_HZ / 2 : sps ? sps : 1;
 }
 
+/* Where the motion would stop if it braked now (2 steps margin for the rounding of the planner); s_lock held */
+static int32_t stop_point_locked(void)
+{
+    uint32_t vel = s_m.vel; /* single words, changed by the interrupt: a tick apart at worst */
+    int8_t dir = s_m.dir;
+    int32_t pos = s_m.pos;
+    uint64_t v2 = ((uint64_t)vel * vel) >> 32;
+    int32_t brake = (int32_t)(v2 / (2 * (uint64_t)s_m.accel)) + 2;
+    return dir > 0 ? pos + brake : dir < 0 ? pos - brake : pos;
+}
+
 /* Time for a move: distance at the (clamped) speed, plus speeding up and braking, plus 2 s */
 static uint32_t move_time_ms(int32_t steps, uint32_t sps)
 {
@@ -345,10 +360,14 @@ esp_err_t stepper_home(void)
     uint32_t slow = real_sps(fast / SLOW_TOUCH_DIV);
     int32_t backoff = mm_to_steps(BACKOFF_MM);
     int32_t travel = stepper_travel_steps();
-    int32_t search = travel + travel / 4;
+    int32_t release = mm_to_steps(RELEASE_MM);
     esp_err_t err = ESP_OK;
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    /* After a closing that missed the end stop the sleeve cannot be higher than s_lost_top: do not push on whatever
+     * stopped it (it may still be there) for longer than needed */
+    int32_t lost_top = s_lost_top;
+    int32_t search = lost_top > 0 ? lost_top + s_window : travel + travel / 4;
     s_ready = false;
     s_close = CLOSE_IDLE;
     s_m.target = s_m.pos; /* stopped (the interrupt is halted on a fault) */
@@ -377,11 +396,16 @@ esp_err_t stepper_home(void)
     }
 
     /* 2. Down until the end stop */
-    ESP_LOGI(TAG, "Homing: moving down to the end stop");
+    ESP_LOGI(TAG, "Homing: moving down to the end stop (at most %ld mm)", (long)(search / mm_to_steps(1)));
     s_endstop_hit = false;
     set_target(s_m.pos - search);
     if (!wait_motion(move_time_ms(search, fast), true) || !s_endstop_hit) {
-        ESP_LOGE(TAG, "Homing: end stop not reached within %d mm", CONFIG_MOTOR_TRAVEL_MM * 5 / 4);
+        /* Something in the way (or no motor, or it turns the wrong way): back up as a failed closing does, rather
+         * than keep pressing on it */
+        ESP_LOGE(TAG, "Homing: end stop not reached within %ld mm, backing up %d mm", (long)(search / mm_to_steps(1)),
+                 RELEASE_MM);
+        set_target(s_m.pos + release);
+        wait_motion(move_time_ms(release, fast), false);
         err = ESP_ERR_NOT_FOUND;
         goto done;
     }
@@ -414,6 +438,9 @@ done:
     s_rezeroed = false;
     s_fault = false;
     s_homed = s_ready = err == ESP_OK;
+    if (err == ESP_OK) {
+        s_lost_top = 0;
+    }
     xSemaphoreGive(s_lock);
     return err;
 }
@@ -427,21 +454,33 @@ static void start_touch_locked(void)
     set_target_locked(-mm_to_steps(CLOSE_SEEK_MM));
 }
 
-void stepper_move_to(int32_t pos)
+bool stepper_move_to(int32_t pos)
 {
     int32_t max = stepper_travel_steps();
     pos = pos < 0 ? 0 : pos > max ? max : pos;
+    bool accepted = true;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (!s_ready) {
-        /* not homed, or stopped by a fault: only stepper_home() moves the motor */
+        /* not homed, stopped by a fault, or a closing missed the end stop: only stepper_home() moves the motor */
+        accepted = false;
     } else if (pos > 0) {
-        s_close = CLOSE_IDLE;
-        set_limits(s_vmax_normal, s_accel_normal);
-        set_target_locked(pos);
+        if (s_close == CLOSE_TOUCH) {
+            /* The closing is checking the position on the end stop (at most CLOSE_SLOW_MM + CLOSE_SEEK_MM at the
+             * homing speed): let it finish. Moving up now would trust a count that may have lost steps on
+             * something in the way, and drive the sleeve past the top by as much. */
+            accepted = false;
+        } else {
+            s_close = CLOSE_IDLE;
+            set_limits(s_vmax_normal, s_accel_normal);
+            set_target_locked(pos);
+        }
     } else if (s_close == CLOSE_IDLE) {
-        /* Close: the last CLOSE_SLOW_MM slower, and always onto the end stop (checks the position) */
+        /* Close: the last CLOSE_SLOW_MM slower, and always onto the end stop (checks the position). Already heading
+         * down and stopping inside the slow zone anyway: slow down to the homing speed, never turn back up. */
         int32_t slow_zone = mm_to_steps(CLOSE_SLOW_MM);
-        if (s_m.pos > slow_zone) {
+        int32_t stop = stop_point_locked();
+        s_close_peak = stop > s_m.pos ? stop : s_m.pos;
+        if (stop > slow_zone) {
             s_close = CLOSE_APPROACH;
             set_limits(s_vmax_normal, s_accel_normal);
             set_target_locked(slow_zone);
@@ -450,6 +489,7 @@ void stepper_move_to(int32_t pos)
         }
     }
     xSemaphoreGive(s_lock);
+    return accepted;
 }
 
 int32_t stepper_position(void)
@@ -483,7 +523,9 @@ stepper_event_t stepper_poll(void)
 
     switch (s_close) {
     case CLOSE_APPROACH:
-        if (motion_idle(&s_m)) {
+        /* Slow down for the last CLOSE_SLOW_MM as soon as the motion brakes for it (within 1 mm), not from a stop */
+        if (motion_idle(&s_m) ||
+            (s_m.dir < 0 && stop_point_locked() <= mm_to_steps(CLOSE_SLOW_MM) + s_rezero_tolerance)) {
             start_touch_locked();
         }
         break;
@@ -494,17 +536,20 @@ stepper_event_t stepper_poll(void)
             set_target_locked(0);
         } else if (motion_idle(&s_m)) {
             /* CLOSE_SEEK_MM below 0 and still not pressed: something holds the sleeve up (or steps were lost
-             * going down). Back up and let go rather than keep pushing. */
+             * going down). The position is wrong by the lost steps: not ready (no move trusts it) until homed.
+             * Back up rather than keep pushing. The sleeve only went down since s_close_peak: after backing up it
+             * is at most RELEASE_MM higher, so homing has a bounded search. */
+            int32_t release = mm_to_steps(RELEASE_MM);
             s_close = CLOSE_RELEASE;
-            set_target_locked(s_m.pos + mm_to_steps(RELEASE_MM));
+            s_ready = false;
+            s_lost_top = (s_close_peak > 0 ? s_close_peak : 0) + release;
+            set_target_locked(s_m.pos + release);
         }
         break;
     case CLOSE_RELEASE:
         if (motion_idle(&s_m)) {
+            /* At rest RELEASE_MM above whatever stopped it, holding like any rest (CONFIG_MOTOR_IDLE_OFF_MS) */
             s_close = CLOSE_IDLE;
-            s_ready = false;
-            stop_timer_locked(now);
-            driver_enable(false);
             ev = STEPPER_EVENT_NOT_CLOSED;
         }
         break;
@@ -527,6 +572,20 @@ stepper_event_t stepper_poll(void)
     s_rezeroed = false;
     xSemaphoreGive(s_lock);
     return ev;
+}
+
+void stepper_stop(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    stop_timer_locked(esp_timer_get_time());
+    s_m.target = s_m.pos;
+    motion_halt(&s_m, s_m.pos);
+    s_close = CLOSE_IDLE;
+    s_ready = false;
+#if CONFIG_MOTOR_IDLE_OFF_MS > 0
+    driver_enable(false); /* the lead screw holds the sleeve; nothing polls any more to turn the driver off later */
+#endif
+    xSemaphoreGive(s_lock);
 }
 
 void stepper_disable(void)

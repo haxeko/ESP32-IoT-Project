@@ -10,13 +10,19 @@ Cảm biến khoảng cách VL53L0X/L1X để điều khiển bằng tay chưa c
 
 - **Độ sáng trong app = độ cao của đèn.** 100 % là mở hết hành trình, 50 % là mở nửa. Số LED lộ ra (và sáng) theo cùng bảng với đèn thanh LED cũ: 50 % → 15/30 LED, 10 % → 3 LED...
 - **Trong lúc ống che chạy**, LED sáng dần (khi mở) hoặc tắt dần (khi đóng) theo đúng phần đang lộ. Một LED tính là lộ khi đã lộ quá nửa chiều cao của nó.
-- **Tắt**: LED tắt ngay, ống che hạ xuống đóng hẳn. 10 mm cuối chạy chậm (tốc độ về gốc) và lần đóng nào cũng phải chạm công tắc hành trình, nên vị trí 0 được kiểm tra lại mỗi lần đóng. **Bật**: ống che mở lại tới độ sáng trước khi tắt. Hiệu ứng "sáng dần từ mức thấp nhất" của Matter khi Bật được bỏ qua, nên đèn không bị hạ xuống rồi mới nâng lên.
+- **Tắt**: LED tắt ngay, ống che hạ xuống đóng hẳn. 10 mm cuối chạy chậm (tốc độ về gốc; ống che giảm tốc liền mạch, không dừng lại hay quay ngược lên) và lần đóng nào cũng phải chạm công tắc hành trình, nên vị trí 0 được kiểm tra lại mỗi lần đóng. **Bật**: ống che mở lại tới độ sáng trước khi tắt. Hiệu ứng "sáng dần từ mức thấp nhất" của Matter khi Bật được bỏ qua, nên đèn không bị hạ xuống rồi mới nâng lên.
+- **Bật (hay đổi độ sáng) trong lúc đang đóng**: nếu ống che chưa vào 10 mm cuối, nó quay lên ngay. Nếu đã vào 10 mm cuối, đèn đóng cho xong (chạm công tắc, tối đa khoảng 2 giây) rồi mới mở: firmware không mở ra dựa trên vị trí chưa được kiểm tra.
 - **Màu, nhiệt độ màu trắng, cường độ cố định 30 %**: giống đèn `matter-rgb-light-ws2812`.
 - **Khởi động / có điện lại**: firmware không biết ống che đang ở đâu, nên luôn **về gốc** trước. Ống che hạ xuống tới công tắc hành trình, nhích lên 3 mm, rồi chạm lại thật chậm để lấy điểm 0 chính xác. Sau đó nó chạy tới trạng thái đã lưu (bật/tắt, độ sáng, màu). Trong lúc về gốc, LED tắt.
 - **Công tắc hành trình chỉ được tin ở gần đáy** (trong khoảng 3 mm quanh điểm 0). Gặp công tắc trong khoảng đó khi đóng: vị trí 0 được chỉnh lại; lệch quá 1 mm thì log báo mất bước.
-- **Công tắc báo nhấn ở chỗ không thể** (cao hơn 3 mm, hoặc không nhả ra khi mở): có thể do đứt dây NC, nhiễu, hay mất nhiều bước. Motor dừng ngay tại chỗ, không tin công tắc, rồi về gốc lại. Nếu công tắc thật sự bị nhấn (mất bước), về gốc thành công và đèn chạy tiếp. Nếu công tắc kẹt "nhấn" (dây đứt), về gốc báo lỗi và motor bị tắt.
-- **Đóng mà không chạm được công tắc** (sau khi đã xuống quá điểm 0 thêm 5 mm): có vật kẹt hoặc mất bước khi hạ. Ống che nhấc lên 10 mm rồi motor nhả (tắt driver). Lệnh tiếp theo trong app sẽ về gốc lại trước khi chạy. Sau 3 lần đóng hỏng như vậy, motor tắt cho tới khi khởi động lại.
-- **Không có motor, hoặc về gốc thất bại** (công tắc không bị nhấn sau 125 % hành trình; vẫn bị nhấn sau khi đã nhấc lên 3 mm): motor được tắt, đèn chạy như đèn thanh LED thường (độ sáng = số LED sáng) cho tới khi khởi động lại, log báo lỗi.
+- **Công tắc báo nhấn ở chỗ không thể** (cao hơn 3 mm, hoặc không nhả ra khi mở): có thể do đứt dây NC, nhiễu, hay mất nhiều bước. Motor dừng ngay tại chỗ, không tin công tắc, rồi về gốc lại. Nếu công tắc thật sự bị nhấn (mất bước), về gốc thành công và đèn chạy tiếp. Nếu công tắc kẹt "nhấn" (dây đứt), về gốc báo lỗi và đèn dừng hẳn (xem dưới).
+- **Đóng mà không chạm được công tắc** (bộ đếm đã xuống quá điểm 0 thêm 5 mm): có vật kẹt hoặc mất bước khi hạ. Ống che nhấc lên 10 mm rồi **đứng giữ ở đó** (như lúc nghỉ, xem *Driver off at rest*), vị trí coi như không còn tin được. App vẫn báo **Tắt** và LED tắt, nhưng ống che đang hở. Gửi Tắt lần nữa không có tác dụng (Matter bỏ qua lệnh trùng). Muốn đóng lại: dọn vật kẹt rồi Bật, sau đó Tắt (hoặc bấm nút BOOT hai lần).
+  - Lệnh nhận được trong lúc ống che đang nhấc lên sẽ được giữ lại cho tới khi nhấc xong.
+  - Lệnh tiếp theo **về gốc lại trước**, nhưng chỉ tìm xuống một quãng giới hạn: độ cao lúc bắt đầu đóng + 13 mm (ống che không thể cao hơn thế). Không tìm thấy công tắc (vật vẫn còn) thì ống che nhấc lên 10 mm và đèn dừng hẳn tới khi khởi động lại.
+  - Đóng hỏng 3 lần liên tiếp (không lần đóng nào chạm công tắc ở giữa) thì đèn cũng dừng hẳn.
+- **Không có motor, hoặc về gốc thất bại** (công tắc không bị nhấn sau quãng tìm; vẫn bị nhấn sau khi đã nhấc lên 3 mm): đèn dừng hẳn cho tới khi khởi động lại, log báo lỗi. Nếu không tìm thấy công tắc, ống che nhấc lên 10 mm trước (thôi ép vào vật đang chắn). Khi dừng hẳn:
+  - Motor **vẫn giữ lực** nếu *Driver off at rest* = 0, để ống che không tự trôi xuống với trục bước 8 mm. Đặt khác 0 thì driver tắt.
+  - LED sáng theo độ sáng như đèn thanh LED thường (độ sáng = số LED sáng), nên có thể không khớp phần đang lộ ra.
 - **Lần đầu khởi động** (chưa có gì lưu): đèn ở trạng thái **tắt** (đóng), để đèn mới nạp không tự chạy ngay tới hết hành trình. Bật lên thì mở 100 %.
 - **Nhận dạng (Identify)**: nháy phần LED đang lộ ra. Khi đèn đóng, phần nháy (LED đầu) nằm trong ống che nên có thể không thấy.
 - **Nút BOOT**: nhấn nhanh để bật/tắt; giữ 5 giây rồi nhả để factory reset.
@@ -107,13 +113,32 @@ Mức 3,3 V của ESP32-C3 thường đủ cho WS2812 khi dải chạy 5,0 V, nh
 
 - Dải LED dán dọc cột, **LED đầu tiên (DIN) ở dưới**, ngay mép trên của đế, nơi bắt đầu lộ ra khi ống che nhấc lên. Nếu DIN ở trên, bật *Light LEDs from the end of the strip*.
 - **Hành trình phải bằng chiều dài phần dải LED**: `Travel = số LED × khoảng cách giữa 2 LED`. Ví dụ dải 144 LED/m (khoảng cách 6,9 mm): 30 LED = 208 mm; dải 60 LED/m (16,7 mm): 30 LED = 500 mm. Đặt `LED_COUNT` và `MOTOR_TRAVEL_MM` cho khớp.
-- **Trục vít và ray phải dài hơn hành trình ít nhất 5–10 mm** (đo trước khi đặt `MOTOR_TRAVEL_MM`): firmware cần thêm 3 mm phía trên khi kiểm tra công tắc, và công tắc có hành trình vượt quá điểm nhấn.
-- **Bước vít**: T8 bước 8 mm (4 đầu ren) chạy nhanh nhưng **không tự hãm**: để mặc định *Driver off at rest = 0* (giữ dòng) để ống che không tự trôi xuống. T8 bước 2 mm chạy chậm hơn 4 lần nhưng tự hãm: có thể đặt *Driver off at rest* = 2000 ms để motor nghỉ, đỡ nóng. Nhớ đặt `MOTOR_LEAD_UM` = 2000 cho trục bước 2 mm.
+- **Phía trên vị trí mở hết, trục vít và ray phải còn trống ít nhất 10 mm, và phải có chặn cơ khí** (vòng chặn hoặc đai ốc khóa trên trục, cách vị trí mở hết khoảng 12–15 mm) để đai ốc không bao giờ chạy ra khỏi trục. Lý do: sau một lần đóng hỏng, ống che nhấc lên 10 mm. Nếu nó bị kẹt ngay sát đỉnh thì sẽ lên tới 10 mm trên vị trí mở hết, và tối đa 20 mm nếu lần về gốc sau đó cũng hỏng. Mở lại ngay sau khi bị ép (xem **An toàn**) cũng có thể vượt đỉnh. Có chặn cơ khí, phần vượt chỉ làm motor trượt bước (kêu rè rè) chứ không hỏng gì. Đo trước khi đặt `MOTOR_TRAVEL_MM`.
+- **Phía dưới**, công tắc phải còn hành trình vượt quá điểm nhấn (khoảng 1 mm trở lên): lần chạm khi đóng dừng sau điểm nhấn vài bước.
+- **Bước vít**: T8 bước 8 mm (4 đầu ren) **không tự hãm**: để mặc định *Driver off at rest = 0* (giữ dòng) để ống che không tự trôi xuống. T8 bước 2 mm tự hãm: có thể đặt *Driver off at rest* = 2000 ms để motor nghỉ, đỡ nóng. Nhớ đặt `MOTOR_LEAD_UM` = 2000. Tốc độ đặt theo mm/s, nên với bước 2 mm motor phải quay nhanh gấp 4 lần (300 vòng/phút ở 10 mm/s). Nếu motor trượt bước, giảm *Speed*.
 
 ### An toàn
 
-- **Chỗ kẹt tay**: mép ống che và mặt đế. Motor NEMA17 qua trục vít ép được hàng chục tới vài trăm newton. Firmware không đo được kẹt (không dùng StallGuard): nếu có vật chắn khi đóng, motor tiếp tục ép tới khi chạy hết quãng đường lệnh (vài giây), rồi nhấc lên 10 mm và nhả. Mô phỏng với vật cản ở 30 mm: ép khoảng 3,5 giây. Khi về gốc lúc khởi động, nếu có vật chắn, motor ép suốt quãng tìm (tối đa 125 % hành trình). Giữ tay và đồ vật khỏi khe khi đèn chạy, đặt Vref vừa đủ nâng, và dùng ống che nhẹ.
-- Lần chạy đầu, hãy để tay gần công tắc nguồn 12 V.
+**Chỗ kẹt tay**: mép ống che và mặt đế, hoặc bất cứ chỗ nào ống che hạ xuống. Motor NEMA17 qua trục vít ép được hàng chục newton trở lên. Firmware **không đo được kẹt** (không có StallGuard hay cảm biến lực): motor cứ bước tiếp tới hết quãng đường lệnh, ép lên vật chắn suốt thời gian đó.
+
+- **Khi Tắt (đóng)**: ép tới khi bộ đếm xuống tới 5 mm dưới điểm 0, rồi nhấc lên 10 mm và đứng giữ. Thời gian ép đo trong mô phỏng với cấu hình mặc định (10 mm/s, về gốc 8 mm/s), từ bước đầu tới bước cuối bị chặn:
+
+  | Vật chắn ở | Ép lần đóng | Lệnh sau, vật vẫn còn |
+  |---|---|---|
+  | 30 mm (đóng từ 50 %) | 4,1 giây | thêm 9,9 giây |
+  | 30 mm (đóng từ 100 %) | 4,1 giây | thêm 19,3 giây |
+  | 75 mm (đóng từ 100 %) | 8,6 giây | thêm 19,3 giây |
+  | 140 mm (đóng từ 100 %) | 15,1 giây | thêm 19,3 giây |
+
+  Vật chắn càng cao thì ép càng lâu. Sau lần ép thứ hai, ống che nhấc lên 10 mm và đèn dừng hẳn.
+- **Khi giảm độ sáng** (hạ xuống một mức khác 0): không có kiểm tra nào. Motor ép tới khi chạy hết quãng đường, rồi **vẫn giữ lực ép** (dòng giữ, trừ khi *Driver off at rest* tắt driver), không nhấc lên, cho tới lệnh sau. LED sáng theo vị trí đếm, không theo vị trí thật. Lần đóng sau phát hiện lệch như trường hợp dưới.
+- **Mở lại trong lúc ống che đang bị chặn** (Bật khi ống che chưa vào 10 mm cuối): firmware không biết đã mất bao nhiêu bước. Ống che sẽ lên quá vị trí mở hết đúng bằng quãng đã mất (ở tốc độ mặc định: 10 mm cho mỗi giây bị chặn). Chặn cơ khí ở đỉnh (mục **Cơ khí**) là bắt buộc. Lần đóng sau sẽ phát hiện lệch: lệch ít (≤ 3 mm) thì chỉnh lại điểm 0, lệch nhiều thì thành đóng hỏng (xem trên) và lệnh kế tiếp về gốc lại.
+- **Khi về gốc** (khởi động, sau lỗi công tắc): nếu có vật chắn, motor ép suốt quãng tìm (125 % hành trình, tới khoảng 23 giây), rồi nhấc lên 10 mm và dừng hẳn.
+- **Tốc độ**: thời gian ép tỉ lệ nghịch với tốc độ. Trên 10 000 bước/giây tốc độ bị giới hạn, ép lâu hơn. Ví dụ trục bước 2 mm với 32 vi bước: 4,1 giây thành 11,3 giây.
+
+Vì vậy: giữ tay và đồ vật khỏi khe khi đèn chạy, đặt Vref vừa đủ nâng, dùng ống che nhẹ, tránh mép sắc. Không dùng cho trẻ nhỏ khi chưa có cảm biến. Cách khắc phục thật là đo được vị trí hoặc lực thật: cảm biến VL53L đo độ cao (dự định), TMC2209 qua UART với StallGuard, hoặc dải cảm biến chạm ở mép ống che.
+
+Lần chạy đầu, hãy để tay gần công tắc nguồn 12 V.
 
 ## Cấu hình (`idf.py menuconfig`)
 
@@ -156,7 +181,10 @@ Ghép nối: tên Bluetooth `VibeLift-3840`, mã QR `MT:Y.K9042C00KA0648G00`, m�
 0. **Chỉnh buck 5,0 V** (mục Nguồn), kiểm tra cực tính 12 V.
 1. **Chưa nối motor**: nạp firmware, xem log (`idf.py -p PORT monitor`). Log về gốc báo lỗi là **bình thường** khi chưa có motor; đèn chạy như đèn thanh LED: kiểm tra LED, ghép nối, app. Đèn mới nạp ở trạng thái tắt.
 2. **Nối công tắc hành trình**: khởi động lại một lần khi công tắc nhả, một lần khi giữ nhấn. Dòng log `stepper: ... end stop GPIO3 (NC, now released/pressed)` phải đổi theo.
-3. **Nối motor, chỉnh Vref**. Trong app để đèn **tắt** (hoặc 10 %). Để ống che ở giữa hành trình, khởi động lại: ống che phải **đi xuống** tìm công tắc. Nếu đi lên, tắt nguồn 12 V ngay, đổi chiều (*Invert the direction*).
+3. **Chỉnh Vref rồi mới nối motor**:
+   - Cấp 12 V khi **chưa nối motor**, chỉnh Vref (mục Cài đặt TMC2209).
+   - **Rút 12 V**, nối motor, rồi cấp điện lại.
+   - Trong app để đèn **tắt** (hoặc 10 %). Để ống che ở giữa hành trình, khởi động lại: ống che phải **đi xuống** tìm công tắc. Nếu đi lên, tắt nguồn 12 V ngay, đổi chiều (*Invert the direction*).
 4. Tăng độ sáng từng nấc trong app (10 % → 25 % → 50 % → 100 %), kiểm tra ống che dừng đúng mép LED cuối cùng và không chạm đỉnh; sai thì chỉnh `MOTOR_TRAVEL_MM` / `MOTOR_LEAD_UM` / vi bước.
 
 ## Cấu trúc mã nguồn
@@ -168,7 +196,7 @@ Ghép nối: tên Bluetooth `VibeLift-3840`, mã QR `MT:Y.K9042C00KA0648G00`, m�
 | `main/lift.c`, `main/lift_map.h` | Độ sáng/bật tắt → độ cao; vị trí thật → số LED lộ ra |
 | `main/led_bar.c` | Dải WS2812: chỉ sáng phần lộ ra (chế độ lift), màu, cường độ cố định, nháy Identify |
 | `main/app_driver.cpp`, `main/app_main.cpp` | Matter: Extended Color Light, nút BOOT, NVS, watchdog (`app_health.cpp`) |
-| `test/host/` | Test trên máy tính: quỹ đạo motor (về đích chính xác, không vượt tốc, không dừng gấp), độ cao ↔ số LED, driver LED, đổi màu, và mô phỏng `stepper.c` với timer, GPIO, TMC2209, ống che và công tắc giả lập: về gốc từ mọi vị trí, dây công tắc đứt, thiếu motor, mất bước, vật kẹt khi đóng, nhiễu công tắc (5 cấu hình) |
+| `test/host/` | Test trên máy tính: quỹ đạo motor (về đích chính xác, không vượt tốc, không dừng gấp), độ cao ↔ số LED, driver LED, đổi màu, và mô phỏng `stepper.c` + logic của `lift.c` với timer, GPIO, TMC2209, ống che và công tắc giả lập. Tình huống: về gốc từ mọi vị trí, dây công tắc đứt, thiếu motor, mất bước, vật kẹt khi đóng (đo thời gian ép), Bật trong lúc đóng hỏng, ống che bị giữ ở đỉnh, Tắt sát vùng chậm, nhiễu công tắc. Chạy với 5 cấu hình. |
 
 ```bash
 test/host/run.sh   # chỉ cần gcc
@@ -179,5 +207,5 @@ test/host/run.sh   # chỉ cần gcc
 - Chưa có cảm biến VL53L; điều khiển bằng app, nút BOOT.
 - Mỗi lần khởi động đèn phải về gốc (đóng hẳn rồi mở lại), vì step motor không tự biết vị trí.
 - Chứng chỉ Matter test, chưa bật Secure Boot / mã hóa flash (như đèn RGB).
-- Không phát hiện kẹt/quá tải (TMC2209 UART + StallGuard chưa dùng); xem mục **An toàn**.
+- Không phát hiện kẹt/quá tải (TMC2209 UART + StallGuard chưa dùng); xem mục **An toàn**. Mất bước khi hạ xuống một mức khác 0 chỉ được phát hiện ở lần đóng sau.
 - Chưa thử trên phần cứng thật (chỉ mô phỏng); xem mục **Chạy thử lần đầu**.

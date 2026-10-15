@@ -25,23 +25,28 @@ esp_err_t stepper_init(void);
 /**
  * Find the closed position (blocking, a few seconds): leave the end stop if it is pressed, move down until it
  * is pressed, move up 3 mm (it must release), then touch it again slowly. Position 0 is where it is pressed.
- * Also the way back after STEPPER_EVENT_FAULT or STEPPER_EVENT_NOT_CLOSED.
- * @return ESP_OK; ESP_ERR_NOT_FOUND if the end stop was not reached within the travel (+25 %);
+ * Also the way back after STEPPER_EVENT_FAULT or STEPPER_EVENT_NOT_CLOSED. The search down covers 125 % of the
+ * travel; after STEPPER_EVENT_NOT_CLOSED only the height the sleeve can be at (the height the closing started
+ * from + 13 mm). When the end stop is not reached, the sleeve backs up 10 mm (rather than keep pressing on
+ * whatever is in the way) and holds there.
+ * @return ESP_OK; ESP_ERR_NOT_FOUND if the end stop was not reached within the search;
  *         ESP_ERR_INVALID_STATE if it stays pressed while moving up (broken NC wire, the motor does not move or
  *         cannot lift the sleeve).
  */
 esp_err_t stepper_home(void);
 
 /**
- * Move to a position (clamped to 0..travel). Returns at once; the motion runs in the interrupt. Ignored until
- * homed, and after a fault until homed again (stepper_ready()).
+ * Move to a position (clamped to 0..travel). Returns at once; the motion runs in the interrupt.
  * Closing (0) checks the position: the last 10 mm run at the homing speed and end on the end stop (position 0
- * corrected there); if it is not found within 5 mm below 0, the sleeve backs up 10 mm and the driver lets go
+ * corrected there); if it is not found within 5 mm below 0, the sleeve backs up 10 mm and holds there, not ready
  * (STEPPER_EVENT_NOT_CLOSED).
+ * @return false when refused, call again later: not ready (not homed, after a fault, or a closing that missed the
+ *         end stop: stepper_home() first), or an opening while the closing checks the end stop (its last 15 mm
+ *         at most, then it is accepted).
  */
-void stepper_move_to(int32_t pos);
+bool stepper_move_to(int32_t pos);
 
-/** Homed and no fault since: stepper_move_to() moves the motor. */
+/** Homed, no fault and no failed closing since: stepper_move_to() moves the motor. */
 bool stepper_ready(void);
 
 /** Current position in steps (updated by the interrupt at every step). */
@@ -62,7 +67,7 @@ typedef enum {
     STEPPER_EVENT_FAULT,
     /**
      * Closing did not find the end stop 5 mm below 0: something holds the sleeve up (or steps were lost going
-     * down). It backed up 10 mm and the driver is off. Call stepper_home() before moving again.
+     * down). It backed up 10 mm and rests there (driver as at any rest). Call stepper_home() before moving again.
      */
     STEPPER_EVENT_NOT_CLOSED,
 } stepper_event_t;
@@ -73,6 +78,12 @@ typedef enum {
  * @return what happened since the last call.
  */
 stepper_event_t stepper_poll(void);
+
+/**
+ * Stop for good (until stepper_home()): motion and timer interrupt stopped, not ready. The driver keeps its state:
+ * holding where it is when CONFIG_MOTOR_IDLE_OFF_MS is 0 (a lead screw that is not self-locking), else off.
+ */
+void stepper_stop(void);
 
 /** Driver output off (motor free, no holding torque) and motion stopped. */
 void stepper_disable(void);

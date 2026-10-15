@@ -81,12 +81,12 @@ menu "Lift motor (step motor)"
         range -1 21
         default 7
         help
-            Turns the driver output off while the lamp is not homed, after a fault, and
-            at rest when "Driver off at rest" is set. Put a 10 kOhm pull-up to 3.3 V on
-            it so the driver stays off while the ESP32-C3 boots.
+            Keeps the driver output off until the first motion, and turns it off at rest
+            when "Driver off at rest" is set. Put a 10 kOhm pull-up to 3.3 V on it so the
+            driver stays off while the ESP32-C3 boots.
             With -1, wire the driver's EN pin to GND: TMC2209 modules pull EN up, so an
-            open EN keeps the driver off. The firmware then cannot let go of the motor
-            after a fault.
+            open EN keeps the driver off. The driver is then always on (holding), even
+            with "Driver off at rest".
 
     config MOTOR_ENDSTOP_GPIO
         int "End stop GPIO"
@@ -104,8 +104,8 @@ menu "Lift motor (step motor)"
             "pressed". At boot, homing then stops with an error instead of driving into
             the base; later, a press read more than 3 mm above the closed position (or
             not released when opening) stops the motor and homes again, which finds the
-            broken wire and turns the motor off. With NO, a broken wire is never seen as
-            pressed: homing pushes against the base for the whole search.
+            broken wire and stops the lamp until a restart. With NO, a broken wire is
+            never seen as pressed: homing pushes against the base for the whole search.
             Say n for a normally open (NO) contact.
 
     config MOTOR_DIR_INVERT
@@ -170,9 +170,11 @@ menu "Lift motor (step motor)"
         range 0 600000
         default 0
         help
-            0 keeps the motor energised at rest (holding torque). With a self-locking
-            lead screw (2 mm per turn) the driver can be turned off to save power and
-            heat, e.g. 2000. With an 8 mm lead the upper part may slide down when off.
+            0 keeps the motor energised at rest (holding torque), also after a closing
+            that missed the end stop (10 mm above what stopped it) and when the lamp
+            stops for good after an error. With a self-locking lead screw (2 mm per turn)
+            the driver can be turned off to save power and heat, e.g. 2000. With an 8 mm
+            lead the upper part may slide down when off.
 
     endif
 
