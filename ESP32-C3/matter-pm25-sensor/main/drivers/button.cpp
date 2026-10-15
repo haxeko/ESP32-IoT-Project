@@ -6,8 +6,8 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-// Push button polled from an esp_timer: no interrupt, so contact bounce or
-// noise on a long wire cannot flood the CPU, and a level must last
+// Push buttons, each polled from its own esp_timer: no interrupt, so contact
+// bounce or noise on a long wire cannot flood the CPU, and a level must last
 // BUTTON_DEBOUNCE_SAMPLES polls before it counts.
 
 #include <driver/gpio.h>
@@ -21,32 +21,39 @@ static const char *TAG = "button";
 #define BUTTON_POLL_MS              50
 #define BUTTON_DEBOUNCE_SAMPLES     2
 
-static gpio_num_t s_gpio;
-static button_cb_t s_cb;
-static void *s_user_data;
-static bool s_pressed;                  // debounced state
-static int s_changed_samples;           // polls in a row that disagree with s_pressed
-static int64_t s_pressed_since_ms;
+typedef struct {
+    gpio_num_t gpio;
+    button_cb_t cb;
+    void *user_data;
+    bool pressed;               // debounced state
+    int changed_samples;        // polls in a row that disagree with pressed
+    int64_t pressed_since_ms;
+} button_t;
+
+// A slot is filled before its timer starts, and then only used by that timer.
+static button_t s_buttons[BUTTON_MAX_COUNT];
+static int s_button_count;
 
 static void poll_button(void *arg)
 {
+    button_t *b = (button_t *)arg;
     const int64_t now_ms = esp_timer_get_time() / 1000;
-    const bool pressed = gpio_get_level(s_gpio) == 0;
+    const bool pressed = gpio_get_level(b->gpio) == 0;
 
-    if (pressed == s_pressed) {
-        s_changed_samples = 0;
-    } else if (++s_changed_samples >= BUTTON_DEBOUNCE_SAMPLES) {
-        s_changed_samples = 0;
-        s_pressed = pressed;
+    if (pressed == b->pressed) {
+        b->changed_samples = 0;
+    } else if (++b->changed_samples >= BUTTON_DEBOUNCE_SAMPLES) {
+        b->changed_samples = 0;
+        b->pressed = pressed;
         if (pressed) {
-            s_pressed_since_ms = now_ms;
+            b->pressed_since_ms = now_ms;
         } else {
-            s_cb((uint32_t)(now_ms - s_pressed_since_ms), true, s_user_data);
+            b->cb((uint32_t)(now_ms - b->pressed_since_ms), true, b->user_data);
         }
     }
 
-    if (s_pressed) {
-        s_cb((uint32_t)(now_ms - s_pressed_since_ms), false, s_user_data);
+    if (b->pressed) {
+        b->cb((uint32_t)(now_ms - b->pressed_since_ms), false, b->user_data);
     }
 }
 
@@ -55,9 +62,19 @@ esp_err_t button_init(int gpio, button_cb_t cb, void *user_data)
     if (!GPIO_IS_VALID_GPIO(gpio) || cb == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    s_gpio = (gpio_num_t)gpio;
-    s_cb = cb;
-    s_user_data = user_data;
+    for (int i = 0; i < s_button_count; i++) {
+        if (s_buttons[i].gpio == gpio) {
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+    if (s_button_count >= BUTTON_MAX_COUNT) {
+        return ESP_ERR_NO_MEM;
+    }
+    button_t *b = &s_buttons[s_button_count];
+    *b = {};
+    b->gpio = (gpio_num_t)gpio;
+    b->cb = cb;
+    b->user_data = user_data;
 
     gpio_config_t io_config = {};
     io_config.pin_bit_mask = 1ULL << gpio;
@@ -72,6 +89,7 @@ esp_err_t button_init(int gpio, button_cb_t cb, void *user_data)
 
     esp_timer_create_args_t timer_args = {};
     timer_args.callback = poll_button;
+    timer_args.arg = b;
     timer_args.name = "button";
     esp_timer_handle_t timer;
     err = esp_timer_create(&timer_args, &timer);
@@ -83,6 +101,7 @@ esp_err_t button_init(int gpio, button_cb_t cb, void *user_data)
         esp_timer_delete(timer);
         return err;
     }
+    s_button_count++;
     ESP_LOGI(TAG, "Button on GPIO%d", gpio);
     return ESP_OK;
 }

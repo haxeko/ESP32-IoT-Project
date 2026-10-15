@@ -111,28 +111,21 @@ menu "Local Display and Indicators"
         range 1 100
         default 50
 
-    config LD2410_UART_RX_PIN
-        int "LD2410 UART RX pin (connect to radar TX)"
+    config DISPLAY_BUTTON_GPIO
+        int "Display on/off button GPIO (-1 = no button)"
+        range -1 21
         default 3
+        help
+            Push button between this GPIO and GND (the internal pull-up is
+            used). Each press turns the OLED off when it is on, and on when it
+            is off. The choice is saved and applies again after a restart.
+            The OLED is still on during start-up (until the first measurement
+            + 5 s) and during a factory reset. Without a button (-1) the OLED
+            stays on.
 
-    config LD2410_UART_TX_PIN
-        int "LD2410 UART TX pin (connect to radar RX)"
-        default 4
-
-    config PRESENCE_DISTANCE_CM
-        int "Turn the OLED on when someone is closer than (cm)"
-        range 30 600
-        default 120
-
-    config PRESENCE_HOLD_SEC
-        int "Keep the OLED on after the person leaves (seconds)"
-        range 0 3600
-        default 60
-
-    config RADAR_TIMEOUT_SEC
-        int "Ignore radar data older than (seconds)"
-        range 1 300
-        default 30
+            Free on an ESP32-C3 with this wiring: GPIO0, 1, 3, 4, 5, 6. Do not
+            use a strapping pin (GPIO2, 8, 9), the flash pins (GPIO11 to 17)
+            or the USB pins (GPIO18, 19).
 
 endmenu
 
@@ -149,8 +142,8 @@ menu "Factory Reset Button"
             and restarts, ready to be paired again. Releasing it earlier
             cancels.
 
-            Free on an ESP32-C3 with this wiring: GPIO0, 1, 5, 6, 7. Do not
-            use a strapping pin (GPIO2, 8, 9), the flash pins (GPIO11 to 17)
-            or the USB pins (GPIO18, 19).
+            Free on an ESP32-C3 with this wiring: GPIO0, 1, 4, 5, 6, 7 (GPIO3
+            is the display button). Do not use a strapping pin (GPIO2, 8, 9),
+            the flash pins (GPIO11 to 17) or the USB pins (GPIO18, 19).
 
 endmenu

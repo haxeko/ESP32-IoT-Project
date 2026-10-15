@@ -12,7 +12,8 @@
 #include <stdint.h>
 
 // On-device UI that runs without any controller: OLED, WS2812 air quality
-// indicator and the LD2410 presence radar that wakes the OLED.
+// indicator and the button that turns the OLED on and off
+// (CONFIG_DISPLAY_BUTTON_GPIO).
 esp_err_t local_ui_init(void);
 
 // Air quality level shown on the OLED and LEDs, from PM2.5 in µg/m³:

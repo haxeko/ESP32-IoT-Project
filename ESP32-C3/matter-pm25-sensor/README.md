@@ -1,6 +1,8 @@
-# Matter PM2.5 Air Quality Sensor (ESP32-C3, Wi-Fi)
+# Matter PM2.5 Air Quality Sensor (ESP32-C3, Wi-Fi), bản nút bật/tắt màn hình
 
 Cảm biến bụi mịn PM2.5 chuẩn **Matter over Wi-Fi** chạy trên ESP32-C3, thêm trực tiếp vào **Apple Home (HomeKit)**, Google Home, Home Assistant, SmartThings...
+
+Bản này giống [bản có radar](../matter-wifi/matter-pm25-sensor/) nhưng **không dùng radar LD2410**: màn hình OLED bật/tắt bằng **một nút nhấn** (mặc định GPIO3). Phần Matter, cảm biến, LED và nút factory reset giữ nguyên.
 
 Thiết bị dùng device type **Air Quality Sensor (0x002C)** và chỉ gửi qua Matter hai giá trị:
 
@@ -9,13 +11,16 @@ Thiết bị dùng device type **Air Quality Sensor (0x002C)** và chỉ gửi q
 | Air Quality (0x005B) | Mức chất lượng không khí, tính từ PM2.5 (trạng thái chính của cảm biến) |
 | PM2.5 Concentration Measurement (0x042A) | PM2.5, µg/m³ |
 
-Màn hình OLED, đèn LED WS2812 và radar LD2410 chạy **tại chỗ trên thiết bị**, không gửi qua Matter (giống bản ESPHome trước đó):
+Màn hình OLED, đèn LED WS2812 và các nút nhấn chạy **tại chỗ trên thiết bị**, không gửi qua Matter:
 
 - **LED WS2812** đổi màu theo mức chất lượng không khí, theo bảng màu của Apple Home: xanh lá, xanh vàng, vàng, đỏ, tím. Khi ứng dụng gửi lệnh **Identify** (ví dụ nút *Identify* của thiết bị trong Home Assistant), LED nháy trắng để chỉ ra thiết bị, xong thì trở lại màu chất lượng không khí.
 - **Màn hình OLED** hiện PM2.5 và mức chất lượng không khí. Giữa dòng tiêu đề có biểu tượng ngôi nhà khi thiết bị có Wi-Fi **và** có ít nhất một ứng dụng (Apple Home, Home Assistant...) đang kết nối. Khi không còn ứng dụng nào kết nối, biểu tượng tự mất, chậm nhất sau khoảng thời gian báo cáo tối đa mà ứng dụng chọn (thường tới 10 phút).
   Màn hình sáng/tắt như sau:
   - Luôn sáng khi khởi động cho tới khi có kết quả đo đầu tiên, sau đó sáng thêm 5 giây. Nếu cảm biến PM lỗi thì tối đa 120 giây.
-  - Sau đó chỉ sáng khi **radar LD2410 thấy người trong khoảng 120 cm**, và tắt sau 60 giây khi không còn ai.
+  - Sau đó theo **nút màn hình**: mỗi lần nhấn, màn hình đang sáng thì tắt, đang tắt thì sáng. Màn hình đổi ngay khi nhấn xuống, không cần chờ buông nút. Nhấn trong lúc khởi động thì màn hình tắt ngay.
+  - Lựa chọn sáng/tắt được **lưu lại**: mất điện rồi cắm lại, màn hình vẫn sáng lúc khởi động như trên, rồi trở về đúng trạng thái đã chọn. Lần đầu dùng, hoặc khi không lắp nút, màn hình luôn sáng.
+  - Khi factory reset, màn hình luôn sáng để hiện đếm ngược, kể cả khi đang tắt.
+  - Màn hình OLED để sáng liên tục nhiều tháng có thể bị **lưu ảnh** (các chữ cố định như "PM2.5" mờ dần in lên màn hình). Nên tắt màn hình khi không cần xem.
 
 ## Phần cứng
 
@@ -25,39 +30,39 @@ Màn hình OLED, đèn LED WS2812 và radar LD2410 chạy **tại chỗ trên th
   - **Nova Fitness SDS011 / SDS021**
 - Màn hình OLED **SH1106 128x64** (I2C, địa chỉ 0x3C)
 - Dải LED **WS2812**, 6 bóng
-- Radar hiện diện **HLK-LD2410**
+- Một nút nhấn bất kỳ để bật/tắt màn hình (không bắt buộc)
 - Một nút nhấn bất kỳ để factory reset (không bắt buộc)
 
-Các phần OLED, LED và LD2410 đều không bắt buộc. Thiếu phần nào thì firmware ghi lỗi vào log rồi chạy tiếp, cảm biến PM2.5 và Matter vẫn hoạt động. Màn hình không trả lời (chưa cắm, lỏng dây, mất nguồn giữa chừng) thì firmware thử khởi tạo lại mỗi 5 giây và tự sáng lại khi màn hình trả lời.
+Các phần OLED, LED và hai nút đều không bắt buộc. Thiếu phần nào thì firmware ghi lỗi vào log rồi chạy tiếp, cảm biến PM2.5 và Matter vẫn hoạt động. Màn hình không trả lời (chưa cắm, lỏng dây, mất nguồn giữa chừng) thì firmware thử khởi tạo lại mỗi 5 giây và tự sáng lại khi màn hình trả lời.
 
-Thiết bị **chạy độc lập với Matter**: cảm biến, màn hình, LED và radar khởi động trước Matter. Chúng vẫn hoạt động khi thiết bị chưa được ghép nối, khi mất Wi-Fi, hoặc khi Matter không khởi động được. Mỗi 30 giây, log in một dòng `local_ui: status: ...` cho biết trạng thái của màn hình, radar và LED, và một dòng `local_ui: heap: free=... min=... largest=...` cho biết RAM trống hiện tại, mức thấp nhất từ khi khởi động và khối liền lớn nhất.
+Thiết bị **chạy độc lập với Matter**: cảm biến, màn hình, LED và các nút khởi động trước Matter. Chúng vẫn hoạt động khi thiết bị chưa được ghép nối, khi mất Wi-Fi, hoặc khi Matter không khởi động được. Mỗi 30 giây, log in một dòng `local_ui: status: ...` cho biết trạng thái của màn hình (`setting=on/off` là lựa chọn của nút màn hình) và LED, và một dòng `local_ui: heap: free=... min=... largest=...` cho biết RAM trống hiện tại, mức thấp nhất từ khi khởi động và khối liền lớn nhất.
 
-Nếu luồng Matter hoặc một task của thiết bị (cảm biến PM, radar, màn hình) bị treo quá 30 giây, watchdog khởi động lại thiết bị thay vì để nó đứng im.
+Nếu luồng Matter hoặc một task của thiết bị (cảm biến PM, màn hình) bị treo quá 30 giây, watchdog khởi động lại thiết bị thay vì để nó đứng im.
 
 ### Sơ đồ nối dây
 
-![Sơ đồ đấu dây: ESP32-C3 SuperMini, PMS5003, LD2410C, OLED SH1106, LED WS2812B và nút factory reset](docs/wiring.png)
+![Sơ đồ đấu dây: ESP32-C3 SuperMini, PMS5003, OLED SH1106, LED WS2812B, nút bật/tắt màn hình và nút factory reset](docs/wiring.png)
 
-Hình minh họa, không theo tỉ lệ. Thứ tự chân của OLED và LD2410 khác nhau giữa các hãng và phiên bản: nối theo chữ in trên mạch, không theo vị trí chân trong hình.
+Hình minh họa, không theo tỉ lệ. Thứ tự chân của OLED khác nhau giữa các hãng: nối theo chữ in trên mạch, không theo vị trí chân trong hình.
 
 | Thiết bị | Chân | ESP32-C3 |
 |---|---|---|
 | PMS5003 | TX | **GPIO20** |
 | PMS5003 | RX | **GPIO21** |
 | PMS5003 | VCC / GND | 5V / GND |
-| LD2410 | TX | **GPIO3** |
-| LD2410 | RX | **GPIO4** |
-| LD2410 | VCC / GND | 5V / GND |
 | OLED SH1106 | SDA | **GPIO8** |
 | OLED SH1106 | SCL | **GPIO9** |
 | OLED SH1106 | VCC / GND | 3.3V / GND |
 | WS2812 | DIN | **GPIO10** |
 | WS2812 | VCC / GND | 5V / GND |
+| Nút bật/tắt màn hình | Chân 1 / chân 2 | **GPIO3** / GND |
 | Nút factory reset | Chân 1 / chân 2 | **GPIO7** / GND |
 
-Quạt PMS5003 và radar LD2410 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng vào ESP32-C3 được. Chân SET/RESET của PMS (nếu có) để hở hoặc nối 3.3V.
+Quạt PMS5003 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng vào ESP32-C3 được. Chân SET/RESET của PMS (nếu có) để hở hoặc nối 3.3V.
 
-Việc phân chia UART giống bản ESPHome: PMS5003 dùng UART1, LD2410 dùng UART0 (256000 baud), còn log chạy qua USB.
+PMS5003 dùng UART1, log chạy qua USB. Hai nút nối thẳng giữa chân GPIO và GND, firmware tự bật điện trở kéo lên. Với nút 4 chân, dùng 2 chân chéo nhau.
+
+Đang có mạch bản radar thì chỉ cần tháo LD2410 và nối nút màn hình vào hai dây cũ GPIO3 và GND của radar.
 
 ### Factory reset
 
@@ -68,7 +73,7 @@ Factory reset xóa Wi-Fi và thông tin ghép nối Matter, rồi thiết bị k
   2. Khi màn hình hiện số **0**, buông nút. Màn hình hiện *Đang đặt lại...* rồi thiết bị khởi động lại.
   3. Buông nút trước khi về 0 là hủy. Nút bị kẹt (giữ mãi không buông) cũng không reset.
 
-  Đổi chân trong `menuconfig` → *Factory Reset Button*, đặt `-1` nếu không lắp nút. Firmware báo lỗi khi build nếu chọn trùng chân đang dùng, chân strapping (GPIO2/8/9), chân flash (GPIO11–17) hay chân USB (GPIO18/19). Chân còn trống: GPIO0, 1, 5, 6, 7.
+  Đổi chân trong `menuconfig` → *Factory Reset Button*, đặt `-1` nếu không lắp nút. Firmware báo lỗi khi build nếu chọn trùng chân đang dùng (kể cả chân của nút màn hình), chân strapping (GPIO2/8/9), chân flash (GPIO11–17) hay chân USB (GPIO18/19). Chân còn trống: GPIO0, 1, 4, 5, 6.
 - **Cắm rồi rút nguồn 5 lần liên tiếp**, mỗi lần giữ điện dưới 10 giây. Ở lần cắm thứ 5, thiết bị factory reset. Cách này dùng được cả khi không lắp nút.
 - Nếu bạn xóa thiết bị khỏi tất cả ứng dụng (Apple Home, Home Assistant...), thiết bị tự mở lại chế độ ghép nối, không cần reset.
 - Cả hai cách vẫn chạy khi Matter không khởi động được: khi đó firmware xóa thẳng phân vùng NVS rồi khởi động lại.
@@ -103,7 +108,7 @@ Build và nạp:
 . ./esp-idf/export.sh
 . ./esp-matter/export.sh
 
-cd ESP32-C3/matter-wifi/matter-pm25-sensor
+cd ESP32-C3/matter-pm25-sensor
 idf.py set-target esp32c3
 idf.py menuconfig          # (tùy chọn) PM2.5 Sensor Configuration
 idf.py -p /dev/ttyACM0 flash monitor
@@ -115,15 +120,19 @@ Mỗi lần build xong, thư mục `build/firmware/` chỉ chứa file của đ�
 
 | File | Dùng khi | Nạp ở địa chỉ | Wi-Fi và ghép nối Matter |
 |---|---|---|---|
-| `haxeko_pm5003_v1.0.49_esp32c3_merged.bin` | Mạch mới, hoặc muốn xóa sạch | `0x0` | **Bị xóa**: file phủ cả vùng NVS |
-| `haxeko_pm5003_v1.0.49_esp32c3_update.bin` | Cập nhật thiết bị đang dùng | `0x1D000` | Giữ nguyên |
+| `haxeko_pm5003_button_v1.0.49_esp32c3_merged.bin` | Mạch mới, hoặc muốn xóa sạch | `0x0` | **Bị xóa**: file phủ cả vùng NVS |
+| `haxeko_pm5003_button_v1.0.49_esp32c3_update.bin` | Cập nhật thiết bị đang dùng | `0x1D000` | Giữ nguyên |
+
+Chữ `button` trong tên file phân biệt với file của bản radar (`haxeko_pm5003_v...`), vì hai bản có cùng tên kiểu máy. Đổi hoặc bỏ chữ này ở `FIRMWARE_FILE_TAG` trong `CMakeLists.txt`.
 
 ```bash
 # Mạch mới (xóa ghép nối)
-esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x0 build/firmware/haxeko_pm5003_v1.0.49_esp32c3_merged.bin
+esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x0 build/firmware/haxeko_pm5003_button_v1.0.49_esp32c3_merged.bin
 # Cập nhật, giữ ghép nối
-esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x1d000 build/firmware/haxeko_pm5003_v1.0.49_esp32c3_update.bin
+esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x1d000 build/firmware/haxeko_pm5003_button_v1.0.49_esp32c3_update.bin
 ```
+
+Có thể nạp file update của bản này lên thiết bị đang chạy bản radar (và ngược lại) mà vẫn giữ ghép nối: hai bản dùng cùng bảng phân vùng và cùng thông tin Matter.
 
 File update chỉ ghi vùng chọn phân vùng OTA và firmware, nên vẫn chạy đúng kể cả sau một lần cập nhật OTA. Khi bootloader hoặc bảng phân vùng thay đổi (sửa `partitions.csv` hay cấu hình bootloader), phải nạp file merged. `idf.py flash` cũng giữ nguyên ghép nối.
 
@@ -147,10 +156,7 @@ File update chỉ ghi vùng chọn phân vùng OTA và firmware, nên vẫn ch�
 | OLED I2C address | 0x3C |
 | Rotate OLED 180 degrees | bật |
 | WS2812 data pin / số LED / độ sáng | 10 / 6 / 50% |
-| LD2410 RX / TX pin | 3 / 4 |
-| Khoảng cách bật màn hình | 120 cm |
-| Giữ màn hình sáng sau khi người rời đi | 60 s |
-| Bỏ qua dữ liệu radar cũ hơn | 30 s |
+| Display on/off button GPIO | 3 (`-1` = không có nút, màn hình luôn sáng) |
 
 *Factory Reset Button*:
 
@@ -180,7 +186,7 @@ Phiên bản có dạng **`<major>.<minor>.<build>`**, ví dụ `1.0.49`, và ch
 | Nơi | Ví dụ |
 |---|---|
 | Apple Home / Home Assistant, mục Firmware (`SoftwareVersionString`) | `1.0.49` |
-| Tên file nạp trong `build/firmware/` | `haxeko_pm5003_v1.0.49_esp32c3_merged.bin` |
+| Tên file nạp trong `build/firmware/` | `haxeko_pm5003_button_v1.0.49_esp32c3_merged.bin` |
 | Log khi khởi động | `Haxeko PM5003, firmware 1.0.49` |
 | Số phiên bản Matter dùng cho OTA (`SoftwareVersion`) | `49` |
 
@@ -234,9 +240,8 @@ test/host/run.sh
 | Test | Kiểm tra |
 |---|---|
 | `test_pm_sensor.cpp` (đo theo chu kỳ và đo liên tục) | Ghép khung PMS5003 bị chia nhỏ, nhiễu, khung trả lời lệnh; bỏ 30 giây khởi động; báo mất dữ liệu; gửi lại lệnh cấu hình khi cảm biến im lặng |
-| `test_ld2410.cpp` | Khung radar bị chia nhỏ, header lặp, độ dài sai, footer hỏng, chế độ engineering, khung ACK |
-| `test_button.cpp` | Chống dội nút, thời gian giữ, nút bị kẹt |
-| `test_local_ui.cpp` | OLED bật/tắt theo khởi động và radar, rút/cắm OLED, OLED mất nguồn âm thầm, màn reset, LED theo mức không khí, Identify |
+| `test_button.cpp` | Hai nút chạy độc lập, chống dội nút, thời gian giữ, nút bị kẹt, chân trùng |
+| `test_local_ui.cpp` (có nút và không có nút) | OLED lúc khởi động, nút màn hình bật/tắt và lưu lựa chọn, nhấn trong lúc khởi động, nhấn hai lần liền, màn reset khi màn hình đang tắt, rút/cắm OLED, OLED mất nguồn âm thầm, LED theo mức không khí, Identify |
 
 Phần Matter, Wi-Fi và BLE vẫn phải thử trên thiết bị thật.
 
@@ -261,15 +266,14 @@ matter-pm25-sensor/
 │   ├── chip_project_config.h # Tên/loại thiết bị khi dò tìm ghép nối
 │   ├── app_main.cpp          # Matter node, endpoint Air Quality Sensor, factory reset
 │   ├── device_info.cpp       # Manufacturer / Model / Hardware (Basic Information)
-│   ├── local_ui.cpp          # Logic màn hình / LED / radar chạy tại chỗ
+│   ├── local_ui.cpp          # Logic màn hình / LED / nút màn hình chạy tại chỗ
 │   ├── Kconfig.projbuild     # Cấu hình chân và tham số
 │   ├── idf_component.yml
 │   ├── drivers/
 │   │   ├── pm_sensor.cpp     # PMS5003/7003/A003 và SDS011 (UART1)
-│   │   ├── ld2410.cpp        # Radar LD2410 (UART0)
 │   │   ├── sh1106.cpp        # OLED SH1106 I2C + vẽ chữ
 │   │   ├── status_led.cpp    # WS2812
-│   │   └── button.cpp        # Nút factory reset
+│   │   └── button.cpp        # Nút nhấn: factory reset, bật/tắt màn hình
 │   └── ui/
 │       └── fonts.c           # Font bitmap Roboto (sinh bởi tools/gen_fonts.py)
 ├── test/host/                 # Kiểm thử trên máy tính (run.sh)

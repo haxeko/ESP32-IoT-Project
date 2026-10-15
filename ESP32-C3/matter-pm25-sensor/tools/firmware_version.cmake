@@ -71,12 +71,16 @@ endfunction()
 
 # Adds the "firmware_files" target, run at the end of every build. It empties
 # build/firmware/ and writes the flash files of this version (see
-# tools/firmware_files.cmake). Must be called after project().
+# tools/firmware_files.cmake). Must be called after project(). The optional
+# FIRMWARE_FILE_TAG variable is added after the model name.
 function(firmware_files_target project_dir)
     idf_build_get_property(python PYTHON)
     idf_build_get_property(build_dir BUILD_DIR)
-    # e.g. "haxeko_pm5003_v1.0.49_esp32c3"
+    # e.g. "haxeko_pm5003_button_v1.0.49_esp32c3"
     string(TOLOWER "${CONFIG_DEVICE_VENDOR_NAME}_${CONFIG_DEVICE_PRODUCT_NAME}" prefix)
+    if(FIRMWARE_FILE_TAG)
+        string(TOLOWER "${prefix}_${FIRMWARE_FILE_TAG}" prefix)
+    endif()
     string(REGEX REPLACE "[^a-z0-9_.-]+" "-" prefix "${prefix}")
     add_custom_target(firmware_files ALL
         COMMAND ${CMAKE_COMMAND}

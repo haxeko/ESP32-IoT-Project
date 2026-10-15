@@ -6,12 +6,12 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-// Local UI logic (ported from the ESPHome configuration):
+// Local UI logic (ported from the ESPHome configuration, without the radar):
 // - WS2812 color follows the air quality level of the last PM2.5 value; the
 //   LEDs blink white during a Matter Identify.
 // - The OLED is on during start-up (until the first PM2.5 value + 5 s, at most
-//   120 s + 5 s), then only while someone is within CONFIG_PRESENCE_DISTANCE_CM
-//   of the LD2410 radar, and during a factory reset.
+//   120 s + 5 s) and during a factory reset. Otherwise the display button
+//   turns it on and off, and that choice is kept in NVS across restarts.
 
 #include <esp_heap_caps.h>
 #include <esp_log.h>
@@ -20,9 +20,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <math.h>
+#include <nvs.h>
 #include <stdio.h>
 
-#include "drivers/ld2410.h"
+#include "drivers/button.h"
 #include "drivers/sh1106.h"
 #include "drivers/status_led.h"
 #include "local_ui.h"
@@ -62,6 +63,26 @@ static const char *TAG = "local_ui";
 #else
 #define OLED_ROTATE_180             false
 #endif
+
+#if CONFIG_DISPLAY_BUTTON_GPIO >= 0
+static_assert(CONFIG_DISPLAY_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_RX_PIN &&
+              CONFIG_DISPLAY_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_TX_PIN &&
+              CONFIG_DISPLAY_BUTTON_GPIO != CONFIG_OLED_SDA_PIN &&
+              CONFIG_DISPLAY_BUTTON_GPIO != CONFIG_OLED_SCL_PIN &&
+              CONFIG_DISPLAY_BUTTON_GPIO != CONFIG_STATUS_LED_GPIO &&
+              CONFIG_DISPLAY_BUTTON_GPIO != CONFIG_FACTORY_RESET_BUTTON_GPIO,
+              "The display button GPIO is already used");
+#if CONFIG_IDF_TARGET_ESP32C3
+// Pressed during a reset, a strapping pin changes the boot mode.
+static_assert(CONFIG_DISPLAY_BUTTON_GPIO != 2 && CONFIG_DISPLAY_BUTTON_GPIO != 8 && CONFIG_DISPLAY_BUTTON_GPIO != 9 &&
+              (CONFIG_DISPLAY_BUTTON_GPIO < 11 || CONFIG_DISPLAY_BUTTON_GPIO > 19),
+              "Display button: GPIO2/8/9 are strapping pins, GPIO11-17 flash, GPIO18-19 USB");
+#endif
+#endif
+
+// Display button setting (on or off), saved when it changes.
+static constexpr char kNvsNamespace[] = "local_ui";
+static constexpr char kNvsDisplayOnKey[] = "display_on";
 
 #if CONFIG_PM_SENSOR_MODEL_SDS011
 #define PM_SENSOR_NAME              "SDS011"
@@ -113,10 +134,11 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static screen_t s_screen = { .pm25 = NAN, .level = -1, .matter_connected = false,
                              .reset = LOCAL_UI_RESET_NONE, .reset_seconds = 0 };
 static int64_t s_identify_until_ms;     // under s_lock; 0 = not identifying
+static uint32_t s_display_presses;      // under s_lock; display button presses not handled yet
 static TaskHandle_t s_task;
 static bool s_oled_ok;
 static bool s_led_ok;
-static bool s_radar_ok;
+static bool s_display_on = true;        // display button setting, loaded by local_ui_init()
 
 static int64_t now_ms()
 {
@@ -182,27 +204,51 @@ void local_ui_identify(uint32_t duration_ms)
     }
 }
 
-// Someone is within CONFIG_PRESENCE_DISTANCE_CM of the radar, and the radar is
-// still sending data. The "detection distance" field is not used because the
-// LD2410 often reports 0 cm for it while a target is present.
-static bool presence_raw(int64_t now)
+static void save_display_on(bool on)
 {
-    ld2410_target_t t;
-    if (!ld2410_get_target(&t) || (!t.moving && !t.still)) {
-        return false;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, kNvsDisplayOnKey, on ? 1 : 0);
+        if (err == ESP_OK) {
+            err = nvs_commit(handle);
+        }
+        nvs_close(handle);
     }
-    if (now - t.timestamp_ms > CONFIG_RADAR_TIMEOUT_SEC * 1000) {
-        return false;
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to save the display setting: %s", esp_err_to_name(err));
     }
-    int distance = INT32_MAX;
-    if (t.moving && t.moving_cm > 0 && t.moving_cm < distance) {
-        distance = t.moving_cm;
-    }
-    if (t.still && t.still_cm > 0 && t.still_cm < distance) {
-        distance = t.still_cm;
-    }
-    return distance <= CONFIG_PRESENCE_DISTANCE_CM;
 }
+
+#if CONFIG_DISPLAY_BUTTON_GPIO >= 0
+// Display button setting saved by save_display_on(): on when never saved.
+static bool load_display_on()
+{
+    uint8_t on = 1;
+    nvs_handle_t handle;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) == ESP_OK) {
+        nvs_get_u8(handle, kNvsDisplayOnKey, &on);
+        nvs_close(handle);
+    }
+    return on != 0;
+}
+
+// Runs in the esp_timer task. Acts on the press itself (first poll, held_ms =
+// 0) rather than on the release, so the screen reacts at once. The UI task
+// handles it: it may be busy (LED fade) and owns the display state.
+static void display_button_cb(uint32_t held_ms, bool released, void *user_data)
+{
+    if (released || held_ms != 0) {
+        return;
+    }
+    taskENTER_CRITICAL(&s_lock);
+    s_display_presses++;
+    taskEXIT_CRITICAL(&s_lock);
+    if (s_task != NULL) {
+        xTaskNotifyGive(s_task);
+    }
+}
+#endif
 
 // Factory reset: count down while the button is held (4..1), then 0 when
 // releasing it resets.
@@ -258,8 +304,7 @@ static void local_ui_task(void *arg)
     const int64_t boot_ms = now_ms();
     bool startup = true;
     int64_t startup_hold_from = -1;     // set when the start-up hold period begins
-    bool presence = false;
-    int64_t last_presence_ms = 0;
+    bool display_on = s_display_on;     // display button setting
     bool oled_on = s_oled_ok;
     int64_t last_redraw_ms = 0;
     int64_t last_oled_retry_ms = boot_ms;
@@ -280,6 +325,8 @@ static void local_ui_task(void *arg)
         taskENTER_CRITICAL(&s_lock);
         const screen_t screen = s_screen;
         const bool identifying = s_identify_until_ms > now;
+        const uint32_t presses = s_display_presses;
+        s_display_presses = 0;
         taskEXIT_CRITICAL(&s_lock);
         const float pm25 = screen.pm25;
         const int level = screen.level;
@@ -296,12 +343,18 @@ static void local_ui_task(void *arg)
             }
         }
 
-        // Presence within CONFIG_PRESENCE_DISTANCE_CM, with a delayed off.
-        if (s_radar_ok && presence_raw(now)) {
-            presence = true;
-            last_presence_ms = now;
-        } else if (presence && now - last_presence_ms >= CONFIG_PRESENCE_HOLD_SEC * 1000) {
-            presence = false;
+        // Display button: each press flips what the screen shows (during
+        // start-up it is on even when the setting is off) and ends start-up.
+        if (presses > 0) {
+            const bool was_on = display_on;
+            for (uint32_t i = 0; i < presses; i++) {
+                display_on = !(startup || display_on);
+                startup = false;
+            }
+            ESP_LOGI(TAG, "Display button: %s", display_on ? "on" : "off");
+            if (display_on != was_on) {
+                save_display_on(display_on);
+            }
         }
 
         // LEDs: blink white during a Matter Identify, otherwise show the air
@@ -344,9 +397,10 @@ static void local_ui_task(void *arg)
             oled_on = false;    // turned on below if it should be
         }
 
-        // OLED: on during start-up, while someone is close, or during a factory reset.
+        // OLED: on during start-up, when the display button setting is on, or
+        // during a factory reset.
         if (s_oled_ok) {
-            const bool should_be_on = startup || presence || resetting;
+            const bool should_be_on = startup || display_on || resetting;
             esp_err_t err = ESP_OK;
             if (should_be_on != oled_on) {
                 oled_on = should_be_on;
@@ -380,23 +434,16 @@ static void local_ui_task(void *arg)
 
         if (now - last_status_ms >= STATUS_LOG_MS) {
             last_status_ms = now;
-            ld2410_target_t t;
-            const bool radar_seen = s_radar_ok && ld2410_get_target(&t);
-            ESP_LOGI(TAG, "status: oled=%s screen=%s startup=%d presence=%d radar=%s led_level=%d pm25=%d matter=%d",
-                     s_oled_ok ? "ok" : "missing", oled_on ? "on" : "off", startup, presence,
-                     radar_seen ? (t.moving || t.still ? "target" : "no-target") : "no-data",
+            ESP_LOGI(TAG, "status: oled=%s screen=%s startup=%d setting=%s led_level=%d pm25=%d matter=%d",
+                     s_oled_ok ? "ok" : "missing", oled_on ? "on" : "off", startup, display_on ? "on" : "off",
                      led_level, isnan(pm25) ? -1 : (int)lroundf(pm25), screen.matter_connected);
             // Internal RAM: free now / lowest ever / largest block (RAM headroom check).
             ESP_LOGI(TAG, "heap: free=%u min=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-            if (radar_seen) {
-                ESP_LOGI(TAG, "radar: moving=%d %ucm still=%d %ucm, %lld ms ago", t.moving, t.moving_cm, t.still,
-                         t.still_cm, (long long)(now - t.timestamp_ms));
-            }
         }
 
-        // Woken up early by local_ui_set_reset().
+        // Woken up early by local_ui_set_reset(), local_ui_identify() and the display button.
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(UI_TICK_MS));
     }
 }
@@ -414,7 +461,13 @@ static bool init_oled()
 
 esp_err_t local_ui_init(void)
 {
-    // Each part is optional: a missing OLED or radar must not stop the sensor.
+#if CONFIG_DISPLAY_BUTTON_GPIO >= 0
+    s_display_on = load_display_on();
+#else
+    s_display_on = true;    // no button to turn it back on
+#endif
+
+    // Each part is optional: a missing OLED, LED strip or button must not stop the sensor.
     s_oled_ok = init_oled() && draw_screen(s_screen) == ESP_OK && sh1106_set_power(true) == ESP_OK;
 
     esp_err_t err;
@@ -425,14 +478,19 @@ esp_err_t local_ui_init(void)
         ESP_LOGE(TAG, "LED init failed: %s", esp_err_to_name(err));
     }
 
-    err = ld2410_init(CONFIG_LD2410_UART_RX_PIN, CONFIG_LD2410_UART_TX_PIN);
-    s_radar_ok = (err == ESP_OK);
-    if (!s_radar_ok) {
-        ESP_LOGE(TAG, "LD2410 init failed: %s", esp_err_to_name(err));
-    }
-
     if (xTaskCreate(local_ui_task, "local_ui", UI_TASK_STACK, NULL, UI_TASK_PRIO, &s_task) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
+
+#if CONFIG_DISPLAY_BUTTON_GPIO >= 0
+    // After the task exists, so that the first press wakes it up.
+    err = button_init(CONFIG_DISPLAY_BUTTON_GPIO, display_button_cb, NULL);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Display button on GPIO%d, display %s after start-up", CONFIG_DISPLAY_BUTTON_GPIO,
+                 s_display_on ? "on" : "off");
+    } else {
+        ESP_LOGE(TAG, "Display button init failed: %s", esp_err_to_name(err));
+    }
+#endif
     return ESP_OK;
 }

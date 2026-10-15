@@ -7,8 +7,9 @@
 */
 
 // Matter Air Quality Sensor (device type 0x002C) with a PM2.5 concentration
-// measurement cluster, fed by a UART PM sensor. The OLED, WS2812 indicator and
-// LD2410 radar are handled locally (local_ui.cpp) and are not exposed to Matter.
+// measurement cluster, fed by a UART PM sensor. The OLED (with its on/off
+// button) and the WS2812 indicator are handled locally (local_ui.cpp) and are
+// not exposed to Matter.
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/InteractionModelEngine.h>
@@ -64,8 +65,7 @@ static_assert(CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_RX_PIN &
               CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_OLED_SDA_PIN &&
               CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_OLED_SCL_PIN &&
               CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_STATUS_LED_GPIO &&
-              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_RX_PIN &&
-              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_TX_PIN,
+              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_DISPLAY_BUTTON_GPIO,
               "The factory reset button GPIO is already used");
 #if CONFIG_IDF_TARGET_ESP32C3
 // Pressed during a reset, a strapping pin changes the boot mode.
@@ -109,7 +109,7 @@ static void update_measured_value(uint16_t endpoint_id, uint32_t cluster_id, uin
 }
 
 // Set once the Matter stack is running. Until then (or if Matter fails to
-// start) the sensor, OLED, LEDs and radar keep working locally.
+// start) the sensor, OLED and LEDs keep working locally.
 static std::atomic<bool> s_matter_started{false};
 static uint16_t s_air_quality_endpoint_id;
 static std::atomic<bool> s_factory_reset_started{false};
@@ -490,7 +490,7 @@ extern "C" void app_main()
 
     const bool factory_reset_requested = check_factory_reset_boot_count();
 
-    /* The sensor, OLED, WS2812 and LD2410 work locally, before and without Matter */
+    /* The sensor, OLED and WS2812 work locally, before and without Matter */
     esp_err_t err = local_ui_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start local UI: %s", esp_err_to_name(err));
