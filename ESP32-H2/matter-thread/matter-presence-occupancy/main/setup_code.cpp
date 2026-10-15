@@ -26,7 +26,8 @@
 #include <platform/CommissionableDataProvider.h>
 #endif
 
-static const char *TAG = "setup_code";
+// Unused when both CONFIG_UNIQUE_SETUP_CODE and CONFIG_PRINT_ONBOARDING_CODES are off (factory build)
+[[maybe_unused]] static const char *TAG = "setup_code";
 
 #if CONFIG_UNIQUE_SETUP_CODE
 namespace {
