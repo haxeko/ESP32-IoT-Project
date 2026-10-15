@@ -45,6 +45,11 @@ CONFIG_DEVICE_TYPE=263
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
 
+# Also build build/matter_presence_h2_learn-ota.bin: the app image with the Matter
+# OTA header (VID/PID from the config, version = PROJECT_VER_NUMBER/PROJECT_VER),
+# the file a Matter controller (e.g. the Home Assistant Matter Server) serves
+CONFIG_CHIP_OTA_IMAGE_BUILD=y
+
 # Exclude unused clusters to optimize flash and memory usage
 CONFIG_SUPPORT_ACCOUNT_LOGIN_CLUSTER=n
 CONFIG_SUPPORT_ACTIVATED_CARBON_FILTER_MONITORING_CLUSTER=n

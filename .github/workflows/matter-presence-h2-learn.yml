@@ -31,6 +31,8 @@ jobs:
           idf.py set-target esp32h2
           idf.py build
           idf.py merge-bin -o matter_presence_h2_learn_merged.bin
+          # Matter OTA image (CONFIG_CHIP_OTA_IMAGE_BUILD); .ota is the extension controllers expect
+          cp build/matter_presence_h2_learn-ota.bin build/matter_presence_h2_learn.ota
       - uses: actions/upload-artifact@v4
         with:
           name: matter_presence_h2_learn-esp32h2
@@ -41,3 +43,4 @@ jobs:
             ESP32-H2/matter-presence-ld2410-learning/build/ota_data_initial.bin
             ESP32-H2/matter-presence-ld2410-learning/build/flash_args
             ESP32-H2/matter-presence-ld2410-learning/build/matter_presence_h2_learn_merged.bin
+            ESP32-H2/matter-presence-ld2410-learning/build/matter_presence_h2_learn.ota

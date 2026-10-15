@@ -202,6 +202,20 @@ Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 >
 > Nâng cấp bản fork mà **giữ ghép nối** (thiết bị chưa từng cập nhật OTA): chỉ nạp phần ứng dụng `esptool.py --chip esp32h2 -p /dev/ttyUSB0 write_flash 0x20000 matter_presence_h2_learn.bin` (hoặc `idf.py flash`).
 
+### Cập nhật qua mạng (OTA) từ Home Assistant
+
+Mỗi bản build có thêm file `matter_presence_h2_learn.ota` (trong Artifacts; build tại máy là `build/matter_presence_h2_learn-ota.bin`, đổi đuôi thành `.ota`). Đây là file ứng dụng kèm header Matter OTA: mã hãng/sản phẩm `0xFFF1`/`0x8000` và phiên bản `1.0.<số commit>`. Không dùng được file `.bin` cho việc này.
+
+1. Settings → Add-ons → **Matter Server** → **Open Web UI** (cần Matter Server bản matter.js 1.4.0 trở lên, có nút *Upload Firmware*).
+2. Chọn thiết bị → **Upload Firmware** → chọn file `.ota` → **Start Update** (hoặc bấm Cài đặt ở entity *Firmware* của thiết bị trong Home Assistant).
+3. Thiết bị tải qua Thread (khoảng 1,7 MB, có thể mất vài chục phút), tự khởi động lại vào bản mới và giữ ghép nối.
+
+> - Phiên bản trong file phải **lớn hơn** bản đang chạy, nếu không sẽ báo "No update available".
+> - Kiểm tra số phiên bản trước khi bấm cài: `0xFFF1`/`0x8000` là mã test dùng chung, test-net DCL có thể có firmware khác cùng mã.
+> - Nếu sau khi upload vẫn báo không có cập nhật, bật tuỳ chọn test-net DCL trong cấu hình add-on.
+> - Bản đổi số endpoint (như bản bỏ entity Duration) vẫn nên xoá thiết bị và ghép nối lại sau khi cập nhật.
+> - Sau khi đã cập nhật OTA, thiết bị chạy từ phân vùng `ota_1`: nạp USB thì dùng file merged (hoặc `idf.py flash`, ghi cả `otadata`), không ghi riêng `0x20000`.
+
 ## Cấu hình (`idf.py menuconfig`)
 
 *Presence Sensor Configuration*:
