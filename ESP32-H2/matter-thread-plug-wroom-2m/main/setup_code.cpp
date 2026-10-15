@@ -19,11 +19,13 @@
 #include <esp_matter_providers.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <freertos/task.h>
 #include <nvs.h>
 #include <nvs_flash.h>
 
 #include <crypto/CHIPCryptoPAL.h>
 #include <platform/CommissionableDataProvider.h>
+#include <platform/PlatformManager.h>
 #endif
 
 // Unused when both CONFIG_UNIQUE_SETUP_CODE and CONFIG_PRINT_ONBOARDING_CODES are off (factory build)
@@ -270,6 +272,26 @@ esp_err_t setup_code_init(void)
     return err;
 #else
     return ESP_OK;
+#endif
+}
+
+void setup_code_preload(void)
+{
+#if CONFIG_UNIQUE_SETUP_CODE
+    // The first load may generate the code (PBKDF2 + SPAKE2+ verifier with mbedTLS ECC): run it on the Matter task
+    // (8 KB stack) and wait, instead of on whichever smaller task asks first (e.g. id_diag on a commissioned board,
+    // where no commissioning window asks for it at boot)
+    TaskHandle_t self = xTaskGetCurrentTaskHandle();
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork(
+        [](intptr_t arg) {
+            uint16_t discriminator;
+            (void)s_provider.GetSetupDiscriminator(discriminator);
+            xTaskNotifyGive(reinterpret_cast<TaskHandle_t>(arg));
+        },
+        reinterpret_cast<intptr_t>(self));
+    if (err == CHIP_NO_ERROR) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    }
 #endif
 }
 

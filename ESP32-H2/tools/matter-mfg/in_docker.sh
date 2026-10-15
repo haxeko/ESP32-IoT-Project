@@ -9,7 +9,14 @@ IMAGE=${IMAGE:-espressif/esp-matter:release-v1.6.1_idf_v6.0.2}
 HERE=$(cd "$(dirname "$0")" && pwd)
 script=$1
 shift
-docker run --rm -v "$PWD":/work -v "$HERE":/tools:ro -w /work "$IMAGE" \
+# CD_FILE / OUT are passed through when set. The outputs are given back to the calling user (the container runs as
+# root) and the folders holding DAC private keys are made private.
+docker run --rm -e CD_FILE -e OUT -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+    -v "$PWD":/work -v "$HERE":/tools:ro -w /work "$IMAGE" \
     bash -c '. /opt/espressif/esp-idf/export.sh >/dev/null 2>&1; . /opt/espressif/esp-matter/export.sh >/dev/null 2>&1
-             cd /work && bash /tools/"$0" "$@"' \
+             cd /work && bash /tools/"$0" "$@"; rc=$?
+             find /work/factory -type d -name internal -exec chmod -R go-rwx {} + 2>/dev/null
+             chmod -R go-rwx /work/${OUT:-pki}/private 2>/dev/null
+             chown -R "$HOST_UID:$HOST_GID" /work/${OUT:-pki} /work/factory 2>/dev/null
+             exit $rc' \
     "$script" "$@"

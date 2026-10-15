@@ -1,6 +1,6 @@
 # Per-board random setup code instead of the SDK test code 20202021 / 3840 (README "Mã ghép nối riêng").
 # Applied after sdkconfig.defaults and sdkconfig.defaults.esp32h2:
-#   idf.py -B build-unique -D SDKCONFIG=sdkconfig.unique \
+#   idf.py -B build-unique -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.unique \
 #     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.unique_setup" build
 # Each board generates its passcode, discriminator and SPAKE2+ verifier on first use and keeps them in the
 # "fctry" partition (main/setup_code.cpp); the QR code is printed on the serial log while pairing is possible.

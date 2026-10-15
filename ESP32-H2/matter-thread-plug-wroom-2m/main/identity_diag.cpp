@@ -258,7 +258,10 @@ private:
     {
         Entry *e = Find(h);
         if (!e) {
-            e = &mEntries[mNext];
+            e = Find(nullptr); // a slot never used or freed by OnSubscriptionTerminated
+        }
+        if (!e) {
+            e = &mEntries[mNext]; // all in use (some may be stale): overwrite round-robin
             mNext = (mNext + 1) % kSlots;
         }
         *e = { h, fabric, peer };
@@ -674,14 +677,20 @@ static void dump(bool full, bool scan_nvs)
 
 static void identity_diag_task(void *)
 {
+    // Seconds to ticks directly: pdMS_TO_TICKS() multiplies in 32 bits and wraps above ~42950 s
+    const TickType_t period = (TickType_t)s_period_s * (TickType_t)configTICK_RATE_HZ;
     uint32_t blocks = 0;
     TickType_t last_event_dump = 0;
     dump(true, true);
     blocks++;
+    // Absolute deadline: event-triggered blocks must not push the periodic full block back forever
+    TickType_t next_full = xTaskGetTickCount() + period;
 
     for (;;) {
+        const TickType_t now = xTaskGetTickCount();
+        const TickType_t remaining = (int32_t)(next_full - now) > 0 ? next_full - now : 0;
         uint32_t bits = 0;
-        if (xTaskNotifyWait(0, UINT32_MAX, &bits, pdMS_TO_TICKS(s_period_s * 1000u)) == pdTRUE) {
+        if (remaining > 0 && xTaskNotifyWait(0, UINT32_MAX, &bits, remaining) == pdTRUE) {
             // Coalesce bursts (role change + address change + network data change ...)
             const TickType_t since = xTaskGetTickCount() - last_event_dump;
             if (since < kMinEventGap) {
@@ -696,6 +705,7 @@ static void identity_diag_task(void *)
         }
         dump(true, (blocks % kNvsScanEvery) == 0);
         blocks++;
+        next_full = xTaskGetTickCount() + period;
     }
 }
 

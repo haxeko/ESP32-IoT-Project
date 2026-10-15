@@ -1,7 +1,8 @@
 #!/bin/bash
 # Per-board factory partitions ("fctry") for the manufacturing build (sdkconfig.defaults.factory).
-# Each board gets its own DAC + DAC private key (signed by the PAI), random passcode, discriminator, SPAKE2+
-# salt/verifier and serial number; the CD and the PAI certificate are the same for all boards.
+# Each board gets its own DAC + DAC private key (signed by the PAI), random passcode, discriminator and SPAKE2+
+# salt/verifier; the CD and the PAI certificate are the same for all boards. The partition also holds a random
+# "serial-num" that these firmwares do not use: they report the eFuse-MAC serial number (main/device_info.cpp).
 #
 #   gen_factory_data.sh -t occupancy|plug -n COUNT [--private]
 #     -t occupancy  ESP32-H2 presence sensors (device type 0x0107)
@@ -13,6 +14,7 @@
 #                                                 <uuid>-qrcode.png       QR label
 #         factory/<type>-<date>/fff1_8000/summary-*.csv                   one line per board
 # Keep each partition.bin with its QR label: after erase-flash the same file must be flashed again.
+# Run it in a working folder OUTSIDE the git repository: the output contains private keys and passcodes.
 set -euo pipefail
 TYPE="" COUNT=1 PRIVATE=0
 while [ $# -gt 0 ]; do
@@ -32,6 +34,7 @@ esac
 # CD=pki/cd/CD_test_occupancy_0107.der / CD_test_plug_010A.der: signed with the SDK test CD key instead.
 CD=${CD_FILE:-$CD}
 [ -f "$CD" ] || { echo "$CD missing: run gen_pki.sh first"; exit 1; }
+echo "Using CD: $CD" 
 
 CRED=${ESP_MATTER_PATH:-/opt/espressif/esp-matter}/connectedhomeip/connectedhomeip/credentials
 if [ $PRIVATE = 1 ]; then
@@ -56,11 +59,18 @@ for dac in $(find "$OUTDIR" -name DAC_cert.der); do
         echo "  INVALID chain: $dac"; fail=1
     fi
 done
-echo "Boards (label = QR code + manual code; the partition file is next to its onb_codes.csv):"
-python3 - "$OUTDIR"/fff1_8000/summary-*.csv <<'PY'
-import csv, sys
-for row in csv.DictReader(open(sys.argv[1])):
-    print(f"  serial {row['serial-num']}  discriminator {row['discriminator']:>4}  {row['qrcode']}  {row['manualcode']}")
-PY
 echo "The DAC private keys are in <uuid>/internal: delete those folders once the boards are flashed."
+echo "Boards (uuid = partition file name; label = QR code + manual code):"
+python3 - "$OUTDIR"/fff1_8000 <<'PY' || fail=1
+import collections, csv, glob, os, sys
+seen = collections.Counter()
+for f in sorted(glob.glob(os.path.join(sys.argv[1], '*', '*-onb_codes.csv'))):
+    row = next(csv.DictReader(open(f)))
+    seen[row['discriminator']] += 1
+    print(f"  {os.path.basename(os.path.dirname(f))}  discriminator {row['discriminator']:>4}  {row['qrcode']}  {row['manualcode']}")
+dup = [d for d, n in seen.items() if n > 1]
+if dup:
+    print(f"ERROR: discriminator repeated in this batch: {', '.join(dup)}; delete this output and run again")
+    sys.exit(2)
+PY
 exit $fail

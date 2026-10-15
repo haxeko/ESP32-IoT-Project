@@ -188,7 +188,7 @@ Bản build mặc định cho mọi bo **chung một mã ghép nối** (mã test
 | `sdkconfig.defaults.factory` | nạp từ file factory riêng từng bo (`ESP32-H2/tools/matter-mfg`) | DAC riêng từng bo |
 
 ```bash
-idf.py -B build-unique -D SDKCONFIG=sdkconfig.unique \
+idf.py -B build-unique -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.unique \
   -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.unique_setup" build
 idf.py -B build-unique -p /dev/ttyUSB0 flash monitor
 ```

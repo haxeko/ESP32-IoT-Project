@@ -148,7 +148,7 @@ Tất cả đều **[Đã kiểm chứng]**:
 - Extended Address và ML-EID được sinh ngẫu nhiên bằng RNG phần cứng ở lần đầu (`mac.cpp:111,119`, `mle.cpp:125`) rồi lưu trong `nvs/openthread`.
 - UniqueID: chuỗi ngẫu nhiên 64 bit sinh ở lần khởi động đầu, lưu ở `nvs/chip-config/unique-id`.
 - Serial lấy từ MAC eFuse: duy nhất theo chip, không đổi qua OTA và erase-flash.
-- File merged nạp ở 0x0 ghi `0xFF` lên `esp_secure_cert`, `nvs`, `nvs_keys`, `otadata`, `phy_init` (đã kiểm từng byte), nên **không** thể chép danh tính sang bo khác. CI chỉ phát hành file ứng dụng. Repo không có ảnh NVS nào, không có hướng dẫn `read-flash`.
+- File merged nạp ở 0x0 ghi `0xFF` lên `esp_secure_cert`, `nvs`, `nvs_keys`, `otadata`, `phy_init` (đã kiểm từng byte), nên **không** thể chép danh tính sang bo khác. CI chỉ phát hành ảnh firmware (app, bootloader, partition table, `ota_data_initial`, merged, `.ota`), không có ảnh `nvs`, `fctry` hay `esp_secure_cert`. Repo không có ảnh NVS nào, không có hướng dẫn `read-flash`.
 - File `.ota` chỉ gồm ứng dụng cộng 83 byte header.
 - Factory reset (giữ nút 5 s, xóa fabric cuối trên P3/P4, lệnh shell) xóa dữ liệu Matter, Thread và ứng dụng trong `nvs`; không đụng `fctry` hay `esp_secure_cert`.
 - BLE tắt sau khi ghép: không còn chia sóng BLE/802.15.4 lúc vận hành.
@@ -193,7 +193,7 @@ Nguồn cấp:
 | Serial Number | nhãn Basic Information | nên duy nhất | HW | P1/P2: 6 byte của EUI-64; P3/P4: MAC eFuse (`device_info.cpp`) | không nên | duy nhất | `id_diag: dev serial=`; trang thiết bị trong HA | – |
 | UniqueID | định danh ổn định cho controller | **phải** duy nhất | RND | `GenericConfigurationManagerImpl.ipp:269-272`; `nvs/chip-config/unique-id` | **không** | duy nhất | `id_diag: dev unique_id=`; `chip-tool basicinformation read unique-id` | factory reset bo bị trùng |
 | Rotating Device ID | quảng bá ẩn danh | nếu bật | FAC | – | – | **tắt** (nếu bật với provider tùy biến thì là hằng `00112233…`, `CHIPDeviceConfig.h:370-373`) | `sdkconfig` | để tắt, hoặc override `GetRotatingDeviceIdUniqueId` |
-| Discriminator | tìm thiết bị khi ghép | nên khác nhau | FW (test 3840) / A: RND / B: FAC | `ipp:128-133` | **nên khác** | **trùng 3840** | `id_diag: dev discriminator=`; tên BLE `Presence-3840` | phương án A/B |
+| Discriminator | tìm thiết bị khi ghép | nên khác nhau | FW (test 3840) / A: RND / B: FAC | `ipp:128-133` | **nên khác** | **trùng 3840** | `id_diag: dev discriminator=`; tên BLE `<prefix>3840` (P1 `Presence-`, P2 `Occupancy-`, P3/P4 `MATTER-`) | phương án A/B |
 | Setup passcode + SPAKE2+ verifier/salt | khóa PASE | **phải** khác và bí mật | FW (test) / A / B | `ipp:102-107` | **không** | **trùng 20202021, công khai** | không log; xem QR in ra (dev) | phương án A/B |
 | DAC + khóa riêng DAC | chứng thực thiết bị | **phải** riêng | FW (ví dụ SDK) / B: FAC | `ExampleDACs.cpp`; B: `fctry/chip-factory` | **không** | **trùng, khóa công khai** | log commissioning; `strings` file `.bin` | phương án B |
 | PAI / PAA | chuỗi chứng thực | chung cho dòng sản phẩm | FW / FAC | như trên | có | PAI dev FFF1 | `chip-cert validate-att-cert` | – |
@@ -305,7 +305,7 @@ Lưu ý thiết kế E3:
 - **Salt:** 32 byte. **Số vòng PBKDF2:** 1000, bằng mức của mã test.
 - **Lúc sinh:** sinh lười, ở lần đầu SDK cần tới (khi cấu hình quảng bá BLE, `BLEManagerImpl.cpp:1071`), sau đó lưu và dùng lại.
 - **Vì sao lưu ở `fctry`:** giữ qua reboot, OTA, factory reset của Matter (chỉ xóa `nvs`) và nạp file merged (chỉ ghi tới 0x1D47D0). Chỉ `erase-flash` mới làm mã đổi; khi đó bo in mã mới ra log.
-- **Tên BLE:** tự thành `Presence-<discriminator>`, mỗi bo một tên.
+- **Tên BLE:** tự thành `<prefix><discriminator>` (P1 `Presence-`, P2 `Occupancy-`, P3/P4 `MATTER-` mặc định của SDK), mỗi bo một tên.
 
 ## F. Code đầy đủ
 
@@ -332,7 +332,7 @@ cd ESP32-H2/matter-presence-ld2410-learning
 idf.py set-target esp32h2 && idf.py build                    # bản mặc định (mã test chung)
 idf.py -p /dev/ttyUSB0 flash monitor                         # giữ ghép nối nếu chưa từng OTA
 # Mã ghép riêng từng bo (phương án A):
-idf.py -B build-unique -D SDKCONFIG=sdkconfig.unique \
+idf.py -B build-unique -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.unique \
   -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.unique_setup" build
 idf.py -B build-unique -p /dev/ttyUSB0 flash monitor
 # Factory data (phương án B): xem mục H
@@ -426,13 +426,16 @@ Firmware lấy chứng thực từ `fctry` khi build với `sdkconfig.defaults.f
 ### Quy trình B (đã chạy thử tạo dữ liệu; chưa nạp lên bo thật)
 
 ```bash
-mkdir mfg && cd mfg
-../ESP32-H2/tools/matter-mfg/in_docker.sh gen_pki.sh                        # CD
-../ESP32-H2/tools/matter-mfg/in_docker.sh gen_factory_data.sh -t occupancy -n 10
+# Thư mục làm việc NGOÀI repo git: kết quả chứa khóa riêng DAC và passcode
+mkdir -p ~/matter-mfg && cd ~/matter-mfg
+T=<repo>/ESP32-H2/tools/matter-mfg
+$T/in_docker.sh gen_pki.sh                                         # CD
+$T/in_docker.sh gen_factory_data.sh -t occupancy -n 10             # -t plug cho P3/P4
 # với mỗi bo: nạp fctry TRƯỚC, rồi firmware build với sdkconfig.defaults.factory
-../ESP32-H2/tools/matter-mfg/flash_factory.sh /dev/ttyUSB0 factory/occupancy-*/fff1_8000/<uuid>/<uuid>-partition.bin            # 4 MB: 0x3E0000
-../ESP32-H2/tools/matter-mfg/flash_factory.sh /dev/ttyUSB0 <…>-partition.bin 0x1F0000                                           # P4 (2 MB)
-idf.py -B build-factory -D SDKCONFIG=sdkconfig.factory \
+$T/flash_factory.sh /dev/ttyUSB0 factory/occupancy-*/fff1_8000/<uuid>/<uuid>-partition.bin             # 4 MB: 0x3E0000
+$T/flash_factory.sh /dev/ttyUSB0 factory/plug-*/fff1_8000/<uuid>/<uuid>-partition.bin 0x1F0000         # P4 (2 MB)
+cd <repo>/ESP32-H2/<thư mục dự án>
+idf.py -B build-factory -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.factory \
   -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.factory" build
 idf.py -B build-factory -p /dev/ttyUSB0 flash monitor
 ```
@@ -442,13 +445,14 @@ Kết quả chạy thử:
 - Mỗi bo ra một file `<uuid>-partition.bin` 24576 byte (vừa phân vùng 0x6000), `onb_codes.csv` và `qrcode.png`.
 - Mọi DAC đều qua `chip-cert validate-att-cert`. Discriminator và QR khác nhau giữa các bo.
 - Namespace `chip-factory` gồm `dac-cert`, `dac-key`, `dac-pub-key`, `pai-cert`, `cert-dclrn`, `discriminator`, `iteration-count`, `salt`, `verifier`, `serial-num`, `vendor-id`, `product-id`…, **không có passcode**.
+- `serial-num` trong file là chuỗi ngẫu nhiên mà firmware **không dùng**: bo vẫn báo serial từ MAC eFuse (`device_info.cpp`). Vì vậy script in danh sách theo `uuid`, không theo serial.
 
 Lưu ý [đã kiểm chứng trong SDK]:
 
 - **Bo đã ghép:** đổi sang firmware factory vẫn giữ các fabric hiện có, vì DAC chỉ kiểm khi commissioning.
 - **Quên nạp `fctry`:** bo không ghép mới được nữa. Phải nạp `fctry` trước.
 - **Xóa thư mục `internal/`:** chứa khóa riêng DAC, cần xóa sau khi nạp.
-- **mfg-tool 1.0.26:** sinh passcode bằng `random` của Python (không phải nguồn ngẫu nhiên mật mã), có thể trùng discriminator giữa các lô. Cần giữ file kiểm kê và kiểm tra trùng.
+- **mfg-tool 1.0.26:** sinh passcode bằng `random` của Python (không phải nguồn ngẫu nhiên mật mã), và mỗi bo bốc discriminator độc lập trong 4096 giá trị, nên có thể trùng ngay trong một lô (khoảng 1 % với 10 bo, 26 % với 50 bo). `gen_factory_data.sh` báo lỗi khi có discriminator trùng trong lô; giữa các lô thì phải tự đối chiếu file kiểm kê.
 
 ### Quy trình A
 
@@ -495,7 +499,7 @@ chip-tool payload parse-setup-payload MT:Y.K9042C00KA0648G00                    
 - **Ảnh QR:**
   - phương án B: file `<uuid>-qrcode.png`;
   - phương án A hoặc mã test: mở link `QR image:` in trong log, hoặc tự tạo bằng bất kỳ công cụ QR nào với chuỗi `MT:…`.
-- **So nhãn với dữ liệu thật:** `check_qr.sh <QR trên nhãn>` phải cho ra cùng discriminator với dòng `id_diag: dev discriminator=` của bo đó. Với phương án B, so thêm với `onb_codes.csv` và `summary-*.csv`.
+- **So nhãn với dữ liệu thật:** `check_qr.sh <QR trên nhãn>` phải cho ra cùng discriminator với dòng `id_diag: dev discriminator=` của bo đó. Với phương án B, so thêm với `<uuid>-onb_codes.csv`. Dùng mã QR để so: mã nhập tay chỉ mang passcode và 4 bit cao của discriminator (`Short discriminator` = discriminator >> 8), VID/PID hiện là 0.
 
 ### Rủi ro khi nhiều bo dùng chung mã
 
@@ -513,7 +517,7 @@ Không ảnh hưởng thiết bị đã ghép. Cơ chế tạo mã riêng: phư�
 
 1. **Chỉ chép firmware, không bao giờ chép dữ liệu.** Dùng file merged (0x0) hoặc app, `idf.py flash` hoặc `.ota`. **Không** `read-flash` một bo đã ghép để nạp sang bo khác.
 2. **Bo mới hoặc bo chuyển nhà:** `erase-flash` hoặc nạp merged, rồi ghép lại.
-3. **Phương án B:** mỗi bo một file `fctry`. Ghi cặp `serial ↔ uuid ↔ QR` vào bảng kiểm kê, dán nhãn ngay khi nạp, nạp `fctry` **trước** firmware, đọc lại để so (`flash_factory.sh` tự làm). Xóa thư mục `internal/` chứa khóa DAC.
+3. **Phương án B:** chạy script trong thư mục **ngoài repo**. Mỗi bo một file `fctry`. Lúc nạp, ghi cặp `uuid ↔ QR` vào bảng kiểm kê và dán nhãn ngay; nạp `fctry` **trước** firmware, đọc lại để so (`flash_factory.sh` tự làm). Sau lần khởi động đầu, ghi thêm serial thật của bo (dòng `id_diag: dev serial=`). Xóa thư mục `internal/` chứa khóa DAC.
 4. **Phương án A:** nạp firmware, đọc QR từ log, dán nhãn ngay.
 5. **Ghép từng bo một.** Với mã test chung, các bo khác phải tắt nguồn hoặc đã ghép xong. Sau khi ghép, kiểm tra bằng Identify và so Serial trong app với dòng `dev serial=` của bo.
 6. **Multi-admin:** dùng "Bật chế độ ghép nối" (Enhanced) trong Apple Home hoặc HA thay vì bấm đúp.

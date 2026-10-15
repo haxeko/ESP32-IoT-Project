@@ -1,7 +1,7 @@
 # Manufacturing build: DAC, PAI, Certification Declaration, passcode verifier and discriminator come from a
 # per-board factory partition made with esp-matter-mfg-tool (ESP32-H2/tools/matter-mfg, README "Factory data").
 # Applied after sdkconfig.defaults and sdkconfig.defaults.esp32h2:
-#   idf.py -B build-factory -D SDKCONFIG=sdkconfig.factory \
+#   idf.py -B build-factory -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.factory \
 #     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.factory" build
 # Flash each board's <uuid>-partition.bin to the "fctry" partition BEFORE this firmware: without it the board
 # keeps working with its existing controllers but cannot be commissioned again.

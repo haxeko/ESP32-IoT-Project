@@ -10,6 +10,7 @@
 #                         No controller trusts this PAA unless you install it (chip-tool --paa-trust-store-path).
 #
 # Never use any of this as a production identity: the SDK test keys are public.
+# Files that already exist are kept (re-running never replaces a CD or a PAA/PAI key already used for DACs).
 set -euo pipefail
 CRED=${ESP_MATTER_PATH:-/opt/espressif/esp-matter}/connectedhomeip/connectedhomeip/credentials
 EXAMPLES=${ESP_MATTER_PATH:-/opt/espressif/esp-matter}/connectedhomeip/connectedhomeip/src/credentials/examples
@@ -29,17 +30,22 @@ PY
 chip-cert print-cd "$OUT/cd/CD_example_FFF1.der" | head -3
 
 # -f 1: format version, -l 0 -i 0: security level/info, -n 1: version, -t 0: certification type "development"
-chip-cert gen-cd -K "$CDKEY" -C "$CDCERT" -O "$OUT/cd/CD_test_occupancy_0107.der" -f 1 -V FFF1 -p 8000 -d 0107 \
-    -c CSA00000SWC00000-01 -l 0 -i 0 -n 1 -t 0
-chip-cert gen-cd -K "$CDKEY" -C "$CDCERT" -O "$OUT/cd/CD_test_plug_010A.der" -f 1 -V FFF1 -p 8000 -d 010A \
-    -c CSA00000SWC00000-02 -l 0 -i 0 -n 1 -t 0
+[ -f "$OUT/cd/CD_test_occupancy_0107.der" ] ||
+    chip-cert gen-cd -K "$CDKEY" -C "$CDCERT" -O "$OUT/cd/CD_test_occupancy_0107.der" -f 1 -V FFF1 -p 8000 -d 0107 \
+        -c CSA00000SWC00000-01 -l 0 -i 0 -n 1 -t 0
+[ -f "$OUT/cd/CD_test_plug_010A.der" ] ||
+    chip-cert gen-cd -K "$CDKEY" -C "$CDCERT" -O "$OUT/cd/CD_test_plug_010A.der" -f 1 -V FFF1 -p 8000 -d 010A \
+        -c CSA00000SWC00000-02 -l 0 -i 0 -n 1 -t 0
 
 if [ "${1:-}" = "--private" ]; then
     mkdir -p "$OUT/private"
-    chip-cert gen-att-cert -t a -c "Dev PAA (not trusted by controllers)" -V FFF1 \
-        -o "$OUT/private/PAA-Cert.pem" -O "$OUT/private/PAA-Key.pem" -f "2026-01-01 00:00:00" -l 4294967295
-    chip-cert gen-att-cert -t i -c "Dev PAI" -V FFF1 -P 8000 -C "$OUT/private/PAA-Cert.pem" -K "$OUT/private/PAA-Key.pem" \
-        -o "$OUT/private/PAI-Cert.pem" -O "$OUT/private/PAI-Key.pem" -f "2026-01-01 00:00:00" -l 4294967295
+    [ -f "$OUT/private/PAA-Cert.pem" ] ||
+        chip-cert gen-att-cert -t a -c "Dev PAA (not trusted by controllers)" -V FFF1 \
+            -o "$OUT/private/PAA-Cert.pem" -O "$OUT/private/PAA-Key.pem" -f "2026-01-01 00:00:00" -l 4294967295
+    [ -f "$OUT/private/PAI-Cert.pem" ] ||
+        chip-cert gen-att-cert -t i -c "Dev PAI" -V FFF1 -P 8000 -C "$OUT/private/PAA-Cert.pem" \
+            -K "$OUT/private/PAA-Key.pem" -o "$OUT/private/PAI-Cert.pem" -O "$OUT/private/PAI-Key.pem" \
+            -f "2026-01-01 00:00:00" -l 4294967295
     echo "Private chain in $OUT/private (keep PAA-Key.pem / PAI-Key.pem offline)"
 fi
 echo "Done: $OUT"

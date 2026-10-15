@@ -338,6 +338,8 @@ extern "C" void app_main()
 
     err = esp_matter::start(app_event_cb);
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
+    /* First boot of a unique_setup build: generate the setup code on the Matter task (nothing in the default build) */
+    setup_code_preload();
 
     /* Log Thread addresses / SRP state until commissioned (see README, troubleshooting) */
     thread_diag_start();

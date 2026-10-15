@@ -381,6 +381,8 @@ static esp_err_t start_matter()
     esp_err_t err = esp_matter::start(app_event_cb);
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
+    // First boot of a unique_setup build: generate the setup code on the Matter task (nothing in the default build)
+    setup_code_preload();
 
     if (radar_control && radar_control_start() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the radar configuration task");

@@ -19,6 +19,11 @@
  *  Does nothing in the default build. */
 esp_err_t setup_code_init(void);
 
+/** Load (or generate and store, first boot only) the per-board setup code on the Matter task and wait for it.
+ *  Call after esp_matter::start() and before starting any small task that may read it (identity_diag).
+ *  Does nothing in the default build. */
+void setup_code_preload(void);
+
 /** Log the QR code, its web link and the manual pairing code of this board (CONFIG_PRINT_ONBOARDING_CODES).
  *  on_network: the board is advertised over DNS-SD only (BLE already released). Call with the CHIP stack lock
  *  held (Matter task or ScopedChipStackLock), only for windows opened with the board's own setup code (basic

@@ -5,8 +5,10 @@
 # 0x1F0000 for matter-thread-plug-wroom-2m (2 MB). Flash it before the manufacturing firmware.
 set -euo pipefail
 PORT=$1 BIN=$2 OFFSET=${3:-0x3E0000}
-[ "$(stat -c %s "$BIN")" = 24576 ] || { echo "$BIN is not a 0x6000-byte factory partition"; exit 1; }
+[ "$(wc -c < "$BIN" | tr -d ' ')" = 24576 ] || { echo "$BIN is not a 0x6000-byte factory partition"; exit 1; }
 esptool --chip esp32h2 -p "$PORT" write-flash "$OFFSET" "$BIN"
 # Read back and compare
-esptool --chip esp32h2 -p "$PORT" read-flash "$OFFSET" 0x6000 /tmp/fctry_readback.bin
-cmp "$BIN" /tmp/fctry_readback.bin && echo "fctry OK at $OFFSET"
+READBACK=$(mktemp)
+esptool --chip esp32h2 -p "$PORT" read-flash "$OFFSET" 0x6000 "$READBACK"
+cmp "$BIN" "$READBACK" && echo "fctry OK at $OFFSET"
+rm -f "$READBACK"
