@@ -26,7 +26,8 @@ typedef void (*pm_sensor_cb_t)(const pm_sensor_data_t *data, void *user_data);
 typedef struct {
     int rx_pin;
     int tx_pin;
-    uint32_t report_interval_ms;    // samples are averaged over this interval
+    uint32_t report_interval_ms;    // continuous mode: samples are averaged and reported at this
+                                    // interval (the PMS duty cycle reports once per period)
     pm_sensor_cb_t cb;              // called from the sensor task
     void *user_data;
 } pm_sensor_config_t;

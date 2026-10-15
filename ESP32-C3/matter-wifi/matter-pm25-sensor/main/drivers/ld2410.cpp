@@ -13,6 +13,7 @@
 
 #include <driver/uart.h>
 #include <esp_log.h>
+#include <esp_task_wdt.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -64,7 +65,10 @@ static void ld2410_task(void *arg)
     size_t pos = 0;
     size_t frame_len = 0;
 
+    esp_task_wdt_add(NULL);     // restart the device if this task ever stops
+
     while (true) {
+        esp_task_wdt_reset();
         int len = uart_read_bytes(LD2410_UART_NUM, rx, sizeof(rx), pdMS_TO_TICKS(100));
         for (int i = 0; i < len; i++) {
             uint8_t b = rx[i];
@@ -120,15 +124,16 @@ esp_err_t ld2410_init(int rx_pin, int tx_pin)
         return err;
     }
     err = uart_param_config(LD2410_UART_NUM, &uart_config);
-    if (err != ESP_OK) {
-        return err;
+    if (err == ESP_OK) {
+        err = uart_set_pin(LD2410_UART_NUM, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     }
-    err = uart_set_pin(LD2410_UART_NUM, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    if (err != ESP_OK) {
-        return err;
+    if (err == ESP_OK &&
+        xTaskCreate(ld2410_task, "ld2410", LD2410_TASK_STACK, NULL, LD2410_TASK_PRIO, NULL) != pdPASS) {
+        err = ESP_ERR_NO_MEM;
     }
-    if (xTaskCreate(ld2410_task, "ld2410", LD2410_TASK_STACK, NULL, LD2410_TASK_PRIO, NULL) != pdPASS) {
-        return ESP_ERR_NO_MEM;
+    if (err != ESP_OK) {
+        uart_driver_delete(LD2410_UART_NUM);
+        return err;
     }
     ESP_LOGI(TAG, "LD2410 on UART%d, RX=GPIO%d TX=GPIO%d", LD2410_UART_NUM, rx_pin, tx_pin);
     return ESP_OK;
