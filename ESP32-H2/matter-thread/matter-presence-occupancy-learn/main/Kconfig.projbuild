@@ -135,16 +135,7 @@ menu "Empty Room Learning"
         help
             New threshold of each gate = highest energy recorded in the empty
             room + this margin, never below the LD2410 factory default and
-            at most LD2410_LEARN_MAX_THRESHOLD.
-
-    config LD2410_LEARN_MAX_THRESHOLD
-        int "Highest learned threshold (energy 50-100)"
-        range 50 100
-        default 90
-        help
-            Upper limit of a learned threshold. At 100 the radar ignores the
-            gate (nobody detected at that distance); below it, a person still
-            shows up where a noise source such as a ceiling fan is.
+            at most 100 (gate ignored).
 
 endmenu
 

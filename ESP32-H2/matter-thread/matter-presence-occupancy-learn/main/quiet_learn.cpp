@@ -32,8 +32,7 @@ static uint8_t learned_threshold(uint8_t noise, uint8_t margin, uint8_t factory)
     if (value < factory) {
         value = factory;
     }
-    // Below 100, which would make the radar ignore the gate entirely.
-    return (uint8_t)(value > CONFIG_LD2410_LEARN_MAX_THRESHOLD ? CONFIG_LD2410_LEARN_MAX_THRESHOLD : value);
+    return (uint8_t)(value > 100 ? 100 : value);
 }
 
 void quiet_learn_compute_thresholds(const ld2410_capture_t *noise, const ld2410_thresholds_t *current,
