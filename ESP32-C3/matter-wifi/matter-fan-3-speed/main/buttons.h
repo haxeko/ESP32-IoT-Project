@@ -7,7 +7,8 @@
  *   double click  pairing: open the commissioning window for 15 min (while learning: finish learning)
  *   triple click  learn the IR remote
  *   hold 5 s      LED turns red; release: factory reset (Wi-Fi and Matter pairings are erased)
- * Optional speed button: next speed. Optional oscillation button: oscillation on/off. */
+ * Optional speed button: next speed. Optional oscillation button: oscillation on/off. Optional natural wind
+ * button: natural wind on/off (on also starts a stopped fan). */
 
 /** Callbacks of the actions that need Matter */
 typedef struct {

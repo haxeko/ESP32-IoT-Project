@@ -16,8 +16,8 @@ typedef enum {
     FAN_SRC_NATURAL, /**< the fan task itself: natural wind changed the speed (listener only, not for posts) */
 } fan_src_t;
 
-/** Called by the fan task after every command, also when the state did not change (a Matter write of 45 %
- *  leaves a fan at speed 1 unchanged, but the controller still has to see 33 %). */
+/** Called by the fan task (must not block) after every command, also when the state did not change, so Matter can
+ *  write the real state back over a setting the fan did not take; and after each natural wind step. */
 typedef void (*fan_listener_t)(const fan_state_t *state, fan_src_t src, bool changed);
 
 /** Switch every relay off, restore the stored state (menuconfig -> Fan Behavior) and start the fan task, which
@@ -32,9 +32,14 @@ bool fan_ctrl_post_type(fan_cmd_type_t type, uint8_t arg, fan_src_t src);
 /** Snapshot of the current state, from any task. */
 fan_state_t fan_ctrl_get_state();
 
-/** Speed the motor runs at, from any task: state.speed, or the speed of the moment while natural wind runs.
- *  The listener is also called (src FAN_SRC_NATURAL) when natural wind changes it. */
-uint8_t fan_ctrl_get_drive_speed();
+typedef struct {
+    fan_state_t state;   /**< settings */
+    uint8_t drive_speed; /**< speed the motor runs at: state.speed, or the speed of the moment while natural wind runs
+                              (the listener is also called, src FAN_SRC_NATURAL, when natural wind changes it) */
+} fan_snapshot_t;
+
+/** State and drive speed taken together, from any task. */
+fan_snapshot_t fan_ctrl_get_snapshot();
 
 /** Register the (single) listener. Call before esp_matter::start(). */
 void fan_ctrl_set_listener(fan_listener_t listener);

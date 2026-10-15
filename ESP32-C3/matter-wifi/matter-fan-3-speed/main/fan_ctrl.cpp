@@ -297,60 +297,79 @@ fan_state_t fan_ctrl_get_state()
     return st;
 }
 
-uint8_t fan_ctrl_get_drive_speed()
+fan_snapshot_t fan_ctrl_get_snapshot()
 {
     taskENTER_CRITICAL(&s_lock);
-    const uint8_t speed = s_drive_speed;
+    const fan_snapshot_t snap = {s_state, s_drive_speed};
     taskEXIT_CRITICAL(&s_lock);
-    return speed;
+    return snap;
 }
 
 static void log_state(const fan_state_t &st, const char *why)
 {
-    if (fan_state_natural_running(&st)) {
-        ESP_LOGI(TAG, "Fan natural wind, oscillation %s (%s)", st.swing ? "on" : "off", why);
-    } else if (st.speed) {
-        ESP_LOGI(TAG, "Fan speed %u (%u%%), oscillation %s (%s)", st.speed, fan_speed_to_percent(st.speed),
+    const char *const natural = st.natural ? ", natural wind" : "";
+    if (st.speed) {
+        ESP_LOGI(TAG, "Fan speed %u (%u%%)%s, oscillation %s (%s)", st.speed, fan_speed_to_percent(st.speed), natural,
                  st.swing ? "on" : "off", why);
-    } else if (st.natural) {
-        ESP_LOGI(TAG, "Fan off (next on: natural wind, oscillation %s) (%s)", st.swing ? "on" : "off", why);
     } else {
-        ESP_LOGI(TAG, "Fan off (next on: speed %u, oscillation %s) (%s)", st.last_speed, st.swing ? "on" : "off",
-                 why);
+        ESP_LOGI(TAG, "Fan off (next on: speed %u%s, oscillation %s) (%s)", st.last_speed, natural,
+                 st.swing ? "on" : "off", why);
     }
 }
 
-/* Fan task only: natural wind */
-static uint32_t s_natural_rng;
-static uint8_t s_natural_speed;   /* speed of the moment, 0 = natural wind not running */
-static TickType_t s_natural_tick; /* when s_natural_speed was chosen */
-static TickType_t s_natural_hold; /* how long it is held */
+/* ---- Natural wind (fan task only) ---- */
 
-/* Fan task only: pick the next natural wind speed and hold time */
-static void natural_step()
+namespace {
+
+struct NaturalWind {
+    bool active;       /* the pattern drives the speed relays */
+    uint8_t speed;     /* speed of the moment */
+    TickType_t since;  /* when it was chosen */
+    TickType_t hold;   /* how long it is held */
+    uint32_t rng;
+};
+NaturalWind s_natural;
+
+} // namespace
+
+/* Next speed of the pattern, around the speed setting */
+static void natural_step(uint8_t setting)
 {
     uint32_t hold_ms;
-    s_natural_speed = fan_natural_next(&s_natural_rng, s_natural_speed, CONFIG_FAN_NATURAL_MIN_S,
+    const uint8_t current = s_natural.active ? s_natural.speed : FAN_NATURAL_START;
+    s_natural.speed = fan_natural_next(&s_natural.rng, current, setting, CONFIG_FAN_NATURAL_MIN_S,
                                        CONFIG_FAN_NATURAL_MAX_S, &hold_ms);
-    s_natural_tick = xTaskGetTickCount();
-    s_natural_hold = pdMS_TO_TICKS(hold_ms);
-    ESP_LOGI(TAG, "Natural wind: speed %u for %lu s", s_natural_speed, (unsigned long)(hold_ms / 1000));
+    s_natural.active = true;
+    s_natural.since = xTaskGetTickCount();
+    s_natural.hold = pdMS_TO_TICKS(hold_ms);
+    ESP_LOGI(TAG, "Natural wind: speed %u for %lu s", s_natural.speed, (unsigned long)(hold_ms / 1000));
 }
 
-/* Fan task only: the speed relay for this state; starts or stops the natural wind */
+static TickType_t ticks_left(TickType_t since, TickType_t delay)
+{
+    const TickType_t elapsed = xTaskGetTickCount() - since;
+    return elapsed >= delay ? 0 : delay - elapsed;
+}
+
+/* The speed relay for this state; starts, adjusts or stops the natural wind pattern */
 static uint8_t drive_speed(const fan_state_t &st)
 {
     if (!fan_state_natural_running(&st)) {
-        s_natural_speed = 0;
+        s_natural.active = false;
         return st.speed;
     }
-    if (s_natural_speed == 0) {
-        natural_step();
+    /* Natural wind starts, or the speed setting changed and the speed of the moment is out of the new range */
+    uint8_t low, high;
+    fan_natural_range(st.speed, &low, &high);
+    if (!s_natural.active || s_natural.speed < low || s_natural.speed > high) {
+        natural_step(st.speed);
     }
-    return s_natural_speed;
+    return s_natural.speed;
 }
 
-/* Fan task only: switch the relays and publish the speed they drive */
+/* ---- Fan task ---- */
+
+/* Switch the relays and publish the speed they drive */
 static void drive(const fan_state_t &st)
 {
     const uint8_t speed = drive_speed(st);
@@ -360,15 +379,16 @@ static void drive(const fan_state_t &st)
     taskEXIT_CRITICAL(&s_lock);
 }
 
-static TickType_t ticks_left(TickType_t since, TickType_t delay)
+static void notify(const fan_state_t &st, fan_src_t src, bool changed)
 {
-    const TickType_t elapsed = xTaskGetTickCount() - since;
-    return elapsed >= delay ? 0 : delay - elapsed;
+    if (s_listener) {
+        s_listener(&st, src, changed);
+    }
 }
 
 static void fan_task(void *)
 {
-    s_natural_rng = esp_random() | 1;
+    s_natural.rng = esp_random() | 1;
     /* Apply the restored state here rather than in app_main: the dead time may have to elapse first */
     fan_state_t st = fan_ctrl_get_state();
     drive(st);
@@ -376,33 +396,31 @@ static void fan_task(void *)
 
     bool save_pending = false;
     TickType_t changed_tick = 0;
+    const TickType_t save_delay = pdMS_TO_TICKS(k_save_delay_ms);
     for (;;) {
         TickType_t wait = portMAX_DELAY;
         if (save_pending) {
-            wait = ticks_left(changed_tick, pdMS_TO_TICKS(k_save_delay_ms));
+            wait = ticks_left(changed_tick, save_delay);
         }
-        if (s_natural_speed) {
-            const TickType_t natural_wait = ticks_left(s_natural_tick, s_natural_hold);
+        if (s_natural.active) {
+            const TickType_t natural_wait = ticks_left(s_natural.since, s_natural.hold);
             wait = natural_wait < wait ? natural_wait : wait;
         }
         Msg msg;
         if (xQueueReceive(s_queue, &msg, wait) != pdTRUE) {
-            if (save_pending && ticks_left(changed_tick, pdMS_TO_TICKS(k_save_delay_ms)) == 0) {
-                save_state(fan_ctrl_get_state());
+            /* Timeout: store the state, and/or the next step of the natural wind */
+            if (save_pending && ticks_left(changed_tick, save_delay) == 0) {
+                save_state(st);
                 save_pending = false;
             }
-            if (s_natural_speed && ticks_left(s_natural_tick, s_natural_hold) == 0) {
-                st = fan_ctrl_get_state();
-                natural_step();
+            if (s_natural.active && ticks_left(s_natural.since, s_natural.hold) == 0) {
+                natural_step(st.speed);
                 drive(st);
-                if (s_listener) {
-                    s_listener(&st, FAN_SRC_NATURAL, true);
-                }
+                notify(st, FAN_SRC_NATURAL, true);
             }
             continue;
         }
 
-        st = fan_ctrl_get_state();
         const bool changed = fan_state_apply(&st, &msg.cmd);
         if (changed) {
             taskENTER_CRITICAL(&s_lock);
@@ -414,9 +432,8 @@ static void fan_task(void *)
             save_pending = true;
             changed_tick = xTaskGetTickCount();
         }
-        if (s_listener) {
-            s_listener(&st, (fan_src_t)msg.src, changed);
-        }
+        /* Also when unchanged: Matter writes the real state back over a setting the fan did not take */
+        notify(st, (fan_src_t)msg.src, changed);
     }
 }
 

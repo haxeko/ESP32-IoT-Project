@@ -69,23 +69,6 @@ menu "Fan Behavior"
 
     endchoice
 
-    config FAN_ON_RESUMES_LAST_SPEED
-        bool "Turning the fan on from an app resumes the last speed (not the Matter standard)"
-        default n
-        help
-            n (default): Matter specification. A controller that turns the fan on without choosing
-            a speed runs speed 3 (High): FanMode = On, and Apple Home, which turns a fan on with
-            PercentSetting = 100 % (in HomeKit a stopped fan has speed 0). The power button of the
-            remote and the device button always resume the last speed.
-
-            y: such a write on a stopped fan resumes the speed (or the natural wind) the fan had
-            before it was turned off, like the power button of the remote:
-            - FanMode = On (or Smart without Auto),
-            - PercentSetting = 100 % while the fan is off.
-            So dragging the slider of a stopped fan straight to 100 % also resumes the last speed;
-            once the fan runs, 100 % is speed 3. FanMode = On on a running fan changes nothing
-            (natural wind ends).
-
     config FAN_MATTER_ROCKING
         bool "Oscillation as Matter Rocking (Apple Home 'Oscillate')"
         default y
@@ -95,20 +78,15 @@ menu "Fan Behavior"
             It shows the oscillation setting, also while the fan is off: the swing relay itself
             only closes while the fan runs. n: oscillation only from the remote and the buttons.
 
-    config FAN_MATTER_AUTO_NATURAL
-        bool "Natural wind as Matter FanMode Auto (Apple Home 'Auto' switch)"
-        default y
-        help
-            Fan Control Auto feature (FanModeSequence Off/Low/Med/High/Auto). Apple Home shows an Auto
-            switch next to the speed slider, Home Assistant an "auto" preset: both turn natural wind
-            on and off. Moving the slider (or any other speed setting) leaves natural wind.
-
     config FAN_MATTER_WIND_NATURAL
-        bool "Natural wind as Matter Wind (Home Assistant 'natural_wind' preset)"
+        bool "Natural wind as Matter Wind (WindSetting, Home Assistant 'natural_wind' preset)"
         default y
         help
-            Fan Control Wind feature with WindSupport = natural wind. Home Assistant shows it as the
-            "natural_wind" preset. Apple Home does not show Wind (use the Auto switch above).
+            Fan Control Wind feature with WindSupport = natural wind: WindSetting turns natural wind
+            on and off, independently of the speed setting. Home Assistant shows it as the
+            "natural_wind" preset. Apple Home does not show Wind: there, natural wind is only
+            available from the remote and the buttons. n: natural wind only from the remote and the
+            buttons.
 
     config FAN_NATURAL_MIN_S
         int "Natural wind: shortest time at one speed (s)"
@@ -120,10 +98,11 @@ menu "Fan Behavior"
         range 3 600
         default 30
         help
-            Natural wind switches between speeds 1, 2 and 3 at random, holding each one for a random
-            time between the two limits (a gust at speed 3 at most halfway). With 8-30 s the speed
-            changes about 200 times an hour (each speed relay switches 70-100 times an hour): prefer
-            longer times, or relays rated for many operations, if natural wind runs many hours a day.
+            Natural wind changes the speed at random around the speed setting (speed 1: 1-2, speed 2:
+            1-3, speed 3: 2-3; the motor never stops), holding each speed for a random time between the
+            two limits (a gust at the highest speed at most halfway). With 8-30 s the speed changes about
+            200 times an hour (each speed relay switches 70-100 times an hour): prefer longer times, or
+            relays rated for many operations, if natural wind runs many hours a day.
 
 endmenu
 
@@ -180,7 +159,7 @@ menu "Buttons"
         default -1
         help
             Optional push button to GND: each click turns natural wind on (and the fan on when it is
-            off) or off (the fan keeps running at its manual speed).
+            off) or off (the fan keeps running at its speed setting).
 
 endmenu
 

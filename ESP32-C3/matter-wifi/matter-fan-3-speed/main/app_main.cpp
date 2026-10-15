@@ -218,19 +218,6 @@ static esp_err_t app_identification_cb(identification::callback_type_t type, uin
     return ESP_OK;
 }
 
-/* CHIP task. Fan Control changes reach the fan through the cluster delegate (fan_matter.cpp); the callback only
- * tells it which attribute a controller is writing. */
-static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16_t endpoint_id, uint32_t cluster_id,
-                                         uint32_t attribute_id, esp_matter_attr_val_t *val, void *priv_data)
-{
-    if (type == attribute::PRE_UPDATE) {
-        fan_matter_pre_update(endpoint_id, cluster_id, attribute_id, val);
-    } else if (type == attribute::POST_UPDATE) {
-        fan_matter_post_update(endpoint_id, cluster_id, attribute_id);
-    }
-    return ESP_OK;
-}
-
 /* Double click: open the commissioning window (pairing), e.g. to add the fan to a second ecosystem */
 static void app_open_pairing()
 {
@@ -335,11 +322,12 @@ extern "C" void app_main()
 
     node::config_t node_config;
     device_info_set_name(&node_config);
-    node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
+    /* No attribute callback: Fan Control changes reach the fan through the cluster delegate (fan_matter.cpp) */
+    node_t *node = node::create(&node_config, nullptr, app_identification_cb);
     ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
     device_info_add_attributes(node);
 
-    /* Fan device type: 3 speeds, oscillation (Rocking), natural wind (Auto + Wind), see fan_matter.h */
+    /* Fan device type: 3 speeds, oscillation (Rocking), natural wind (Wind), see fan_matter.h */
     endpoint_t *endpoint = fan_matter_create(node);
     ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create the fan endpoint"));
 

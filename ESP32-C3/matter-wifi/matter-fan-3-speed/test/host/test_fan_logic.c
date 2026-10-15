@@ -15,7 +15,11 @@ static fan_cmd_t cmd(uint8_t type, uint8_t arg)
     return c;
 }
 
-static fan_state_t natural_state(uint8_t speed, uint8_t last, bool natural);
+static fan_state_t natural_state(uint8_t speed, uint8_t last, bool natural)
+{
+    fan_state_t s = { speed, last, false, natural };
+    return s;
+}
 
 static fan_cmd_t step(uint8_t type, bool wrap, bool lowest_off)
 {
@@ -23,44 +27,40 @@ static fan_cmd_t step(uint8_t type, bool wrap, bool lowest_off)
     return c;
 }
 
-static void test_percent_mapping(void)
+// The cluster derives the settings with the Fan Control rules (spec 4.4.6.3.1 / 4.4.6.6.1): a written PercentSetting
+// P gives SpeedSetting = ceil(SpeedMax * P / 100); a written SpeedSetting S gives PercentSetting = floor(S * 100 /
+// SpeedMax), and FanMode Low <= 33 < Medium <= 66 < High. The fan runs at SpeedSetting and reports PercentCurrent =
+// fan_speed_to_percent(speed), which must agree with those rules.
+static unsigned spec_speed_from_percent(unsigned percent)
 {
-    // The three slider positions, and the Matter values that FanMode Low/Medium/High set
+    return (FAN_SPEED_COUNT * percent + 99) / 100;
+}
+
+static void test_percent_rules(void)
+{
     CHECK_EQ(fan_speed_to_percent(0), 0);
     CHECK_EQ(fan_speed_to_percent(1), 33);
     CHECK_EQ(fan_speed_to_percent(2), 66);
     CHECK_EQ(fan_speed_to_percent(3), 100);
     CHECK_EQ(fan_speed_to_percent(9), 100);
 
-    // Every percent snaps to the nearest position; only 0 is off
-    CHECK_EQ(fan_percent_to_speed(0), 0);
-    for (int p = 1; p <= 49; p++) {
-        CHECK_EQ(fan_percent_to_speed((uint8_t)p), 1);
-    }
-    for (int p = 50; p <= 83; p++) {
-        CHECK_EQ(fan_percent_to_speed((uint8_t)p), 2);
-    }
-    for (int p = 84; p <= 100; p++) {
-        CHECK_EQ(fan_percent_to_speed((uint8_t)p), 3);
-    }
-    CHECK_EQ(fan_percent_to_speed(255), 3);
-
-    // Home Assistant sends 33 / 67 / 100 for a 3-speed fan (Math.round of n * 33.33)
-    CHECK_EQ(fan_percent_to_speed(67), 2);
-
-    // Round trip: a snapped value stays where it is
     for (uint8_t s = 0; s <= FAN_SPEED_COUNT; s++) {
-        CHECK_EQ(fan_percent_to_speed(fan_speed_to_percent(s)), s);
+        const unsigned p = fan_speed_to_percent(s);
+        CHECK_EQ(p, (unsigned)s * 100 / FAN_SPEED_COUNT); // floor(S * 100 / SpeedMax)
+        CHECK_EQ(spec_speed_from_percent(p), s);           // and back: the same speed
+        if (s) {
+            const unsigned mode = p <= 33 ? 1 : (p <= 66 ? 2 : 3); // Low / Medium / High
+            CHECK_EQ(mode, s);
+        }
     }
-
-    // The Matter cluster derives SpeedSetting = ceil(SpeedMax * percent / 100) and FanMode Low <= 33 < Medium <= 66 <
-    // High from the snapped percent: they agree with the speed
-    for (uint8_t s = 1; s <= FAN_SPEED_COUNT; s++) {
-        unsigned p = fan_speed_to_percent(s);
-        CHECK_EQ((FAN_SPEED_COUNT * p + 99) / 100, s);
-        unsigned mode = p <= 33 ? 1 : (p <= 66 ? 2 : 3);
-        CHECK_EQ(mode, s);
-    }
+    // Written percentages: 1-33 run speed 1, 34-66 speed 2, 67-100 speed 3 (e.g. Home Assistant's 67 % is speed 3)
+    CHECK_EQ(spec_speed_from_percent(1), 1);
+    CHECK_EQ(spec_speed_from_percent(33), 1);
+    CHECK_EQ(spec_speed_from_percent(34), 2);
+    CHECK_EQ(spec_speed_from_percent(45), 2);
+    CHECK_EQ(spec_speed_from_percent(66), 2);
+    CHECK_EQ(spec_speed_from_percent(67), 3);
+    CHECK_EQ(spec_speed_from_percent(100), 3);
 }
 
 static void test_power(void)
@@ -146,7 +146,7 @@ static void test_swing_relay_never_on_while_off(void)
 {
     const uint8_t types[] = { FAN_CMD_TOGGLE,         FAN_CMD_ON,          FAN_CMD_OFF,       FAN_CMD_SPEED_CYCLE,
                               FAN_CMD_SET_SPEED,      FAN_CMD_SWING_TOGGLE, FAN_CMD_SET_SWING, FAN_CMD_STEP_UP,
-                              FAN_CMD_STEP_DOWN,      FAN_CMD_NATURAL_TOGGLE, FAN_CMD_SET_NATURAL, FAN_CMD_TURN_ON };
+                              FAN_CMD_STEP_DOWN,      FAN_CMD_NATURAL_TOGGLE, FAN_CMD_SET_NATURAL };
     for (uint8_t speed = 0; speed <= FAN_SPEED_COUNT; speed++) {
         for (uint8_t last = 1; last <= FAN_SPEED_COUNT; last++) {
             for (int flags = 0; flags < 4; flags++) {
@@ -171,61 +171,6 @@ static void test_swing_relay_never_on_while_off(void)
             }
         }
     }
-}
-
-static void test_turn_on(void)
-{
-    // Apple Home turns a stopped fan on with 100 %, FanMode On has no speed: both resume the last speed
-    fan_state_t s = state(0, 1, true);
-    fan_cmd_t c = cmd(FAN_CMD_TURN_ON, 3);
-    CHECK(fan_state_apply(&s, &c));
-    CHECK_EQ(s.speed, 1);
-    CHECK(s.swing);
-    c = cmd(FAN_CMD_TURN_ON, 0);
-    s = state(0, 2, false);
-    CHECK(fan_state_apply(&s, &c));
-    CHECK_EQ(s.speed, 2);
-
-    // ... and natural wind, when it was on before the fan was turned off
-    s = natural_state(0, 2, true);
-    c = cmd(FAN_CMD_TURN_ON, 3);
-    CHECK(fan_state_apply(&s, &c));
-    CHECK(fan_state_natural_running(&s));
-    CHECK_EQ(s.speed, 2);
-
-    // Running: 100 % is speed 3, FanMode On keeps the speed; both end natural wind
-    s = state(1, 1, false);
-    c = cmd(FAN_CMD_TURN_ON, 3);
-    CHECK(fan_state_apply(&s, &c));
-    CHECK_EQ(s.speed, 3);
-    CHECK_EQ(s.last_speed, 3);
-    s = state(2, 2, false);
-    c = cmd(FAN_CMD_TURN_ON, 0);
-    CHECK(!fan_state_apply(&s, &c));
-    CHECK_EQ(s.speed, 2);
-    s = natural_state(2, 2, true);
-    CHECK(fan_state_apply(&s, &c));
-    CHECK(!s.natural);
-    CHECK_EQ(s.speed, 2);
-    s = natural_state(1, 1, true);
-    c = cmd(FAN_CMD_TURN_ON, 3);
-    CHECK(fan_state_apply(&s, &c));
-    CHECK(!s.natural);
-    CHECK_EQ(s.speed, 3);
-    c = cmd(FAN_CMD_TURN_ON, 9); // clamped
-    s = state(1, 1, false);
-    fan_state_apply(&s, &c);
-    CHECK_EQ(s.speed, 3);
-
-    // Off -> on -> off -> on from the app keeps the speed chosen before
-    s = state(0, 1, false);
-    c = cmd(FAN_CMD_SET_SPEED, 2);
-    fan_state_apply(&s, &c);
-    c = cmd(FAN_CMD_SET_SPEED, 0);
-    fan_state_apply(&s, &c);
-    c = cmd(FAN_CMD_TURN_ON, 3);
-    fan_state_apply(&s, &c);
-    CHECK_EQ(s.speed, 2);
 }
 
 static void test_step(void)
@@ -288,24 +233,21 @@ static void test_sanitize(void)
     CHECK(!fan_state_apply(&s, &bad));
 }
 
-static fan_state_t natural_state(uint8_t speed, uint8_t last, bool natural)
-{
-    fan_state_t s = { speed, last, false, natural };
-    return s;
-}
-
 static void test_natural(void)
 {
-    // Natural wind on: the fan starts at its last speed when off
+    // Matter WindSetting: only the natural wind setting changes, the fan stays off
     fan_state_t s = natural_state(0, 2, false);
     fan_cmd_t c = cmd(FAN_CMD_SET_NATURAL, 1);
     CHECK(fan_state_apply(&s, &c));
     CHECK(s.natural);
-    CHECK_EQ(s.speed, 2);
-    CHECK(fan_state_natural_running(&s));
+    CHECK_EQ(s.speed, 0);
+    CHECK(!fan_state_natural_running(&s));
     CHECK(!fan_state_apply(&s, &c)); // already on
 
-    // Off keeps the setting, On / Toggle resume natural wind
+    // Turning the fan on runs natural wind; off keeps the setting
+    c = cmd(FAN_CMD_SET_SPEED, 3);
+    CHECK(fan_state_apply(&s, &c));
+    CHECK(fan_state_natural_running(&s));
     c = cmd(FAN_CMD_OFF, 0);
     CHECK(fan_state_apply(&s, &c));
     CHECK(s.natural);
@@ -313,49 +255,29 @@ static void test_natural(void)
     c = cmd(FAN_CMD_TOGGLE, 0);
     CHECK(fan_state_apply(&s, &c));
     CHECK(fan_state_natural_running(&s));
-    c = cmd(FAN_CMD_SET_SPEED, 0); // Matter FanMode Off
-    CHECK(fan_state_apply(&s, &c));
-    CHECK(s.natural);
-    c = cmd(FAN_CMD_ON, 0);
-    CHECK(fan_state_apply(&s, &c));
-    CHECK(fan_state_natural_running(&s));
-
-    // Oscillation does not change it
-    c = cmd(FAN_CMD_SWING_TOGGLE, 0);
-    CHECK(fan_state_apply(&s, &c));
-    CHECK(s.natural);
-
-    // Every speed setting is manual: natural wind ends, the fan keeps running
-    const uint8_t manual[] = { FAN_CMD_SET_SPEED, FAN_CMD_SPEED_CYCLE, FAN_CMD_STEP_UP, FAN_CMD_STEP_DOWN };
-    for (unsigned i = 0; i < sizeof(manual); i++) {
-        s = natural_state(2, 2, true);
-        c = cmd(manual[i], 3);
-        CHECK(fan_state_apply(&s, &c));
-        CHECK(!s.natural);
-        CHECK(s.speed > 0);
-    }
-    // Setting the speed it already had still ends natural wind
-    s = natural_state(3, 3, true);
-    c = cmd(FAN_CMD_SET_SPEED, 3);
-    CHECK(fan_state_apply(&s, &c));
-    CHECK(!s.natural);
     CHECK_EQ(s.speed, 3);
-    // A Step down to off is off: natural wind is kept
-    s = natural_state(1, 1, true);
-    fan_cmd_t st = step(FAN_CMD_STEP_DOWN, false, true);
-    CHECK(fan_state_apply(&s, &st));
-    CHECK_EQ(s.speed, 0);
-    CHECK(s.natural);
 
-    // Off: manual, the fan keeps its speed
-    s = natural_state(1, 1, true);
+    // Settings are independent: speed changes keep natural wind (the speed is its ceiling), oscillation too
+    const uint8_t speed_cmds[] = { FAN_CMD_SET_SPEED, FAN_CMD_SPEED_CYCLE, FAN_CMD_STEP_UP, FAN_CMD_STEP_DOWN,
+                                   FAN_CMD_SWING_TOGGLE };
+    for (unsigned i = 0; i < sizeof(speed_cmds); i++) {
+        s = natural_state(2, 2, true);
+        c = cmd(speed_cmds[i], 1);
+        CHECK(fan_state_apply(&s, &c));
+        CHECK(s.natural);
+    }
+    // ... and natural wind keeps the speed setting
+    s = natural_state(2, 2, true);
     c = cmd(FAN_CMD_SET_NATURAL, 0);
     CHECK(fan_state_apply(&s, &c));
     CHECK(!s.natural);
-    CHECK_EQ(s.speed, 1);
+    CHECK_EQ(s.speed, 2);
     CHECK(!fan_state_apply(&s, &c));
+    c = cmd(FAN_CMD_SET_NATURAL, 1);
+    CHECK(fan_state_apply(&s, &c));
+    CHECK_EQ(s.speed, 2);
 
-    // Toggle: running natural -> manual; manual or off -> natural (and on)
+    // Local natural wind button: toggles; turning it on also starts a stopped fan at its last speed
     c = cmd(FAN_CMD_NATURAL_TOGGLE, 0);
     s = natural_state(2, 2, true);
     CHECK(fan_state_apply(&s, &c));
@@ -364,37 +286,61 @@ static void test_natural(void)
     CHECK(fan_state_apply(&s, &c));
     CHECK(s.natural);
     CHECK_EQ(s.speed, 2);
-    s = natural_state(0, 3, true); // off with natural wind set: turns on
+    s = natural_state(0, 3, false);
     CHECK(fan_state_apply(&s, &c));
     CHECK(fan_state_natural_running(&s));
     CHECK_EQ(s.speed, 3);
-    s = natural_state(0, 1, false);
+    s = natural_state(0, 1, true); // stopped fan with natural wind set: the button turns it off, fan stays off
     CHECK(fan_state_apply(&s, &c));
-    CHECK(fan_state_natural_running(&s));
+    CHECK(!s.natural);
+    CHECK_EQ(s.speed, 0);
+}
+
+// Runs the pattern for one speed setting; checks the speeds used, that the speed always changes and the hold times
+static void run_pattern(uint8_t setting, unsigned count[FAN_SPEED_COUNT + 1], unsigned long *hold_sum, int steps)
+{
+    uint8_t low, high;
+    fan_natural_range(setting, &low, &high);
+    uint32_t rng = 12345u + setting;
+    uint8_t speed = FAN_NATURAL_START;
+    for (int i = 0; i < steps; i++) {
+        uint32_t hold_ms = 0;
+        const uint8_t next = fan_natural_next(&rng, speed, setting, 8, 30, &hold_ms);
+        CHECK(next >= low && next <= high); // within the range, the motor never stops
+        CHECK(next != speed);               // always a change
+        if (i == 0) {
+            CHECK(next < high);             // starts with the breeze, not a gust
+        }
+        CHECK(hold_ms >= 8000);
+        CHECK(hold_ms <= (next == high ? 19000u : 30000u)); // gusts are short
+        count[next]++;
+        *hold_sum += hold_ms;
+        speed = next;
+    }
 }
 
 static void test_natural_pattern(void)
 {
-    uint32_t rng = 12345;
+    // Ranges around the speed setting
+    uint8_t low, high;
+    fan_natural_range(1, &low, &high);
+    CHECK(low == 1 && high == 2);
+    fan_natural_range(2, &low, &high);
+    CHECK(low == 1 && high == 3);
+    fan_natural_range(3, &low, &high);
+    CHECK(low == 2 && high == 3);
+    fan_natural_range(0, &low, &high); // clamped
+    CHECK(low == 1 && high == 2);
+    fan_natural_range(9, &low, &high);
+    CHECK(low == 2 && high == 3);
+
+    const int steps = 20000;
+
+    // Setting 2: every speed is used, speed 2 the most
     unsigned count[FAN_SPEED_COUNT + 1] = { 0 };
     unsigned long hold_sum = 0;
-    uint8_t speed = 0;
-    const int steps = 20000;
-    for (int i = 0; i < steps; i++) {
-        uint32_t hold_ms = 0;
-        const uint8_t next = fan_natural_next(&rng, speed, 8, 30, &hold_ms);
-        CHECK(next >= 1 && next <= FAN_SPEED_COUNT);
-        if (i == 0) {
-            CHECK(next <= 2); // starts low
-        }
-        CHECK(next != speed); // always a change
-        CHECK(hold_ms >= 8000);
-        CHECK(hold_ms <= (next == 3 ? 19000u : 30000u)); // gusts are short
-        count[next]++;
-        hold_sum += hold_ms;
-        speed = next;
-    }
-    // Every speed is used, speed 2 the most
+    run_pattern(2, count, &hold_sum, steps);
+    CHECK_EQ(count[0], 0);
     for (int sp = 1; sp <= FAN_SPEED_COUNT; sp++) {
         CHECK(count[sp] > (unsigned)steps / 10);
     }
@@ -403,26 +349,42 @@ static void test_natural_pattern(void)
     const unsigned long avg_ms = hold_sum / steps;
     CHECK(avg_ms > 12000 && avg_ms < 20000);
 
-    // Limits: max below min, zero min, zero generator state
+    // Settings 1 and 3: two speeds, alternating
+    unsigned count1[FAN_SPEED_COUNT + 1] = { 0 };
+    hold_sum = 0;
+    run_pattern(1, count1, &hold_sum, steps);
+    CHECK(count1[0] == 0 && count1[3] == 0);
+    CHECK(count1[1] == (unsigned)steps / 2 && count1[2] == (unsigned)steps / 2);
+    unsigned count3[FAN_SPEED_COUNT + 1] = { 0 };
+    hold_sum = 0;
+    run_pattern(3, count3, &hold_sum, steps);
+    CHECK(count3[0] == 0 && count3[1] == 0);
+    CHECK(count3[2] == (unsigned)steps / 2 && count3[3] == (unsigned)steps / 2);
+
+    // The setting changes while natural wind runs: the next speed is within the new range, a breeze first
     uint32_t hold_ms = 0;
+    uint32_t rng = 7;
+    CHECK_EQ(fan_natural_next(&rng, 3, 1, 8, 30, &hold_ms), 1);
+    CHECK_EQ(fan_natural_next(&rng, 1, 3, 8, 30, &hold_ms), 2);
+
+    // Limits: max below min, zero min, zero generator state
     rng = 0;
-    CHECK(fan_natural_next(&rng, 2, 10, 5, &hold_ms) != 2);
+    CHECK(fan_natural_next(&rng, 2, 2, 10, 5, &hold_ms) != 2);
     CHECK_EQ(hold_ms, 10000);
     CHECK(rng != 0);
-    fan_natural_next(&rng, 1, 0, 0, &hold_ms);
+    fan_natural_next(&rng, 1, 2, 0, 0, &hold_ms);
     CHECK_EQ(hold_ms, 1000);
-    fan_natural_next(&rng, 9, 600, 600, &hold_ms);
+    fan_natural_next(&rng, 9, 2, 600, 600, &hold_ms);
     CHECK_EQ(hold_ms, 600000);
 }
 
 int main(void)
 {
-    test_percent_mapping();
+    test_percent_rules();
     test_power();
     test_speed();
     test_swing();
     test_swing_relay_never_on_while_off();
-    test_turn_on();
     test_step();
     test_sanitize();
     test_natural();
