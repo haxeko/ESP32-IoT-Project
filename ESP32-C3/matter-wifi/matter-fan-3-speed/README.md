@@ -4,10 +4,11 @@ Firmware ESP-IDF + [esp-matter](https://github.com/espressif/esp-matter) cho **E
 
 - **4 relay**: 3 relay chọn số (1 / 2 / 3) và 1 relay bật/tắt động cơ trục xoay (đảo gió).
 - **Thanh tốc độ chỉ có 3 vị trí khi bật: 33 %, 66 %, 100 %** (tương ứng số 1, 2, 3).
-- **Nút đảo gió bên dưới thanh tốc độ** (giao diện quạt kiểu *Fan v2* của Apple Home) điều khiển relay trục xoay.
+- **Nút Dao động (Oscillate)** dưới thanh tốc độ của Apple Home bật/tắt relay trục xoay (đảo gió).
 - **Gió tự nhiên**: công tắc **Tự động (Auto)** cạnh thanh tốc độ trong Apple Home (preset *natural_wind* / *auto* trong Home Assistant). Quạt tự đổi số 1 ↔ 2 ↔ 3 ngẫu nhiên như gió ngoài trời.
 - **Mắt thu hồng ngoại**: dùng lại remote gốc của quạt (học lệnh ngay trên thiết bị, nhận mọi loại remote).
-- Nút BOOT trên mạch: bật/tắt, ghép nối, học remote, factory reset. Thêm được nút số và nút đảo gió ngoài.
+- **Bật lại từ ứng dụng hay remote đều chạy lại số trước khi tắt** (hoặc gió tự nhiên).
+- Nút BOOT trên mạch: bật/tắt, ghép nối, học remote, factory reset. Thêm được nút số, nút đảo gió và nút gió tự nhiên ngoài.
 
 ## Cách quạt hoạt động
 
@@ -22,20 +23,15 @@ Firmware ESP-IDF + [esp-matter](https://github.com/espressif/esp-matter) cho **E
 
 - Kéo tới vị trí bất kỳ thì quạt chạy ở số gần nhất và thanh trượt tự nhảy về 33 / 66 / 100 %, nên khi quạt bật thanh tốc độ chỉ có 3 vị trí. Ứng dụng đặt tốc độ theo số (`SpeedSetting` 1/2/3, FanMode Low/Medium/High, preset low/medium/high của Home Assistant) cũng ra đúng 3 mức này.
 - **Đổi số an toàn cho motor**: relay số cũ nhả ra, chờ **200 ms** (`FAN_RELAY_DEAD_TIME_MS`) rồi relay số mới mới đóng, kể cả khi tắt rồi bật lại thật nhanh. Không bao giờ có 2 relay số cùng đóng. Nên đấu thêm **khoá liên động bằng dây** (xem [Sơ đồ đấu nối](#sơ-đồ-đấu-nối)) để kể cả khi hỏng hóc cũng không thể cấp điện 2 đầu dây motor cùng lúc.
-- **Bật lại** (nút nguồn remote, nút trên mạch, hoặc ứng dụng gửi lệnh "On"): quạt chạy lại **số trước khi tắt**. Lần bật đầu tiên (chưa có gì lưu): số 1.
+- **Bật lại** (chạm ô quạt trong Apple Home, nút nguồn remote, nút trên mạch, lệnh "On" của ứng dụng): quạt chạy lại **số trước khi tắt**, hoặc gió tự nhiên nếu trước khi tắt đang chạy gió tự nhiên. Lần bật đầu tiên (chưa có gì lưu): số 1.
+- Apple Home bật quạt bằng cách gửi **100 %** (HomeKit coi quạt đang tắt là tốc độ 0, nên "bật" là 100 %). Vì vậy khi quạt **đang tắt**, lệnh 100 % được hiểu là "bật lại số cũ"; khi quạt **đang chạy**, kéo lên 100 % vẫn là số 3. Muốn theo đúng chuẩn Matter (bật = số 3): tắt `FAN_ON_RESUMES_LAST_SPEED`.
 
 ### Đảo gió (trục xoay)
 
 - Relay trục xoay chỉ đóng **khi quạt đang chạy và đảo gió đang bật**. Tắt quạt thì động cơ trục xoay dừng theo, nhưng trạng thái đảo gió được nhớ: bật quạt lại là quạt đảo gió tiếp.
+- Vì vậy lúc quạt tắt, nút **Dao động** trong Apple Home vẫn có thể hiện **Có**: đó là cài đặt cho lần bật sau, còn **relay trục xoay vẫn mở**. Firmware chỉ đóng relay này khi có một relay số đang đóng; test trên máy tính thử với mọi trạng thái và mọi lệnh. Log serial in trạng thái relay thật mỗi khi có thay đổi, ví dụ lúc tắt quạt: `Relays: all speed relays open, oscillation open`.
 - Tắt quạt thì trục xoay dừng trước, bật quạt thì trục xoay chạy sau. Lúc đổi số trục xoay vẫn chạy (motor quạt chỉ trôi theo quán tính trong 200 ms chờ đổi số).
-- Trên Matter, đảo gió được đưa ra **hai** điều khiển, cả hai cùng bật/tắt relay trục xoay và luôn hiển thị cùng một trạng thái:
-
-| Điều khiển Matter | Apple Home (dưới thanh tốc độ) | Home Assistant | Đảo gió bật khi |
-|---|---|---|---|
-| Rocking (`RockSetting`, hỗ trợ trái-phải) | nút dao động (*Oscillate*) | Oscillate | `RockSetting` = trái-phải |
-| AirflowDirection | nút hướng quay (*Rotation Direction*) | Direction | `AirflowDirection` = Reverse |
-
-  Nút hướng quay vốn để đảo chiều gió của quạt trần, ở đây được **gán vào bật/tắt trục xoay**: chiều *Reverse* = đang đảo gió, *Forward* = không đảo gió. Tuỳ phiên bản iOS mà Apple Home hiện một hoặc cả hai nút; nhấn nút nào cũng được. Muốn chỉ còn một nút, tắt `FAN_MATTER_ROCKING` hoặc `FAN_MATTER_AIRFLOW_DIRECTION` trong menuconfig, nạp lại rồi xoá và thêm lại quạt trong ứng dụng.
+- Trên Matter, đảo gió là **Rocking** (`RockSetting`, hỗ trợ trái-phải): Apple Home hiện nút **Dao động** (*Oscillate*), Home Assistant hiện *Oscillate*. Tắt `FAN_MATTER_ROCKING` thì đảo gió chỉ còn ở remote và nút.
 
 ### Gió tự nhiên
 
@@ -50,10 +46,10 @@ Khi bật gió tự nhiên, quạt tự chuyển qua lại giữa số 1, 2, 3 t
 
 - Bật gió tự nhiên khi quạt đang tắt thì quạt bật lên luôn.
 - **Chọn số bất kỳ** (kéo thanh tốc độ, nút số trên remote, nút số ngoài, lệnh Step) là chuyển về chạy **số thường** ở số đã chọn.
-- **Tắt quạt** (ứng dụng, remote, nút) vẫn **nhớ** gió tự nhiên: bật lại bằng nút nguồn remote hoặc nút BOOT thì chạy gió tự nhiên tiếp. Ứng dụng gửi lệnh bật kiểu "On" / chọn tốc độ thì quạt về số thường; bấm *Tự động* để chạy gió tự nhiên lại.
+- **Tắt quạt** (ứng dụng, remote, nút) vẫn **nhớ** gió tự nhiên: bật lại (chạm ô quạt trong Apple Home, nút nguồn remote, nút BOOT, lệnh "On") là chạy gió tự nhiên tiếp. Chọn một số cụ thể thì chạy số thường.
 - Gió tự nhiên cũng được nhớ khi mất điện / khởi động lại.
 - Trên Matter, gió tự nhiên là **FanMode Auto** (Apple Home hiện công tắc *Tự động*, các thuộc tính `PercentSetting`/`SpeedSetting` là null) và **WindSetting = gió tự nhiên** (Home Assistant hiện preset *natural_wind*). Apple Home không hiển thị Wind. `PercentCurrent`/`SpeedCurrent` luôn cho biết số đang chạy thật lúc đó. Preset *sleep_wind* mà Home Assistant luôn liệt kê kèm thì thiết bị không hỗ trợ (báo lỗi khi chọn).
-- ⚠️ **Tuổi thọ relay**: với 8–30 s quạt đổi số khoảng 200 lần một giờ (mỗi relay số đóng cắt khoảng 70–100 lần một giờ). Relay 10 A tải motor quạt nhỏ thường chịu được hàng trăm nghìn lần, nhưng nếu bật gió tự nhiên nhiều giờ mỗi ngày nên tăng thời gian giữ số (ví dụ 20–60 s) hoặc dùng relay tốt hơn. Không cần chức năng này thì tắt `FAN_MATTER_AUTO_NATURAL` và `FAN_MATTER_WIND_NATURAL` (khi đó gió tự nhiên chỉ còn ở remote và nút ngoài).
+- ⚠️ **Tuổi thọ relay**: với 8–30 s quạt đổi số khoảng 200 lần một giờ (mỗi relay số đóng cắt khoảng 70–100 lần một giờ). Relay cơ 10 A tải motor quạt nhỏ thường chịu được hàng trăm nghìn lần, nhưng nếu bật gió tự nhiên nhiều giờ mỗi ngày nên tăng thời gian giữ số (ví dụ 20–60 s), hoặc dùng [relay rắn](#dùng-relay-rắn-ssr) (không mòn, không kêu). Không cần chức năng này thì tắt `FAN_MATTER_AUTO_NATURAL` và `FAN_MATTER_WIND_NATURAL` (khi đó gió tự nhiên chỉ còn ở remote và nút ngoài).
 
 ### Mất điện, khởi động lại
 
@@ -112,6 +108,16 @@ Phía điện lưới, đấu **3 relay số nối tiếp qua tiếp điểm th�
 
 - Mạch này thay cho phím bấm cơ (hoặc mạch điều khiển) gốc của quạt: các dây số trước đây nối vào phím số thì nay nối vào NO của relay tương ứng. Tháo hẳn phím cơ khỏi mạch, không để song song.
 - Quạt có trục xoay bằng núm kéo cơ (không có động cơ đảo gió riêng) thì không dùng relay 4.
+
+### Dùng relay rắn (SSR)
+
+Dùng được relay rắn (SSR) cho 3 relay số, firmware không cần sửa gì ngoài đặt đúng `FAN_RELAY_ACTIVE_LEVEL`. Số liệu dưới đây lấy theo Omron **G3MB-202P** (loại hay gặp trên module SSR 4 kênh: zero-cross, có snubber, 2 A).
+
+- **Gió tự nhiên không làm hại SSR.** SSR không có tiếp điểm nên không mòn: đổi số 200 lần một giờ hay nhiều hơn cũng không giảm tuổi thọ. Loại zero-cross đóng ở điểm 0 V nên ít xung nhiễu. SSR cũng **không kêu "tách"** mỗi lần đổi số như relay cơ (gió tự nhiên đổi số mỗi 8–30 s, ban đêm nghe khá rõ). Có thể giảm `FAN_NATURAL_MIN_S` / `FAN_NATURAL_MAX_S` nếu muốn gió đổi nhanh hơn.
+- **SSR nóng theo dòng tải, không theo số lần đóng cắt.** Sụt áp tối đa 1,6 V: motor quạt 0,2–0,5 A chỉ toả dưới 1 W, không cần tản nhiệt. G3MB-202P chịu 2 A ở 25 °C (giảm dần khi nóng hơn), dư cho motor quạt.
+- **Không đấu được khoá liên động NC**, vì SSR không có tiếp điểm thường đóng. Chỉ còn firmware giữ cho 2 số không cùng đóng: SSR nhả chậm nhất ½ chu kỳ + 1 ms (~11 ms ở 50 Hz), thời gian chết 200 ms là dư. SSR hỏng thường bị **chập luôn** (đóng mãi), khi đó đổi sang số khác sẽ cấp điện 2 đầu dây motor cùng lúc: nên lắp **cầu chì** (1–2 A) trên dây pha của motor, và giữ nguyên cầu chì nhiệt trong cuộn dây motor.
+- **Relay trục xoay nên giữ relay cơ.** Động cơ trục xoay là động cơ đồng bộ nhỏ (vài W), chỉ ăn vài chục mA, dưới **dòng tải tối thiểu 0,1 A** của G3MB-202P, nên SSR có thể đóng không ổn định. Dòng rò của SSR khi tắt (tối đa 1,5 mA ở 200 VAC, qua mạch snubber) cũng có thể làm động cơ nhỏ này kêu ù nhẹ lúc lẽ ra phải đứng yên. Motor quạt chính thì không bị ảnh hưởng.
+- **Kiểm tra mức kích với GPIO 3,3 V.** G3MB-202P loại 5 V cần 4–6 V ở đầu vào, nên GPIO 3,3 V nối thẳng vào đầu vào SSR là không đủ: module phải có transistor đệm. Module kích mức thấp cấp 5 V thì khi GPIO ở mức cao vẫn còn ~1,7 V giữa VCC và chân IN, có module vì vậy tắt không hết. Đặt `FAN_RELAY_ACTIVE_LEVEL` theo module, rồi thử bằng nguồn USB trước khi nối motor: khi quạt tắt, đèn của cả 4 kênh phải tắt; khi quạt chạy, chỉ một kênh số sáng.
 
 ⚠️ Mạch dùng điện 220 V: cách ly, đi dây an toàn, cầu chì cho nguồn. Không cắm USB vào máy tính khi mạch đang nối điện lưới (nguồn HLK-PM01 không chung mass với lưới, nhưng phía relay thì có).
 
@@ -194,14 +200,13 @@ Thiết bị là **Quạt** (Fan, 0x002B) với cluster Fan Control:
 | SpeedMax | 3 (MultiSpeed) |
 | PercentSetting / PercentCurrent | 0, 33, 66, 100 (gió tự nhiên: PercentSetting null, PercentCurrent theo số đang chạy) |
 | RockSupport / RockSetting | trái-phải / đảo gió |
-| AirflowDirection | Forward = không đảo gió, Reverse = đảo gió |
 | WindSupport / WindSetting | gió tự nhiên / gió tự nhiên bật-tắt |
 | Lệnh Step | tăng/giảm một số (Google Home, chip-tool) |
 
-- **Apple Home**: ô quạt bật/tắt; mở ra là thanh tốc độ 3 vị trí, bên cạnh là công tắc **Tự động** (gió tự nhiên), bên dưới là nút đảo gió (xem [Đảo gió](#đảo-gió-trục-xoay), [Gió tự nhiên](#gió-tự-nhiên)).
-- **Home Assistant**: thực thể `fan` có thanh tốc độ bước 33 %, preset low/medium/high/auto/natural_wind, *Oscillate* và *Direction*.
-- **Cập nhật từ bản chưa có gió tự nhiên** (qua OTA hoặc nạp lại app): ứng dụng đã thêm quạt từ trước thường không tự nhận chức năng mới. Xoá quạt khỏi ứng dụng rồi thêm lại (mở ghép nối bằng nút BOOT nhấn đúp, hoặc factory reset) để công tắc *Tự động* hiện ra.
-- Ứng dụng ghi **FanMode = On** (bật mà không chọn số): theo chuẩn Matter là số cao nhất, firmware này cho chạy **số trước khi tắt** như nút nguồn của remote (`FAN_ON_RESUMES_LAST_SPEED`, tắt đi để theo đúng chuẩn).
+- **Apple Home**: chạm ô quạt để bật/tắt (bật lại là chạy số trước khi tắt); mở ra là thanh tốc độ 3 vị trí, bên cạnh là công tắc **Tự động** (gió tự nhiên), bên dưới là nút **Dao động** (đảo gió). Xem [Đảo gió](#đảo-gió-trục-xoay), [Gió tự nhiên](#gió-tự-nhiên).
+- **Home Assistant**: thực thể `fan` có thanh tốc độ bước 33 %, preset low/medium/high/auto/natural_wind và *Oscillate*.
+- **Cập nhật từ bản cũ** (qua OTA hoặc nạp lại app): ứng dụng đã thêm quạt từ trước thường không tự cập nhật các nút (công tắc *Tự động* mới, nút hướng quay đã bỏ). Xoá quạt khỏi ứng dụng rồi thêm lại (mở ghép nối bằng nút BOOT nhấn đúp, hoặc factory reset).
+- **Bật quạt mà không chọn số**: Apple Home gửi `PercentSetting` = 100 %, một số ứng dụng gửi `FanMode` = On. Theo chuẩn Matter cả hai là số cao nhất; firmware này cho quạt đang tắt chạy lại **số trước khi tắt** (hoặc gió tự nhiên) như nút nguồn remote. Hệ quả: lúc quạt đang tắt mà kéo thẳng thanh tốc độ lên 100 % thì cũng ra số cũ; kéo lên 100 % lần nữa (quạt đang chạy) là số 3. Tắt `FAN_ON_RESUMES_LAST_SPEED` để theo đúng chuẩn.
 - Điều khiển bằng remote hay nút trên mạch thì ứng dụng cập nhật ngay.
 
 Với chip-tool (node id `0x7283`, endpoint 1):
@@ -210,8 +215,9 @@ Với chip-tool (node id `0x7283`, endpoint 1):
 chip-tool fancontrol write percent-setting 45 0x7283 1     # -> số 1, PercentSetting tự về 33
 chip-tool fancontrol write percent-setting 70 0x7283 1     # -> số 2, 66 %
 chip-tool fancontrol write fan-mode 3 0x7283 1             # High -> số 3, 100 %
+chip-tool fancontrol write fan-mode 0 0x7283 1             # tắt
+chip-tool fancontrol write percent-setting 100 0x7283 1    # quạt đang tắt: bật lại số cũ (như Apple Home)
 chip-tool fancontrol write rock-setting 1 0x7283 1         # đảo gió bật (0 = tắt)
-chip-tool fancontrol write airflow-direction 1 0x7283 1    # Reverse = đảo gió bật (0 = tắt)
 chip-tool fancontrol write fan-mode 5 0x7283 1             # Auto -> gió tự nhiên
 chip-tool fancontrol write wind-setting 2 0x7283 1         # gió tự nhiên bật (0 = tắt)
 chip-tool fancontrol step 0 0x7283 1 --Wrap false --LowestOff true   # tăng một số
@@ -229,9 +235,8 @@ chip-tool fancontrol read percent-current 0x7283 1
 | | `FAN_RELAY_ACTIVE_LEVEL` | 1 | 1 = active-high, 0 = active-low (module relay opto thường là 0) |
 | | `FAN_RELAY_DEAD_TIME_MS` | 200 | thời gian chờ giữa nhả relay số cũ và đóng relay số mới |
 | Fan Behavior | `FAN_POWER_ON_STATE` | khôi phục | trạng thái khi có điện lại: khôi phục / luôn tắt |
-| | `FAN_ON_RESUMES_LAST_SPEED` | y | FanMode On chạy số trước đó (n = số cao nhất theo chuẩn) |
-| | `FAN_MATTER_ROCKING` | y | đảo gió dạng Rocking (nút *Oscillate*) |
-| | `FAN_MATTER_AIRFLOW_DIRECTION` | y | đảo gió trên nút hướng quay (*Rotation Direction*) |
+| | `FAN_ON_RESUMES_LAST_SPEED` | y | bật quạt từ ứng dụng (FanMode On, hoặc 100 % lúc quạt đang tắt như Apple Home) chạy lại số trước đó (n = số cao nhất theo chuẩn) |
+| | `FAN_MATTER_ROCKING` | y | đảo gió dạng Rocking (nút *Dao động* / *Oscillate*) |
 | | `FAN_MATTER_AUTO_NATURAL` | y | gió tự nhiên là FanMode Auto (công tắc *Tự động* của Apple Home) |
 | | `FAN_MATTER_WIND_NATURAL` | y | gió tự nhiên là Wind (preset *natural_wind* của Home Assistant) |
 | | `FAN_NATURAL_MIN_S` / `FAN_NATURAL_MAX_S` | 8 / 30 | gió tự nhiên: thời gian giữ một số ngắn nhất / dài nhất (giây) |
@@ -336,7 +341,7 @@ test/host/run.sh
 
 | Test | Kiểm tra |
 |---|---|
-| `test_fan_logic.c` | % ↔ số (33/66/100, mọi giá trị 0–100), khớp với FanMode/SpeedSetting mà cluster Matter tự tính; bật/tắt nhớ số cũ, chuyển số vòng, đặt số, đảo gió chỉ chạy khi quạt chạy, lệnh Step (wrap, lowest off), dữ liệu lưu bị hỏng; gió tự nhiên (bật quạt khi bật, chọn số thì thoát, tắt quạt vẫn nhớ), nhịp gió tự nhiên (luôn đổi số, cả 3 số đều dùng, số 2 nhiều nhất, thời gian giữ trong giới hạn) |
+| `test_fan_logic.c` | % ↔ số (33/66/100, mọi giá trị 0–100), khớp với FanMode/SpeedSetting mà cluster Matter tự tính; bật/tắt nhớ số cũ, bật từ ứng dụng (100 % hoặc On lúc quạt tắt = số cũ, lúc đang chạy = số 3 / giữ nguyên), chuyển số vòng, đặt số, relay đảo gió không bao giờ đóng khi quạt tắt (thử mọi trạng thái × mọi lệnh), lệnh Step (wrap, lowest off), dữ liệu lưu bị hỏng; gió tự nhiên (bật quạt khi bật, chọn số thì thoát, tắt quạt vẫn nhớ), nhịp gió tự nhiên (luôn đổi số, cả 3 số đều dùng, số 2 nhiều nhất, thời gian giữ trong giới hạn) |
 | `test_ir.c` | chuyển dữ liệu RMT thành xung (bỏ mức nghỉ đầu khung, gộp đoạn cùng mức, cắt khung quá dài); giải mã NEC với méo của mắt thu và nhiễu thời gian, khung lặp NEC, khung hỏng; mã theo hình dạng (Sony, Samsung) ổn định với nhiễu và khác nhau giữa các nút; lọc nhiễu; giữ nút không lặp lệnh; bảng nút đã học (POWER thành ON khi có nút OFF, học lại chuyển chức năng, nút NATURAL) |
 
 Phần relay, Matter, Wi-Fi và BLE vẫn phải thử trên thiết bị thật.

@@ -15,6 +15,8 @@ static fan_cmd_t cmd(uint8_t type, uint8_t arg)
     return c;
 }
 
+static fan_state_t natural_state(uint8_t speed, uint8_t last, bool natural);
+
 static fan_cmd_t step(uint8_t type, bool wrap, bool lowest_off)
 {
     fan_cmd_t c = { type, 0, wrap, lowest_off };
@@ -136,6 +138,94 @@ static void test_swing(void)
     CHECK(!fan_state_apply(&s, &c));
     CHECK(!fan_state_swing_running(&s));
     CHECK_EQ(s.speed, 1); // speed unchanged
+}
+
+// Oscillation relay: for every state and every command, it is only closed while the fan runs (the app may show the
+// oscillation setting as on while the fan is off: that is the setting for the next start, the relay stays open)
+static void test_swing_relay_never_on_while_off(void)
+{
+    const uint8_t types[] = { FAN_CMD_TOGGLE,         FAN_CMD_ON,          FAN_CMD_OFF,       FAN_CMD_SPEED_CYCLE,
+                              FAN_CMD_SET_SPEED,      FAN_CMD_SWING_TOGGLE, FAN_CMD_SET_SWING, FAN_CMD_STEP_UP,
+                              FAN_CMD_STEP_DOWN,      FAN_CMD_NATURAL_TOGGLE, FAN_CMD_SET_NATURAL, FAN_CMD_TURN_ON };
+    for (uint8_t speed = 0; speed <= FAN_SPEED_COUNT; speed++) {
+        for (uint8_t last = 1; last <= FAN_SPEED_COUNT; last++) {
+            for (int flags = 0; flags < 4; flags++) {
+                for (unsigned t = 0; t < sizeof(types); t++) {
+                    for (uint8_t arg = 0; arg <= FAN_SPEED_COUNT; arg++) {
+                        for (int opt = 0; opt < 4; opt++) {
+                            fan_state_t s = { speed, last, (flags & 1) != 0, (flags & 2) != 0 };
+                            fan_cmd_t c = { types[t], arg, (opt & 1) != 0, (opt & 2) != 0 };
+                            fan_state_apply(&s, &c);
+                            CHECK(fan_state_swing_running(&s) == (s.swing && s.speed > 0));
+                            if (s.speed == 0) {
+                                CHECK(!fan_state_swing_running(&s));
+                                CHECK(!fan_state_natural_running(&s));
+                            }
+                            CHECK(s.last_speed >= 1 && s.last_speed <= FAN_SPEED_COUNT);
+                            if (s.speed) {
+                                CHECK_EQ(s.last_speed, s.speed);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+static void test_turn_on(void)
+{
+    // Apple Home turns a stopped fan on with 100 %, FanMode On has no speed: both resume the last speed
+    fan_state_t s = state(0, 1, true);
+    fan_cmd_t c = cmd(FAN_CMD_TURN_ON, 3);
+    CHECK(fan_state_apply(&s, &c));
+    CHECK_EQ(s.speed, 1);
+    CHECK(s.swing);
+    c = cmd(FAN_CMD_TURN_ON, 0);
+    s = state(0, 2, false);
+    CHECK(fan_state_apply(&s, &c));
+    CHECK_EQ(s.speed, 2);
+
+    // ... and natural wind, when it was on before the fan was turned off
+    s = natural_state(0, 2, true);
+    c = cmd(FAN_CMD_TURN_ON, 3);
+    CHECK(fan_state_apply(&s, &c));
+    CHECK(fan_state_natural_running(&s));
+    CHECK_EQ(s.speed, 2);
+
+    // Running: 100 % is speed 3, FanMode On keeps the speed; both end natural wind
+    s = state(1, 1, false);
+    c = cmd(FAN_CMD_TURN_ON, 3);
+    CHECK(fan_state_apply(&s, &c));
+    CHECK_EQ(s.speed, 3);
+    CHECK_EQ(s.last_speed, 3);
+    s = state(2, 2, false);
+    c = cmd(FAN_CMD_TURN_ON, 0);
+    CHECK(!fan_state_apply(&s, &c));
+    CHECK_EQ(s.speed, 2);
+    s = natural_state(2, 2, true);
+    CHECK(fan_state_apply(&s, &c));
+    CHECK(!s.natural);
+    CHECK_EQ(s.speed, 2);
+    s = natural_state(1, 1, true);
+    c = cmd(FAN_CMD_TURN_ON, 3);
+    CHECK(fan_state_apply(&s, &c));
+    CHECK(!s.natural);
+    CHECK_EQ(s.speed, 3);
+    c = cmd(FAN_CMD_TURN_ON, 9); // clamped
+    s = state(1, 1, false);
+    fan_state_apply(&s, &c);
+    CHECK_EQ(s.speed, 3);
+
+    // Off -> on -> off -> on from the app keeps the speed chosen before
+    s = state(0, 1, false);
+    c = cmd(FAN_CMD_SET_SPEED, 2);
+    fan_state_apply(&s, &c);
+    c = cmd(FAN_CMD_SET_SPEED, 0);
+    fan_state_apply(&s, &c);
+    c = cmd(FAN_CMD_TURN_ON, 3);
+    fan_state_apply(&s, &c);
+    CHECK_EQ(s.speed, 2);
 }
 
 static void test_step(void)
@@ -331,6 +421,8 @@ int main(void)
     test_power();
     test_speed();
     test_swing();
+    test_swing_relay_never_on_while_off();
+    test_turn_on();
     test_step();
     test_sanitize();
     test_natural();

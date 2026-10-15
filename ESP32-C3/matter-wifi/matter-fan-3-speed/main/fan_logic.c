@@ -92,6 +92,16 @@ bool fan_state_apply(fan_state_t *state, const fan_cmd_t *cmd)
             speed = resume_speed(state);
         }
         break;
+    case FAN_CMD_TURN_ON:
+        if (state->speed == 0) {
+            speed = resume_speed(state);
+        } else {
+            if (cmd->arg) {
+                speed = cmd->arg > FAN_SPEED_COUNT ? FAN_SPEED_COUNT : cmd->arg;
+            }
+            manual = true;
+        }
+        break;
     default:
         return false;
     }

@@ -26,11 +26,6 @@ static constexpr const char *k_rocking_name = " Rocking";
 #else
 static constexpr const char *k_rocking_name = "";
 #endif
-#if CONFIG_FAN_MATTER_AIRFLOW_DIRECTION
-static constexpr const char *k_airflow_name = " AirflowDirection";
-#else
-static constexpr const char *k_airflow_name = "";
-#endif
 #if CONFIG_FAN_MATTER_AUTO_NATURAL
 static constexpr const char *k_auto_name = " Auto";
 #else
@@ -46,10 +41,17 @@ namespace {
 
 uint16_t s_endpoint_id = chip::kInvalidEndpointId;
 
+/* A controller write that turns the fan on without choosing a speed (CONFIG_FAN_ON_RESUMES_LAST_SPEED) */
+enum class TurnOn : uint8_t {
+    kNone,
+    kOnMode,      /* FanMode On (or Smart without Auto) */
+    kFullPercent, /* PercentSetting 100 %: Apple Home turns a stopped fan on with it */
+};
+
 /* CHIP task only */
-bool s_following;    /* the fan state has been written into the cluster once: follow controller changes */
-bool s_writing;      /* our own writes into the cluster are in progress: their notifications are not commands */
-bool s_on_requested; /* the controller write being processed is FanMode On (or Smart without Auto) */
+bool s_following; /* the fan state has been written into the cluster once: follow controller changes */
+bool s_writing;   /* our own writes into the cluster are in progress: their notifications are not commands */
+TurnOn s_turn_on; /* the controller write being processed, from fan_matter_pre_update() */
 
 /* Any task */
 std::atomic<bool> s_started{false};        /* esp_matter::start() has returned: the CHIP task takes work */
@@ -84,8 +86,8 @@ public:
         if (!s_following || s_writing) {
             return;
         }
-        const bool on_requested = s_on_requested;
-        s_on_requested = false;
+        const TurnOn turn_on = s_turn_on;
+        s_turn_on = TurnOn::kNone;
         uint8_t speed;
         if (state.mode == FC::FanModeEnum::kOff) {
             speed = 0;
@@ -101,13 +103,11 @@ public:
         } else {
             return;
         }
-        if (on_requested && speed) {
-            /* FanMode On: the cluster chose High, resume the last speed instead (CONFIG_FAN_ON_RESUMES_LAST_SPEED).
-             * A mode other than Auto is a manual setting: it ends natural wind. */
-            if (fan_ctrl_get_state().natural) {
-                post(FAN_CMD_SET_NATURAL, 0);
-            }
-            post(FAN_CMD_ON, 0);
+        if (turn_on != TurnOn::kNone && speed) {
+            /* The cluster chose High (speed 3). A stopped fan resumes its last speed (and natural wind) instead, like
+             * the power button of the remote; a running one takes 100 % as speed 3 and FanMode On as no change. The
+             * fan task decides, so a command still queued (off just before) is taken into account. */
+            post(FAN_CMD_TURN_ON, turn_on == TurnOn::kFullPercent ? speed : 0);
             return;
         }
         /* A speed ends natural wind (fan_logic.h); Off keeps it for the next On */
@@ -125,14 +125,6 @@ public:
     {
         if (s_following && !s_writing) {
             post(FAN_CMD_SET_NATURAL, value.Has(FC::WindBitmap::kNaturalWind));
-        }
-    }
-
-    void OnAirflowDirectionChanged(FC::AirflowDirectionEnum value) override
-    {
-        /* The rotation direction button is the oscillation switch: Reverse = on */
-        if (s_following && !s_writing) {
-            post(FAN_CMD_SET_SWING, value == FC::AirflowDirectionEnum::kReverse);
         }
     }
 };
@@ -178,9 +170,6 @@ void write_state(intptr_t)
 #if CONFIG_FAN_MATTER_ROCKING
     cluster->SetRockSetting(st.swing ? chip::BitMask<FC::RockBitmap>(FC::RockBitmap::kRockLeftRight)
                                      : chip::BitMask<FC::RockBitmap>());
-#endif
-#if CONFIG_FAN_MATTER_AIRFLOW_DIRECTION
-    cluster->SetAirflowDirection(st.swing ? FC::AirflowDirectionEnum::kReverse : FC::AirflowDirectionEnum::kForward);
 #endif
     s_writing = false;
 
@@ -257,13 +246,6 @@ endpoint_t *fan_matter_create(node_t *node)
         err = cluster::fan_control::feature::rocking::add(fan_control, &rocking);
     }
 #endif
-#if CONFIG_FAN_MATTER_AIRFLOW_DIRECTION
-    if (err == ESP_OK) {
-        cluster::fan_control::feature::airflow_direction::config_t airflow;
-        airflow.airflow_direction = chip::to_underlying(FC::AirflowDirectionEnum::kForward);
-        err = cluster::fan_control::feature::airflow_direction::add(fan_control, &airflow);
-    }
-#endif
 #if CONFIG_FAN_MATTER_AUTO_NATURAL
     if (err == ESP_OK) {
         err = cluster::fan_control::feature::fan_auto::add(fan_control);
@@ -286,8 +268,8 @@ endpoint_t *fan_matter_create(node_t *node)
     }
 
     fan_ctrl_set_listener(on_fan_state);
-    ESP_LOGI(TAG, "Fan endpoint %u: %d speeds, oscillation switch:%s%s, natural wind:%s%s", s_endpoint_id,
-             FAN_SPEED_COUNT, k_rocking_name, k_airflow_name, k_auto_name, k_wind_name);
+    ESP_LOGI(TAG, "Fan endpoint %u: %d speeds, oscillation:%s, natural wind:%s%s", s_endpoint_id, FAN_SPEED_COUNT,
+             k_rocking_name, k_auto_name, k_wind_name);
     return endpoint;
 }
 
@@ -297,12 +279,20 @@ void fan_matter_pre_update(uint16_t endpoint_id, uint32_t cluster_id, uint32_t a
     if (endpoint_id != s_endpoint_id || cluster_id != FanControl::Id) {
         return;
     }
-    s_on_requested = false;
+    s_turn_on = TurnOn::kNone;
 #if CONFIG_FAN_ON_RESUMES_LAST_SPEED
-    if (attribute_id == FanControl::Attributes::FanMode::Id && val != nullptr) {
+    if (val == nullptr) {
+        return;
+    }
+    if (attribute_id == FanControl::Attributes::FanMode::Id) {
         const auto mode = static_cast<FC::FanModeEnum>(val->val.u8);
         /* With Auto, the cluster turns Smart into Auto (natural wind), handled as such */
-        s_on_requested = mode == FC::FanModeEnum::kOn || mode == FC::FanModeEnum::kSmart;
+        if (mode == FC::FanModeEnum::kOn || mode == FC::FanModeEnum::kSmart) {
+            s_turn_on = TurnOn::kOnMode;
+        }
+    } else if (attribute_id == FanControl::Attributes::PercentSetting::Id && val->val.u8 == 100) {
+        /* Apple Home turns a fan on with 100 % (HomeKit: speed 0 while off, so "on" means 100 %) */
+        s_turn_on = TurnOn::kFullPercent;
     }
 #else
     (void)attribute_id;
@@ -315,7 +305,7 @@ void fan_matter_post_update(uint16_t endpoint_id, uint32_t cluster_id, uint32_t 
     (void)attribute_id;
     if (endpoint_id == s_endpoint_id && cluster_id == FanControl::Id) {
         /* Not consumed when the write changed nothing (FanMode On while already at High) */
-        s_on_requested = false;
+        s_turn_on = TurnOn::kNone;
     }
 }
 

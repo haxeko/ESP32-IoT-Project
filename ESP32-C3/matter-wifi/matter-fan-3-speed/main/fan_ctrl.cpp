@@ -177,6 +177,8 @@ static void wait_dead_time()
 static void relays_apply(const fan_state_t &st, uint8_t speed)
 {
     const bool swing = fan_state_swing_running(&st);
+    const uint8_t old_speed = s_phys_speed;
+    const bool old_swing = s_phys_swing;
 
     /* The oscillation relay opens before the fan is switched off and closes after it is switched on. A speed change
      * does not interrupt it: the fan coasts for the dead time only. */
@@ -199,6 +201,13 @@ static void relays_apply(const fan_state_t &st, uint8_t speed)
     if (swing && !s_phys_swing) {
         gpio_set_level(k_swing_gpio, relay_level(true));
         s_phys_swing = true;
+    }
+    if (s_phys_speed != old_speed || s_phys_swing != old_swing) {
+        if (s_phys_speed) {
+            ESP_LOGI(TAG, "Relays: speed %u closed, oscillation %s", s_phys_speed, s_phys_swing ? "closed" : "open");
+        } else {
+            ESP_LOGI(TAG, "Relays: all speed relays open, oscillation %s", s_phys_swing ? "closed" : "open");
+        }
     }
 }
 

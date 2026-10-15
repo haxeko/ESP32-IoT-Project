@@ -339,7 +339,7 @@ extern "C" void app_main()
     ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
     device_info_add_attributes(node);
 
-    /* Fan device type: 3 speeds, oscillation (Rocking + AirflowDirection), see fan_matter.h */
+    /* Fan device type: 3 speeds, oscillation (Rocking), natural wind (Auto + Wind), see fan_matter.h */
     endpoint_t *endpoint = fan_matter_create(node);
     ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create the fan endpoint"));
 

@@ -36,10 +36,14 @@ typedef enum {
     FAN_CMD_STEP_DOWN,    /**< Matter Step, direction Decrease (wrap, lowest_off) */
     FAN_CMD_NATURAL_TOGGLE, /**< natural wind running -> manual; otherwise -> natural wind, on at last_speed when off */
     FAN_CMD_SET_NATURAL,    /**< arg = 1: natural wind, on at last_speed when off; arg = 0: manual, speed unchanged */
+    FAN_CMD_TURN_ON,        /**< a controller turns the fan on (Matter FanMode On, 100 %): off -> on at last_speed
+                                 like the power button (natural wind kept); running: arg 1..3 sets that speed, arg 0
+                                 keeps it, natural wind ends */
 } fan_cmd_type_t;
 
-/* Natural wind is left by every command that selects a speed (SET_SPEED 1..3, SPEED_CYCLE, STEP to a running speed)
- * and by SET_NATURAL 0 / NATURAL_TOGGLE. Off, On and Toggle keep it: the power button resumes natural wind. */
+/* Natural wind is left by every command that selects a speed (SET_SPEED 1..3, SPEED_CYCLE, STEP to a running speed,
+ * TURN_ON on a running fan) and by SET_NATURAL 0 / NATURAL_TOGGLE. Off, On, Toggle and TURN_ON on a stopped fan keep
+ * it: turning the fan back on resumes natural wind. */
 
 typedef struct {
     uint8_t type; /**< fan_cmd_type_t */

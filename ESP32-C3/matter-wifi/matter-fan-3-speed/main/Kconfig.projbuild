@@ -62,21 +62,26 @@ menu "Fan Behavior"
             reset that hit a start younger than 30 s (then the fan starts off).
 
         config FAN_POWER_ON_RESTORE
-            bool "Restore the last state (speed and oscillation)"
+            bool "Restore the last state (speed, oscillation, natural wind)"
 
         config FAN_POWER_ON_OFF
-            bool "Stay off (speed and oscillation are kept for the next On)"
+            bool "Stay off (speed, oscillation and natural wind are kept for the next On)"
 
     endchoice
 
     config FAN_ON_RESUMES_LAST_SPEED
-        bool "Matter FanMode On resumes the last speed"
+        bool "Turning the fan on from an app resumes the last speed"
         default y
         help
-            A controller that writes FanMode = On (or Smart) turns the fan on at the speed it had
-            before it was turned off, like the power button of the remote, instead of the speed 3
-            (High) that the Matter specification asks for. Writes of FanMode = On while the fan is
-            already running leave the speed unchanged.
+            A controller that turns a stopped fan on without choosing a speed gets the speed (or the
+            natural wind) the fan had before it was turned off, like the power button of the remote,
+            instead of the speed 3 (High) that the Matter specification asks for:
+            - FanMode = On (or Smart without Auto),
+            - PercentSetting = 100 % while the fan is off: Apple Home turns a fan on that way (in
+              HomeKit a stopped fan has speed 0, so "on" sends 100 %).
+            So dragging the slider of a stopped fan straight to 100 % also resumes the last speed;
+            once the fan runs, 100 % is speed 3. FanMode = On on a running fan changes nothing
+            (natural wind ends). n: FanMode On and 100 % always run speed 3.
 
     config FAN_MATTER_ROCKING
         bool "Oscillation as Matter Rocking (Apple Home 'Oscillate')"
@@ -84,15 +89,8 @@ menu "Fan Behavior"
         help
             Fan Control Rocking feature (RockSupport = left-right). Apple Home shows it as an
             Oscillate switch, Home Assistant as Oscillate. Turns the swing relay on and off.
-
-    config FAN_MATTER_AIRFLOW_DIRECTION
-        bool "Oscillation on the Matter AirflowDirection (Apple Home 'Rotation direction') button"
-        default y
-        help
-            Fan Control AirflowDirection feature, used as a second oscillation switch:
-            Reverse = oscillation on, Forward = oscillation off. Apple Home shows it as the
-            rotation direction button under the speed slider, Home Assistant as Direction.
-            Both features drive the same swing relay and always show the same state.
+            It shows the oscillation setting, also while the fan is off: the swing relay itself
+            only closes while the fan runs. n: oscillation only from the remote and the buttons.
 
     config FAN_MATTER_AUTO_NATURAL
         bool "Natural wind as Matter FanMode Auto (Apple Home 'Auto' switch)"
