@@ -35,19 +35,31 @@ Mức 30 %, số LED, chân GPIO và chiều sáng (từ đầu hay từ cuối 
 
 - ESP32-C3 SuperMini (hoặc ESP32-C3-DevKitM-1...), flash 4 MB.
 - Dải 30 LED WS2812 / WS2812B.
-- Nguồn 5V cho LED. 30 LED ở 30 %, màu trắng, ăn khoảng **0,55 A**, nên dùng nguồn **5V 1A** trở lên.
+- Nguồn **5V 2A** trở lên. 30 LED ở 30 %, màu trắng, ăn khoảng **0,55 A**; ESP32-C3 có thêm những xung dòng vài trăm mA mỗi lần phát Wi-Fi.
 
 ### Sơ đồ nối dây
+
+Dòng của dải LED **không được đi qua board SuperMini**. Kéo dây riêng từ nguồn 5V tới dải LED và tới board (nối hình sao):
+
+```
+Nguồn 5V 2A (+) ──┬──────────────► 5V dải LED      (tụ 470–1000 µF sát đầu dải)
+                  └──────────────► chân 5V SuperMini (tụ 10–100 µF sát chân)
+Nguồn 5V 2A (−) ──┬──────────────► GND dải LED
+                  └──────────────► GND SuperMini
+GPIO4 ──[330 Ω]──────────────────► DIN dải LED
+```
 
 | WS2812 | Nối vào |
 |---|---|
 | DIN | **GPIO4** (nên nối tiếp điện trở 330 Ω) |
-| 5V | 5V nguồn |
+| 5V | 5V nguồn, dây riêng (không lấy từ chân 5V hay 3V3 của SuperMini) |
 | GND | GND nguồn **và** GND của ESP32-C3 |
 
-Nên đặt tụ 470–1000 µF giữa 5V và GND ở đầu dải LED. Mức logic 3.3V của ESP32-C3 thường đủ cho WS2812; nếu LED nhấp nháy sai màu, thêm IC chuyển mức (74AHCT125) hoặc cấp cho LED đầu tiên 4.5V qua một diode.
+**Không cấp điện cho dải LED từ chân 5V hay 3V3 của SuperMini**, kể cả khi board cắm củ sạc tốt: dòng LED đi qua cáp USB và mạch của board làm sụt áp. Khi nguồn không đủ, lúc dải LED sáng nhiều (ví dụ trắng cả 30 LED) cộng thêm xung dòng Wi-Fi, ESP32-C3 bị sụt áp (brownout) và khởi động lại liên tục. Triệu chứng đã gặp thực tế: nút BOOT không còn tác dụng, app báo "Không phản hồi", RESET cũng không cứu được vì lần khởi động nào đèn cũng bật lại đúng trạng thái đó; tháo dải LED ra thì hết lỗi.
 
-Có thể cấp nguồn cho cả mạch từ chân **5V** của SuperMini khi cắm USB, nhưng cổng USB máy tính thường chỉ cho 0,5 A. Nếu chỉnh mức sáng cao hơn 30 % hoặc dùng nhiều LED hơn, hãy dùng nguồn 5V riêng.
+Khi cắm USB vào máy tính để nạp firmware hay xem log, nên rút dây 5V từ nguồn ngoài vào board (vẫn giữ GND chung): trên nhiều board, chân 5V nối thẳng với 5V của cổng USB.
+
+Mức logic 3.3V của ESP32-C3 thường đủ cho WS2812; nếu LED nhấp nháy sai màu, thêm IC chuyển mức (74AHCT125) hoặc cấp cho LED đầu tiên 4.5V qua một diode.
 
 ### Nút bấm
 
@@ -194,7 +206,7 @@ Firmware tự bảo vệ:
 ### Phần cứng và router
 
 - **ESP32-C3 SuperMini**: nhiều lô có ăng-ten phối hợp kém, Wi-Fi chập chờn hoặc rớt khi phát công suất tối đa. Cách sửa phổ biến là giảm công suất phát: menuconfig → **Wi-Fi** → *Maximum Wi-Fi transmit power* → **8.5 dBm** (tầm phủ giảm, nên đặt router đủ gần). Tránh để dây nguồn, dải LED hay vật kim loại đè lên đầu ăng-ten của board.
-- **Nguồn**: lúc phát Wi-Fi, ESP32-C3 có những xung dòng vài trăm mA, cộng thêm dải LED. Nguồn yếu hoặc dây dài làm sụt áp, gây brownout hoặc lỗi Wi-Fi. Dùng nguồn 5V từ 1 A trở lên, tụ 470–1000 µF ở đầu dải LED, và thêm tụ 10–100 µF sát chân 5V/GND của SuperMini.
+- **Nguồn**: lúc phát Wi-Fi, ESP32-C3 có những xung dòng vài trăm mA, cộng thêm dải LED. Nguồn yếu, dây dài, hoặc dòng LED đi qua board làm sụt áp, gây brownout hoặc lỗi Wi-Fi. Nếu tháo dải LED ra mà hết lỗi thì gần như chắc chắn là do nguồn: nối lại theo [sơ đồ nối dây](#sơ-đồ-nối-dây) (nguồn 5V 2A, dây riêng cho LED và cho board, tụ ở cả hai đầu).
 - **Router**: phải có Wi-Fi 2.4 GHz; tắt *AP/client isolation* (cách ly thiết bị); nếu đèn hay mất kết nối, thử tắt *IGMP/MLD snooping* hoặc *multicast to unicast*; hub (Apple TV/HomePod) cùng mạng với đèn.
 
 ## Cấu trúc mã nguồn
