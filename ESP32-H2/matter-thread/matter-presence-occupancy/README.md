@@ -157,6 +157,7 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 |---|---|
 | Nhà sản xuất (Manufacturer) | `Haxeko` |
 | Kiểu máy (Model) | `H2 Occupancy` |
+| Phần cứng (Hardware) | `ESP32H2-LD2410` |
 | Tên thiết bị khi ghép nối | `Occupancy Sensor` (cũng là tên DNS-SD; tên Bluetooth là `Occupancy-<discriminator>`, ví dụ `Occupancy-3840`) |
 | Số serial | Địa chỉ MAC gốc trong eFuse, ví dụ `744DBDA1B2C3`. Tự động, riêng cho từng chip |
 | Firmware | `1.0.<số commit>`, tự tăng sau mỗi commit; cũng là số phiên bản Matter dùng cho OTA |

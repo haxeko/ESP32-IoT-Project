@@ -15,6 +15,12 @@ menu "Device Information"
             Default name that controllers show when the device is added.
             Max 32 characters. It can be renamed later in the app.
 
+    config DEVICE_HARDWARE_VERSION_STRING
+        string "Hardware (Basic Information HardwareVersionString)"
+        default "ESP32H2-LD2410"
+        help
+            Shown as Hardware by controllers. Max 64 characters.
+
 endmenu
 
 menu "Presence Sensor Configuration"
