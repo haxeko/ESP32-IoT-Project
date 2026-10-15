@@ -52,6 +52,52 @@ menu "WS2812 RGB Light"
 
 endmenu
 
+menu "Wi-Fi"
+
+    config APP_WIFI_POWER_SAVE_OFF
+        bool "Keep the Wi-Fi radio awake once commissioned (no power save)"
+        default y
+        help
+            ESP-IDF lets the Wi-Fi radio sleep between beacons by default (modem sleep, WIFI_PS_MIN_MODEM):
+            multicast frames wait for the next DTIM beacon and can get lost with some routers. Matter
+            controllers find the light with multicast (mDNS, IPv6 neighbor discovery), so a sleeping radio
+            can make the light show "No Response". The light is mains powered: keep the radio awake. Applied
+            once BLE is off (after commissioning, or at boot when already commissioned). Uses a few tens of
+            mA more.
+            Say n to keep the ESP-IDF default (modem sleep).
+
+    choice APP_WIFI_TX_POWER
+        prompt "Maximum Wi-Fi transmit power"
+        default APP_WIFI_TX_POWER_20
+        help
+            Many ESP32-C3 SuperMini boards have a poorly tuned antenna: at full power their Wi-Fi connection
+            fails or keeps dropping, and lowering the transmit power (usually to 8.5 dBm) fixes it. A lower
+            power also means less range: keep the router close enough.
+
+        config APP_WIFI_TX_POWER_20
+            bool "20 dBm (ESP-IDF default)"
+        config APP_WIFI_TX_POWER_15
+            bool "15 dBm"
+        config APP_WIFI_TX_POWER_13
+            bool "13 dBm"
+        config APP_WIFI_TX_POWER_11
+            bool "11 dBm"
+        config APP_WIFI_TX_POWER_8_5
+            bool "8.5 dBm (ESP32-C3 SuperMini fix)"
+    endchoice
+
+    config APP_WIFI_TX_POWER_QUARTER_DBM
+        int
+        default 60 if APP_WIFI_TX_POWER_15
+        default 52 if APP_WIFI_TX_POWER_13
+        default 44 if APP_WIFI_TX_POWER_11
+        default 34 if APP_WIFI_TX_POWER_8_5
+        default 80
+        help
+            Value for esp_wifi_set_max_tx_power(), in 0.25 dBm. 80 (20 dBm) leaves the ESP-IDF default.
+
+endmenu
+
 menu "Button"
 
     config APP_BUTTON_GPIO

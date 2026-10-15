@@ -51,6 +51,12 @@ CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
 
+# Task watchdog: restart the device when the Matter thread (fed every 5 s, see main/app_health.cpp) or the idle
+# task stops running for 30 s, instead of leaving the light unresponsive until it is unplugged.
+# Rollback: CONFIG_ESP_TASK_WDT_PANIC=n only prints a warning.
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+
 # Increase LwIP IPv6 address number to 6 (MAX_FABRIC + 1)
 # unique local addresses for fabrics(MAX_FABRIC), a link local address(1)
 CONFIG_LWIP_IPV6_NUM_ADDRESSES=6

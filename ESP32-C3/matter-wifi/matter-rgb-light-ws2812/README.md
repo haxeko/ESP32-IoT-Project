@@ -154,16 +154,60 @@ Tạo ảnh QR từ chuỗi trên, ví dụ: `https://project-chip.github.io/con
 
 Khi xóa thiết bị khỏi tất cả ứng dụng, thiết bị tự mở lại chế độ ghép nối 5 phút (qua Wi-Fi đã lưu). Muốn ghép lại từ đầu, giữ nút BOOT 5 giây rồi nhả ra để factory reset.
 
+## Khi app báo "Không phản hồi"
+
+"Không phản hồi" (No Response) nghĩa là app không liên lạc được với đèn qua mạng. Cách đèn thể hiện độ sáng (số LED sáng) **không liên quan**: qua Matter, đèn chỉ báo thuộc tính chuẩn `CurrentLevel` của cluster Level Control và trả lời lệnh như mọi đèn Matter khác. App không biết và cũng không kiểm tra đèn hiển thị độ sáng ra sao.
+
+Firmware tự bảo vệ:
+- **Tự khởi động lại khi treo**: luồng Matter phải chạy một việc nhỏ mỗi 5 giây. Nếu nó ngừng quá 30 giây (treo, kẹt), task watchdog khởi động lại đèn. Đèn khôi phục bật/tắt, độ sáng và màu như trước.
+- **Wi-Fi không ngủ** sau khi ghép xong (menuconfig → **Wi-Fi** → *Keep the Wi-Fi radio awake*, mặc định bật). Mặc định ESP-IDF cho radio ngủ giữa các beacon: gói multicast mà app dùng để tìm đèn (mDNS, IPv6 neighbor discovery) phải chờ tới beacon DTIM và có thể bị mất với một số router. Đèn cắm điện nên giữ radio luôn thức, tốn thêm vài chục mA.
+- **Log chẩn đoán** trên cổng USB: lý do khởi động lần trước, mỗi 60 giây một dòng trạng thái, lý do mỗi lần mất Wi-Fi.
+
+### Tìm nguyên nhân
+
+1. **Nhấn nút BOOT** khi app đang báo Không phản hồi:
+   - Đèn bật/tắt theo nút: firmware vẫn chạy bình thường, lỗi nằm ở đường mạng (sóng Wi-Fi, router, hub Apple TV/HomePod).
+   - Đèn không đổi: đèn mất nguồn, hoặc firmware bị treo (khi đó watchdog sẽ khởi động lại đèn trong vòng 30 giây).
+2. **Ghi log**: cắm đèn vào máy tính bằng cáp USB **từ trước** và để chạy cho tới khi lỗi xảy ra (rút ra cắm lại là khởi động lại đèn, mất dấu vết). Mở log mà không reset chip:
+   ```bash
+   idf.py -p /dev/ttyACM0 monitor --no-reset --timestamps    # Ctrl+T rồi Ctrl+L: lưu log ra file
+   # hoặc không cần ESP-IDF (pip install pyserial; Windows: COM3...)
+   python -m serial.tools.miniterm --dtr 0 --rts 0 /dev/ttyACM0 115200
+   ```
+3. **Đọc log** (ví dụ):
+   ```
+   W (512) app_health: Reset reason: brownout (supply voltage dropped) (9)
+   I (60512) app_health: up 60 s | heap 151208 free, 98012 min, 65536 largest | Wi-Fi -58 dBm ch 6, 3 IPv6, 0 drops | 1 fabrics, 2 subscriptions
+   W (912345) app_health: Wi-Fi connection lost: reason 200, RSSI -86 dBm (1 since boot)
+   ```
+   | Dấu hiệu | Nguyên nhân thường gặp |
+   |---|---|
+   | `Reset reason: brownout` | Nguồn sụt áp khi LED và Wi-Fi cùng ăn dòng: dùng nguồn 5V khỏe hơn, dây ngắn và to hơn, thêm tụ |
+   | `Reset reason: task watchdog` hoặc `crash (panic)` | Firmware treo hoặc lỗi: gửi log (đoạn trước lần khởi động lại) để sửa |
+   | RSSI yếu hơn khoảng -75 dBm, `drops` tăng dần | Sóng yếu hoặc ăng-ten kém: dời đèn/router, xem mục SuperMini bên dưới |
+   | `reason 200` (beacon timeout), `201` (không thấy AP), `15`/`204` (bắt tay quá hạn) | Sóng yếu, nhiễu, router khởi động lại hoặc đổi kênh |
+   | `heap ... free` giảm đều theo từng giờ | Rò rỉ bộ nhớ: gửi log |
+   | Wi-Fi tốt, `fabrics` ≥ 1 nhưng `0 subscriptions` | App/hub mất kết nối tới đèn: kiểm tra router (bên dưới), khởi động lại hub |
+
+   Không có máy tính bên cạnh: số lần khởi động của đèn nằm trong cluster General Diagnostics (`RebootCount`), đọc bằng chip-tool (`chip-tool generaldiagnostics read reboot-count <node-id> 0`) hoặc trong file *Download diagnostics* của thiết bị trên Home Assistant. Số này tăng mà không ai rút điện nghĩa là đèn đã tự khởi động lại.
+
+### Phần cứng và router
+
+- **ESP32-C3 SuperMini**: nhiều lô có ăng-ten phối hợp kém, Wi-Fi chập chờn hoặc rớt khi phát công suất tối đa. Cách sửa phổ biến là giảm công suất phát: menuconfig → **Wi-Fi** → *Maximum Wi-Fi transmit power* → **8.5 dBm** (tầm phủ giảm, nên đặt router đủ gần). Tránh để dây nguồn, dải LED hay vật kim loại đè lên đầu ăng-ten của board.
+- **Nguồn**: lúc phát Wi-Fi, ESP32-C3 có những xung dòng vài trăm mA, cộng thêm dải LED. Nguồn yếu hoặc dây dài làm sụt áp, gây brownout hoặc lỗi Wi-Fi. Dùng nguồn 5V từ 1 A trở lên, tụ 470–1000 µF ở đầu dải LED, và thêm tụ 10–100 µF sát chân 5V/GND của SuperMini.
+- **Router**: phải có Wi-Fi 2.4 GHz; tắt *AP/client isolation* (cách ly thiết bị); nếu đèn hay mất kết nối, thử tắt *IGMP/MLD snooping* hoặc *multicast to unicast*; hub (Apple TV/HomePod) cùng mạng với đèn.
+
 ## Cấu trúc mã nguồn
 
 | File | Nội dung |
 |---|---|
 | `main/app_main.cpp` | Khởi tạo NVS, tạo node Matter, endpoint Extended Color Light (Hue/Saturation, XY, nhiệt độ màu 2000–6500 K) |
+| `main/app_health.cpp` | Watchdog cho luồng Matter, Wi-Fi không ngủ, công suất phát Wi-Fi, log lý do khởi động / trạng thái 60 giây / mất Wi-Fi |
 | `main/device_info.cpp` | Manufacturer / Model / tên / số serial (Basic Information) |
 | `main/app_driver.cpp` | Nhận thay đổi OnOff / LevelControl / ColorControl từ Matter, Identify, nút BOOT |
 | `main/led_bar.c` | Điều khiển WS2812 qua RMT (`espressif/led_strip`): số LED sáng theo độ sáng, cường độ cố định 30 %, nháy Identify; chỉ gửi dữ liệu ra LED khi hình ảnh thay đổi |
 | `main/color_convert.c` | Đổi Hue/Saturation, XY sang RGB và ngược lại |
-| `main/Kconfig.projbuild` | Tùy chọn: Manufacturer/Model, GPIO, số LED, mức 30 %, chiều sáng, chân nút |
+| `main/Kconfig.projbuild` | Tùy chọn: Manufacturer/Model, GPIO, số LED, mức 30 %, chiều sáng, chân nút, Wi-Fi (không ngủ, công suất phát) |
 | `test/host/` | Test chạy trên máy tính (không cần ESP32): driver dải LED và đổi màu |
 
 ## Kiểm thử

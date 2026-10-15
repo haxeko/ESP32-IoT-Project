@@ -8,6 +8,7 @@
 #include <app_reset.h>
 #include <common_macros.h>
 
+#include <app_health.h>
 #include <app_priv.h>
 #include <device_info.h>
 
@@ -44,6 +45,9 @@ static void open_commissioning_window_if_needed()
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
+    /* Wi-Fi power save and transmit power, Wi-Fi disconnect logs */
+    app_health_handle_event(event);
+
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "Interface IP Address changed");
@@ -125,6 +129,7 @@ static void init_nvs()
 
 extern "C" void app_main()
 {
+    app_health_log_reset_reason();
     init_nvs();
 
     /* WS2812 x30 on GPIO4. The light keeps working as a Matter device even if the strip fails to init. */
@@ -200,6 +205,9 @@ extern "C" void app_main()
 
     err = esp_matter::start(app_event_cb);
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
+
+    /* Restart if the Matter thread hangs (task watchdog), status line every 60 s on the serial log */
+    app_health_start();
 
     /* Restore the last on/off, brightness and color persisted in NVS */
     app_driver_light_set_defaults(light_endpoint_id);
