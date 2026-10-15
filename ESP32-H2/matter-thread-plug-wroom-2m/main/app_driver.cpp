@@ -10,6 +10,7 @@
 
 #include <app_priv.h>
 #include <common_macros.h>
+#include <setup_code.h>
 #include <esp_matter.h>
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
@@ -138,6 +139,7 @@ static void app_driver_button_pairing_cb(void *arg, void *data)
         if (err == CHIP_NO_ERROR) {
             ESP_LOGI(TAG, "Commissioning window opened for %d s (%s)", CHIP_DEVICE_CONFIG_DISCOVERY_TIMEOUT_SECS,
                      commissioned ? "Thread/DNS-SD" : "BLE + DNS-SD");
+            setup_code_print(commissioned);
         } else {
             /* e.g. a commissioning (fail-safe) still in progress */
             ESP_LOGW(TAG, "Failed to open commissioning window: %" CHIP_ERROR_FORMAT, err.Format());

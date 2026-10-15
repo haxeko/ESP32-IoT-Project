@@ -39,6 +39,8 @@
 #include <drivers/ld2410.h>
 #include <drivers/status_led.h>
 #include <drivers/user_button.h>
+#include <identity_diag.h>
+#include <setup_code.h>
 #include <thread_diag.h>
 
 static const char *TAG = "app_main";
@@ -242,6 +244,7 @@ static void open_commissioning_window(uint32_t timeout_sec)
     }
     ESP_LOGI(TAG, "Commissioning window open for %" PRIu32 " s (%s)", timeout_sec,
              s_ble_released ? "network only" : "BLE and network");
+    setup_code_print(s_ble_released);
 }
 
 static void open_commissioning_window_if_necessary()
@@ -254,12 +257,17 @@ static void open_commissioning_window_if_necessary()
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
+    identity_diag_on_event(event);
+
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kServerReady:
         apply_hold_time_config();
         // Already commissioned: no need for the periodic Thread diagnostics
         if (is_commissioned()) {
             thread_diag_stop();
+        } else {
+            // The SDK opened the boot commissioning window (BLE and network)
+            setup_code_print(false);
         }
         break;
 
@@ -347,12 +355,20 @@ static esp_err_t start_matter()
     };
     set_openthread_platform_config(&ot_config);
 
+    // Per-board setup code (sdkconfig.defaults.unique_setup); nothing to do in the default build
+    setup_code_init();
+
     esp_err_t err = esp_matter::start(app_event_cb);
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
 
     /* Log Thread addresses / SRP state until commissioned (see README, troubleshooting) */
     thread_diag_start();
+
+    /* Identity / Thread / Matter state at boot, on events and every CONFIG_IDENTITY_DIAG_PERIOD_SEC */
+    if (identity_diag_start(CONFIG_IDENTITY_DIAG_PERIOD_SEC) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start the identity diagnostics");
+    }
 
 #if CONFIG_ENABLE_CHIP_SHELL
     esp_matter::console::diagnostics_register_commands();
@@ -368,13 +384,18 @@ static esp_err_t start_matter()
 
 // Double click: pairing mode. Not commissioned: the device can be added again
 // (e.g. after the boot window timed out). Commissioned: another app can add it
-// with the same setup code (Multi-Admin). Runs in the esp_timer task.
+// with the same setup code (Multi-Admin). Runs in the esp_timer task: the work is handed to the Matter
+// task instead of waiting here for the Matter stack lock, which would stall every esp_timer callback.
 static void pairing_button_cb()
 {
     VerifyOrReturn(s_matter_started, ESP_LOGW(TAG, "Matter is not running, cannot open pairing mode"));
-    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
-    open_commissioning_window(kPairingWindowSec);
-    update_led_mode();
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork([](intptr_t) {
+        open_commissioning_window(kPairingWindowSec);
+        update_led_mode();
+    });
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "Pairing mode ignored, Matter task busy: %" CHIP_ERROR_FORMAT, err.Format());
+    }
 }
 
 // Long press: factory reset. Runs in the esp_timer task.

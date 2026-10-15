@@ -123,3 +123,56 @@ menu "Thread Diagnostics"
             the device after BLE provisioning. Stops once the device is commissioned.
 
 endmenu
+
+menu "Identity Diagnostics and Setup Code"
+
+    config IDENTITY_DIAG_PERIOD_SEC
+        int "Identity / Thread / Matter diagnostics period (seconds, 0 = off)"
+        range 0 86400
+        default 300
+        help
+            Logs (tag "id_diag") at boot, at this period and on Thread, fabric and
+            session events: reset reason, factory MAC, IEEE EUI-64, serial number,
+            UniqueID, discriminator, Thread role, RLOC16, extended address, ML-EID,
+            partition ID, leader, network name, Ext PAN ID, channel, neighbours, MLE
+            counters, on-mesh prefixes, SRP server and registration state, Matter
+            fabrics (index, node ID, fabric ID, compressed fabric ID, controller
+            vendor), CASE sessions, subscriptions and NVS usage.
+            Never logs the setup passcode, private keys or the Thread network key.
+
+    config IDENTITY_DIAG_SUBSCRIPTION_LOG
+        bool "Log every subscription request, establishment and termination"
+        default y
+        help
+            One line per subscription event with the fabric index, the controller
+            node ID and the negotiated report intervals. Only observes: the
+            subscriptions and their intervals are not changed.
+
+    config PRINT_ONBOARDING_CODES
+        bool "Log the QR code and manual pairing code when pairing is possible"
+        default y
+        help
+            At boot when not commissioned, and when the button opens the pairing
+            window. Development aid: the QR code contains the setup passcode, turn
+            this off in production builds.
+
+    config UNIQUE_SETUP_CODE
+        bool "Per-board random setup code stored in flash"
+        depends on CUSTOM_COMMISSIONABLE_DATA_PROVIDER
+        default y
+        help
+            Enabled by sdkconfig.defaults.unique_setup (see README). Each board
+            generates its own passcode, discriminator and SPAKE2+ salt on first use,
+            computes the SPAKE2+ verifier and stores them in the partition below.
+            Kept across reboots, OTA, factory reset and flashing the merged or app
+            image; regenerated only after erase-flash.
+
+    config UNIQUE_SETUP_CODE_PARTITION
+        string "Flash partition for the per-board setup code"
+        depends on UNIQUE_SETUP_CODE
+        default "fctry"
+        help
+            NVS data partition, namespace "setup-code". "fctry" is otherwise unused
+            by these builds and lies outside the area written by the merged image.
+
+endmenu

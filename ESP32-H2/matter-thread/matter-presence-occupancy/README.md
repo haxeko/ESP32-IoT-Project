@@ -92,7 +92,7 @@ Google Home, Home Assistant, SmartThings làm tương tự: chọn thêm thiết
 Với chip-tool (lấy dataset từ Border Router, ví dụ `ot-ctl dataset active -x`):
 
 ```bash
-chip-tool pairing ble-thread 0x7283 hex:<ACTIVE_DATASET> 20202021 3840
+chip-tool pairing ble-thread 0x7283 hex:<ACTIVE_DATASET> 20202021 3840   # mỗi bo một Node ID
 chip-tool occupancysensing read occupancy 0x7283 1
 chip-tool occupancysensing write hold-time 60 0x7283 1
 ```
@@ -100,6 +100,46 @@ chip-tool occupancysensing write hold-time 60 0x7283 1
 - Sau khi bật nguồn, thiết bị quảng bá BLE nhanh trong 30 s rồi chuyển sang chậm (log `Start slow advertisement`). Đây là bình thường, thiết bị vẫn chờ ghép nối. Cửa sổ ghép nối mở 15 phút; hết thời gian thì **bấm đúp nút BOOT** để mở lại (hoặc rút điện cắm lại).
 - Nếu xoá thiết bị khỏi tất cả ứng dụng, chế độ ghép nối tự mở lại trong 5 phút, giữ nguyên mạng Thread (ghép nối qua mạng, không cần BLE).
 - Firmware dùng chứng chỉ test nên chỉ hợp với mục đích DIY. Để làm sản phẩm thật, hãy tạo DAC/passcode riêng bằng `esp-matter-mfg-tool`.
+
+### Nhiều bo cùng firmware
+
+Bản build mặc định cho mọi bo **chung một mã ghép nối** (mã test của SDK ở trên). Mã này chỉ dùng lúc ghép nối, không ảnh hưởng các bo đã ghép, nhưng:
+
+- Ghép **từng bo một**: các bo chưa ghép khác để tắt nguồn, không bấm đúp hai bo cùng lúc. Nếu không, app có thể ghép nhầm bo (mọi bo quảng bá cùng tên BLE, cùng discriminator).
+- Sau khi ghép, kiểm tra đúng bo bằng **Identify** hoặc so **Serial** trong app với dòng `id_diag: dev serial=` trong log.
+- Thêm vào hệ thứ hai (Multi-Admin): ưu tiên chức năng chia sẻ của hệ đang quản lý (Apple Home: *Bật chế độ ghép nối*; HA: *Share device*), vì mã do app tạo ngẫu nhiên. Bấm đúp nút thì mở bằng mã chung.
+- chip-tool: mỗi bo một Node ID (`0x7283`, `0x7284`, ...). Hai bo cùng Node ID trong cùng fabric sẽ trùng tên dịch vụ `_matter._tcp`.
+- Muốn mỗi bo một mã riêng: xem mục **Mã ghép nối riêng cho từng bo**.
+- Khi có người đi qua cảm biến mà Apple Home vẫn cập nhật nhưng lệnh từ Apple không tới bo, thì lỗi nằm ở đường controller → thiết bị (Border Router, SRP, định tuyến), không phải danh tính bo. Xem mục **Log chẩn đoán danh tính**.
+
+## Mã ghép nối riêng cho từng bo
+
+| Bản build | Mã ghép nối | DAC (chứng thực) |
+|---|---|---|
+| Mặc định | mã test chung `20202021` / `3840` | DAC test của SDK (chung mọi bo) |
+| `sdkconfig.defaults.unique_setup` | mỗi bo tự sinh mã ngẫu nhiên lần đầu, lưu ở phân vùng `fctry` | DAC test của SDK (chung) |
+| `sdkconfig.defaults.factory` | nạp từ file factory riêng từng bo (`ESP32-H2/tools/matter-mfg`) | DAC riêng từng bo |
+
+```bash
+idf.py -B build-unique -D SDKCONFIG=sdkconfig.unique \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.unique_setup" build
+idf.py -B build-unique -p /dev/ttyUSB0 flash monitor
+```
+
+Khi bo có thể được ghép (lần đầu khởi động, hoặc sau khi bấm đúp), log in mã của chính bo đó:
+
+```
+W setup_code: New per-board setup code generated and stored in fctry/setup-code, discriminator 2294
+I setup_code: Setup code of this board (BLE):
+I setup_code:   QR code: MT:Y.K90...
+I setup_code:   QR image: https://project-chip.github.io/connectedhomeip/qrcode.html?data=MT%3AY.K90...
+I setup_code:   Manual pairing code: 21137749112
+```
+
+- Mã giữ nguyên qua khởi động lại, OTA, factory reset và nạp file merged. Chỉ `erase-flash` mới làm bo sinh mã mới (và in lại).
+- Bo đã ghép vẫn giữ các hệ hiện có; mã mới chỉ dùng cho lần ghép sau.
+- Bản mặc định cũng in mã (mã test chung). Làm sản phẩm thật thì tắt `CONFIG_PRINT_ONBOARDING_CODES`, vì QR chứa passcode.
+- Factory data và chứng chỉ test: `ESP32-H2/tools/matter-mfg/README.md` và `ESP32-H2/docs/multi-device-audit.md` (mục G, H).
 
 ## Build
 
@@ -190,6 +230,33 @@ I thread_diag: Summary: OMR address YES, on-mesh prefixes 1, SRP host Registered
 
 Có thể gõ lệnh OpenThread trên serial monitor (115200 baud, cổng USB **UART** của DevKit): `matter esp ot_cli state`, `matter esp ot_cli ipaddr`, `matter esp ot_cli srp client service`... Cổng USB gốc của ESP32-H2 chỉ xuất log, không nhận lệnh.
 
+### Log chẩn đoán danh tính (`id_diag`)
+
+Firmware in một khối log lúc khởi động, sau đó 5 phút một lần (`CONFIG_IDENTITY_DIAG_PERIOD_SEC`, 0 = tắt), và in thêm khi có sự kiện Thread, fabric hoặc phiên. Log không bao giờ chứa passcode, khóa riêng hay network key.
+
+```
+I id_diag: hw   efuse_mac=744DBDA1B2C3 eui64=744DBDFFFEA1B2C3 reset=power-on up=300s heap=... min_heap=...
+I id_diag: dev  vid=0xFFF1 pid=0x8000 serial=... unique_id=... discriminator=3840 test_setup_code=yes
+I id_diag: mtr  commissioned=yes fabrics=2 window_open=no failsafe=no sessions: case=2 pase=0, subscriptions=3 reads=0
+I id_diag: fab  index=1 vendor=0x.... node_id=... fabric_id=... compressed_fabric_id=... case=1 subscriptions=2 label="..."
+I id_diag: ot   role=router rloc16=0x5400 ext_addr=8E7D3F1A2B4C6D9E eui64=... ml_eid=fd...
+I id_diag: ot   dataset=yes net="..." ext_panid=... panid=0x.... ch=15 partition=0x... leader_rid=...
+I id_diag: mle  roles: ... attach_attempts=1 partition_changes=0 better_partition=0 parent_changes=0
+I id_diag: br   on-mesh prefixes=1 (default route 1), OMR address=yes
+I id_diag: srp  server=[fd...]:53 host=8E7D3F1A2B4C6D9E state=Registered services=2/2 registered
+I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
+```
+
+Khi thêm bo thứ hai mà các bo chập chờn, so log giữa các bo:
+
+- `efuse_mac`, `serial`, `unique_id`, `ext_addr`, `ml_eid`, `srp host` phải **khác nhau**. Trùng nghĩa là bo bị chép nguyên NVS từ bo khác: factory reset hoặc `erase-flash` bo đó rồi ghép lại.
+- `ext_panid`, `partition` phải **giống nhau** giữa các bo và với Border Router. Khác nghĩa là các Border Router (Apple, HA, Aqara) không cùng một mạng Thread.
+- `srp state` phải là `Registered`. `server=` cho biết Border Router nào đang giữ bản ghi của bo.
+- `reset=` là `BROWNOUT`, `PANIC` hoặc `WATCHDOG` nghĩa là bo bị khởi động lại (nguồn yếu, lỗi firmware).
+- Có dòng `SUB request` mà không có `SUB established`, hoặc `SUB terminated` lặp lại: controller mất subscription.
+
+Phân tích đầy đủ, bảng định danh và bộ test nhiều thiết bị: `ESP32-H2/docs/multi-device-audit.md`.
+
 ## Cấu trúc thư mục
 
 ```
@@ -198,11 +265,15 @@ matter-presence-occupancy/
 ├── partitions.csv              # 4 MB, 2 phân vùng OTA
 ├── sdkconfig.defaults          # Matter/BLE, tắt các cluster không dùng
 ├── sdkconfig.defaults.esp32h2  # OpenThread (FTD, SRP client), chân radar, LED
+├── sdkconfig.defaults.unique_setup  # Mã ghép nối riêng từng bo (tùy chọn)
+├── sdkconfig.defaults.factory       # Factory data riêng từng bo (tùy chọn)
 └── main/
     ├── app_main.cpp            # Matter node, endpoint Occupancy Sensor, radar -> occupancy, OpenThread
     ├── device_info.cpp         # Manufacturer / Model / Serial (Basic Information)
     ├── chip_project_config.h   # Tên thiết bị trong DNS-SD khi chưa ghép nối
     ├── thread_diag.cpp         # Log chẩn đoán Thread/SRP khi chưa ghép nối
+    ├── identity_diag.cpp       # Log danh tính / Thread / SRP / fabric / subscription (id_diag)
+    ├── setup_code.cpp          # In mã QR; mã ghép nối riêng từng bo (unique_setup)
     ├── Kconfig.projbuild       # Cấu hình chân và tham số
     └── drivers/
         ├── ld2410.cpp          # Radar LD2410 (UART1, 256000 baud)
