@@ -16,6 +16,7 @@
 #include <esp_matter_providers.h>
 #include <platform/ESP32/ESP32Config.h>
 #include <platform/internal/GenericDeviceInstanceInfoProvider.h>
+#include <soc/soc_caps.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -59,16 +60,22 @@ static_assert(sizeof(CONFIG_DEVICE_VENDOR_NAME) - 1 <= 32, "Manufacturer must be
 static_assert(sizeof(CONFIG_DEVICE_PRODUCT_NAME) - 1 <= 32, "Model must be at most 32 characters");
 static_assert(sizeof(CONFIG_DEVICE_DISPLAY_NAME) - 1 <= 32, "Device name must be at most 32 characters");
 
+#if !SOC_IEEE802154_SUPPORTED
+#error "device_info_get_serial() expects the EUI-64 MAC of an 802.15.4 chip"
+#endif
+
 void device_info_get_serial(char *buf, size_t size)
 {
     // ESP32-H2 has no Wi-Fi: use the factory base MAC burned in eFuse,
     // e.g. "744DBDA1B2C3". Unique per chip, survives erase-flash.
-    uint8_t mac[6] = {};
-    esp_err_t err = esp_efuse_mac_get_default(mac);
+    // On 802.15.4 chips the MAC comes as an EUI-64: the 3 OUI bytes, the 2
+    // MAC_EXT bytes (FF FE), then the 3 bytes that differ from chip to chip.
+    uint8_t eui64[8] = {};
+    esp_err_t err = esp_efuse_mac_get_default(eui64);
     if (err != ESP_OK) {
         ESP_LOGE("device_info", "Failed to read the MAC address from eFuse, err:%d", err);
     }
-    snprintf(buf, size, "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    snprintf(buf, size, "%02X%02X%02X%02X%02X%02X", eui64[0], eui64[1], eui64[2], eui64[5], eui64[6], eui64[7]);
 }
 
 void device_info_init(void)
