@@ -87,14 +87,14 @@ chip-tool modeselect change-to-mode 1 0x7283 4    # Detection accuracy 0.2 m
 
 ## Phần cứng
 
-- **Waveshare ESP32-H2-Zero** (như trong sơ đồ), hoặc board ESP32-H2 khác có flash 4 MB: ESP32-H2-DevKitM-1, ESP32-H2 Super Mini...
+- **ESP32-H2 SuperMini** (như trong sơ đồ), hoặc board ESP32-H2 khác có flash 4 MB: ESP32-H2-Zero, ESP32-H2-DevKitM-1...
 - Radar hiện diện **HLK-LD2410** (LD2410, LD2410B, LD2410C)
 
 ### Sơ đồ nối dây
 
-![Sơ đồ đấu dây: Waveshare ESP32-H2-Zero và radar HLK-LD2410C (VCC 5V, GND, TX → GPIO11, RX ← GPIO12), LED RGB GPIO8 và nút BOOT GPIO9 có sẵn trên board](docs/wiring.png)
+![Sơ đồ đấu dây: ESP32-H2 SuperMini và radar HLK-LD2410C (VCC 5V, GND, TX → GPIO11, RX ← GPIO12), LED RGB GPIO8 và nút BOOT GPIO9 có sẵn trên board](docs/wiring.png)
 
-Hình vẽ lại theo sơ đồ chân của Waveshare ESP32-H2-Zero và HLK-LD2410C, không theo tỉ lệ. Board ESP32-H2 khác thì nối theo số GPIO in trên mạch; LD2410 và LD2410B xếp chân khác LD2410C: nối theo chữ in trên mạch radar.
+Hình vẽ lại theo sơ đồ chân của ESP32-H2 SuperMini và HLK-LD2410C, không theo tỉ lệ. Trên SuperMini, 5V, GND, GPIO12 và GPIO11 nằm cùng một hàng chân bên phải. Chân 8 và 9 đã nối sẵn LED RGB và nút BOOT trên board: không nối gì thêm vào. Board ESP32-H2 khác thì nối theo số GPIO in trên mạch; LD2410 và LD2410B xếp chân khác LD2410C: nối theo chữ in trên mạch radar.
 
 | LD2410 | ESP32-H2 |
 |---|---|
