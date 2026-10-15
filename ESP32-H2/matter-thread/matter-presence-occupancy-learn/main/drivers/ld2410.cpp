@@ -52,6 +52,8 @@ static constexpr uint16_t kCmdReadParams = 0x0061;
 static constexpr uint16_t kCmdEngineeringOn = 0x0062;
 static constexpr uint16_t kCmdEngineeringOff = 0x0063;
 static constexpr uint16_t kCmdGateSensitivity = 0x0064;
+static constexpr uint16_t kCmdRestart = 0x00A3;
+static constexpr uint16_t kCmdSetResolution = 0x00AA;
 static constexpr uint16_t kCmdReadResolution = 0x00AB;
 static constexpr uint16_t kAckFlag = 0x0100;
 
@@ -382,14 +384,29 @@ esp_err_t ld2410_read_gate_length(uint16_t *gate_cm)
     }
     const uint16_t resolution = ack.len >= 2 ? (uint16_t)(ack.data[0] | (ack.data[1] << 8)) : 0xFFFF;
     if (resolution == 0) {
-        *gate_cm = 75;
+        *gate_cm = LD2410_DEFAULT_GATE_CM;
     } else if (resolution == 1) {
-        *gate_cm = 20;
+        *gate_cm = LD2410_FINE_GATE_CM;
     } else {
         ESP_LOGW(TAG, "Unknown distance resolution %u", resolution);
         return ESP_ERR_INVALID_RESPONSE;
     }
     return ESP_OK;
+}
+
+esp_err_t ld2410_set_gate_length(uint16_t gate_cm)
+{
+    if (gate_cm != LD2410_DEFAULT_GATE_CM && gate_cm != LD2410_FINE_GATE_CM) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    // Resolution (2): 0 = 0.75 m, 1 = 0.2 m
+    const uint8_t value[] = { gate_cm == LD2410_FINE_GATE_CM ? (uint8_t)0x01 : (uint8_t)0x00, 0x00 };
+    return command(kCmdSetResolution, value, sizeof(value), NULL);
+}
+
+esp_err_t ld2410_restart(void)
+{
+    return command(kCmdRestart, NULL, 0, NULL);
 }
 
 void ld2410_capture_start(void)

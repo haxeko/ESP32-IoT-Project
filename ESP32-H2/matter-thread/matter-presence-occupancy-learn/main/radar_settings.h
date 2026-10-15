@@ -39,12 +39,25 @@ void radar_format_duration(uint16_t seconds, char *buf, size_t len);
 // "1.5 m", "2.25 m", "6 m"
 void radar_format_distance(uint32_t cm, char *buf, size_t len);
 
+// Radar settings shown in Home Assistant
+typedef struct {
+    ld2410_config_t config;   // farthest gates, no-one duration, thresholds
+    uint16_t gate_cm;         // gate length: LD2410_DEFAULT_GATE_CM or LD2410_FINE_GATE_CM
+    bool resolution_settable; // the radar answers the resolution query (LD2410B/C)
+} radar_settings_t;
+
 #define RADAR_KEEP (-1)
 
-// One configuration session with the radar: reads its settings (and the gate
-// length while *gate_cm is 0), writes the requested no-one duration and
-// farthest gate for moving and still targets (RADAR_KEEP: unchanged), then
-// reads them back into *out. Waits for the radar's answers, up to a few
-// seconds when it does not answer.
-esp_err_t radar_settings_session(int32_t want_duration_s, int32_t want_gate, uint16_t *gate_cm,
-                                 ld2410_config_t *out);
+// Changes for radar_settings_session(), RADAR_KEEP: unchanged
+typedef struct {
+    int32_t duration_s; // no-one duration
+    int32_t gate;       // farthest gate for moving and still targets
+    int32_t gate_cm;    // gate length (restarts the radar)
+} radar_settings_request_t;
+
+// One configuration session with the radar: reads its settings, writes the
+// requested ones and reads them back into *out. Waits for the radar's
+// answers: a few seconds when it does not answer, about 2 s more when the
+// gate length changes. ESP_ERR_NOT_SUPPORTED: a gate length change asked to a
+// radar with a fixed 0.75 m resolution.
+esp_err_t radar_settings_session(const radar_settings_request_t *want, radar_settings_t *out);

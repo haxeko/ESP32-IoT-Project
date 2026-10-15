@@ -7,6 +7,8 @@
 */
 
 #include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <stdio.h>
 
 #include <algorithm>
@@ -14,6 +16,9 @@
 #include "radar_settings.h"
 
 static const char *TAG = "radar_settings";
+
+// The radar answers commands again about a second after a restart.
+static constexpr uint32_t kRestartMs = 1000;
 
 // The radar keeps reporting a target for this long after losing it; Matter
 // HoldTime then adds its own delay before the room turns unoccupied. The
@@ -87,22 +92,72 @@ static esp_err_t write_settings(ld2410_config_t *cfg, int32_t want_duration_s, i
     return err;
 }
 
-esp_err_t radar_settings_session(int32_t want_duration_s, int32_t want_gate, uint16_t *gate_cm,
-                                 ld2410_config_t *out)
+// In configuration mode. A radar without the resolution query (older
+// firmware) uses 0.75 m gates.
+static void read_gate_length(radar_settings_t *out)
+{
+    out->resolution_settable = ld2410_read_gate_length(&out->gate_cm) == ESP_OK;
+    if (!out->resolution_settable) {
+        out->gate_cm = LD2410_DEFAULT_GATE_CM;
+    }
+}
+
+// In configuration mode: stores the gate length, restarts the radar to apply
+// it and reads it back. *in_config tells whether the radar is still in
+// configuration mode afterwards.
+static esp_err_t change_gate_length(uint16_t gate_cm, radar_settings_t *out, bool *in_config)
+{
+    const uint16_t old_gate_cm = out->gate_cm;
+    esp_err_t err = ld2410_set_gate_length(gate_cm);
+    if (err != ESP_OK) {
+        return err;
+    }
+    // The radar may restart before its answer is sent: only a refusal is an error.
+    err = ld2410_restart();
+    if (err == ESP_FAIL) {
+        ESP_LOGE(TAG, "The radar refused to restart, gate length left at %u cm", old_gate_cm);
+        (void) ld2410_set_gate_length(old_gate_cm);
+        return err;
+    }
+    *in_config = false;
+    vTaskDelay(pdMS_TO_TICKS(kRestartMs));
+    err = ld2410_config_begin();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "The radar does not answer after its restart");
+        return err;
+    }
+    *in_config = true;
+    read_gate_length(out);
+    if (out->gate_cm != gate_cm) {
+        ESP_LOGE(TAG, "The radar uses %u cm gates after its restart instead of %u cm", out->gate_cm, gate_cm);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    return ESP_OK;
+}
+
+esp_err_t radar_settings_session(const radar_settings_request_t *want, radar_settings_t *out)
 {
     esp_err_t err = ld2410_config_begin();
     if (err != ESP_OK) {
         return err;
     }
-    if (*gate_cm == 0 && ld2410_read_gate_length(gate_cm) != ESP_OK) {
-        ESP_LOGI(TAG, "No distance resolution query on this radar, using %u cm gates", LD2410_DEFAULT_GATE_CM);
-        *gate_cm = LD2410_DEFAULT_GATE_CM;
+    bool in_config = true;
+    read_gate_length(out);
+    if (want->gate_cm != RADAR_KEEP && want->gate_cm != out->gate_cm) {
+        if (out->resolution_settable) {
+            err = change_gate_length((uint16_t)want->gate_cm, out, &in_config);
+        } else {
+            ESP_LOGE(TAG, "This radar has a fixed 0.75 m resolution");
+            err = ESP_ERR_NOT_SUPPORTED;
+        }
     }
-    err = ld2410_read_config(out);
-    if (err == ESP_OK && (want_duration_s != RADAR_KEEP || want_gate != RADAR_KEEP)) {
-        err = write_settings(out, want_duration_s, want_gate);
+    if (err == ESP_OK) {
+        err = ld2410_read_config(&out->config);
     }
-    if (ld2410_config_end() != ESP_OK) {
+    if (err == ESP_OK && (want->duration_s != RADAR_KEEP || want->gate != RADAR_KEEP)) {
+        err = write_settings(&out->config, want->duration_s, want->gate);
+    }
+    if (in_config && ld2410_config_end() != ESP_OK) {
         ESP_LOGW(TAG, "Could not end the configuration mode");
     }
     return err;

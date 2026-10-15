@@ -15,6 +15,8 @@
 // Distance gates 0..8, 0.75 m each at the default resolution
 #define LD2410_GATE_COUNT 9
 #define LD2410_DEFAULT_GATE_CM 75
+// Gate length of the 0.2 m resolution (LD2410B/C)
+#define LD2410_FINE_GATE_CM 20
 // Accepted range of the farthest detection gate
 #define LD2410_MIN_MAX_GATE 2
 #define LD2410_MAX_MAX_GATE (LD2410_GATE_COUNT - 1)
@@ -78,6 +80,12 @@ esp_err_t ld2410_set_max_gates_and_duration(uint8_t max_moving_gate, uint8_t max
 // resolution. Radars without this query (older firmware) return an error and
 // use 75 cm.
 esp_err_t ld2410_read_gate_length(uint16_t *gate_cm);
+// Stores the gate length (LD2410_DEFAULT_GATE_CM or LD2410_FINE_GATE_CM) in
+// the radar's flash; it takes effect after ld2410_restart().
+esp_err_t ld2410_set_gate_length(uint16_t gate_cm);
+// Restarts the radar, which leaves the configuration mode; it answers
+// commands again about a second later.
+esp_err_t ld2410_restart(void);
 
 // Between start and stop, engineering frames update the per-gate maxima.
 void ld2410_capture_start(void);
