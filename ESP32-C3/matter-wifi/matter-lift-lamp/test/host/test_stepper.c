@@ -163,6 +163,7 @@ static struct {
     int rezero_reports, faults, not_closed;
     esp_err_t rehome_err;
     int rehomes, refused;
+    long accepted_at;   /* count when the last move was accepted */
     uint16_t exposed;   /* led_bar_set_exposed() */
     bool follow_level;  /* led_bar_follow_level() */
     long target;        /* wanted target (what the Matter state asks for) */
@@ -463,7 +464,9 @@ static esp_err_t sim_stepper_home(void)
 static bool sim_stepper_move_to(int32_t pos)
 {
     bool accepted = stepper_move_to(pos);
-    if (!accepted) {
+    if (accepted) {
+        g.accepted_at = stepper_position();
+    } else {
         g.refused++;
     }
     return accepted;
@@ -1259,6 +1262,12 @@ static void scenario_held_at_top(void)
     check_signals();
 }
 
+static bool touch_just_above_slow_zone(void)
+{
+    return s_close == CLOSE_TOUCH && stepper_position() > mm_to_steps(CLOSE_SLOW_MM) &&
+           stepper_position() <= mm_to_steps(CLOSE_SLOW_MM + 1);
+}
+
 static bool touch_in_slow_zone(void)
 {
     return s_close == CLOSE_TOUCH && stepper_position() <= mm_to_steps(CLOSE_SLOW_MM);
@@ -1316,16 +1325,30 @@ static void scenario_closing_smooth(void)
            s_last_target == TRAVEL / 2 ? "taken at once" : "refused");
     CHECK(s_last_target == TRAVEL / 2 && g.refused == refused);
     CHECK(settle(move_ms(TRAVEL)) >= 0 && stepper_position() == TRAVEL / 2 && labs(g.phys - TRAVEL / 2) <= TOUCH_DEPTH);
+    /* Up to 1 mm above the last 10 mm: taken at once too */
+    lift_move(0);
+    CHECK(run_until(touch_just_above_slow_zone, move_ms(TRAVEL)));
+    at = stepper_position();
+    refused = g.refused;
+    lift_move(TRAVEL / 2);
+    printf("  On at %.1f mm (just above the last 10 mm): %s\n", (double)at / STEPS_PER_MM,
+           s_last_target == TRAVEL / 2 ? "taken at once" : "refused");
+    CHECK(s_last_target == TRAVEL / 2 && g.refused == refused && g.accepted_at == at);
+    CHECK(settle(move_ms(TRAVEL)) >= 0 && stepper_position() == TRAVEL / 2 && labs(g.phys - TRAVEL / 2) <= TOUCH_DEPTH);
     /* An On just inside the last 10 mm waits for the end stop (README: about 1.3 s with the defaults) */
     lift_move(0);
     CHECK(run_until(touch_in_slow_zone, move_ms(TRAVEL)));
+    at = stepper_position();
+    refused = g.refused;
     int64_t t0 = g_sim_now_us;
     lift_move(TRAVEL / 2);
+    CHECK(g.refused == refused + 1 && s_last_target == 0); /* the count is not checked yet */
     CHECK(run_until(opening_taken, 10000));
     int64_t wait = (g_sim_now_us - t0) / 1000;
-    printf("  On at %.1f mm (inside the last 10 mm): taken after %lld ms, once closed\n",
-           (double)mm_to_steps(CLOSE_SLOW_MM) / STEPS_PER_MM, (long long)wait);
-    CHECK(wait <= mm_to_steps(CLOSE_SLOW_MM) * 1000L / HOMING_SPS + 500 && g.rezero_reports == 0);
+    printf("  On at %.1f mm (inside the last 10 mm): taken after %lld ms, at %ld steps (closed)\n",
+           (double)at / STEPS_PER_MM, (long long)wait, g.accepted_at);
+    CHECK(g.accepted_at == 0 && wait <= mm_to_steps(CLOSE_SLOW_MM) * 1000L / HOMING_SPS + 500 &&
+          g.rezero_reports == 0);
     CHECK(settle(move_ms(TRAVEL)) >= 0 && stepper_position() == TRAVEL / 2);
     check_signals();
 }

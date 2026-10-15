@@ -92,7 +92,8 @@ static volatile bool s_endstop_hit; /* the end stop stopped a downward motion at
 static volatile bool s_rezeroed;    /* ... more than 1 mm from 0: steps were lost */
 static volatile bool s_fault;       /* the end stop read pressed where it cannot be: motion halted */
 /* Steps output upward since the end stop last set position 0. The sleeve only rises when the motor steps up, so it is
- * no higher than this above the end stop, whatever steps were lost going down (unless lifted by hand, driver off). */
+ * no higher than this above the end stop, whatever steps were lost going down (unless pushed up by hand: an 8 mm lead
+ * can be, even with the driver holding). */
 static volatile int32_t s_rise;
 
 static inline bool IRAM_ATTR endstop_pressed_raw(void)
