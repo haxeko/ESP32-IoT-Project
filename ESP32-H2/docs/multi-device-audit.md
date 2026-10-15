@@ -579,5 +579,26 @@ Thứ tự thử multi-fabric:
 
 ### Đã kiểm chứng và chưa kiểm chứng
 
-- **Đã kiểm chứng:** mọi bằng chứng trong code/SDK nêu ở trên; build cả 4 dự án và 2 biến thể A/B (kết quả ghi trong commit); script tạo PKI, CD và factory data, kiểm chuỗi DAC, tạo và giải mã QR trong Docker.
-- **Chưa kiểm chứng (cần phần cứng):** log `id_diag` thực tế; phương án A và B trên bo thật (thời gian tính verifier, ghép bằng mã mới); hành vi của Apple Home, HA và Aqara với DAC riêng; các nguyên nhân D1–D4 trong mạng của bạn.
+**Đã kiểm chứng:**
+
+- Mọi bằng chứng trong code/SDK nêu ở trên. Mỗi phát hiện đều qua một bên kiểm chứng độc lập.
+- Script tạo PKI, CD và factory data, kiểm chuỗi DAC, tạo và giải mã QR, chạy trong Docker.
+- Build trong Docker (ESP-IDF v6.0.2, esp-matter 1.6.1), với code cuối sau vòng review, **0 warning, 0 lỗi**:
+
+| Dự án / biến thể | File app | Còn trống trong phân vùng app | RAM tĩnh (DIRAM) |
+|---|---|---|---|
+| P1 mặc định | 0x1B6E40 | 9 % | 174 666 B (67,7 %) |
+| P1 `unique_setup` (phương án A) | 0x1B76E0 | 8 % | – |
+| P1 `factory` (phương án B) | 0x1B6500 | 9 % | – |
+| P2 mặc định | 0x1B1A40 | 10 % | 172 210 B (66,8 %) |
+| P3 mặc định | 0x170240 | 23 % | 158 302 B (61,4 %) |
+| P4 mặc định (2 MB) | 0x163800 | 23 % | 157 256 B (61,0 %) |
+
+So với P1 trước khi sửa, code mới tốn thêm khoảng 9,6 KB flash và 1,3 KB RAM tĩnh. Lúc chạy còn tốn thêm 4 KB heap cho stack của task `id_diag` (chỉ khi `IDENTITY_DIAG_PERIOD_SEC` khác 0).
+
+**Chưa kiểm chứng (cần phần cứng):**
+
+- log `id_diag` thực tế và mức stack/heap còn trống lúc chạy (P1 có `mem: Stack unused … id_diag`);
+- phương án A và B trên bo thật: thời gian sinh verifier, ghép bằng mã mới, nạp `fctry`;
+- hành vi của Apple Home, HA và Aqara với DAC riêng;
+- các nguyên nhân D1–D4 trong mạng của bạn.
