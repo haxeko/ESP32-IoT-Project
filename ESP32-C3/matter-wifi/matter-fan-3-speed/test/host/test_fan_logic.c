@@ -238,19 +238,16 @@ static void test_sanitize(void)
 
 static void test_natural(void)
 {
-    // Matter WindSetting: only the natural wind setting changes, the fan stays off
+    // Natural wind on: the fan starts at its last speed when off
     fan_state_t s = natural_state(0, 2, false);
     fan_cmd_t c = cmd(FAN_CMD_SET_NATURAL, 1);
     CHECK(fan_state_apply(&s, &c));
     CHECK(s.natural);
-    CHECK_EQ(s.speed, 0);
-    CHECK(!fan_state_natural_running(&s));
+    CHECK_EQ(s.speed, 2);
+    CHECK(fan_state_natural_running(&s));
     CHECK(!fan_state_apply(&s, &c)); // already on
 
-    // Turning the fan on runs natural wind; off keeps the setting
-    c = cmd(FAN_CMD_SET_SPEED, 3);
-    CHECK(fan_state_apply(&s, &c));
-    CHECK(fan_state_natural_running(&s));
+    // Off keeps the setting, On / Toggle resume natural wind
     c = cmd(FAN_CMD_OFF, 0);
     CHECK(fan_state_apply(&s, &c));
     CHECK(s.natural);
@@ -258,29 +255,49 @@ static void test_natural(void)
     c = cmd(FAN_CMD_TOGGLE, 0);
     CHECK(fan_state_apply(&s, &c));
     CHECK(fan_state_natural_running(&s));
-    CHECK_EQ(s.speed, 3);
+    c = cmd(FAN_CMD_SET_SPEED, 0); // Matter FanMode Off
+    CHECK(fan_state_apply(&s, &c));
+    CHECK(s.natural);
+    c = cmd(FAN_CMD_ON, 0);
+    CHECK(fan_state_apply(&s, &c));
+    CHECK(fan_state_natural_running(&s));
 
-    // Settings are independent: speed changes keep natural wind (the speed is its ceiling), oscillation too
-    const uint8_t speed_cmds[] = { FAN_CMD_SET_SPEED, FAN_CMD_SPEED_CYCLE, FAN_CMD_STEP_UP, FAN_CMD_STEP_DOWN,
-                                   FAN_CMD_SWING_TOGGLE };
-    for (unsigned i = 0; i < sizeof(speed_cmds); i++) {
+    // Oscillation does not change it
+    c = cmd(FAN_CMD_SWING_TOGGLE, 0);
+    CHECK(fan_state_apply(&s, &c));
+    CHECK(s.natural);
+
+    // Every speed setting is manual: natural wind ends, the fan keeps running
+    const uint8_t manual[] = { FAN_CMD_SET_SPEED, FAN_CMD_SPEED_CYCLE, FAN_CMD_STEP_UP, FAN_CMD_STEP_DOWN };
+    for (unsigned i = 0; i < sizeof(manual); i++) {
         s = natural_state(2, 2, true);
-        c = cmd(speed_cmds[i], 1);
+        c = cmd(manual[i], 3);
         CHECK(fan_state_apply(&s, &c));
-        CHECK(s.natural);
+        CHECK(!s.natural);
+        CHECK(s.speed > 0);
     }
-    // ... and natural wind keeps the speed setting
-    s = natural_state(2, 2, true);
+    // Setting the speed it already had still ends natural wind
+    s = natural_state(3, 3, true);
+    c = cmd(FAN_CMD_SET_SPEED, 3);
+    CHECK(fan_state_apply(&s, &c));
+    CHECK(!s.natural);
+    CHECK_EQ(s.speed, 3);
+    // A Step down to off is off: natural wind is kept
+    s = natural_state(1, 1, true);
+    fan_cmd_t st = step(FAN_CMD_STEP_DOWN, false, true);
+    CHECK(fan_state_apply(&s, &st));
+    CHECK_EQ(s.speed, 0);
+    CHECK(s.natural);
+
+    // Off: manual, the fan keeps its speed
+    s = natural_state(1, 1, true);
     c = cmd(FAN_CMD_SET_NATURAL, 0);
     CHECK(fan_state_apply(&s, &c));
     CHECK(!s.natural);
-    CHECK_EQ(s.speed, 2);
+    CHECK_EQ(s.speed, 1);
     CHECK(!fan_state_apply(&s, &c));
-    c = cmd(FAN_CMD_SET_NATURAL, 1);
-    CHECK(fan_state_apply(&s, &c));
-    CHECK_EQ(s.speed, 2);
 
-    // Local natural wind button: toggles; turning it on also starts a stopped fan at its last speed
+    // Toggle: running natural -> manual; manual or off -> natural (and on)
     c = cmd(FAN_CMD_NATURAL_TOGGLE, 0);
     s = natural_state(2, 2, true);
     CHECK(fan_state_apply(&s, &c));
@@ -289,61 +306,37 @@ static void test_natural(void)
     CHECK(fan_state_apply(&s, &c));
     CHECK(s.natural);
     CHECK_EQ(s.speed, 2);
-    s = natural_state(0, 3, false);
+    s = natural_state(0, 3, true); // off with natural wind set: turns on
     CHECK(fan_state_apply(&s, &c));
     CHECK(fan_state_natural_running(&s));
     CHECK_EQ(s.speed, 3);
-    s = natural_state(0, 1, true); // stopped fan with natural wind set: the button turns it off, fan stays off
+    s = natural_state(0, 1, false);
     CHECK(fan_state_apply(&s, &c));
-    CHECK(!s.natural);
-    CHECK_EQ(s.speed, 0);
-}
-
-// Runs the pattern for one speed setting; checks the speeds used, that the speed always changes and the hold times
-static void run_pattern(uint8_t setting, unsigned count[FAN_SPEED_COUNT + 1], unsigned long *hold_sum, int steps)
-{
-    uint8_t low, high;
-    fan_natural_range(setting, &low, &high);
-    uint32_t rng = 12345u + setting;
-    uint8_t speed = FAN_NATURAL_START;
-    for (int i = 0; i < steps; i++) {
-        uint32_t hold_ms = 0;
-        const uint8_t next = fan_natural_next(&rng, speed, setting, 8, 30, &hold_ms);
-        CHECK(next >= low && next <= high); // within the range, the motor never stops
-        CHECK(next != speed);               // always a change
-        if (i == 0) {
-            CHECK(next < high);             // starts with the breeze, not a gust
-        }
-        CHECK(hold_ms >= 8000);
-        CHECK(hold_ms <= (next == high ? 19000u : 30000u)); // gusts are short
-        count[next]++;
-        *hold_sum += hold_ms;
-        speed = next;
-    }
+    CHECK(fan_state_natural_running(&s));
 }
 
 static void test_natural_pattern(void)
 {
-    // Ranges around the speed setting
-    uint8_t low, high;
-    fan_natural_range(1, &low, &high);
-    CHECK(low == 1 && high == 2);
-    fan_natural_range(2, &low, &high);
-    CHECK(low == 1 && high == 3);
-    fan_natural_range(3, &low, &high);
-    CHECK(low == 2 && high == 3);
-    fan_natural_range(0, &low, &high); // clamped
-    CHECK(low == 1 && high == 2);
-    fan_natural_range(9, &low, &high);
-    CHECK(low == 2 && high == 3);
-
-    const int steps = 20000;
-
-    // Setting 2: every speed is used, speed 2 the most
+    uint32_t rng = 12345;
     unsigned count[FAN_SPEED_COUNT + 1] = { 0 };
     unsigned long hold_sum = 0;
-    run_pattern(2, count, &hold_sum, steps);
-    CHECK_EQ(count[0], 0);
+    uint8_t speed = 0;
+    const int steps = 20000;
+    for (int i = 0; i < steps; i++) {
+        uint32_t hold_ms = 0;
+        const uint8_t next = fan_natural_next(&rng, speed, 8, 30, &hold_ms);
+        CHECK(next >= 1 && next <= FAN_SPEED_COUNT);
+        if (i == 0) {
+            CHECK(next <= 2); // starts low
+        }
+        CHECK(next != speed); // always a change
+        CHECK(hold_ms >= 8000);
+        CHECK(hold_ms <= (next == 3 ? 19000u : 30000u)); // gusts are short
+        count[next]++;
+        hold_sum += hold_ms;
+        speed = next;
+    }
+    // Every speed is used, speed 2 the most
     for (int sp = 1; sp <= FAN_SPEED_COUNT; sp++) {
         CHECK(count[sp] > (unsigned)steps / 10);
     }
@@ -352,32 +345,15 @@ static void test_natural_pattern(void)
     const unsigned long avg_ms = hold_sum / steps;
     CHECK(avg_ms > 12000 && avg_ms < 20000);
 
-    // Settings 1 and 3: two speeds, alternating
-    unsigned count1[FAN_SPEED_COUNT + 1] = { 0 };
-    hold_sum = 0;
-    run_pattern(1, count1, &hold_sum, steps);
-    CHECK(count1[0] == 0 && count1[3] == 0);
-    CHECK(count1[1] == (unsigned)steps / 2 && count1[2] == (unsigned)steps / 2);
-    unsigned count3[FAN_SPEED_COUNT + 1] = { 0 };
-    hold_sum = 0;
-    run_pattern(3, count3, &hold_sum, steps);
-    CHECK(count3[0] == 0 && count3[1] == 0);
-    CHECK(count3[2] == (unsigned)steps / 2 && count3[3] == (unsigned)steps / 2);
-
-    // The setting changes while natural wind runs: the next speed is within the new range, a breeze first
-    uint32_t hold_ms = 0;
-    uint32_t rng = 7;
-    CHECK_EQ(fan_natural_next(&rng, 3, 1, 8, 30, &hold_ms), 1);
-    CHECK_EQ(fan_natural_next(&rng, 1, 3, 8, 30, &hold_ms), 2);
-
     // Limits: max below min, zero min, zero generator state
+    uint32_t hold_ms = 0;
     rng = 0;
-    CHECK(fan_natural_next(&rng, 2, 2, 10, 5, &hold_ms) != 2);
+    CHECK(fan_natural_next(&rng, 2, 10, 5, &hold_ms) != 2);
     CHECK_EQ(hold_ms, 10000);
     CHECK(rng != 0);
-    fan_natural_next(&rng, 1, 2, 0, 0, &hold_ms);
+    fan_natural_next(&rng, 1, 0, 0, &hold_ms);
     CHECK_EQ(hold_ms, 1000);
-    fan_natural_next(&rng, 9, 2, 600, 600, &hold_ms);
+    fan_natural_next(&rng, 9, 600, 600, &hold_ms);
     CHECK_EQ(hold_ms, 600000);
 }
 

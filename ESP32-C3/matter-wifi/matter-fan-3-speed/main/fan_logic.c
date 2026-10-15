@@ -19,6 +19,7 @@ bool fan_state_apply(fan_state_t *state, const fan_cmd_t *cmd)
     const fan_state_t old = *state;
     const uint8_t lowest = cmd->lowest_off ? 0 : 1;
     uint8_t speed = state->speed;
+    bool manual = false; /* the command selects a speed: natural wind ends when the fan runs */
 
     switch ((fan_cmd_type_t)cmd->type) {
     case FAN_CMD_TOGGLE:
@@ -34,9 +35,11 @@ bool fan_state_apply(fan_state_t *state, const fan_cmd_t *cmd)
         break;
     case FAN_CMD_SPEED_CYCLE:
         speed = state->speed ? (uint8_t)(state->speed % FAN_SPEED_COUNT + 1) : resume_speed(state);
+        manual = true;
         break;
     case FAN_CMD_SET_SPEED:
         speed = cmd->arg > FAN_SPEED_COUNT ? FAN_SPEED_COUNT : cmd->arg;
+        manual = true;
         break;
     case FAN_CMD_SWING_TOGGLE:
         state->swing = !state->swing;
@@ -50,6 +53,7 @@ bool fan_state_apply(fan_state_t *state, const fan_cmd_t *cmd)
         } else if (cmd->wrap) {
             speed = lowest;
         }
+        manual = true;
         break;
     case FAN_CMD_STEP_DOWN:
         if (state->speed > lowest) {
@@ -57,15 +61,23 @@ bool fan_state_apply(fan_state_t *state, const fan_cmd_t *cmd)
         } else if (cmd->wrap) {
             speed = FAN_SPEED_COUNT;
         }
+        manual = true;
         break;
     case FAN_CMD_NATURAL_TOGGLE:
-        state->natural = !state->natural;
-        if (state->natural && state->speed == 0) {
-            speed = resume_speed(state);
+        if (state->speed && state->natural) {
+            state->natural = false;
+        } else {
+            state->natural = true;
+            if (state->speed == 0) {
+                speed = resume_speed(state);
+            }
         }
         break;
     case FAN_CMD_SET_NATURAL:
         state->natural = cmd->arg != 0;
+        if (state->natural && state->speed == 0) {
+            speed = resume_speed(state);
+        }
         break;
     default:
         return false;
@@ -74,6 +86,9 @@ bool fan_state_apply(fan_state_t *state, const fan_cmd_t *cmd)
     state->speed = speed;
     if (speed) {
         state->last_speed = speed;
+        if (manual) {
+            state->natural = false;
+        }
     }
     return state->speed != old.speed || state->last_speed != old.last_speed || state->swing != old.swing ||
            state->natural != old.natural;
@@ -113,45 +128,24 @@ static uint32_t next_random(uint32_t *rng)
     return x;
 }
 
-void fan_natural_range(uint8_t setting, uint8_t *low, uint8_t *high)
+uint8_t fan_natural_next(uint32_t *rng, uint8_t current, uint16_t min_s, uint16_t max_s, uint32_t *hold_ms)
 {
     _Static_assert(FAN_SPEED_COUNT == 3, "the natural wind pattern is written for 3 speeds");
-    if (setting <= 1) {
-        *low = 1;
-        *high = 2;
-    } else if (setting == 2) {
-        *low = 1;
-        *high = 3;
-    } else {
-        *low = 2;
-        *high = 3;
-    }
-}
-
-uint8_t fan_natural_next(uint32_t *rng, uint8_t current, uint8_t setting, uint16_t min_s, uint16_t max_s,
-                         uint32_t *hold_ms)
-{
-    uint8_t low, high;
-    fan_natural_range(setting, &low, &high);
     const uint32_t pct = next_random(rng) % 100;
     uint8_t next;
-    if (high - low == 1) {
-        next = current == low ? high : low; /* breeze at low, gusts at high */
-    } else {
-        switch (current) {
-        case 1:
-            next = pct < 75 ? 2 : 3; /* breeze, sometimes a gust */
-            break;
-        case 2:
-            next = pct < 55 ? 1 : 3;
-            break;
-        case 3:
-            next = pct < 70 ? 2 : 1;
-            break;
-        default:
-            next = pct < 50 ? 1 : 2; /* starts low */
-            break;
-        }
+    switch (current) {
+    case 1:
+        next = pct < 75 ? 2 : 3; /* breeze, sometimes a gust */
+        break;
+    case 2:
+        next = pct < 55 ? 1 : 3;
+        break;
+    case 3:
+        next = pct < 70 ? 2 : 1;
+        break;
+    default:
+        next = pct < 50 ? 1 : 2; /* natural wind starts low */
+        break;
     }
 
     if (min_s < 1) {
@@ -162,7 +156,7 @@ uint8_t fan_natural_next(uint32_t *rng, uint8_t current, uint8_t setting, uint16
     }
     const uint32_t lo = (uint32_t)min_s * 1000;
     uint32_t hi = (uint32_t)max_s * 1000;
-    if (next == high) {
+    if (next == FAN_SPEED_COUNT) {
         hi = lo + (hi - lo) / 2; /* gust */
     }
     *hold_ms = lo + next_random(rng) % (hi - lo + 1);

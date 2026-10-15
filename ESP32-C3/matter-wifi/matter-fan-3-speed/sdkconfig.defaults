@@ -69,7 +69,7 @@ CONFIG_MAX_GROUP_KEYS_PER_FABRIC=4
 CONFIG_BUTTON_PERIOD_TIME_MS=20
 CONFIG_BUTTON_LONG_PRESS_TIME_MS=5000
 
-# Vendor/product name, hardware version and MAC-based serial number (main/device_info.cpp)
+# Vendor/product name, hardware version and the serial number from the chip eFuse (main/device_info.cpp)
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 
 # Matter OTA requestor, with app rollback: a new image is confirmed after 60 s on Wi-Fi with its fabrics

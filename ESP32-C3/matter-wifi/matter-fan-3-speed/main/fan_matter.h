@@ -1,9 +1,10 @@
 #pragma once
 
 /* Matter side of the fan: Fan device type (0x002B) with the Fan Control cluster
- *   FanModeSequence Off/Low/Med/High, MultiSpeed (SpeedMax 3), Step,
+ *   FanModeSequence Off/Low/Med/High/Auto, MultiSpeed (SpeedMax 3), Step,
  *   Rocking (RockSupport left-right) for the oscillation relay (optional, CONFIG_FAN_MATTER_ROCKING),
- *   Wind (WindSupport natural wind) for natural wind (optional, CONFIG_FAN_MATTER_WIND_NATURAL).
+ *   Auto (FanMode Auto, Apple Home's Auto switch) and Wind (WindSupport natural wind), both mapped to natural wind
+ *   (optional, CONFIG_FAN_MATTER_AUTO_NATURAL / CONFIG_FAN_MATTER_WIND_NATURAL).
  *
  * Fan Control is a code-driven cluster in esp-matter 1.6: it applies the specification rules between FanMode,
  * PercentSetting and SpeedSetting itself, and reports controller changes to the application through the

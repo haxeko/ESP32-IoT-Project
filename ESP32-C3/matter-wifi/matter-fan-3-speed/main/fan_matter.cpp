@@ -27,6 +27,11 @@ static constexpr const char *k_rocking_name = " Rocking";
 #else
 static constexpr const char *k_rocking_name = "";
 #endif
+#if CONFIG_FAN_MATTER_AUTO_NATURAL
+static constexpr const char *k_auto_name = " Auto";
+#else
+static constexpr const char *k_auto_name = "";
+#endif
 #if CONFIG_FAN_MATTER_WIND_NATURAL
 static constexpr const char *k_wind_name = " Wind";
 #else
@@ -76,10 +81,16 @@ public:
         if (!s_following || s_writing) {
             return;
         }
+        if (state.mode == FC::FanModeEnum::kAuto) {
+            /* FanMode Auto (Apple Home Auto switch, FanMode Smart): natural wind */
+            post(FAN_CMD_SET_NATURAL, 1);
+            return;
+        }
         /* The cluster has applied the Fan Control rules to the write (FanMode, PercentSetting and SpeedSetting
-         * agree, SpeedSetting = ceil(SpeedMax * PercentSetting / 100)): the fan runs at SpeedSetting. */
+         * agree, SpeedSetting = ceil(SpeedMax * PercentSetting / 100)): the fan runs at SpeedSetting. A speed ends
+         * natural wind, Off keeps it for the next power-on (fan_logic.h). */
         if (state.speedSetting.IsNull()) {
-            schedule_write(); /* only in Auto, which this fan does not support */
+            schedule_write();
             return;
         }
         const uint8_t speed = state.mode == FC::FanModeEnum::kOff
@@ -113,9 +124,11 @@ void check(Status status, const char *what)
 }
 
 /* CHIP task: write the fan state into the cluster.
- * - SpeedSetting only when the fan's speed setting differs from it (a change from the remote or the buttons, or a
- *   controller change the fan did not take). The cluster then derives PercentSetting = floor(SpeedSetting * 100 /
- *   SpeedMax) and FanMode. A controller's own PercentSetting (e.g. 45 %, which is speed 2) stays as written.
+ * - Natural wind running: FanMode Auto (the cluster nulls PercentSetting and SpeedSetting).
+ * - Otherwise SpeedSetting, only when the fan's speed differs from it (a change from the remote or the buttons, the
+ *   end of natural wind, or a controller change the fan did not take). The cluster then derives PercentSetting =
+ *   floor(SpeedSetting * 100 / SpeedMax) and FanMode. A controller's own PercentSetting (e.g. 45 %, which is speed 2)
+ *   stays as written.
  * - PercentCurrent / SpeedCurrent: the speed the motor runs at (natural wind varies it).
  * - RockSetting / WindSetting: the oscillation and natural wind settings. */
 void write_state(intptr_t)
@@ -130,9 +143,19 @@ void write_state(intptr_t)
     const fan_state_t &st = snap.state;
 
     s_writing = true;
-    const chip::app::DataModel::Nullable<uint8_t> setting = cluster->GetSpeedSetting();
-    if (setting.IsNull() || setting.Value() != st.speed) {
-        check(cluster->SetSpeedSetting(chip::app::DataModel::MakeNullable(st.speed)), "SpeedSetting");
+#if CONFIG_FAN_MATTER_AUTO_NATURAL
+    const bool auto_mode = fan_state_natural_running(&st);
+#else
+    const bool auto_mode = false;
+#endif
+    if (auto_mode) {
+        check(cluster->SetFanMode(FC::FanModeEnum::kAuto), "FanMode");
+    } else {
+        const chip::app::DataModel::Nullable<uint8_t> setting = cluster->GetSpeedSetting();
+        if (setting.IsNull() || setting.Value() != st.speed) {
+            /* Also leaves Auto: the cluster derives Off / Low / Medium / High from it */
+            check(cluster->SetSpeedSetting(chip::app::DataModel::MakeNullable(st.speed)), "SpeedSetting");
+        }
     }
     cluster->SetPercentCurrent(fan_speed_to_percent(snap.drive_speed));
     cluster->SetSpeedCurrent(snap.drive_speed);
@@ -191,8 +214,12 @@ endpoint_t *fan_matter_create(node_t *node)
     config.identify.identify_type = chip::to_underlying(status_led_present() ? Identify::IdentifyTypeEnum::kVisibleIndicator
                                                                              : Identify::IdentifyTypeEnum::kNone);
     config.fan_control.fan_mode = chip::to_underlying(FC::FanModeEnum::kOff);
-    /* 3 speeds, no Auto: Low = speed 1, Medium = speed 2, High = speed 3 */
+    /* 3 speeds: Low = speed 1, Medium = speed 2, High = speed 3; Auto = natural wind */
+#if CONFIG_FAN_MATTER_AUTO_NATURAL
+    config.fan_control.fan_mode_sequence = chip::to_underlying(FC::FanModeSequenceEnum::kOffLowMedHighAuto);
+#else
     config.fan_control.fan_mode_sequence = chip::to_underlying(FC::FanModeSequenceEnum::kOffLowMedHigh);
+#endif
     config.fan_control.percent_setting = nullable<uint8_t>(0);
     config.fan_control.percent_current = 0;
     config.fan_control.delegate = &s_delegate;
@@ -217,6 +244,11 @@ endpoint_t *fan_matter_create(node_t *node)
         err = cluster::fan_control::feature::rocking::add(fan_control, &rocking);
     }
 #endif
+#if CONFIG_FAN_MATTER_AUTO_NATURAL
+    if (err == ESP_OK) {
+        err = cluster::fan_control::feature::fan_auto::add(fan_control);
+    }
+#endif
 #if CONFIG_FAN_MATTER_WIND_NATURAL
     if (err == ESP_OK) {
         cluster::fan_control::feature::wind::config_t wind;
@@ -234,8 +266,9 @@ endpoint_t *fan_matter_create(node_t *node)
     }
 
     fan_ctrl_set_listener(on_fan_state);
-    ESP_LOGI(TAG, "Fan endpoint %u: %d speeds, oscillation:%s, natural wind:%s", s_endpoint_id, FAN_SPEED_COUNT,
-             k_rocking_name[0] ? k_rocking_name : " none", k_wind_name[0] ? k_wind_name : " none");
+    ESP_LOGI(TAG, "Fan endpoint %u: %d speeds, oscillation:%s, natural wind:%s%s", s_endpoint_id, FAN_SPEED_COUNT,
+             k_rocking_name[0] ? k_rocking_name : " none", k_auto_name,
+             (k_auto_name[0] || k_wind_name[0]) ? k_wind_name : " none");
     return endpoint;
 }
 

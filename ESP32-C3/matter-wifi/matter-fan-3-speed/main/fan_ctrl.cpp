@@ -107,13 +107,15 @@ fan_snapshot_t fan_ctrl_get_snapshot()
 
 static void log_state(const fan_state_t &st, const char *why)
 {
-    const char *const natural = st.natural ? ", natural wind" : "";
-    if (st.speed) {
-        ESP_LOGI(TAG, "Fan speed %u (%u%%)%s, oscillation %s (%s)", st.speed, fan_speed_to_percent(st.speed), natural,
-                 st.swing ? "on" : "off", why);
+    const char *const swing = st.swing ? "on" : "off";
+    if (fan_state_natural_running(&st)) {
+        ESP_LOGI(TAG, "Fan natural wind, oscillation %s (%s)", swing, why);
+    } else if (st.speed) {
+        ESP_LOGI(TAG, "Fan speed %u (%u%%), oscillation %s (%s)", st.speed, fan_speed_to_percent(st.speed), swing, why);
+    } else if (st.natural) {
+        ESP_LOGI(TAG, "Fan off (next on: natural wind, oscillation %s) (%s)", swing, why);
     } else {
-        ESP_LOGI(TAG, "Fan off (next on: speed %u%s, oscillation %s) (%s)", st.last_speed, natural,
-                 st.swing ? "on" : "off", why);
+        ESP_LOGI(TAG, "Fan off (next on: speed %u, oscillation %s) (%s)", st.last_speed, swing, why);
     }
 }
 
@@ -123,7 +125,7 @@ namespace {
 
 struct NaturalWind {
     bool active;       /* the pattern drives the speed relays */
-    uint8_t speed;     /* speed of the moment */
+    uint8_t speed;     /* speed of the moment, 1..3 */
     TickType_t since;  /* when it was chosen */
     TickType_t hold;   /* how long it is held */
     uint32_t rng;
@@ -132,17 +134,17 @@ NaturalWind s_natural;
 
 } // namespace
 
-/* Next speed of the pattern, around the speed setting */
-static void natural_step(uint8_t setting)
+/* Next speed of the pattern */
+static void natural_step()
 {
     uint32_t hold_ms;
-    const uint8_t current = s_natural.active ? s_natural.speed : FAN_NATURAL_START;
-    s_natural.speed = fan_natural_next(&s_natural.rng, current, setting, CONFIG_FAN_NATURAL_MIN_S,
-                                       CONFIG_FAN_NATURAL_MAX_S, &hold_ms);
+    const uint8_t current = s_natural.active ? s_natural.speed : 0;
+    s_natural.speed = fan_natural_next(&s_natural.rng, current, CONFIG_FAN_NATURAL_MIN_S, CONFIG_FAN_NATURAL_MAX_S,
+                                       &hold_ms);
     s_natural.active = true;
     s_natural.since = xTaskGetTickCount();
     s_natural.hold = pdMS_TO_TICKS(hold_ms);
-    ESP_LOGD(TAG, "Natural wind: speed %u for %lu s", s_natural.speed, (unsigned long)(hold_ms / 1000));
+    ESP_LOGI(TAG, "Natural wind: speed %u for %lu s", s_natural.speed, (unsigned long)(hold_ms / 1000));
 }
 
 static TickType_t ticks_left(TickType_t since, TickType_t delay)
@@ -158,11 +160,8 @@ static uint8_t drive_speed(const fan_state_t &st)
         s_natural.active = false;
         return st.speed;
     }
-    /* Natural wind starts, or the speed setting changed and the speed of the moment is out of the new range */
-    uint8_t low, high;
-    fan_natural_range(st.speed, &low, &high);
-    if (!s_natural.active || s_natural.speed < low || s_natural.speed > high) {
-        natural_step(st.speed);
+    if (!s_natural.active) {
+        natural_step(); /* natural wind starts */
     }
     return s_natural.speed;
 }
@@ -219,7 +218,7 @@ static void fan_task(void *)
                 changed_tick = xTaskGetTickCount(); /* a failed write is retried after another delay */
             }
             if (s_natural.active && ticks_left(s_natural.since, s_natural.hold) == 0) {
-                natural_step(st.speed);
+                natural_step();
                 drive(st);
                 notify(st, FAN_SRC_NATURAL, true);
             }

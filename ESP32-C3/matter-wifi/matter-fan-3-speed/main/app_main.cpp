@@ -344,7 +344,7 @@ extern "C" void app_main()
     }
     device_info_add_attributes(node);
 
-    /* Fan device type: 3 speeds, oscillation (Rocking), natural wind (Wind), see fan_matter.h */
+    /* Fan device type: 3 speeds, oscillation (Rocking), natural wind (Auto + Wind), see fan_matter.h */
     if (fan_matter_create(node) == nullptr) {
         ESP_LOGE(TAG, "Failed to create the fan endpoint: running without Matter");
         return;

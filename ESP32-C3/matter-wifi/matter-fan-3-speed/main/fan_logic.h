@@ -3,9 +3,10 @@
 /* Fan state machine shared by Matter, the IR remote and the buttons. Pure C, no ESP-IDF dependency
  * (built and tested on the host by test/host/run.sh).
  *
- * The state holds settings, as the Matter Fan Control cluster does: the speed setting (SpeedSetting, 0 = off), the
- * oscillation setting (RockSetting) and the natural wind setting (WindSetting). They are independent of each other:
- * a speed change keeps oscillation and natural wind, natural wind keeps the speed setting. */
+ * The state holds the speed setting (Matter SpeedSetting, 0 = off), the oscillation setting (RockSetting) and the
+ * natural wind setting (FanMode Auto / WindSetting). Natural wind is a mode of its own: every command that selects a
+ * speed (SET_SPEED 1..3, SPEED_CYCLE, STEP to a running speed) leaves it, as does SET_NATURAL 0 / NATURAL_TOGGLE.
+ * Off, On and Toggle keep it: turning the fan back on with the power button resumes natural wind. */
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -24,8 +25,8 @@ typedef struct {
     uint8_t speed;      /**< speed setting: 0 = off, 1..FAN_SPEED_COUNT */
     uint8_t last_speed; /**< 1..FAN_SPEED_COUNT: speed of the next local "on" (remote power button, device button) */
     bool swing;         /**< oscillation setting; the swing relay runs only while the fan runs */
-    bool natural;       /**< natural wind setting; while the fan runs, the fan task varies the speed around the
-                             speed setting (fan_natural_next()) */
+    bool natural;       /**< natural wind: while the fan runs, the fan task varies the speed (fan_natural_next());
+                             speed is then the speed of the next manual setting */
 } fan_state_t;
 
 typedef enum {
@@ -38,8 +39,8 @@ typedef enum {
     FAN_CMD_SET_SWING,      /**< arg = 0 (off) / 1 (on): Matter RockSetting */
     FAN_CMD_STEP_UP,        /**< Matter Step, direction Increase (wrap, lowest_off) */
     FAN_CMD_STEP_DOWN,      /**< Matter Step, direction Decrease (wrap, lowest_off) */
-    FAN_CMD_NATURAL_TOGGLE, /**< local natural wind button: on <-> off; turning it on also starts a stopped fan */
-    FAN_CMD_SET_NATURAL,    /**< arg = 0 (off) / 1 (on): Matter WindSetting, the speed setting is not changed */
+    FAN_CMD_NATURAL_TOGGLE, /**< natural wind running -> manual; otherwise -> natural wind, on at last_speed when off */
+    FAN_CMD_SET_NATURAL,    /**< arg = 1: natural wind, on at last_speed when off; arg = 0: manual, speed unchanged */
 } fan_cmd_type_t;
 
 typedef struct {
@@ -65,20 +66,11 @@ bool fan_state_swing_running(const fan_state_t *state);
 /** Whether the fan task varies the speed (natural wind on and the fan running). */
 bool fan_state_natural_running(const fan_state_t *state);
 
-/** fan_natural_next() current value when natural wind starts */
-#define FAN_NATURAL_START 0xFF
-
-/** Speeds natural wind uses around a speed setting (1..FAN_SPEED_COUNT; other values are clamped):
- *  setting 1: speeds 1-2, setting 2: speeds 1-3, setting 3: speeds 2-3. The motor never stops. */
-void fan_natural_range(uint8_t setting, uint8_t *low, uint8_t *high);
-
-/** Natural wind: the next speed of the pattern and how long to hold it. The pattern stays within
- *  fan_natural_range(setting): mostly the lower speeds (the breeze), short gusts at the highest one; with three speeds,
- *  mostly 1 and 2. The speed always changes; it starts (current = FAN_NATURAL_START, or a speed outside the range)
- *  below the gust speed. The hold time is random between min_s and max_s seconds, a gust lasts at most half way.
- *  rng: state of the random generator, any non-zero value to start with. */
-uint8_t fan_natural_next(uint32_t *rng, uint8_t current, uint8_t setting, uint16_t min_s, uint16_t max_s,
-                         uint32_t *hold_ms);
+/** Natural wind: the next speed after `current` (0 = natural wind just started) and how long to hold it.
+ *  The speed always changes: from 1 mostly up to 2, from 3 mostly down to 2, short gusts at 3; it starts at 1 or 2
+ *  and the motor never stops. The hold time is random between min_s and max_s seconds (a gust at speed 3 at most
+ *  halfway). rng: state of the random generator, any non-zero value to start with. */
+uint8_t fan_natural_next(uint32_t *rng, uint8_t current, uint16_t min_s, uint16_t max_s, uint32_t *hold_ms);
 
 #ifdef __cplusplus
 }

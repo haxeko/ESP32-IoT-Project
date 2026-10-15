@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <esp_efuse.h>
+#include <esp_efuse_table.h>
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_matter_providers.h>
@@ -26,8 +28,13 @@ static_assert(sizeof(CONFIG_DEVICE_DISPLAY_NAME) - 1 <= 32,
 static_assert(sizeof(CONFIG_DEVICE_HARDWARE_VERSION_STRING) - 1 <= ConfigurationManager::kMaxHardwareVersionStringLength,
               "CONFIG_DEVICE_HARDWARE_VERSION_STRING exceeds the 64-character HardwareVersionString limit");
 
-/* Wi-Fi MAC, e.g. "8ED0B2A8594B": unique per chip, unchanged by OTA and erase-flash */
+/* The chip's own identity from eFuse (CONFIG_DEVICE_SERIAL_NUMBER_SOURCE), in upper-case hex: unique per chip,
+ * unchanged by OTA, erase-flash, factory reset and a custom MAC. ESP32-C3 has no separate serial number. */
 static char s_serial_number[ConfigurationManager::kMaxSerialNumberLength + 1];
+
+static constexpr size_t k_unique_id_size = 16; /* eFuse OPTIONAL_UNIQUE_ID, 128 bits */
+static_assert(2 * k_unique_id_size <= ConfigurationManager::kMaxSerialNumberLength,
+              "the unique ID in hex exceeds the 32-character SerialNumber limit");
 
 static CHIP_ERROR copy_string(const char *src, char *buf, size_t buf_size)
 {
@@ -36,6 +43,50 @@ static CHIP_ERROR copy_string(const char *src, char *buf, size_t buf_size)
     memcpy(buf, src, len + 1);
     return CHIP_NO_ERROR;
 }
+
+/* bytes in order, two upper-case hex digits each, into s_serial_number */
+static void set_serial_number(const uint8_t *bytes, size_t len)
+{
+    static constexpr char k_digits[] = "0123456789ABCDEF";
+    size_t pos = 0;
+    for (size_t i = 0; i < len && pos + 2 < sizeof(s_serial_number); i++) {
+        s_serial_number[pos++] = k_digits[bytes[i] >> 4];
+        s_serial_number[pos++] = k_digits[bytes[i] & 0x0F];
+    }
+    s_serial_number[pos] = '\0';
+}
+
+/* The MAC address Espressif burned into eFuse BLOCK1, as "esptool read-mac" (or "chip-id", on ESP32-C3) prints it.
+ * The Wi-Fi MAC is this address too, unless a custom MAC is configured. */
+static bool read_factory_mac()
+{
+    uint8_t mac[6] = {};
+    if (esp_efuse_mac_get_default(mac) != ESP_OK) {
+        return false;
+    }
+    set_serial_number(mac, sizeof(mac));
+    return true;
+}
+
+#if CONFIG_DEVICE_SERIAL_NUMBER_UNIQUE_ID
+/* eFuse OPTIONAL_UNIQUE_ID (BLOCK2), byte 0 first as "espefuse summary" prints it. Blank (all zero) on some chips. */
+static bool read_unique_id()
+{
+    uint8_t id[k_unique_id_size] = {};
+    if (esp_efuse_read_field_blob(ESP_EFUSE_OPTIONAL_UNIQUE_ID, id, sizeof(id) * 8) != ESP_OK) {
+        return false;
+    }
+    uint8_t any = 0;
+    for (uint8_t byte : id) {
+        any |= byte;
+    }
+    if (any == 0) {
+        return false;
+    }
+    set_serial_number(id, sizeof(id));
+    return true;
+}
+#endif
 
 namespace {
 
@@ -75,16 +126,26 @@ DeviceInstanceInfo s_provider;
 
 void device_info_init(void)
 {
-    uint8_t mac[6] = {};
-    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
-        snprintf(s_serial_number, sizeof(s_serial_number), "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2],
-                 mac[3], mac[4], mac[5]);
+    const char *source = "eFuse factory MAC";
+    bool found = false;
+#if CONFIG_DEVICE_SERIAL_NUMBER_UNIQUE_ID
+    found = read_unique_id();
+    if (found) {
+        source = "eFuse unique ID";
     } else {
+        ESP_LOGW(TAG, "No unique ID in eFuse: serial number from the factory MAC");
+    }
+#endif
+    if (!found) {
+        found = read_factory_mac();
+    }
+    if (!found) {
         /* Cosmetic field: never stop the device from booting because of it */
         snprintf(s_serial_number, sizeof(s_serial_number), "UNKNOWN");
+        source = "eFuse not readable";
     }
-    ESP_LOGI(TAG, "Manufacturer: %s, Model: %s, Hardware: %s, Serial number: %s", CONFIG_DEVICE_VENDOR_NAME,
-             CONFIG_DEVICE_PRODUCT_NAME, CONFIG_DEVICE_HARDWARE_VERSION_STRING, s_serial_number);
+    ESP_LOGI(TAG, "Manufacturer: %s, Model: %s, Hardware: %s, Serial number: %s (%s)", CONFIG_DEVICE_VENDOR_NAME,
+             CONFIG_DEVICE_PRODUCT_NAME, CONFIG_DEVICE_HARDWARE_VERSION_STRING, s_serial_number, source);
     esp_matter::set_custom_device_instance_info_provider(&s_provider);
 }
 
