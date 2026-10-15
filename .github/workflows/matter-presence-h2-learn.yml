@@ -3,11 +3,11 @@ name: Build matter-presence-h2-learn
 on:
   push:
     paths:
-      - 'ESP32-H2/matter-thread/matter-presence-occupancy-learn/**'
+      - 'ESP32-H2/matter-presence-ld2410-learning/**'
       - '.github/workflows/matter-presence-h2-learn.yml'
   pull_request:
     paths:
-      - 'ESP32-H2/matter-thread/matter-presence-occupancy-learn/**'
+      - 'ESP32-H2/matter-presence-ld2410-learning/**'
       - '.github/workflows/matter-presence-h2-learn.yml'
   workflow_dispatch:
 
@@ -17,7 +17,7 @@ jobs:
     container: espressif/esp-matter:release-v1.6.1_idf_v6.0.2
     defaults:
       run:
-        working-directory: ESP32-H2/matter-thread/matter-presence-occupancy-learn
+        working-directory: ESP32-H2/matter-presence-ld2410-learning
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,9 +35,9 @@ jobs:
         with:
           name: matter_presence_h2_learn-esp32h2
           path: |
-            ESP32-H2/matter-thread/matter-presence-occupancy-learn/build/matter_presence_h2_learn.bin
-            ESP32-H2/matter-thread/matter-presence-occupancy-learn/build/bootloader/bootloader.bin
-            ESP32-H2/matter-thread/matter-presence-occupancy-learn/build/partition_table/partition-table.bin
-            ESP32-H2/matter-thread/matter-presence-occupancy-learn/build/ota_data_initial.bin
-            ESP32-H2/matter-thread/matter-presence-occupancy-learn/build/flash_args
-            ESP32-H2/matter-thread/matter-presence-occupancy-learn/build/matter_presence_h2_learn_merged.bin
+            ESP32-H2/matter-presence-ld2410-learning/build/matter_presence_h2_learn.bin
+            ESP32-H2/matter-presence-ld2410-learning/build/bootloader/bootloader.bin
+            ESP32-H2/matter-presence-ld2410-learning/build/partition_table/partition-table.bin
+            ESP32-H2/matter-presence-ld2410-learning/build/ota_data_initial.bin
+            ESP32-H2/matter-presence-ld2410-learning/build/flash_args
+            ESP32-H2/matter-presence-ld2410-learning/build/matter_presence_h2_learn_merged.bin
