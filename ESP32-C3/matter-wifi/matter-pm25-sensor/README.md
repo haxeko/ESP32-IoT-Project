@@ -2,6 +2,8 @@
 
 Cảm biến bụi mịn PM2.5 chuẩn **Matter over Wi-Fi** chạy trên ESP32-C3, thêm trực tiếp vào **Apple Home (HomeKit)**, Google Home, Home Assistant, SmartThings...
 
+Không dùng radar LD2410? Xem [bản nút bật/tắt màn hình](../../matter-pm25-sensor/): màn hình bật/tắt bằng một nút nhấn thay cho radar.
+
 Thiết bị dùng device type **Air Quality Sensor (0x002C)** và chỉ gửi qua Matter hai giá trị:
 
 | Cluster | Nội dung |
@@ -35,6 +37,10 @@ Thiết bị **chạy độc lập với Matter**: cảm biến, màn hình, LED
 Nếu luồng Matter hoặc một task của thiết bị (cảm biến PM, radar, màn hình) bị treo quá 30 giây, watchdog khởi động lại thiết bị thay vì để nó đứng im.
 
 ### Sơ đồ nối dây
+
+![Sơ đồ đấu dây: ESP32-C3 SuperMini, PMS5003, LD2410C, OLED SH1106, LED WS2812B và nút factory reset](docs/wiring.png)
+
+Hình minh họa, không theo tỉ lệ. Thứ tự chân của OLED và LD2410 khác nhau giữa các hãng và phiên bản: nối theo chữ in trên mạch, không theo vị trí chân trong hình.
 
 | Thiết bị | Chân | ESP32-C3 |
 |---|---|---|
@@ -162,6 +168,7 @@ File update chỉ ghi vùng chọn phân vùng OTA và firmware, nên vẫn ch�
 |---|---|---|
 | Nhà sản xuất (Manufacturer) | `Haxeko` | `menuconfig` → *Device Information* |
 | Kiểu máy (Model) | `PM5003` | `menuconfig` → *Device Information* |
+| Phần cứng (Hardware) | `ESP32C3-PMS5003` (`ESP32C3-SDS011` khi chọn SDS011) | `menuconfig` → *Device Information* |
 | Tên thiết bị khi ghép nối | `Air Quality Sensor` | `menuconfig` → *Device Information* |
 | Số serial | `<MAC Wi-Fi>`, ví dụ `8ED0B2A8594B` | Tự động, riêng cho từng chip |
 | Tên Bluetooth khi chờ ghép nối | `AirQuality-3840` | `CONFIG_BLE_DEVICE_NAME_PREFIX` trong `sdkconfig.defaults` |
@@ -249,12 +256,13 @@ python3 tools/gen_fonts.py Roboto-Regular.ttf Roboto-Bold.ttf > main/ui/fonts.c
 ```
 matter-pm25-sensor/
 ├── CMakeLists.txt
+├── docs/wiring.png            # Sơ đồ đấu dây
 ├── partitions.csv
 ├── sdkconfig.defaults
 ├── main/
 │   ├── chip_project_config.h # Tên/loại thiết bị khi dò tìm ghép nối
 │   ├── app_main.cpp          # Matter node, endpoint Air Quality Sensor, factory reset
-│   ├── device_info.cpp       # Manufacturer / Model (Basic Information)
+│   ├── device_info.cpp       # Manufacturer / Model / Hardware (Basic Information)
 │   ├── local_ui.cpp          # Logic màn hình / LED / radar chạy tại chỗ
 │   ├── Kconfig.projbuild     # Cấu hình chân và tham số
 │   ├── idf_component.yml

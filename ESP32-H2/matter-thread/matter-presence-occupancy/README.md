@@ -19,7 +19,7 @@ Logic phát hiện giữ nguyên như các bản LD2410 khác trong repo:
 
 - **Có người** ngay khi radar thấy mục tiêu đang di chuyển hoặc đứng yên.
 - **Không có người** sau khi radar không thấy ai trong khoảng **HoldTime**. Bộ đếm do cluster Matter xử lý, nên chỉnh HoldTime trong app có tác dụng ngay.
-- Nếu radar không gửi dữ liệu quá **10 giây** (lỏng dây, mất nguồn), thiết bị báo **không có người**, LED nháy đỏ và ghi lỗi vào log. Có dữ liệu lại thì tự hoạt động bình thường.
+- Nếu radar không gửi dữ liệu quá **10 giây** (lỏng dây, mất nguồn), thiết bị báo **không có người** và ghi lỗi vào log. Có dữ liệu lại thì tự hoạt động bình thường.
 - Tuỳ chọn chỉ tính người ở gần hơn một khoảng cách (*Only count targets closer than*). Độ nhạy từng vùng (gate) dùng cấu hình sẵn của LD2410, chỉnh bằng app **HLKRadarTool** qua Bluetooth của LD2410B/C.
 
 ## Phần cứng
@@ -31,8 +31,8 @@ Logic phát hiện giữ nguyên như các bản LD2410 khác trong repo:
 
 | LD2410 | ESP32-H2 |
 |---|---|
-| TX | **GPIO4** |
-| RX | **GPIO5** |
+| TX | **GPIO11** |
+| RX | **GPIO12** |
 | VCC | **5V** |
 | GND | GND |
 
@@ -40,24 +40,30 @@ LD2410 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng
 
 | Chức năng | Chân |
 |---|---|
-| Radar LD2410 (UART1) | RX = GPIO4, TX = GPIO5 |
+| Radar LD2410 (UART1) | RX = GPIO11, TX = GPIO12 |
 | LED RGB WS2812 trên board | GPIO8 |
-| Nút BOOT, giữ 5 s: factory reset | GPIO9 |
+| Nút BOOT: bấm đúp = chế độ ghép nối, giữ 5 s = factory reset | GPIO9 |
 
 ### Đèn LED
 
 | LED | Trạng thái |
 |---|---|
-| Xanh dương nháy chậm (1 s sáng, 1 s tắt) | Chưa ghép nối, chờ thêm vào ứng dụng Matter |
-| Xanh lá sáng / tắt | Đã ghép nối. Sáng khi radar thấy người (tức thì, không có HoldTime), tiện để chỉnh vị trí đặt radar |
-| Đỏ nháy | Radar không gửi dữ liệu, kiểm tra dây |
+| Xanh dương nháy chậm (1 s sáng, 1 s tắt) | Chế độ ghép nối: đang chờ thêm vào ứng dụng Matter |
+| Tắt | Hoạt động bình thường (đã ghép nối), hoặc chế độ ghép nối đã hết giờ |
 | Trắng nháy nhanh | Ứng dụng yêu cầu *Identify* (xác định thiết bị) |
+
+Trạng thái radar (có người / mất tín hiệu) chỉ xem được trong app và trong log, LED không báo.
 
 Board không có LED WS2812: chọn *Single-colour LED on a GPIO* hoặc *None* trong `menuconfig` → *Status LED*.
 
-### Factory reset
+### Nút BOOT (GPIO9)
 
-**Giữ nút BOOT (GPIO9) 5 giây.** Thiết bị xoá thông tin mạng Thread và toàn bộ thông tin ghép nối Matter, rồi khởi động lại như lúc mới.
+| Thao tác | Kết quả |
+|---|---|
+| **Bấm đúp** (2 lần nhanh) | Vào **chế độ ghép nối** trong 15 phút, LED nháy xanh. Chưa ghép nối: thêm lại thiết bị khi chế độ ghép nối lúc khởi động đã hết giờ. Đã ghép nối: thêm thiết bị vào ứng dụng thứ hai (Multi-Admin) bằng chính mã ghép nối của thiết bị |
+| **Giữ 5 giây** | **Factory reset**: xoá mạng Thread và toàn bộ thông tin ghép nối Matter, khởi động lại. Sau đó LED nháy xanh chờ ghép nối |
+
+Sau khi đã ghép nối, BLE được tắt để tiết kiệm RAM. Khi đó chế độ ghép nối bằng nút bấm chỉ quảng bá qua mạng Thread (Border Router), nên ứng dụng thứ hai cần dùng cùng mạng Wi-Fi/LAN với Border Router.
 
 ## Yêu cầu mạng
 
@@ -91,7 +97,7 @@ chip-tool occupancysensing read occupancy 0x7283 1
 chip-tool occupancysensing write hold-time 60 0x7283 1
 ```
 
-- Sau khi bật nguồn, thiết bị quảng bá BLE nhanh trong 30 s rồi chuyển sang chậm (log `Start slow advertisement`). Đây là bình thường, thiết bị vẫn chờ ghép nối. Cửa sổ ghép nối mở 15 phút; hết thời gian thì rút điện cắm lại.
+- Sau khi bật nguồn, thiết bị quảng bá BLE nhanh trong 30 s rồi chuyển sang chậm (log `Start slow advertisement`). Đây là bình thường, thiết bị vẫn chờ ghép nối. Cửa sổ ghép nối mở 15 phút; hết thời gian thì **bấm đúp nút BOOT** để mở lại (hoặc rút điện cắm lại).
 - Nếu xoá thiết bị khỏi tất cả ứng dụng, chế độ ghép nối tự mở lại trong 5 phút, giữ nguyên mạng Thread (ghép nối qua mạng, không cần BLE).
 - Firmware dùng chứng chỉ test nên chỉ hợp với mục đích DIY. Để làm sản phẩm thật, hãy tạo DAC/passcode riêng bằng `esp-matter-mfg-tool`.
 
@@ -133,23 +139,26 @@ Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 
 | Tuỳ chọn | Mặc định | Ý nghĩa |
 |---|---|---|
-| ESP32-H2 UART RX pin | 4 | Nối với TX của LD2410 |
-| ESP32-H2 UART TX pin | 5 | Nối với RX của LD2410 |
+| ESP32-H2 UART RX pin | 11 | Nối với TX của LD2410 |
+| ESP32-H2 UART TX pin | 12 | Nối với RX của LD2410 |
 | Only count targets closer than | 0 (tắt) | Bỏ qua mục tiêu xa hơn khoảng cách này (cm) |
 | Default hold time | 30 s | HoldTime lúc mới nạp / sau factory reset. Đổi trong app thì giá trị mới được lưu lại |
 | Report unoccupied when the radar sends nothing for | 10 s | Coi radar mất kết nối sau khoảng thời gian này |
 | Status LED | WS2812 | WS2812 / LED một màu trên GPIO / không có |
 | Status LED pin | 8 | Chân LED |
 | WS2812 brightness | 20 | Độ sáng LED WS2812 (1–255) |
-| Factory reset button pin | 9 | Nút BOOT, giữ 5 giây để reset. `-1` để tắt |
+| Button pin | 9 | Nút BOOT: bấm đúp = chế độ ghép nối, giữ 5 giây = reset. `-1` để tắt |
+
+Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc nếu chọn chân flash (GPIO15–GPIO21).
 
 *Device Information*:
 
 | Mục | Giá trị mặc định |
 |---|---|
 | Nhà sản xuất (Manufacturer) | `Haxeko` |
-| Kiểu máy (Model) | `ESP32H2 LD2410` |
-| Tên thiết bị khi ghép nối | `Presence Sensor` (cũng là tên Bluetooth `Presence-<discriminator>` và tên DNS-SD) |
+| Kiểu máy (Model) | `H2 Occupancy` |
+| Phần cứng (Hardware) | `ESP32H2-LD2410` |
+| Tên thiết bị khi ghép nối | `Occupancy Sensor` (cũng là tên DNS-SD; tên Bluetooth là `Occupancy-<discriminator>`, ví dụ `Occupancy-3840`) |
 | Số serial | Địa chỉ MAC gốc trong eFuse, ví dụ `744DBDA1B2C3`. Tự động, riêng cho từng chip |
 | Firmware | `1.0.<số commit>`, tự tăng sau mỗi commit; cũng là số phiên bản Matter dùng cho OTA |
 
@@ -198,5 +207,5 @@ matter-presence-occupancy/
     └── drivers/
         ├── ld2410.cpp          # Radar LD2410 (UART1, 256000 baud)
         ├── status_led.cpp      # LED trạng thái (WS2812 hoặc LED thường)
-        └── reset_button.cpp    # Nút factory reset
+        └── user_button.cpp     # Nút BOOT: bấm đúp, giữ lâu
 ```

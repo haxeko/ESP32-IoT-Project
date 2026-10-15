@@ -7,8 +7,8 @@
 */
 
 // Basic Information values that controllers show for the accessory. Everything
-// not overridden here (IDs, hardware version...) keeps the defaults of the
-// generic provider. The firmware version comes from
+// not overridden here (IDs, numeric hardware version...) keeps the defaults of
+// the generic provider. The firmware version comes from
 // PROJECT_VER / PROJECT_VER_NUMBER in the top-level CMakeLists.txt.
 
 #include <esp_log.h>
@@ -38,6 +38,10 @@ public:
     CHIP_ERROR GetVendorName(char * buf, size_t bufSize) override { return CopyString(buf, bufSize, CONFIG_DEVICE_VENDOR_NAME); }
     CHIP_ERROR GetProductName(char * buf, size_t bufSize) override { return CopyString(buf, bufSize, CONFIG_DEVICE_PRODUCT_NAME); }
     CHIP_ERROR GetProductLabel(char * buf, size_t bufSize) override { return CopyString(buf, bufSize, CONFIG_DEVICE_DISPLAY_NAME); }
+    CHIP_ERROR GetHardwareVersionString(char * buf, size_t bufSize) override
+    {
+        return CopyString(buf, bufSize, CONFIG_DEVICE_HARDWARE_VERSION_STRING);
+    }
     CHIP_ERROR GetSerialNumber(char * buf, size_t bufSize) override
     {
         char serial[ConfigurationManager::kMaxSerialNumberLength + 1];
@@ -60,6 +64,8 @@ private:
 static_assert(sizeof(CONFIG_DEVICE_VENDOR_NAME) - 1 <= 32, "Manufacturer must be at most 32 characters");
 static_assert(sizeof(CONFIG_DEVICE_PRODUCT_NAME) - 1 <= 32, "Model must be at most 32 characters");
 static_assert(sizeof(CONFIG_DEVICE_DISPLAY_NAME) - 1 <= 32, "Device name must be at most 32 characters");
+static_assert(sizeof(CONFIG_DEVICE_HARDWARE_VERSION_STRING) - 1 <= ConfigurationManager::kMaxHardwareVersionStringLength,
+              "Hardware must be at most 64 characters");
 
 void device_info_get_serial(char *buf, size_t size)
 {

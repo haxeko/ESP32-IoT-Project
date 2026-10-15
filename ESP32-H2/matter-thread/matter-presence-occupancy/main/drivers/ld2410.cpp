@@ -40,8 +40,10 @@ static bool s_has_target;
 
 static void handle_payload(const uint8_t *p, size_t len)
 {
-    // TYPE (0x01 engineering / 0x02 basic), 0xAA head, then the basic target data.
-    if (len < 11 || (p[0] != 0x01 && p[0] != 0x02) || p[1] != 0xAA) {
+    // TYPE (0x01 engineering / 0x02 basic), 0xAA head, the basic target data
+    // (11 bytes from TYPE), engineering data if any, then the 0x55 tail and a
+    // check byte (0x00). The tail rejects frames corrupted by line noise.
+    if (len < 13 || (p[0] != 0x01 && p[0] != 0x02) || p[1] != 0xAA || p[len - 2] != 0x55 || p[len - 1] != 0x00) {
         return;
     }
     ld2410_target_t t = {
@@ -121,15 +123,16 @@ esp_err_t ld2410_init(int rx_pin, int tx_pin)
         return err;
     }
     err = uart_param_config(LD2410_UART_NUM, &uart_config);
-    if (err != ESP_OK) {
-        return err;
+    if (err == ESP_OK) {
+        err = uart_set_pin(LD2410_UART_NUM, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     }
-    err = uart_set_pin(LD2410_UART_NUM, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    if (err != ESP_OK) {
-        return err;
+    if (err == ESP_OK &&
+        xTaskCreate(ld2410_task, "ld2410", LD2410_TASK_STACK, NULL, LD2410_TASK_PRIO, NULL) != pdPASS) {
+        err = ESP_ERR_NO_MEM;
     }
-    if (xTaskCreate(ld2410_task, "ld2410", LD2410_TASK_STACK, NULL, LD2410_TASK_PRIO, NULL) != pdPASS) {
-        return ESP_ERR_NO_MEM;
+    if (err != ESP_OK) {
+        uart_driver_delete(LD2410_UART_NUM);
+        return err;
     }
     ESP_LOGI(TAG, "LD2410 on UART%d, RX=GPIO%d TX=GPIO%d", LD2410_UART_NUM, rx_pin, tx_pin);
     return ESP_OK;

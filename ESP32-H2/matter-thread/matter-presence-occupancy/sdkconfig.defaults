@@ -7,8 +7,12 @@ CONFIG_BT_NIMBLE_ENABLED=y
 #disable BT connection reattempt
 CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT=n
 
-#enable lwip ipv6 autoconfig
-CONFIG_LWIP_IPV6_AUTOCONFIG=y
+# Matter commissioning only advertises and accepts one connection from the
+# phone: BLE peripheral role only, which saves RAM while BLE runs (it is
+# released after commissioning, CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING)
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
 
 # Use a custom partition table
 CONFIG_PARTITION_TABLE_CUSTOM=y
@@ -18,8 +22,6 @@ CONFIG_PARTITION_TABLE_OFFSET=0xC000
 # Enable chip shell
 CONFIG_ENABLE_CHIP_SHELL=y
 
-CONFIG_ENABLE_WIFI_AP=n
-
 #enable lwIP route hooks
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
 CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
@@ -27,15 +29,12 @@ CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
 # Only a few dynamic endpoints are needed
 CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=2
 
-# disable softap by default
-CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
-
 # Manufacturer / Model / Serial number come from main/device_info.cpp
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 
-# Bluetooth name while waiting for commissioning: "Presence-<discriminator>"
+# Bluetooth name while waiting for commissioning: "Occupancy-<discriminator>"
 # (at most 16 characters in total)
-CONFIG_BLE_DEVICE_NAME_PREFIX="Presence-"
+CONFIG_BLE_DEVICE_NAME_PREFIX="Occupancy-"
 
 # Name and device type in commissionable discovery (DNS-SD "DN" and "DT"),
 # shown by controllers before pairing. 263 = 0x0107 Occupancy Sensor.
@@ -45,13 +44,6 @@ CONFIG_DEVICE_TYPE=263
 
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
-
-# Enable HKDF in mbedtls
-CONFIG_MBEDTLS_HKDF_C=y
-
-# Increase LwIP IPv6 address number to 6 (MAX_FABRIC + 1)
-# unique local addresses for fabrics(MAX_FABRIC), a link local address(1)
-CONFIG_LWIP_IPV6_NUM_ADDRESSES=6
 
 # Exclude unused clusters to optimize flash and memory usage
 CONFIG_SUPPORT_ACCOUNT_LOGIN_CLUSTER=n

@@ -25,6 +25,8 @@
 #include <esp_matter_console.h>
 #include <esp_system.h>
 #include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <nvs_flash.h>
 #include <platform/KeyValueStoreManager.h>
 
@@ -35,8 +37,8 @@
 
 #include <device_info.h>
 #include <drivers/ld2410.h>
-#include <drivers/reset_button.h>
 #include <drivers/status_led.h>
+#include <drivers/user_button.h>
 #include <thread_diag.h>
 
 static const char *TAG = "app_main";
@@ -45,9 +47,17 @@ using namespace esp_matter;
 using namespace esp_matter::endpoint;
 using namespace chip::app::Clusters;
 
-static constexpr uint64_t kRadarPollUs = 100 * 1000;
+static constexpr uint32_t kRadarPollMs = 100;
+static constexpr uint32_t kPresenceTaskStack = 4096;
+// Above the Matter task (CONFIG_CHIP_TASK_PRIORITY = 1) so radar sampling keeps
+// its pace, below OpenThread (5); the task sleeps between polls.
+static constexpr UBaseType_t kPresenceTaskPriority = 2;
 static constexpr uint32_t kFactoryResetHoldMs = 5000;
-static constexpr uint16_t kCommissioningWindowSec = 300;
+// Pairing mode opened by a double click on the button, same length as the
+// window opened at boot when the device is not commissioned (15 min)
+static constexpr uint32_t kPairingWindowSec = CONFIG_CHIP_DISCOVERY_TIMEOUT_SECS;
+// Window reopened after the last fabric is removed
+static constexpr uint32_t kRecommissioningWindowSec = 300;
 
 // HoldTime limits reported to controllers (HoldTimeLimits attribute)
 static constexpr uint16_t kHoldTimeMin = 1;
@@ -57,20 +67,45 @@ static constexpr uint16_t kHoldTimeMax = 300;
 // default HoldTime from menuconfig has been applied.
 static const char kHoldTimeInitKey[] = "app/hold-init";
 
+// Catch pin mistakes from menuconfig at build time. GPIO15-GPIO21 connect the
+// in-package flash of ESP32-H2.
+static constexpr bool is_flash_pin(int gpio)
+{
+    return gpio >= 15 && gpio <= 21;
+}
+static_assert(CONFIG_LD2410_UART_RX_PIN != CONFIG_LD2410_UART_TX_PIN, "LD2410 RX and TX must be different pins");
+static_assert(!is_flash_pin(CONFIG_LD2410_UART_RX_PIN) && !is_flash_pin(CONFIG_LD2410_UART_TX_PIN),
+              "LD2410 pins must not be flash pins (GPIO15-GPIO21)");
+static_assert(CONFIG_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_RX_PIN &&
+                  CONFIG_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_TX_PIN && !is_flash_pin(CONFIG_RESET_BUTTON_GPIO),
+              "Button pin conflicts with the radar or flash pins");
+#if !CONFIG_STATUS_LED_TYPE_NONE
+static_assert(CONFIG_STATUS_LED_GPIO != CONFIG_LD2410_UART_RX_PIN && CONFIG_STATUS_LED_GPIO != CONFIG_LD2410_UART_TX_PIN &&
+                  CONFIG_STATUS_LED_GPIO != CONFIG_RESET_BUTTON_GPIO && !is_flash_pin(CONFIG_STATUS_LED_GPIO),
+              "Status LED pin conflicts with the radar, the button or flash pins");
+#endif
+
 static std::atomic<bool> s_matter_started{false};
+// Set on the Matter task once BLE has been shut down after commissioning
+// (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING); it stays off until the next reboot.
+static bool s_ble_released;
 static uint16_t s_occupancy_endpoint_id;
 
 // ---------------------------------------------------------------------------
 // Radar -> occupancy
 
-// Runs on the Matter thread. The cluster applies HoldTime itself: occupied is
-// reported at once, unoccupied only after HoldTime seconds without presence.
-static void report_occupancy(bool present)
+// Called from the presence task: the cluster belongs to the Matter stack, so
+// take the stack lock. This blocks until the Matter task is free instead of
+// posting to its event queue, which reboots the device when the queue is full.
+// The cluster applies HoldTime itself: occupied is reported at once,
+// unoccupied only after HoldTime seconds without presence.
+static bool report_occupancy(bool present)
 {
+    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
     OccupancySensingCluster *cluster = OccupancySensing::FindClusterOnEndpoint(s_occupancy_endpoint_id);
-    if (cluster) {
-        cluster->SetOccupancy(present);
-    }
+    VerifyOrReturnValue(cluster != nullptr, false);
+    cluster->SetOccupancy(present);
+    return true;
 }
 
 static bool radar_presence(const ld2410_target_t &t)
@@ -82,42 +117,52 @@ static bool radar_presence(const ld2410_target_t &t)
            (t.still && t.still_cm <= CONFIG_PRESENCE_MAX_DISTANCE_CM);
 }
 
-static void radar_poll_cb(void *arg)
+// Polls the radar every kRadarPollMs. Runs in its own task rather than an
+// esp_timer callback: it logs and may wait for the Matter stack lock, which
+// must not stall the high-priority esp_timer task.
+static void presence_task(void *arg)
 {
-    static bool s_radar_ok = true;
-    static bool s_present = false;
-    static bool s_reported = false;
-    static bool s_reported_present = false;
+    bool radar_ok = true;
+    bool present = false;
+    bool reported = false;
+    bool reported_present = false;
 
-    ld2410_target_t t = {};
-    // Before the first frame, count from boot so the radar gets the same grace period.
-    const int64_t last_ms = ld2410_get_target(&t) ? t.timestamp_ms : 0;
-    const bool fresh = esp_timer_get_time() / 1000 - last_ms <= CONFIG_RADAR_TIMEOUT_SEC * 1000;
-    if (fresh != s_radar_ok) {
-        s_radar_ok = fresh;
-        status_led_set_radar_fault(!fresh);
-        if (fresh) {
-            ESP_LOGI(TAG, "Radar data received");
-        } else {
-            ESP_LOGE(TAG, "No data from the LD2410 for %d s, check the wiring (radar TX -> GPIO%d, RX -> GPIO%d)",
-                     CONFIG_RADAR_TIMEOUT_SEC, CONFIG_LD2410_UART_RX_PIN, CONFIG_LD2410_UART_TX_PIN);
+    TickType_t last_wake = xTaskGetTickCount();
+    while (true) {
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(kRadarPollMs));
+
+        ld2410_target_t t = {};
+        // Before the first frame, count from boot so the radar gets the same grace period.
+        const int64_t last_ms = ld2410_get_target(&t) ? t.timestamp_ms : 0;
+        const bool fresh = esp_timer_get_time() / 1000 - last_ms <= CONFIG_RADAR_TIMEOUT_SEC * 1000;
+        if (fresh != radar_ok) {
+            radar_ok = fresh;
+            if (fresh) {
+                ESP_LOGI(TAG, "Radar data received");
+            } else {
+                ESP_LOGE(TAG, "No data from the LD2410 for %d s, check the wiring (radar TX -> GPIO%d, RX -> GPIO%d)",
+                         CONFIG_RADAR_TIMEOUT_SEC, CONFIG_LD2410_UART_RX_PIN, CONFIG_LD2410_UART_TX_PIN);
+            }
         }
-    }
 
-    // A silent radar counts as "no one", so the room does not stay occupied forever.
-    const bool present = fresh && radar_presence(t);
-    if (present != s_present) {
-        s_present = present;
-        ESP_LOGI(TAG, "Radar: %s (moving %s %u cm, still %s %u cm)", present ? "presence" : "no one",
-                 t.moving ? "yes" : "no", t.moving_cm, t.still ? "yes" : "no", t.still_cm);
-        status_led_set_presence(present);
-    }
+        // A silent radar counts as "no one", so the room does not stay occupied forever.
+        const bool now_present = fresh && radar_presence(t);
+        if (now_present != present) {
+            present = now_present;
+            if (fresh) {
+                ESP_LOGI(TAG, "Radar: %s (moving %s %u cm, still %s %u cm)", present ? "presence" : "no one",
+                         t.moving ? "yes" : "no", t.moving_cm, t.still ? "yes" : "no", t.still_cm);
+            } else {
+                ESP_LOGI(TAG, "Radar: no one (no radar data)");
+            }
+        }
 
-    // Only transitions go to the cluster: each "unoccupied" restarts its hold timer.
-    if (s_matter_started && (!s_reported || present != s_reported_present)) {
-        s_reported = true;
-        s_reported_present = present;
-        chip::DeviceLayer::SystemLayer().ScheduleLambda([present]() { report_occupancy(present); });
+        // Only transitions go to the cluster: each "unoccupied" restarts its hold timer.
+        // A report that does not reach the cluster is retried on the next poll.
+        if (s_matter_started && (!reported || present != reported_present) && report_occupancy(present)) {
+            reported = true;
+            reported_present = present;
+        }
     }
 }
 
@@ -169,25 +214,42 @@ static bool is_commissioned()
     return chip::Server::GetInstance().GetFabricTable().FabricCount() > 0;
 }
 
+// Runs on the Matter task. The LED blinks blue while the commissioning window
+// is open (waiting to be added to an app) and stays dark otherwise.
 static void update_led_mode()
 {
-    status_led_set_mode(is_commissioned() ? STATUS_LED_PRESENCE : STATUS_LED_COMMISSIONING);
+    const bool pairing = chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen();
+    status_led_set_mode(pairing ? STATUS_LED_PAIRING : STATUS_LED_OFF);
+}
+
+// Must hold the Matter stack lock (Matter task or ScopedChipStackLock).
+static void open_commissioning_window(uint32_t timeout_sec)
+{
+    chip::CommissioningWindowManager &commissionMgr = chip::Server::GetInstance().GetCommissioningWindowManager();
+    if (commissionMgr.IsCommissioningWindowOpen()) {
+        ESP_LOGI(TAG, "Commissioning window already open");
+        return;
+    }
+
+    // Once BLE is released the device is only found over the network: DNS-SD
+    // through the SRP server of the Thread Border Router.
+    const auto advertisement = s_ble_released ? chip::CommissioningWindowAdvertisement::kDnssdOnly
+                                              : chip::CommissioningWindowAdvertisement::kAllSupported;
+    CHIP_ERROR err = commissionMgr.OpenBasicCommissioningWindow(chip::System::Clock::Seconds32(timeout_sec), advertisement);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Failed to open commissioning window, err:%" CHIP_ERROR_FORMAT, err.Format());
+        return;
+    }
+    ESP_LOGI(TAG, "Commissioning window open for %" PRIu32 " s (%s)", timeout_sec,
+             s_ble_released ? "network only" : "BLE and network");
 }
 
 static void open_commissioning_window_if_necessary()
 {
-    VerifyOrReturn(!is_commissioned());
-
-    chip::CommissioningWindowManager &commissionMgr = chip::Server::GetInstance().GetCommissioningWindowManager();
-    VerifyOrReturn(commissionMgr.IsCommissioningWindowOpen() == false);
-
     // After removing the last fabric the Thread credentials are kept, so the
-    // device can be added again over the network (DNS-SD through SRP) right away.
-    CHIP_ERROR err = commissionMgr.OpenBasicCommissioningWindow(chip::System::Clock::Seconds16(kCommissioningWindowSec),
-                                                                chip::CommissioningWindowAdvertisement::kDnssdOnly);
-    if (err != CHIP_NO_ERROR) {
-        ESP_LOGE(TAG, "Failed to open commissioning window, err:%" CHIP_ERROR_FORMAT, err.Format());
-    }
+    // device can be added again over the network right away.
+    VerifyOrReturn(!is_commissioned());
+    open_commissioning_window(kRecommissioningWindowSec);
 }
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
@@ -233,6 +295,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kBLEDeinitialized:
         ESP_LOGI(TAG, "BLE deinitialized and memory reclaimed");
+        s_ble_released = true;
         break;
 
     default:
@@ -303,6 +366,18 @@ static esp_err_t start_matter()
     return ESP_OK;
 }
 
+// Double click: pairing mode. Not commissioned: the device can be added again
+// (e.g. after the boot window timed out). Commissioned: another app can add it
+// with the same setup code (Multi-Admin). Runs in the esp_timer task.
+static void pairing_button_cb()
+{
+    VerifyOrReturn(s_matter_started, ESP_LOGW(TAG, "Matter is not running, cannot open pairing mode"));
+    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    open_commissioning_window(kPairingWindowSec);
+    update_led_mode();
+}
+
+// Long press: factory reset. Runs in the esp_timer task.
 static void factory_reset_cb()
 {
     ESP_LOGW(TAG, "Factory reset: erasing the Thread network and Matter pairing");
@@ -327,7 +402,12 @@ extern "C" void app_main()
              esp_app_get_description()->version);
 
     status_led_init();
-    reset_button_init(CONFIG_RESET_BUTTON_GPIO, kFactoryResetHoldMs, factory_reset_cb);
+    const user_button_config_t button_config = {
+        .on_double_click = pairing_button_cb,
+        .on_long_press = factory_reset_cb,
+        .long_press_ms = kFactoryResetHoldMs,
+    };
+    user_button_init(CONFIG_RESET_BUTTON_GPIO, &button_config);
 
     err = ld2410_init(CONFIG_LD2410_UART_RX_PIN, CONFIG_LD2410_UART_TX_PIN);
     if (err != ESP_OK) {
@@ -338,11 +418,8 @@ extern "C" void app_main()
         ESP_LOGE(TAG, "Matter is not running");
     }
 
-    static esp_timer_handle_t s_radar_timer;
-    const esp_timer_create_args_t timer_args = {
-        .callback = radar_poll_cb,
-        .name = "radar_poll",
-    };
-    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &s_radar_timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(s_radar_timer, kRadarPollUs));
+    // Started after Matter so that its first report sees s_matter_started.
+    if (xTaskCreate(presence_task, "presence", kPresenceTaskStack, NULL, kPresenceTaskPriority, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create the presence task");
+    }
 }

@@ -9,9 +9,9 @@
 #pragma once
 
 #include <esp_err.h>
+#include <stdint.h>
 
-typedef void (*reset_button_cb_t)(void);
-
-// Calls cb once when the active-low button on gpio has been held for
-// hold_ms. gpio < 0 disables the button.
-esp_err_t reset_button_init(int gpio, uint32_t hold_ms, reset_button_cb_t cb);
+// Logs the free heap (now, lowest since boot, largest block) and the unused
+// stack of the main tasks once now and then every period_s seconds, as a
+// warning when one runs low. Runs in the esp_timer task.
+esp_err_t mem_monitor_start(uint32_t period_s);
