@@ -39,7 +39,8 @@ _Static_assert(!PIN_CLASH(CONFIG_MOTOR_STEP_GPIO, CONFIG_MOTOR_DIR_GPIO) &&
                    !PIN_CLASH(CONFIG_MOTOR_DIR_GPIO, CONFIG_MOTOR_ENDSTOP_GPIO) &&
                    !PIN_CLASH(CONFIG_MOTOR_EN_GPIO, CONFIG_MOTOR_ENDSTOP_GPIO),
                "motor GPIOs must all differ");
-_Static_assert(!PIN_CLASH(CONFIG_LED_GPIO, CONFIG_MOTOR_STEP_GPIO) && !PIN_CLASH(CONFIG_LED_GPIO, CONFIG_MOTOR_DIR_GPIO) &&
+_Static_assert(!PIN_CLASH(CONFIG_LED_GPIO, CONFIG_MOTOR_STEP_GPIO) &&
+                   !PIN_CLASH(CONFIG_LED_GPIO, CONFIG_MOTOR_DIR_GPIO) &&
                    !PIN_CLASH(CONFIG_LED_GPIO, CONFIG_MOTOR_EN_GPIO) &&
                    !PIN_CLASH(CONFIG_LED_GPIO, CONFIG_MOTOR_ENDSTOP_GPIO),
                "a motor GPIO is the WS2812 GPIO");
@@ -71,10 +72,8 @@ static int32_t s_rezero_tolerance; /* re-zero this far (1 mm) from 0: steps were
 static int32_t s_window;           /* ZERO_WINDOW_MM in steps */
 static bool s_homed;               /* the position is known (s_lock) */
 static bool s_ready;               /* homed, and no fault since: stepper_move_to() works (s_lock) */
-static int32_t s_close_peak;       /* highest position since the closing began: the sleeve was no higher (s_lock) */
-/* After a closing that missed the end stop: the sleeve is at most this high (it only went down, then backed up),
- * so homing searches only this far down (plus ZERO_WINDOW_MM). 0: position not lost, search 125 % of the travel. */
-static int32_t s_lost_top; /* (s_lock) */
+/* A closing missed the end stop: the next homing searches only as far down as the sleeve can be (s_rise) (s_lock) */
+static bool s_lost;
 
 /* Closing (target 0) runs in phases, driven by stepper_poll() (s_lock) */
 static enum {
@@ -92,6 +91,9 @@ static volatile bool s_homing;      /* homing runs: any end stop press is positi
 static volatile bool s_endstop_hit; /* the end stop stopped a downward motion at 0 */
 static volatile bool s_rezeroed;    /* ... more than 1 mm from 0: steps were lost */
 static volatile bool s_fault;       /* the end stop read pressed where it cannot be: motion halted */
+/* Steps output upward since the end stop last set position 0. The sleeve only rises when the motor steps up, so it is
+ * no higher than this above the end stop, whatever steps were lost going down (unless lifted by hand, driver off). */
+static volatile int32_t s_rise;
 
 static inline bool IRAM_ATTR endstop_pressed_raw(void)
 {
@@ -151,6 +153,7 @@ static bool IRAM_ATTR on_tick(gptimer_handle_t timer, const gptimer_alarm_event_
                     s_rezeroed = true;
                 }
                 motion_halt(&s_m, 0);
+                s_rise = 0;
                 s_endstop_hit = true;
             } else {
                 fault_halt(); /* pressed far above 0 */
@@ -171,6 +174,9 @@ static bool IRAM_ATTR on_tick(gptimer_handle_t timer, const gptimer_alarm_event_
     if (step) {
         REG_WRITE(GPIO_OUT_W1TS_REG, STEP_BIT);
         s_step_high = true;
+        if (step > 0 && s_rise < INT32_MAX) {
+            s_rise++;
+        }
     }
     return false;
 }
@@ -364,10 +370,12 @@ esp_err_t stepper_home(void)
     esp_err_t err = ESP_OK;
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    /* After a closing that missed the end stop the sleeve cannot be higher than s_lost_top: do not push on whatever
-     * stopped it (it may still be there) for longer than needed */
-    int32_t lost_top = s_lost_top;
-    int32_t search = lost_top > 0 ? lost_top + s_window : travel + travel / 4;
+    /* After a closing that missed the end stop the sleeve is no higher than s_rise: do not press on whatever stopped
+     * it (it may still be there) for longer than needed. Otherwise (boot, fault) 125 % of the travel. */
+    int32_t search = travel + travel / 4;
+    if (s_lost && s_rise < search - s_window) {
+        search = s_rise + s_window;
+    }
     s_ready = false;
     s_close = CLOSE_IDLE;
     s_m.target = s_m.pos; /* stopped (the interrupt is halted on a fault) */
@@ -439,7 +447,7 @@ done:
     s_fault = false;
     s_homed = s_ready = err == ESP_OK;
     if (err == ESP_OK) {
-        s_lost_top = 0;
+        s_lost = false;
     }
     xSemaphoreGive(s_lock);
     return err;
@@ -464,10 +472,11 @@ bool stepper_move_to(int32_t pos)
         /* not homed, stopped by a fault, or a closing missed the end stop: only stepper_home() moves the motor */
         accepted = false;
     } else if (pos > 0) {
-        if (s_close == CLOSE_TOUCH) {
-            /* The closing is checking the position on the end stop (at most CLOSE_SLOW_MM + CLOSE_SEEK_MM at the
+        if (s_close == CLOSE_TOUCH && s_m.pos <= mm_to_steps(CLOSE_SLOW_MM)) {
+            /* The closing is checking the position on the end stop (its last CLOSE_SLOW_MM + CLOSE_SEEK_MM, at the
              * homing speed): let it finish. Moving up now would trust a count that may have lost steps on
-             * something in the way, and drive the sleeve past the top by as much. */
+             * something in the way, and drive the sleeve past the top by as much. Above the slow zone (the
+             * motion already slows down for it) an opening is taken at once, as during CLOSE_APPROACH. */
             accepted = false;
         } else {
             s_close = CLOSE_IDLE;
@@ -478,9 +487,7 @@ bool stepper_move_to(int32_t pos)
         /* Close: the last CLOSE_SLOW_MM slower, and always onto the end stop (checks the position). Already heading
          * down and stopping inside the slow zone anyway: slow down to the homing speed, never turn back up. */
         int32_t slow_zone = mm_to_steps(CLOSE_SLOW_MM);
-        int32_t stop = stop_point_locked();
-        s_close_peak = stop > s_m.pos ? stop : s_m.pos;
-        if (stop > slow_zone) {
+        if (stop_point_locked() > slow_zone) {
             s_close = CLOSE_APPROACH;
             set_limits(s_vmax_normal, s_accel_normal);
             set_target_locked(slow_zone);
@@ -536,14 +543,13 @@ stepper_event_t stepper_poll(void)
             set_target_locked(0);
         } else if (motion_idle(&s_m)) {
             /* CLOSE_SEEK_MM below 0 and still not pressed: something holds the sleeve up (or steps were lost
-             * going down). The position is wrong by the lost steps: not ready (no move trusts it) until homed.
-             * Back up rather than keep pushing. The sleeve only went down since s_close_peak: after backing up it
-             * is at most RELEASE_MM higher, so homing has a bounded search. */
-            int32_t release = mm_to_steps(RELEASE_MM);
+             * going down). The position is wrong by the lost steps: not ready (no move trusts it) until homed,
+             * and that homing searches only down to where the sleeve can be (s_rise). Back up rather than keep
+             * pushing. */
             s_close = CLOSE_RELEASE;
             s_ready = false;
-            s_lost_top = (s_close_peak > 0 ? s_close_peak : 0) + release;
-            set_target_locked(s_m.pos + release);
+            s_lost = true;
+            set_target_locked(s_m.pos + mm_to_steps(RELEASE_MM));
         }
         break;
     case CLOSE_RELEASE:

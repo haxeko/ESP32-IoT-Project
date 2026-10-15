@@ -26,9 +26,9 @@ esp_err_t stepper_init(void);
  * Find the closed position (blocking, a few seconds): leave the end stop if it is pressed, move down until it
  * is pressed, move up 3 mm (it must release), then touch it again slowly. Position 0 is where it is pressed.
  * Also the way back after STEPPER_EVENT_FAULT or STEPPER_EVENT_NOT_CLOSED. The search down covers 125 % of the
- * travel; after STEPPER_EVENT_NOT_CLOSED only the height the sleeve can be at (the height the closing started
- * from + 13 mm). When the end stop is not reached, the sleeve backs up 10 mm (rather than keep pressing on
- * whatever is in the way) and holds there.
+ * travel; after STEPPER_EVENT_NOT_CLOSED only the height the sleeve can be at: every step it moved up since the
+ * end stop last set position 0 (it only rises when the motor steps up), + 3 mm. When the end stop is not reached,
+ * the sleeve backs up 10 mm (rather than keep pressing on whatever is in the way) and holds there.
  * @return ESP_OK; ESP_ERR_NOT_FOUND if the end stop was not reached within the search;
  *         ESP_ERR_INVALID_STATE if it stays pressed while moving up (broken NC wire, the motor does not move or
  *         cannot lift the sleeve).
@@ -41,8 +41,8 @@ esp_err_t stepper_home(void);
  * corrected there); if it is not found within 5 mm below 0, the sleeve backs up 10 mm and holds there, not ready
  * (STEPPER_EVENT_NOT_CLOSED).
  * @return false when refused, call again later: not ready (not homed, after a fault, or a closing that missed the
- *         end stop: stepper_home() first), or an opening while the closing checks the end stop (its last 15 mm
- *         at most, then it is accepted).
+ *         end stop: stepper_home() first), or an opening while the closing checks the end stop (from 10 mm down
+ *         to the end stop or 5 mm below 0, then it is accepted).
  */
 bool stepper_move_to(int32_t pos);
 

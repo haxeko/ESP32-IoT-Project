@@ -13,7 +13,8 @@
 // command with a bounded search), opening while a failed closing backs up or checks the end stop, how long the
 // motor presses on an obstacle, the sleeve held at the top while closing, Off near the slow zone (no turning back),
 // end stop wire breaking (open or closed lamp) or a glitch after homing, contact chatter, motor turning the wrong
-// way (information only). lift_iteration() does what one pass of the main/lift.c loop does.
+// way (information only), the "3 in a row" count of failed closings. main/lift.c is compiled in too: the scenarios
+// drive its lift_pass() as its task does.
 // Built several times by run.sh with different CONFIG_MOTOR_* values (Kconfig defaults below otherwise).
 #include "check.h"
 
@@ -77,6 +78,9 @@
 #endif
 #ifndef CONFIG_APP_BUTTON_GPIO
 #define CONFIG_APP_BUTTON_GPIO 9
+#endif
+#ifndef CONFIG_LED_COUNT
+#define CONFIG_LED_COUNT 30
 #endif
 
 /* On the device a failed ESP_ERROR_CHECK aborts (reboot): here it fails the scenario and ends it */
@@ -154,16 +158,16 @@ static struct {
     int64_t min_gap_us, last_gap_us, min_high_us, min_low_us, min_dir_setup_us;
     int64_t min_first_step_us; /* EN on -> first STEP */
     bool first_step_pending;
-    long touch_rest_ticks; /* ticks at rest while a closing checks the end stop, before reaching it */
+    long closing_rest_ticks; /* ticks at rest above 0 while closing (before the end stop) */
+    /* What main/lift.c did (its stepper calls go through counting wrappers) */
     int rezero_reports, faults, not_closed;
     esp_err_t rehome_err;
     int rehomes, refused;
-    /* main/lift.c state */
-    int strikes;       /* not_closed: failed closings since one reached the end stop */
-    bool gave_up;      /* give_up(): the lamp does not move until restart */
-    long target;       /* wanted target */
+    uint16_t exposed;   /* led_bar_set_exposed() */
+    bool follow_level;  /* led_bar_follow_level() */
+    long target;        /* wanted target (what the Matter state asks for) */
     bool has_target;
-    long last_target;  /* last target the stepper accepted */
+    uint32_t next_wait_ms; /* lift_pass(): time to the next pass */
     int64_t limit_us; /* simulated time limit of a scenario (hang guard) */
 } g;
 
@@ -396,8 +400,8 @@ static void sim_isr(void)
     if (s_m.vel != 0 && !en_active()) {
         g.moving_while_disabled_ticks++;
     }
-    if (s_close == CLOSE_TOUCH && s_m.vel == 0 && !s_endstop_hit && s_m.pos > -mm_to_steps(CLOSE_SEEK_MM)) {
-        g.touch_rest_ticks++;
+    if ((s_close == CLOSE_APPROACH || s_close == CLOSE_TOUCH) && s_m.vel == 0 && s_m.pos > 0) {
+        g.closing_rest_ticks++;
     }
 }
 
@@ -432,6 +436,97 @@ void sim_task_delay(TickType_t ticks)
 }
 
 /* ---------------------------------------------------------------------------------------------------------------
+ * main/lift.c, compiled here. Its stepper calls go through wrappers that count what happened; led_bar is faked.
+ */
+#include "led_bar.h"
+
+static stepper_event_t sim_stepper_poll(void)
+{
+    stepper_event_t ev = stepper_poll();
+    if (ev == STEPPER_EVENT_REZEROED) {
+        g.rezero_reports++;
+    } else if (ev == STEPPER_EVENT_FAULT) {
+        g.faults++;
+    } else if (ev == STEPPER_EVENT_NOT_CLOSED) {
+        g.not_closed++;
+    }
+    return ev;
+}
+
+static esp_err_t sim_stepper_home(void)
+{
+    g.rehomes++;
+    g.rehome_err = stepper_home();
+    return g.rehome_err;
+}
+
+static bool sim_stepper_move_to(int32_t pos)
+{
+    bool accepted = stepper_move_to(pos);
+    if (!accepted) {
+        g.refused++;
+    }
+    return accepted;
+}
+
+uint16_t led_bar_count_for_level(uint8_t level)
+{
+    return level; /* not used: the scenarios give targets in steps */
+}
+
+void led_bar_set_exposed(uint16_t count)
+{
+    g.exposed = count;
+}
+
+void led_bar_follow_level(void)
+{
+    g.follow_level = true;
+}
+
+void led_bar_set_target_callback(led_bar_target_cb_t cb)
+{
+    (void)cb;
+}
+
+#define stepper_poll    sim_stepper_poll
+#define stepper_home    sim_stepper_home
+#define stepper_move_to sim_stepper_move_to
+#define TAG             LIFT_TAG
+#include "lift.c"
+#undef stepper_poll
+#undef stepper_home
+#undef stepper_move_to
+#undef TAG
+
+/* One pass of the lift task (main/lift.c lift_task()) for the wanted target; before any target only the stepper
+ * housekeeping. Given up: the task is parked. */
+static void lift_iteration(void)
+{
+    if (s_stopped) {
+        g.next_wait_ms = 250;
+        return;
+    }
+    if (!g.has_target) {
+        (void)sim_stepper_poll();
+        g.next_wait_ms = stepper_busy() ? 20 : 250;
+        return;
+    }
+    g.next_wait_ms = lift_pass((int32_t)g.target, 0);
+}
+
+/* The lift task waits until its next pass */
+static void lift_wait(void)
+{
+    vTaskDelay(pdMS_TO_TICKS(g.next_wait_ms ? g.next_wait_ms : 250));
+}
+
+static bool lift_pending(void)
+{
+    return !s_stopped && g.has_target && g.target != s_last_target;
+}
+
+/* ---------------------------------------------------------------------------------------------------------------
  * Helpers
  */
 
@@ -449,7 +544,12 @@ static void boot(long phys)
     g.last_rise_us = g.last_fall_us = g.last_dir_us = NEVER;
     g.min_gap_us = g.min_high_us = g.min_low_us = g.min_dir_setup_us = g.min_first_step_us = INT64_MAX;
     g.limit_us = 600LL * 1000 * 1000;
-    g.last_target = -1;
+    /* main/lift.c statics, as after a reset */
+    s_task = NULL;
+    s_want = 0;
+    s_last_target = -1;
+    s_not_closed = 0;
+    s_stopped = false;
 
     memset(&g_sim_gptimer, 0, sizeof g_sim_gptimer);
     g_sim_now_us = 0;
@@ -466,7 +566,8 @@ static void boot(long phys)
     s_vmax_homing = s_accel_sps2 = 0;
     s_window = 0;
     s_homed = s_ready = false;
-    s_close_peak = s_lost_top = 0;
+    s_lost = false;
+    s_rise = 0;
     s_close = CLOSE_IDLE;
     s_homing = s_fault = false;
     s_step_high = false;
@@ -490,76 +591,8 @@ static int64_t home(esp_err_t *err)
     return (g_sim_now_us - t0) / 1000;
 }
 
-/* main/lift.c give_up(): the motor stops for good (holding when Driver off at rest is 0) */
-static void lift_give_up(void)
-{
-    stepper_stop();
-    g.gave_up = true;
-}
-
-/* What main/lift.c does on a stepper event */
-static void lift_react(stepper_event_t ev)
-{
-    switch (ev) {
-    case STEPPER_EVENT_REZEROED:
-        g.rezero_reports++;
-        break;
-    case STEPPER_EVENT_FAULT: /* home again at once, give up if that fails, then back to the wanted height */
-        g.faults++;
-        g.rehomes++;
-        g.rehome_err = stepper_home();
-        if (g.rehome_err != ESP_OK) {
-            lift_give_up();
-        }
-        g.last_target = -1;
-        break;
-    case STEPPER_EVENT_NOT_CLOSED: /* home again at the next command; the 3rd time in a row, give up */
-        g.not_closed++;
-        if (++g.strikes >= 3) {
-            lift_give_up();
-        }
-        break;
-    case STEPPER_EVENT_NONE:
-        break;
-    }
-}
-
-/* One pass of the main/lift.c loop: apply the wanted target (home first after a failed closing, try again later
- * when refused), then poll the stepper */
-static void lift_iteration(void)
-{
-    if (g.gave_up) {
-        return; /* parked until restart */
-    }
-    if (g.has_target && g.target != g.last_target) {
-        if (!stepper_ready() && !stepper_busy()) {
-            g.rehomes++;
-            g.rehome_err = stepper_home();
-            if (g.rehome_err != ESP_OK) {
-                lift_give_up();
-                return;
-            }
-        }
-        if (stepper_move_to(g.target)) {
-            g.last_target = g.target;
-        } else {
-            g.refused++;
-        }
-    }
-    if (g.strikes && g.last_target == 0 && stepper_ready() && !stepper_busy() && stepper_position() == 0) {
-        g.strikes = 0;
-    }
-    lift_react(stepper_poll());
-}
-
-/* lift.c wait between passes: 20 ms while moving or a move is pending, else 250 ms */
-static void lift_wait(void)
-{
-    bool pending = !g.gave_up && g.has_target && g.target != g.last_target;
-    vTaskDelay(pdMS_TO_TICKS(stepper_busy() || pending ? 20 : 250));
-}
-
 /* A new wanted target (the Matter callback wakes the lift task: one pass at once) */
+static void lift_iteration(void);
 static void lift_move(long target)
 {
     g.target = target;
@@ -575,8 +608,7 @@ static int64_t settle(int64_t max_ms)
     for (;;) {
         lift_wait();
         lift_iteration();
-        bool pending = !g.gave_up && g.has_target && g.target != g.last_target;
-        if (!stepper_busy() && !pending && g_sim_gptimer.fsm != SIM_GPTIMER_RUN) {
+        if (!stepper_busy() && !lift_pending() && g_sim_gptimer.fsm != SIM_GPTIMER_RUN) {
             return (g_sim_now_us - t0) / 1000;
         }
         if (g_sim_now_us - t0 > max_ms * 1000) {
@@ -877,7 +909,7 @@ static void scenario_lost_steps_up(void)
     lift_move(0);
     CHECK(settle(move_ms(TRAVEL) * 2) >= 0);
     printf("  closing: %d fault(s), homed again: %s\n", g.faults, g.rehome_err == ESP_OK ? "OK" : "FAILED");
-    CHECK(g.faults == 1 && g.rehome_err == ESP_OK && !g.gave_up);
+    CHECK(g.faults == 1 && g.rehome_err == ESP_OK && !s_stopped);
     CHECK(stepper_position() == 0 && g.phys <= 0 && g.phys >= -TOUCH_DEPTH && g.pressed);
     lift_move(TRAVEL / 2);
     CHECK(settle(move_ms(TRAVEL)) >= 0 && labs(g.phys - TRAVEL / 2) <= TOUCH_DEPTH);
@@ -915,8 +947,8 @@ static void scenario_lost_steps_closing(void)
     CHECK(g.not_closed == 1 && !stepper_ready() && !stepper_busy());
     CHECK(en_active());
     CHECK(g_sim_gptimer.fsm == SIM_GPTIMER_ENABLE);
-    /* The next command homes first (bounded search: the closing started at 75 mm), then opens: never past full
-     * open */
+    /* The next command homes first (bounded search: moved up 75 + 10 mm since the last zero), then opens: never
+     * past full open */
     lift_move(TRAVEL);
     CHECK(settle(move_ms(TRAVEL) * 3) >= 0);
     CHECK(g.rehome_err == ESP_OK && stepper_position() == TRAVEL);
@@ -961,9 +993,9 @@ static void scenario_obstacle_closing(void)
     g.obstacle = 0;
     lift_move(TRAVEL / 4);
     CHECK(settle(move_ms(TRAVEL) * 3) >= 0);
-    CHECK(g.rehome_err == ESP_OK && labs(g.phys - TRAVEL / 4) <= TOUCH_DEPTH && !g.gave_up);
+    CHECK(g.rehome_err == ESP_OK && labs(g.phys - TRAVEL / 4) <= TOUCH_DEPTH && !s_stopped);
     /* Blocked three times: gives up (motor off) until a restart */
-    for (int i = 0; i < 2 && !g.gave_up; i++) {
+    for (int i = 0; i < 2 && !s_stopped; i++) {
         g.obstacle = 20 * STEPS_PER_MM;
         lift_move(0);
         CHECK(settle(move_ms(TRAVEL) * 2) >= 0);
@@ -971,8 +1003,8 @@ static void scenario_obstacle_closing(void)
         lift_move(TRAVEL / 4);
         CHECK(settle(move_ms(TRAVEL) * 3) >= 0);
     }
-    printf("  %d failed closings: %s\n", g.not_closed, g.gave_up ? "gave up, motor stopped" : "still trying");
-    CHECK(g.not_closed == 3 && g.gave_up && (CONFIG_MOTOR_IDLE_OFF_MS > 0 ? EN_OFF() : en_active()));
+    printf("  %d failed closings: %s\n", g.not_closed, s_stopped ? "gave up, motor stopped" : "still trying");
+    CHECK(g.not_closed == 3 && s_stopped && (CONFIG_MOTOR_IDLE_OFF_MS > 0 ? EN_OFF() : en_active()));
     long steps = g.steps;
     lift_move(TRAVEL / 2); /* ignored until a restart */
     CHECK(settle(1000) >= 0 && g.steps == steps);
@@ -993,12 +1025,12 @@ static void scenario_wire_breaks_after_homing(void)
     CHECK(settle(move_ms(TRAVEL)) >= 0);
     printf("  wire broken, half open -> 10 %%: position %ld, sleeve %.1f mm, %d fault(s), homing again: 0x%x, "
            "gave up: %s\n",
-           (long)stepper_position(), (double)g.phys / STEPS_PER_MM, g.faults, g.rehome_err, g.gave_up ? "yes" : "no");
+           (long)stepper_position(), (double)g.phys / STEPS_PER_MM, g.faults, g.rehome_err, s_stopped ? "yes" : "no");
     lift_move(TRAVEL);
     CHECK(settle(move_ms(TRAVEL)) >= 0);
 #if CONFIG_MOTOR_ENDSTOP_NC
     /* NC: the broken wire reads pressed far above 0: fault, homing again finds it stuck, motor off */
-    CHECK(g.faults == 1 && g.rehome_err == ESP_ERR_INVALID_STATE && g.gave_up);
+    CHECK(g.faults == 1 && g.rehome_err == ESP_ERR_INVALID_STATE && s_stopped);
     /* stopped where it is: holding (the sleeve must not slide down) unless Driver off at rest is set */
     CHECK(CONFIG_MOTOR_IDLE_OFF_MS > 0 ? EN_OFF() : en_active());
     CHECK(g.max_phys <= TRAVEL / 2 + mm_to_steps(BACKOFF_MM)); /* at most the 3 mm test move up */
@@ -1026,7 +1058,7 @@ static void scenario_wire_breaks_closed(void)
            (double)g.max_phys / STEPS_PER_MM, g.faults, g.rehome_err);
 #if CONFIG_MOTOR_ENDSTOP_NC
     /* It does not release when leaving 0: fault a little above the 3 mm window, homing fails, motor off */
-    CHECK(g.faults == 1 && g.rehome_err == ESP_ERR_INVALID_STATE && g.gave_up);
+    CHECK(g.faults == 1 && g.rehome_err == ESP_ERR_INVALID_STATE && s_stopped);
     CHECK(g.max_phys <= 2 * mm_to_steps(ZERO_WINDOW_MM) + mm_to_steps(BACKOFF_MM));
 #endif
 }
@@ -1077,6 +1109,11 @@ static bool counted_below_zero(void)
     return s_close == CLOSE_TOUCH && stepper_position() < -mm_to_steps(1);
 }
 
+static bool counted_in_slow_zone(void)
+{
+    return s_close == CLOSE_TOUCH && stepper_position() > 0 && stepper_position() < mm_to_steps(CLOSE_SLOW_MM) / 2;
+}
+
 static bool closing_failed(void)
 {
     return g.not_closed > 0;
@@ -1089,12 +1126,15 @@ static bool backing_up(void)
 
 static void scenario_open_while_closing_fails(void)
 {
-    /* Half open, Off with something at 30 mm: the closing loses steps on it, counts below 0, backs up. On arrives
-     * while it checks the end stop (counted below 0) or backs up: the opening waits for the end of the closing, then
-     * homes (bounded search) before opening. Moving up at once would trust the count and drive the sleeve 35 mm past
-     * the top. The obstacle is removed with the On (homing works, opens), or not (homing fails, gives up). */
-    static const char *const phase_name[] = {"checking the end stop (counted below 0)", "backing up"};
-    for (int phase = 0; phase < 2; phase++) {
+    /* Half open, Off with something at 30 mm: the closing loses steps on it, counts into the slow zone and below 0,
+     * backs up. On arrives while it checks the end stop (counted inside the last 10 mm, or below 0) or backs up: the
+     * opening waits for the end of the closing, then homes (bounded search) before opening. Moving up at once would
+     * trust the count and drive the sleeve 25-35 mm past the top. The obstacle is removed with the On (homing
+     * works, opens), or not (homing fails, gives up). */
+    static const char *const phase_name[] = {"slowing onto the end stop (counted 0-5 mm)",
+                                             "checking the end stop (counted below 0)", "backing up"};
+    static bool (*const phase_cond[])(void) = {counted_in_slow_zone, counted_below_zero, backing_up};
+    for (int phase = 0; phase < 3; phase++) {
         for (int removed = 1; removed >= 0; removed--) {
             if (!ready_at(TRAVEL / 2)) {
                 return;
@@ -1102,12 +1142,12 @@ static void scenario_open_while_closing_fails(void)
             g.top = TRAVEL + 40 * STEPS_PER_MM; /* long screw: any overshoot shows */
             g.obstacle = 30 * STEPS_PER_MM;
             lift_move(0);
-            CHECK(run_until(phase == 0 ? counted_below_zero : backing_up, move_ms(TRAVEL)));
+            CHECK(run_until(phase_cond[phase], move_ms(TRAVEL)));
             if (removed) {
                 g.obstacle = 0;
             }
             lift_move(TRAVEL);
-            CHECK(g.refused > 0 && g.last_target == 0); /* not applied yet */
+            CHECK(g.refused > 0 && s_last_target == 0); /* not applied yet */
             CHECK(run_until(closing_failed, move_ms(TRAVEL)));
             press_reset(); /* what the homing at the On presses, if it is still there */
             CHECK(settle(move_ms(TRAVEL) * 4) >= 0);
@@ -1115,18 +1155,18 @@ static void scenario_open_while_closing_fails(void)
                    "highest %.1f mm, pressed again %lld ms, %s\n",
                    phase_name[phase], removed ? "removed" : "still there", g.not_closed, g.rehome_err,
                    (long)stepper_position(), (double)g.phys / STEPS_PER_MM, (double)g.max_phys / STEPS_PER_MM,
-                   (long long)press_ms(), g.gave_up ? "gave up" : "running");
+                   (long long)press_ms(), s_stopped ? "gave up" : "running");
             CHECK(g.not_closed == 1 && g.rehomes == 1);
             CHECK(g.max_phys <= (removed ? TRAVEL : TRAVEL / 2)); /* never past full open, or where it started */
             CHECK(g.steps_blocked_top == 0);
             if (removed) {
-                CHECK(g.rehome_err == ESP_OK && !g.gave_up && stepper_position() == TRAVEL);
+                CHECK(g.rehome_err == ESP_OK && !s_stopped && stepper_position() == TRAVEL);
                 CHECK(labs(g.phys - TRAVEL) <= TOUCH_DEPTH);
             } else {
                 /* The bounded search (75 + 13 mm) presses on it again, then backs up 10 mm and stops for good */
-                long lost_top = TRAVEL / 2 + mm_to_steps(RELEASE_MM);
-                CHECK(g.rehome_err == ESP_ERR_NOT_FOUND && g.gave_up);
-                CHECK(press_ms() <= (lost_top + s_window - mm_to_steps(RELEASE_MM)) * 1000L / HOMING_SPS +
+                long rise = TRAVEL / 2 + mm_to_steps(RELEASE_MM); /* moved up since the last zero */
+                CHECK(g.rehome_err == ESP_ERR_NOT_FOUND && s_stopped);
+                CHECK(press_ms() <= (rise + s_window - mm_to_steps(RELEASE_MM)) * 1000L / HOMING_SPS +
                                          1000L * HOMING_SPS / ACCEL_SPS2 + 500);
                 CHECK(g.phys >= g.obstacle + mm_to_steps(RELEASE_MM) - 1);
                 CHECK(CONFIG_MOTOR_IDLE_OFF_MS > 0 ? EN_OFF() : en_active());
@@ -1167,16 +1207,16 @@ static void scenario_press_time(void)
         lift_move(from); /* still there */
         CHECK(settle(move_ms(TRAVEL) * 4) >= 0);
         int64_t again = press_ms();
-        long lost_top = from + mm_to_steps(RELEASE_MM);
-        CHECK(g.gave_up && g.rehome_err == ESP_ERR_NOT_FOUND);
-        CHECK(again <= (lost_top + s_window - mm_to_steps(RELEASE_MM)) * 1000L / HOMING_SPS +
+        long rise = from + mm_to_steps(RELEASE_MM); /* moved up since the last zero */
+        CHECK(s_stopped && g.rehome_err == ESP_ERR_NOT_FOUND);
+        CHECK(again <= (rise + s_window - mm_to_steps(RELEASE_MM)) * 1000L / HOMING_SPS +
                            1000L * HOMING_SPS / ACCEL_SPS2 + 500);
         CHECK(g.max_phys <= from && g.phys >= at + mm_to_steps(RELEASE_MM) - 1); /* backed up again */
         CHECK(CONFIG_MOTOR_IDLE_OFF_MS > 0 ? EN_OFF() : en_active());
         printf("  Off from %d %% (%.0f mm), obstacle at %d mm: pressed %.1f s (bound %.1f s), at the next command "
                "again %.1f s, then %s at %.1f mm, driver %s\n",
                cases[i].from_pct, (double)from / STEPS_PER_MM, cases[i].at_mm, first / 1000.0, bound / 1000.0,
-               again / 1000.0, g.gave_up ? "stopped" : "running", (double)g.phys / STEPS_PER_MM,
+               again / 1000.0, s_stopped ? "stopped" : "running", (double)g.phys / STEPS_PER_MM,
                EN_OFF() ? "off" : "on");
     }
 }
@@ -1201,7 +1241,7 @@ static void scenario_held_at_top(void)
            (double)after_close / STEPS_PER_MM, (double)g.max_phys / STEPS_PER_MM, g.rehome_err,
            EN_OFF() ? "off" : "on");
     CHECK(g.not_closed == 1 && after_close <= TRAVEL + mm_to_steps(RELEASE_MM));
-    CHECK(g.rehome_err == ESP_ERR_NOT_FOUND && g.gave_up && g.max_phys <= TRAVEL + 2 * mm_to_steps(RELEASE_MM));
+    CHECK(g.rehome_err == ESP_ERR_NOT_FOUND && s_stopped && g.max_phys <= TRAVEL + 2 * mm_to_steps(RELEASE_MM));
     /* A mechanical stop 12 mm above full open: the extra back-up stalls on it (steps lost), nothing worse */
     if (!ready_at(TRAVEL)) {
         return;
@@ -1215,8 +1255,29 @@ static void scenario_held_at_top(void)
     CHECK(settle(move_ms(TRAVEL) * 4) >= 0);
     printf("  same with a stop 12 mm above full open: %ld steps lost on it (%.1f mm)\n", g.steps_blocked_top,
            (double)g.steps_blocked_top / STEPS_PER_MM);
-    CHECK(g.gave_up && g.max_phys == g.top);
+    CHECK(s_stopped && g.max_phys == g.top);
     check_signals();
+}
+
+static bool touch_in_slow_zone(void)
+{
+    return s_close == CLOSE_TOUCH && stepper_position() <= mm_to_steps(CLOSE_SLOW_MM);
+}
+
+static bool opening_taken(void)
+{
+    return s_last_target == TRAVEL / 2;
+}
+
+static bool touch_above_slow_zone(void)
+{
+    return s_close == CLOSE_TOUCH && stepper_position() > mm_to_steps(CLOSE_SLOW_MM) + STEPS_PER_MM / 2;
+}
+
+/* Braking distance (steps) from one speed down to another, at the acceleration */
+static long stop_distance_steps(long from_sps, long to_sps)
+{
+    return from_sps > to_sps ? (from_sps * from_sps - to_sps * to_sps) / (2 * ACCEL_SPS2) : 0;
 }
 
 static bool below_11mm(void)
@@ -1242,14 +1303,124 @@ static void scenario_closing_smooth(void)
     /* From full open: the last 10 mm slow down from the normal speed to the homing speed without stopping first */
     lift_move(TRAVEL);
     CHECK(settle(move_ms(TRAVEL)) >= 0);
-    g.touch_rest_ticks = 0;
-    int64_t t0 = g_sim_now_us;
+    g.closing_rest_ticks = 0;
     lift_move(0);
     int64_t ms = settle(move_ms(TRAVEL));
-    printf("  closing from full open: %lld ms, %ld ticks at rest before the end stop\n", (long long)ms,
-           g.touch_rest_ticks);
-    CHECK(ms >= 0 && g.touch_rest_ticks == 0 && stepper_position() == 0 && g.pressed);
-    (void)t0;
+    printf("  closing from full open: %lld ms, %ld ticks at rest above 0 before the end stop\n", (long long)ms,
+           g.closing_rest_ticks);
+    CHECK(ms >= 0 && g.closing_rest_ticks == 0 && stepper_position() == 0 && g.pressed);
+    /* The slow-down starts above the slow zone (by the braking distance): an On there is taken at once */
+    lift_move(TRAVEL);
+    CHECK(settle(move_ms(TRAVEL)) >= 0);
+    lift_move(0);
+    CHECK(run_until(touch_above_slow_zone, move_ms(TRAVEL)) || mm_to_steps(CLOSE_SLOW_MM) + 2 * STEPS_PER_MM >
+                                                                stop_distance_steps(SPEED_SPS, HOMING_SPS));
+    int refused = g.refused;
+    long at = stepper_position();
+    lift_move(TRAVEL / 2);
+    printf("  On at %.1f mm while slowing down for the end stop: %s\n", (double)at / STEPS_PER_MM,
+           s_last_target == TRAVEL / 2 ? "taken at once" : "refused");
+    CHECK(s_last_target == TRAVEL / 2 && g.refused == refused);
+    CHECK(settle(move_ms(TRAVEL)) >= 0 && stepper_position() == TRAVEL / 2 && labs(g.phys - TRAVEL / 2) <= TOUCH_DEPTH);
+    /* An On just inside the last 10 mm waits for the end stop (README: about 1.3 s with the defaults) */
+    lift_move(0);
+    CHECK(run_until(touch_in_slow_zone, move_ms(TRAVEL)));
+    int64_t t0 = g_sim_now_us;
+    lift_move(TRAVEL / 2);
+    CHECK(run_until(opening_taken, 10000));
+    int64_t wait = (g_sim_now_us - t0) / 1000;
+    printf("  On at %.1f mm (inside the last 10 mm): taken after %lld ms, once closed\n",
+           (double)mm_to_steps(CLOSE_SLOW_MM) / STEPS_PER_MM, (long long)wait);
+    CHECK(wait <= mm_to_steps(CLOSE_SLOW_MM) * 1000L / HOMING_SPS + 500 && g.rezero_reports == 0);
+    CHECK(settle(move_ms(TRAVEL)) >= 0 && stepper_position() == TRAVEL / 2);
+    check_signals();
+}
+
+static void scenario_lost_before_closing(void)
+{
+    /* Steps lost going down before the closing (README "Khi giảm độ sáng" and "Mở lại trong lúc ống che đang bị
+     * chặn"): the count is below the sleeve when the closing starts. The closing misses the end stop; the homing at
+     * the next command must still reach it once the obstacle is gone (its search covers every step moved up since the
+     * last zero). */
+    static const struct {
+        const char *what;
+        int from_pct, held_mm, to_pct; /* open to from_pct, something holds the sleeve at held_mm, go to to_pct */
+        bool via_off;                  /* to_pct is an opening sent during a closing (Off first) */
+    } cases[] = {
+        {"dimmed to 10 % while held at 60 mm", 100, 60, 10, false},
+        {"dimmed to 3 % while held at 40 mm", 50, 40, 3, false},
+        {"Off, held at 140 mm, then 10 % while held", 100, 140, 10, true},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        if (!ready_at(TRAVEL * cases[i].from_pct / 100)) {
+            return;
+        }
+        g.obstacle = (long)cases[i].held_mm * STEPS_PER_MM;
+        if (cases[i].via_off) {
+            lift_move(0);
+            CHECK(run_until(closing_failed, 1500) == false); /* presses on it for a while */
+        }
+        lift_move(TRAVEL * cases[i].to_pct / 100);
+        CHECK(settle(move_ms(TRAVEL) * 2) >= 0);
+        long count = stepper_position(), sleeve = g.phys;
+        g.obstacle = 0; /* removed */
+        lift_move(0);
+        CHECK(settle(move_ms(TRAVEL) * 2) >= 0);
+        int not_closed = g.not_closed;
+        lift_move(TRAVEL / 2);
+        CHECK(settle(move_ms(TRAVEL) * 4) >= 0);
+        printf("  %s: count %.1f mm, sleeve %.1f mm; Off: %s; On: homing 0x%x, at %.1f mm, %s\n", cases[i].what,
+               (double)count / STEPS_PER_MM, (double)sleeve / STEPS_PER_MM,
+               not_closed ? "missed the end stop" : "closed",
+               g.rehome_err, (double)g.phys / STEPS_PER_MM, s_stopped ? "gave up" : "running");
+        CHECK(!s_stopped && stepper_position() == TRAVEL / 2 && labs(g.phys - TRAVEL / 2) <= TOUCH_DEPTH);
+        CHECK(g.not_closed <= 1 && (g.not_closed == 0 || (g.rehomes >= 1 && g.rehome_err == ESP_OK)));
+        CHECK(g.max_phys <= TRAVEL && g.steps_blocked_top == 0);
+        check_signals();
+    }
+}
+
+static bool touching(void)
+{
+    return s_close == CLOSE_TOUCH && stepper_position() > 0 && stepper_position() < mm_to_steps(CLOSE_SLOW_MM) / 2;
+}
+
+static void scenario_strikes_in_a_row(void)
+{
+    /* "3 failed closings in a row": a closing that reaches the end stop resets the count, also when an On waits
+     * for it (sent while it slows onto the end stop) */
+    if (!ready_at(TRAVEL / 2)) {
+        return;
+    }
+    g.limit_us = g_sim_now_us + 3600LL * 1000 * 1000; /* 11 closings and homings: long at 3 mm/s */
+    for (int round = 0; round < 4 && !s_stopped; round++) {
+        /* a failed closing, then the obstacle is removed and On homes and opens */
+        g.obstacle = 30 * STEPS_PER_MM;
+        lift_move(0);
+        CHECK(settle(move_ms(TRAVEL) * 2) >= 0);
+        g.obstacle = 0;
+        lift_move(TRAVEL / 2);
+        CHECK(settle(move_ms(TRAVEL) * 4) >= 0);
+        /* a good closing with an On waiting for it */
+        lift_move(0);
+        CHECK(run_until(touching, move_ms(TRAVEL)));
+        lift_move(TRAVEL / 2);
+        CHECK(settle(move_ms(TRAVEL) * 2) >= 0);
+        CHECK(s_not_closed == 0);
+    }
+    printf("  4 x (failed closing, good closing with On waiting): %d failed, count now %d, %s\n", g.not_closed,
+           s_not_closed, s_stopped ? "gave up" : "running");
+    CHECK(g.not_closed == 4 && !s_stopped && stepper_position() == TRAVEL / 2);
+    /* three in a row: gives up */
+    for (int i = 0; i < 3; i++) {
+        g.obstacle = 30 * STEPS_PER_MM;
+        lift_move(0);
+        CHECK(settle(move_ms(TRAVEL) * 2) >= 0);
+        g.obstacle = 0;
+        lift_move(TRAVEL / 2);
+        CHECK(settle(move_ms(TRAVEL) * 4) >= 0);
+    }
+    CHECK(s_stopped && g.not_closed == 7 && g.follow_level);
     check_signals();
 }
 
@@ -1317,6 +1488,8 @@ int main(void)
     RUN(scenario_press_time);
     RUN(scenario_held_at_top);
     RUN(scenario_closing_smooth);
+    RUN(scenario_lost_before_closing);
+    RUN(scenario_strikes_in_a_row);
     RUN(scenario_reversed_motor);
     return check_report();
 }
