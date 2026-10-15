@@ -1,0 +1,5 @@
+dependencies:
+  # On-board WS2812 status LED (GPIO8 on ESP32-H2-DevKitM-1). Pinned to the
+  # 3.1.x series that builds with ESP-IDF v6.0 (dependencies.lock is not
+  # committed, so a range like ^3 would pull new minor versions in CI).
+  espressif/led_strip: "~3.1.0"
