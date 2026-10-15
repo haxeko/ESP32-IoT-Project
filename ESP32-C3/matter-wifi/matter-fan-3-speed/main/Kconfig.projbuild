@@ -70,18 +70,21 @@ menu "Fan Behavior"
     endchoice
 
     config FAN_ON_RESUMES_LAST_SPEED
-        bool "Turning the fan on from an app resumes the last speed"
-        default y
+        bool "Turning the fan on from an app resumes the last speed (not the Matter standard)"
+        default n
         help
-            A controller that turns a stopped fan on without choosing a speed gets the speed (or the
-            natural wind) the fan had before it was turned off, like the power button of the remote,
-            instead of the speed 3 (High) that the Matter specification asks for:
+            n (default): Matter specification. A controller that turns the fan on without choosing
+            a speed runs speed 3 (High): FanMode = On, and Apple Home, which turns a fan on with
+            PercentSetting = 100 % (in HomeKit a stopped fan has speed 0). The power button of the
+            remote and the device button always resume the last speed.
+
+            y: such a write on a stopped fan resumes the speed (or the natural wind) the fan had
+            before it was turned off, like the power button of the remote:
             - FanMode = On (or Smart without Auto),
-            - PercentSetting = 100 % while the fan is off: Apple Home turns a fan on that way (in
-              HomeKit a stopped fan has speed 0, so "on" sends 100 %).
+            - PercentSetting = 100 % while the fan is off.
             So dragging the slider of a stopped fan straight to 100 % also resumes the last speed;
             once the fan runs, 100 % is speed 3. FanMode = On on a running fan changes nothing
-            (natural wind ends). n: FanMode On and 100 % always run speed 3.
+            (natural wind ends).
 
     config FAN_MATTER_ROCKING
         bool "Oscillation as Matter Rocking (Apple Home 'Oscillate')"
