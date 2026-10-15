@@ -303,7 +303,7 @@ Lưu ý thiết kế E3:
 - **Passcode:** lấy mẫu loại bỏ (rejection sampling) trên 27 bit, loại các giá trị cấm theo `PayloadContents::IsValidSetupPIN`.
 - **Discriminator:** 12 bit, tránh 3840.
 - **Salt:** 32 byte. **Số vòng PBKDF2:** 1000, bằng mức của mã test.
-- **Lúc sinh:** sinh lười, ở lần đầu SDK cần tới (khi cấu hình quảng bá BLE, `BLEManagerImpl.cpp:1071`), sau đó lưu và dùng lại.
+- **Lúc sinh:** ở lần khởi động đầu, `setup_code_preload()` (gọi ngay sau `esp_matter::start()`) cho task Matter (stack 8 KB) sinh mã rồi mới chạy tiếp. Cách này tránh để việc tính PBKDF2 và SPAKE2+ rơi vào task nhỏ (stack 4 KB của `id_diag`) trên bo đã ghép, nơi lúc khởi động không có cửa sổ ghép nào đọc mã. Sau đó mã được lưu và dùng lại.
 - **Vì sao lưu ở `fctry`:** giữ qua reboot, OTA, factory reset của Matter (chỉ xóa `nvs`) và nạp file merged (chỉ ghi tới 0x1D47D0). Chỉ `erase-flash` mới làm mã đổi; khi đó bo in mã mới ra log.
 - **Tên BLE:** tự thành `<prefix><discriminator>` (P1 `Presence-`, P2 `Occupancy-`, P3/P4 `MATTER-` mặc định của SDK), mỗi bo một tên.
 
