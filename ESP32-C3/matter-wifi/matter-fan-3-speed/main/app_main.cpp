@@ -18,6 +18,7 @@
 #include <fan_matter.h>
 #include <ir_rx.h>
 #include <status_led.h>
+#include <wifi_power.h>
 
 static const char *TAG = "app_main";
 
@@ -127,6 +128,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "Interface IP Address changed");
+        wifi_power_update();
         break;
 
     case chip::DeviceLayer::DeviceEventType::kWiFiConnectivityChange:
@@ -181,6 +183,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kBLEDeinitialized:
         ESP_LOGI(TAG, "BLE deinitialized and memory reclaimed");
+        wifi_power_update(); /* Bluetooth off: Wi-Fi no longer needs modem sleep */
         break;
 
     default:

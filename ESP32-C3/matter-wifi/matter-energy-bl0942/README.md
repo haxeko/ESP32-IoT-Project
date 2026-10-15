@@ -67,6 +67,8 @@ Cách hiệu chỉnh: cắm tải thuần trở đã biết (bóng sợi đốt 
 - `RELAY_GPIO` (mặc định 5)
 - `RELAY_ACTIVE_LEVEL` (1 = active-high, 0 = active-low; module relay opto rẻ tiền thường là active-low)
 
+`idf.py menuconfig` → **Wi-Fi Power Save** → `WIFI_NO_POWER_SAVE` (mặc định bật): ổ cắm là thiết bị cắm điện nên sau khi ghép nối xong (Bluetooth đã tắt), firmware tắt chế độ tiết kiệm điện Wi-Fi (modem sleep, mặc định của ESP-IDF): sóng Wi-Fi luôn bật, nhận lệnh và gói mDNS từ ứng dụng ngay thay vì chờ beacon tiếp theo của router. Tốn thêm khoảng vài chục mA. Trong lúc ghép nối qua Bluetooth vẫn giữ modem sleep, vì ESP-IDF bắt buộc khi Wi-Fi và Bluetooth dùng chung bộ thu phát. Log khi đã tắt: `Wi-Fi power save off (mains powered)`.
+
 Hoặc sửa trực tiếp `sdkconfig.defaults.esp32c3` rồi xoá `sdkconfig` để áp dụng lại.
 
 ## Build
@@ -130,7 +132,8 @@ main/app_main.cpp          tạo node + endpoint On/Off Plug-in Unit
 main/app_driver.cpp        điều khiển GPIO relay + nút
 main/bl0942.c              driver BL0942 (UART, checksum, CF_CNT -> điện năng)
 main/power_meter.cpp       Electrical Sensor: đưa công suất / áp / dòng / điện năng lên Matter
-main/Kconfig.projbuild     tuỳ chọn relay, UART, hiệu chuẩn BL0942
+main/wifi_power.cpp        tắt tiết kiệm điện Wi-Fi sau khi ghép nối (thiết bị cắm điện)
+main/Kconfig.projbuild     tuỳ chọn relay, UART, hiệu chuẩn BL0942, tiết kiệm điện Wi-Fi
 ```
 
 ## Sơ đồ đấu nối

@@ -76,6 +76,10 @@ docker run --rm -v "$PWD":/project -w /project espressif/esp-matter:release-v1.6
   bash -c '. $IDF_PATH/export.sh && . $ESP_MATTER_PATH/export.sh && cd /project && idf.py set-target esp32c3 && idf.py build'
 ```
 
+### Wi-Fi luôn bật
+
+`idf.py menuconfig` → **Wi-Fi Power Save** → `WIFI_NO_POWER_SAVE` (mặc định bật): đèn là thiết bị cắm điện nên sau khi ghép nối xong (Bluetooth đã tắt), firmware tắt chế độ tiết kiệm điện Wi-Fi (modem sleep, mặc định của ESP-IDF): sóng Wi-Fi luôn bật, nhận lệnh và gói mDNS từ ứng dụng ngay thay vì chờ beacon tiếp theo của router. Tốn thêm khoảng vài chục mA. Trong lúc ghép nối qua Bluetooth vẫn giữ modem sleep, vì ESP-IDF bắt buộc khi Wi-Fi và Bluetooth dùng chung bộ thu phát. Log khi đã tắt: `Wi-Fi power save off (mains powered)`.
+
 ### File firmware
 
 Mỗi lần `idf.py build` tạo thêm 2 file trong `build/`, tên có **hậu tố là phiên bản firmware**:
@@ -143,5 +147,6 @@ Khi xóa thiết bị khỏi tất cả ứng dụng, thiết bị tự mở l�
 | `main/device_info.cpp` | Manufacturer / Model / tên / số serial (Basic Information) |
 | `main/app_driver.cpp` | Nhận thay đổi OnOff / LevelControl / ColorControl từ Matter, Identify, nút BOOT |
 | `main/led_bar.c` | Điều khiển WS2812 qua RMT (`espressif/led_strip`): số LED sáng theo độ sáng, cường độ cố định 30 %, nháy Identify; chỉ gửi dữ liệu ra LED khi hình ảnh thay đổi |
+| `main/wifi_power.cpp` | Tắt tiết kiệm điện Wi-Fi sau khi ghép nối (thiết bị cắm điện) |
 | `main/color_convert.c` | Đổi Hue/Saturation, XY, nhiệt độ màu sang RGB |
-| `main/Kconfig.projbuild` | Tùy chọn: Manufacturer/Model, GPIO, số LED, mức 30 %, chiều sáng, chân nút |
+| `main/Kconfig.projbuild` | Tùy chọn: Manufacturer/Model, GPIO, số LED, mức 30 %, chiều sáng, chân nút, tiết kiệm điện Wi-Fi |

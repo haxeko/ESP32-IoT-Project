@@ -255,6 +255,7 @@ chip-tool fancontrol read percent-current 0x7283 1
 | | `DEVICE_DISPLAY_NAME` | Smart Fan | tên mặc định khi thêm vào ứng dụng, tên quảng bá trước khi ghép nối |
 | | `DEVICE_HARDWARE_VERSION_STRING` | ESP32-C3 SuperMini | phiên bản phần cứng |
 | | `DEVICE_SERIAL_NUMBER_SOURCE` | MAC gốc | số sê-ri lấy từ eFuse của chip: MAC gốc (12 số hex) / ID duy nhất 128 bit (32 số hex), xem [Số sê-ri](#số-sê-ri) |
+| Wi-Fi Power Save | `WIFI_NO_POWER_SAVE` | y | quạt cắm điện: sau khi ghép nối xong, tắt tiết kiệm điện Wi-Fi, xem [Wi-Fi luôn bật](#wi-fi-luôn-bật) |
 
 Hoặc sửa `sdkconfig.defaults` rồi xoá `sdkconfig` để áp dụng lại. ESP32-C3-DevKitM-1: chọn `STATUS_LED_TYPE_WS2812`.
 
@@ -335,6 +336,10 @@ chip-tool fancontrol write fan-mode 2 0x7283 1     # Medium = số 2
 chip-tool basicinformation read serial-number 0x7283 0
 ```
 
+### Wi-Fi luôn bật
+
+Quạt là thiết bị cắm điện nên sau khi ghép nối xong (Bluetooth đã tắt), firmware tắt chế độ tiết kiệm điện Wi-Fi (modem sleep, mặc định của ESP-IDF): sóng Wi-Fi luôn bật, nhận lệnh và gói mDNS từ ứng dụng ngay thay vì chờ beacon tiếp theo của router. Tốn thêm khoảng vài chục mA. Trong lúc ghép nối qua Bluetooth vẫn giữ modem sleep, vì ESP-IDF bắt buộc khi Wi-Fi và Bluetooth dùng chung bộ thu phát. Log khi đã tắt: `Wi-Fi power save off (mains powered)`. Muốn giữ mặc định của ESP-IDF thì tắt `WIFI_NO_POWER_SAVE` (menuconfig → Wi-Fi Power Save).
+
 ### Số sê-ri
 
 Số sê-ri (`SerialNumber`, Apple Home: phụ kiện → cài đặt → **Số sê-ri**) được đọc thẳng từ **eFuse của chip** mỗi lần khởi động: mỗi chip một số, không đổi khi cập nhật OTA, xoá flash hay factory reset.
@@ -384,7 +389,8 @@ main/ir_table.c            bảng nút remote đã học -> lệnh quạt, đị
 main/buttons.cpp           nút BOOT (1/2/3 lần, giữ 5 s), nút số / đảo gió / gió tự nhiên ngoài
 main/status_led.cpp        LED trạng thái (GPIO hoặc WS2812)
 main/device_info.cpp       nhà sản xuất, kiểu máy, tên, phần cứng, số sê-ri (eFuse của chip)
+main/wifi_power.cpp        tắt tiết kiệm điện Wi-Fi sau khi ghép nối (thiết bị cắm điện)
 main/chip_project_config.h tên và loại thiết bị khi quảng bá trước ghép nối (DNS-SD)
-main/Kconfig.projbuild     menu Fan Relays / Fan Behavior / IR Receiver / Buttons / Status LED / Device Information
+main/Kconfig.projbuild     menu Fan Relays / Fan Behavior / IR Receiver / Buttons / Status LED / Device Information / Wi-Fi Power Save
 test/host/                 test trên máy tính (run.sh)
 ```

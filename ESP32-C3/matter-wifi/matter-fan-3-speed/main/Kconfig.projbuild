@@ -263,3 +263,18 @@ menu "Device Information"
     endchoice
 
 endmenu
+
+menu "Wi-Fi Power Save"
+
+    config WIFI_NO_POWER_SAVE
+        bool "Mains powered: no Wi-Fi power save once commissioned"
+        default y
+        help
+            ESP-IDF starts Wi-Fi in modem sleep: the radio sleeps between the router's DTIM beacons, so
+            commands and mDNS queries from controllers wait for the next beacon. On mains power this is
+            not needed: once commissioning is over and Bluetooth is off, power save is turned off
+            (WIFI_PS_NONE) and the radio stays on, for a few tens of mA more. While Bluetooth runs
+            (BLE commissioning), Wi-Fi stays in modem sleep, which ESP-IDF requires when both share
+            the radio. n: keep the ESP-IDF default (modem sleep) all the time.
+
+endmenu
