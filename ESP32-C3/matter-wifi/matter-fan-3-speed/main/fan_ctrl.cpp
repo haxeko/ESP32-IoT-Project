@@ -1,6 +1,5 @@
 #include <fan_ctrl.h>
 
-#include <driver/gpio.h>
 #include <esp_attr.h>
 #include <esp_log.h>
 #include <esp_random.h>
@@ -9,76 +8,15 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
-#include <nvs.h>
 
+#include <fan_store.h>
+#include <relays.h>
 #include <status_led.h>
 
 static const char *TAG = "fan_ctrl";
 
-/* ---- Build-time pin checks ---- */
-
-#if CONFIG_STATUS_LED_TYPE_NONE
-#define STATUS_LED_PIN -1
-#else
-#define STATUS_LED_PIN CONFIG_STATUS_LED_GPIO
-#endif
-
-namespace {
-
-constexpr int k_used_pins[] = {
-    CONFIG_FAN_RELAY_SPEED1_GPIO, CONFIG_FAN_RELAY_SPEED2_GPIO, CONFIG_FAN_RELAY_SPEED3_GPIO,
-    CONFIG_FAN_RELAY_SWING_GPIO,  CONFIG_IR_RX_GPIO,            CONFIG_APP_BUTTON_GPIO,
-    CONFIG_BUTTON_SPEED_GPIO,     CONFIG_BUTTON_SWING_GPIO,     CONFIG_BUTTON_NATURAL_GPIO,
-    STATUS_LED_PIN,
-};
-
-constexpr bool pins_distinct()
-{
-    constexpr size_t n = sizeof(k_used_pins) / sizeof(k_used_pins[0]);
-    for (size_t i = 0; i < n; i++) {
-        for (size_t j = i + 1; j < n; j++) {
-            if (k_used_pins[i] >= 0 && k_used_pins[i] == k_used_pins[j]) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-/* ESP32-C3: GPIO11-17 belong to the SPI flash, GPIO18/19 to the USB port (flashing and logs) */
-constexpr bool pins_usable()
-{
-    for (int pin : k_used_pins) {
-        if (pin >= 11 && pin <= 19) {
-            return false;
-        }
-    }
-    return true;
-}
-
-/* GPIO20/21 are UART0 RX/TX: the log console (and the ROM boot messages on GPIO21) */
-constexpr bool pins_off_console()
-{
-#if CONFIG_ESP_CONSOLE_UART && CONFIG_ESP_CONSOLE_UART_NUM == 0
-    for (int pin : k_used_pins) {
-        if (pin == 20 || pin == 21) {
-            return false;
-        }
-    }
-#endif
-    return true;
-}
-
-} // namespace
-
-static_assert(pins_distinct(), "Two functions use the same GPIO: check menuconfig -> Fan Relays / IR Receiver / "
-                               "Buttons / Status LED");
-static_assert(pins_usable(), "GPIO11-17 (SPI flash) and GPIO18/19 (USB) cannot be used: check menuconfig -> Fan "
-                             "Relays / IR Receiver / Buttons / Status LED");
 static_assert(CONFIG_FAN_NATURAL_MAX_S >= CONFIG_FAN_NATURAL_MIN_S,
               "menuconfig -> Fan Behavior: the natural wind maximum hold time is shorter than the minimum");
-static_assert(pins_off_console(), "GPIO20/21 carry the UART0 log console: check menuconfig -> Fan Relays / IR "
-                                  "Receiver / Buttons / Status LED (or move the console to USB-Serial-JTAG)");
 
 /* ---- Fan state ---- */
 
@@ -86,29 +24,8 @@ namespace {
 
 struct Msg {
     fan_cmd_t cmd;
-    uint8_t src; /* fan_src_t */
+    fan_src_t src;
 };
-
-/* NVS record of the state. Same namespace as the learned IR codes. Version 1 had no natural byte. */
-struct StoredState {
-    uint8_t version;
-    uint8_t speed;
-    uint8_t last_speed;
-    uint8_t swing;
-    uint8_t natural;
-};
-constexpr uint8_t k_state_version = 2;
-constexpr size_t k_state_v1_size = 4;
-constexpr const char *k_nvs_namespace = "fan";
-constexpr const char *k_nvs_key_state = "state";
-
-const gpio_num_t k_speed_gpio[FAN_SPEED_COUNT] = {
-    (gpio_num_t)CONFIG_FAN_RELAY_SPEED1_GPIO,
-    (gpio_num_t)CONFIG_FAN_RELAY_SPEED2_GPIO,
-    (gpio_num_t)CONFIG_FAN_RELAY_SPEED3_GPIO,
-};
-constexpr gpio_num_t k_swing_gpio = (gpio_num_t)CONFIG_FAN_RELAY_SWING_GPIO;
-constexpr int64_t k_dead_time_us = CONFIG_FAN_RELAY_DEAD_TIME_MS * 1000LL;
 
 /* Store the state once it has not changed for this long (a few quick presses on the remote = one flash write).
  * esp_restart() (OTA, factory reset) stores a younger change at once, see fan_ctrl_shutdown(). */
@@ -120,12 +37,9 @@ constexpr uint64_t k_boot_ok_delay_us = 30 * 1000 * 1000ULL;
 constexpr uint32_t k_boot_pending_magic = 0x46414E31; /* "FAN1" */
 
 portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
-fan_state_t s_state;          /* written by the fan task (and fan_ctrl_init), guarded by s_lock */
-uint8_t s_drive_speed;        /* speed relay the fan task drives (natural wind varies it), guarded by s_lock */
-fan_state_t s_saved;          /* fan task only: last state written to NVS */
-uint8_t s_phys_speed;         /* fan task only: speed relay that is closed (0 = none) */
-bool s_phys_swing;            /* fan task only */
-int64_t s_speed_released_us;  /* fan task only: when a speed relay was last released */
+fan_state_t s_state;   /* written by the fan task (and fan_ctrl_init), guarded by s_lock */
+uint8_t s_drive_speed; /* speed relay the fan task drives (natural wind varies it), guarded by s_lock */
+fan_state_t s_saved;   /* fan task only: last state written to NVS */
 QueueHandle_t s_queue;
 fan_listener_t s_listener;
 esp_timer_handle_t s_boot_ok_timer;
@@ -136,7 +50,7 @@ RTC_NOINIT_ATTR uint32_t s_boot_pending;
 
 } // namespace
 
-static const char *src_name(uint8_t src)
+static const char *src_name(fan_src_t src)
 {
     switch (src) {
     case FAN_SRC_MATTER:
@@ -152,131 +66,6 @@ static const char *src_name(uint8_t src)
     }
 }
 
-static int relay_level(bool closed)
-{
-    return closed ? CONFIG_FAN_RELAY_ACTIVE_LEVEL : !CONFIG_FAN_RELAY_ACTIVE_LEVEL;
-}
-
-/* Fan task only: wait until FAN_RELAY_DEAD_TIME_MS have passed since a speed relay was released. vTaskDelay(n) can
- * return after only n - 1 full ticks, so check the microsecond clock again. */
-static void wait_dead_time()
-{
-    constexpr int64_t tick_us = portTICK_PERIOD_MS * 1000;
-    for (;;) {
-        const int64_t left_us = s_speed_released_us + k_dead_time_us - esp_timer_get_time();
-        if (left_us <= 0) {
-            return;
-        }
-        vTaskDelay((TickType_t)((left_us + tick_us - 1) / tick_us));
-    }
-}
-
-/* Fan task only. Break before make: one speed relay at a time, and FAN_RELAY_DEAD_TIME_MS between releasing one
- * and closing another (also across a quick off -> on), so two motor taps are never on the mains together.
- * speed: the speed relay to close (natural wind: the speed of the moment, not st.speed). */
-static void relays_apply(const fan_state_t &st, uint8_t speed)
-{
-    const bool swing = fan_state_swing_running(&st);
-    const uint8_t old_speed = s_phys_speed;
-    const bool old_swing = s_phys_swing;
-
-    /* The oscillation relay opens before the fan is switched off and closes after it is switched on. A speed change
-     * does not interrupt it: the fan coasts for the dead time only. */
-    if (!swing && s_phys_swing) {
-        gpio_set_level(k_swing_gpio, relay_level(false));
-        s_phys_swing = false;
-    }
-    if (speed != s_phys_speed) {
-        if (s_phys_speed) {
-            gpio_set_level(k_speed_gpio[s_phys_speed - 1], relay_level(false));
-            s_speed_released_us = esp_timer_get_time();
-            s_phys_speed = 0;
-        }
-        if (speed) {
-            wait_dead_time();
-            gpio_set_level(k_speed_gpio[speed - 1], relay_level(true));
-            s_phys_speed = speed;
-        }
-    }
-    if (swing && !s_phys_swing) {
-        gpio_set_level(k_swing_gpio, relay_level(true));
-        s_phys_swing = true;
-    }
-    if (s_phys_speed != old_speed || s_phys_swing != old_swing) {
-        if (s_phys_speed) {
-            ESP_LOGI(TAG, "Relays: speed %u closed, oscillation %s", s_phys_speed, s_phys_swing ? "closed" : "open");
-        } else {
-            ESP_LOGI(TAG, "Relays: all speed relays open, oscillation %s", s_phys_swing ? "closed" : "open");
-        }
-    }
-}
-
-static void relays_init()
-{
-    uint64_t mask = 1ULL << k_swing_gpio;
-    for (gpio_num_t pin : k_speed_gpio) {
-        mask |= 1ULL << pin;
-    }
-    /* Latch the open level before enabling the outputs, so no relay clicks at boot */
-    for (gpio_num_t pin : k_speed_gpio) {
-        gpio_set_level(pin, relay_level(false));
-    }
-    gpio_set_level(k_swing_gpio, relay_level(false));
-    const gpio_config_t io = {
-        .pin_bit_mask = mask,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    ESP_ERROR_CHECK(gpio_config(&io));
-    /* After a software reset a speed relay may have been closed until just now */
-    s_speed_released_us = esp_timer_get_time();
-}
-
-static bool load_state(fan_state_t *st)
-{
-    nvs_handle_t handle;
-    if (nvs_open(k_nvs_namespace, NVS_READONLY, &handle) != ESP_OK) {
-        return false; /* nothing stored yet */
-    }
-    StoredState stored = {};
-    size_t len = sizeof(stored);
-    const esp_err_t err = nvs_get_blob(handle, k_nvs_key_state, &stored, &len);
-    nvs_close(handle);
-    if (err != ESP_OK) {
-        return false;
-    }
-    const bool v1 = stored.version == 1 && len == k_state_v1_size; /* before natural wind: off */
-    if (!v1 && (stored.version != k_state_version || len != sizeof(stored))) {
-        return false;
-    }
-    st->speed = stored.speed;
-    st->last_speed = stored.last_speed;
-    st->swing = stored.swing != 0;
-    st->natural = !v1 && stored.natural != 0;
-    fan_state_sanitize(st);
-    return true;
-}
-
-static esp_err_t write_record(const fan_state_t &st)
-{
-    const StoredState stored = {k_state_version, st.speed, st.last_speed, (uint8_t)st.swing, (uint8_t)st.natural};
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(k_nvs_namespace, NVS_READWRITE, &handle);
-    if (err == ESP_OK) {
-        err = nvs_set_blob(handle, k_nvs_key_state, &stored, sizeof(stored));
-        if (err == ESP_OK) {
-            err = nvs_commit(handle);
-        }
-        nvs_close(handle);
-    }
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to store the fan state: %s", esp_err_to_name(err));
-    }
-    return err;
-}
-
 /* Fan task only (and fan_ctrl_init before the task starts) */
 static void save_state(const fan_state_t &st)
 {
@@ -284,7 +73,7 @@ static void save_state(const fan_state_t &st)
         st.natural == s_saved.natural) {
         return;
     }
-    if (write_record(st) == ESP_OK) {
+    if (fan_store_write(&st) == ESP_OK) {
         s_saved = st;
     }
 }
@@ -342,7 +131,7 @@ static void natural_step(uint8_t setting)
     s_natural.active = true;
     s_natural.since = xTaskGetTickCount();
     s_natural.hold = pdMS_TO_TICKS(hold_ms);
-    ESP_LOGI(TAG, "Natural wind: speed %u for %lu s", s_natural.speed, (unsigned long)(hold_ms / 1000));
+    ESP_LOGD(TAG, "Natural wind: speed %u for %lu s", s_natural.speed, (unsigned long)(hold_ms / 1000));
 }
 
 static TickType_t ticks_left(TickType_t since, TickType_t delay)
@@ -373,7 +162,7 @@ static uint8_t drive_speed(const fan_state_t &st)
 static void drive(const fan_state_t &st)
 {
     const uint8_t speed = drive_speed(st);
-    relays_apply(st, speed);
+    relays_apply(speed, fan_state_swing_running(&st));
     taskENTER_CRITICAL(&s_lock);
     s_drive_speed = speed;
     taskEXIT_CRITICAL(&s_lock);
@@ -433,7 +222,7 @@ static void fan_task(void *)
             changed_tick = xTaskGetTickCount();
         }
         /* Also when unchanged: Matter writes the real state back over a setting the fan did not take */
-        notify(st, (fan_src_t)msg.src, changed);
+        notify(st, msg.src, changed);
     }
 }
 
@@ -448,7 +237,8 @@ static void boot_ok_cb(void *)
 static void fan_ctrl_shutdown()
 {
     s_boot_pending = 0;
-    write_record(fan_ctrl_get_state());
+    const fan_state_t st = fan_ctrl_get_state();
+    fan_store_write(&st);
 }
 
 static bool reset_may_be_crash(esp_reset_reason_t reason)
@@ -482,12 +272,15 @@ void fan_ctrl_init()
         .callback = boot_ok_cb,
         .name = "fan_boot_ok",
     };
-    if (esp_timer_create(&timer_args, &s_boot_ok_timer) == ESP_OK) {
-        esp_timer_start_once(s_boot_ok_timer, k_boot_ok_delay_us);
+    if (esp_timer_create(&timer_args, &s_boot_ok_timer) != ESP_OK ||
+        esp_timer_start_once(s_boot_ok_timer, k_boot_ok_delay_us) != ESP_OK) {
+        /* The start cannot be timed: never count a later reset as a crash loop */
+        s_boot_pending = 0;
+        ESP_LOGW(TAG, "Failed to start the boot timer");
     }
 
     fan_state_t st = {0, FAN_DEFAULT_SPEED, false, false};
-    const bool loaded = load_state(&st);
+    const bool loaded = fan_store_load(&st);
     s_saved = st;
     const char *why = loaded ? "restored" : "first start";
     if (crashed && st.speed) {
@@ -523,7 +316,7 @@ bool fan_ctrl_post(const fan_cmd_t *cmd, fan_src_t src)
     if (s_queue == NULL) {
         return false;
     }
-    const Msg msg = {*cmd, (uint8_t)src};
+    const Msg msg = {*cmd, src};
     if (xQueueSend(s_queue, &msg, 0) != pdTRUE) {
         ESP_LOGW(TAG, "Command queue full, %s command dropped", src_name(src));
         return false;

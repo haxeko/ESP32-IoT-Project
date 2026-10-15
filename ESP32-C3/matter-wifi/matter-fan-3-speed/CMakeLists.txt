@@ -51,7 +51,7 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 include(${ESP_MATTER_PATH}/examples/common/cmake_common/components_include.cmake)
 
 # Relays, IR receiver (RMT), buttons (espressif/button) and the status LED are driven directly from main/,
-# so esp-matter's device_hal and examples/common (app_reset) are not used: only examples/common/utils headers.
+# so esp-matter's device_hal and examples/common are not used.
 set(EXTRA_COMPONENT_DIRS
     "${MATTER_SDK_PATH}/config/esp32/components"
     "${ESP_MATTER_PATH}/components"

@@ -8,8 +8,6 @@
 
 #include <esp_matter.h>
 
-#include <common_macros.h>
-
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
 #include <platform/CHIPDeviceLayer.h>
@@ -322,17 +320,27 @@ extern "C" void app_main()
 
     node::config_t node_config;
     device_info_set_name(&node_config);
+    /* If Matter cannot start, the fan keeps running from the remote and the buttons: no abort, which would end in a
+     * reboot loop with the fan off (crash guard in fan_ctrl_init). */
     /* No attribute callback: Fan Control changes reach the fan through the cluster delegate (fan_matter.cpp) */
     node_t *node = node::create(&node_config, nullptr, app_identification_cb);
-    ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
+    if (node == nullptr) {
+        ESP_LOGE(TAG, "Failed to create the Matter node: running without Matter");
+        return;
+    }
     device_info_add_attributes(node);
 
     /* Fan device type: 3 speeds, oscillation (Rocking), natural wind (Wind), see fan_matter.h */
-    endpoint_t *endpoint = fan_matter_create(node);
-    ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create the fan endpoint"));
+    if (fan_matter_create(node) == nullptr) {
+        ESP_LOGE(TAG, "Failed to create the fan endpoint: running without Matter");
+        return;
+    }
 
-    esp_err_t err = esp_matter::start(app_event_cb);
-    ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
+    const esp_err_t err = esp_matter::start(app_event_cb);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start Matter (%s): running without Matter", esp_err_to_name(err));
+        return;
+    }
 
     /* Write the fan state into the Fan Control cluster, then follow controllers */
     fan_matter_start();

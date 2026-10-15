@@ -198,7 +198,7 @@ menu "Status LED"
         default 0
 
     config STATUS_LED_SHOW_RUNNING
-        bool "Keep the LED dimly on while the fan runs"
+        bool "Keep the LED on while the fan runs (WS2812: dim green)"
         depends on !STATUS_LED_TYPE_NONE
         default n
         help

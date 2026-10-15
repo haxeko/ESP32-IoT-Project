@@ -11,6 +11,9 @@ on:
       - '.github/workflows/matter-fan-3-speed.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   host-tests:
     runs-on: ubuntu-latest

@@ -195,7 +195,7 @@ I ir_rx: IR learning finished (double click): 3 of 8 remote buttons learned
 | Chớp xanh lá | nhận lệnh remote / học xong một nút |
 | Đỏ đứng | giữ nút đủ 5 s: thả ra để factory reset |
 | Nháy đỏ nhanh | đang factory reset |
-| Tắt | bình thường (để không chói khi ngủ). Muốn LED sáng mờ khi quạt chạy: `STATUS_LED_SHOW_RUNNING` |
+| Tắt | bình thường (để không chói khi ngủ). Muốn LED sáng khi quạt chạy (WS2812: xanh lá mờ, LED một màu: sáng hẳn): `STATUS_LED_SHOW_RUNNING` |
 
 SuperMini chỉ có LED một màu: các trạng thái trên chỉ khác nhau ở cách nháy. Mạch không có LED: chọn `STATUS_LED_TYPE_NONE` (khi đó Identify báo "không có đèn").
 
@@ -254,7 +254,7 @@ chip-tool fancontrol read percent-current 0x7283 1
 | Status LED | `STATUS_LED_TYPE` | GPIO | không có / LED một màu / WS2812 |
 | | `STATUS_LED_GPIO` | 8 | |
 | | `STATUS_LED_ACTIVE_LEVEL` | 0 | LED một màu: 0 = sáng ở mức thấp (SuperMini) |
-| | `STATUS_LED_SHOW_RUNNING` | n | LED sáng mờ khi quạt chạy |
+| | `STATUS_LED_SHOW_RUNNING` | n | LED sáng khi quạt chạy (WS2812: xanh lá mờ) |
 | Device Information | `DEVICE_VENDOR_NAME` | Haxeko | nhà sản xuất |
 | | `DEVICE_PRODUCT_NAME` | Smart Fan | kiểu máy |
 | | `DEVICE_DISPLAY_NAME` | Smart Fan | tên mặc định khi thêm vào ứng dụng, tên quảng bá trước khi ghép nối |
@@ -361,7 +361,9 @@ sdkconfig.defaults         Matter over Wi-Fi, BLE tối giản, OTA + rollback, 
 partitions.csv             4 MB, 2 phân vùng OTA
 main/app_main.cpp          khởi tạo, node Matter, sự kiện ghép nối/LED, Identify, xác nhận OTA, factory reset
 main/fan_matter.cpp        endpoint Fan, delegate Fan Control <-> task quạt (SpeedSetting, Rocking, Wind)
-main/fan_ctrl.cpp          task quạt: relay (ngắt trước - đóng sau, thời gian chết), gió tự nhiên, lưu/khôi phục trạng thái
+main/fan_ctrl.cpp          task quạt: hàng đợi lệnh, gió tự nhiên, lưu trạng thái sau 3 s, chống khởi động lỗi lặp lại
+main/relays.cpp            relay số và relay trục xoay (ngắt trước - đóng sau, thời gian chết), kiểm tra chân GPIO khi build
+main/fan_store.cpp         bản ghi trạng thái quạt trong NVS (phiên bản 2, đọc được phiên bản 1)
 main/fan_logic.c           máy trạng thái quạt (thuần C, có test)
 main/ir_rx.cpp             mắt thu hồng ngoại (RMT), học remote, lưu mã
 main/ir_decode.c           giải mã NEC, mã theo hình dạng khung, lọc lặp phím (thuần C, có test)
