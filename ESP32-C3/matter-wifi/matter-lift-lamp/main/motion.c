@@ -48,22 +48,28 @@ int MOTION_IRAM motion_tick(motion_t *m)
             m->dir = remaining > 0 ? 1 : -1;
             m->phase = 0;
         }
-    } else if (remaining == 0) {
-        /* On the target: braking left at most the last speed increment, stop here */
-        m->vel = 0;
-        m->phase = 0;
-        m->dir = 0;
-        return 0;
     }
 
-    /* Steps still available in the current direction (0 when the target is behind) */
+    /* Steps still available in the current direction (0 on the target, or when it is behind) */
     uint32_t left = 0;
-    if ((remaining > 0) == (m->dir > 0)) {
+    if (remaining != 0 && (remaining > 0) == (m->dir > 0)) {
         left = remaining > 0 ? (uint32_t)remaining : (uint32_t)(-(int64_t)remaining);
     }
 
-    /* Braking distance v^2 / 2a, compared without division: brake when vel^2 / 2^32 >= 2 * accel * left */
     uint64_t v2 = ((uint64_t)m->vel * m->vel) >> 32;
+    if (left == 0 && v2 < (uint64_t)4 * m->accel) {
+        /* On (or just past) the target and slow enough to stop within about 2 steps: stop here, and turn around on
+         * a later tick if the target is behind. A target set closer than the braking distance (or reached too fast)
+         * is passed while braking, then approached again: never an abrupt stop from speed. */
+        m->vel = 0;
+        m->phase = 0;
+        if (remaining == 0) {
+            m->dir = 0;
+        }
+        return 0;
+    }
+
+    /* Braking distance v^2 / 2a, compared without division: brake when vel^2 / 2^32 >= 2 * accel * left */
     if (left == 0 || v2 >= (uint64_t)2 * m->accel * left || m->vel > m->vmax) {
         m->vel = m->vel > m->accel ? m->vel - m->accel : 0;
     } else if (m->vel < m->vmax) {

@@ -39,10 +39,14 @@ static struct run run_until_idle(motion_t *m, long max_ticks, void (*hook)(motio
         uint32_t vel_before = m->vel;
         int s = motion_tick(m);
         uint32_t dv = m->vel > vel_before ? m->vel - vel_before : vel_before - m->vel;
-        if (m->vel == 0 && vel_before != 0 && m->pos == m->target) {
+        if (m->vel == 0 && vel_before != 0) {
+            /* A stop (on the target, or to turn around): only from the speed of the last couple of steps */
             double v = (double)vel_before / 4294967296.0 * TICK_HZ;
             if (v > r.arrive_speed) {
                 r.arrive_speed = v;
+            }
+            if ((((uint64_t)vel_before * vel_before) >> 32) >= (uint64_t)4 * m->accel) {
+                r.jerks++;
             }
         } else if (dv > m->accel) {
             r.jerks++;
@@ -176,6 +180,48 @@ static void ramp_targets(motion_t *m, long t)
     }
 }
 
+/* Cruising at full speed, the target is moved to just ahead (closer than the braking distance, 500 steps) */
+static void test_target_just_ahead(void)
+{
+    static const int ahead[] = {0, 1, 50, 200, 400, 499, 500, 600};
+    for (unsigned i = 0; i < sizeof(ahead) / sizeof(ahead[0]); i++) {
+        motion_t m = new_motion();
+        m.target = 30000;
+        for (int t = 0; t < 2 * TICK_HZ; t++) { /* 1 s of ramp, then cruising */
+            motion_tick(&m);
+        }
+        int32_t at = m.pos;
+        m.target = at + ahead[i];
+        struct run r = run_until_idle(&m, 10L * TICK_HZ, NULL);
+        long past = r.overshoot;
+        CHECK(r.ticks > 0 && m.pos == at + ahead[i]);
+        CHECK(r.jerks == 0 && r.arrive_speed < 200 && r.min_gap >= 2);
+        CHECK(past <= 520); /* never further than the braking distance */
+        if (r.jerks || r.arrive_speed >= 200 || m.pos != at + ahead[i]) {
+            printf("  target %d ahead at full speed: pos %ld, stop from %.0f steps/s, %ld jerk(s), %ld past\n",
+                   ahead[i], (long)(m.pos - at), r.arrive_speed, r.jerks, past);
+        }
+    }
+}
+
+/* Matter MoveToLevel with a transition while the lamp is opening: the target comes down by small steps */
+static void ramp_down_targets(motion_t *m, long t)
+{
+    if (t == 0) {
+        m->target = 30000;
+    } else if (t >= TICK_HZ * 3 / 2 && t % (TICK_HZ / 10) == 0 && t <= TICK_HZ * 7 / 2) {
+        int32_t step = (int32_t)((t - TICK_HZ * 3 / 2) / (TICK_HZ / 10)); /* 0..20 */
+        m->target = 27000 - step * 1200;
+    }
+}
+
+static void test_transition_down_while_opening(void)
+{
+    motion_t m = new_motion();
+    struct run r = run_until_idle(&m, 60L * TICK_HZ, ramp_down_targets);
+    CHECK(m.pos == 27000 - 20 * 1200 && r.jerks == 0 && r.arrive_speed < 200 && r.min_gap >= 2);
+}
+
 static void test_ramp(void)
 {
     motion_t m = new_motion();
@@ -231,6 +277,8 @@ int main(void)
     test_full_travel();
     test_short_moves();
     test_reverse_while_moving();
+    test_target_just_ahead();
+    test_transition_down_while_opening();
     test_extend_while_braking();
     test_ramp();
     test_halt();

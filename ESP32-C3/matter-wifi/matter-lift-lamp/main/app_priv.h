@@ -3,8 +3,11 @@
 #include <esp_err.h>
 #include <esp_matter.h>
 
-/** State applied at first boot (before anything is stored in NVS): light on, 100 % (all LEDs), white */
-#define DEFAULT_POWER      true
+/**
+ * State applied at first boot (before anything is stored in NVS): off (the lamp stays closed after homing, so a
+ * freshly flashed lamp never runs straight to full travel before it has been checked), 100 % when switched on, white
+ */
+#define DEFAULT_POWER      false
 #define DEFAULT_BRIGHTNESS 254
 
 /** Endpoint of the light (set in app_main() before the Matter stack starts, read-only afterwards). */

@@ -81,9 +81,12 @@ menu "Lift motor (step motor)"
         range -1 21
         default 7
         help
-            Turns the driver output off while the lamp is not homed, and at rest when
-            "Driver off at rest" is set. Put a 10 kOhm pull-up to 3.3 V on it so the
-            driver stays off while the ESP32-C3 boots.
+            Turns the driver output off while the lamp is not homed, after a fault, and
+            at rest when "Driver off at rest" is set. Put a 10 kOhm pull-up to 3.3 V on
+            it so the driver stays off while the ESP32-C3 boots.
+            With -1, wire the driver's EN pin to GND: TMC2209 modules pull EN up, so an
+            open EN keeps the driver off. The firmware then cannot let go of the motor
+            after a fault.
 
     config MOTOR_ENDSTOP_GPIO
         int "End stop GPIO"
@@ -98,7 +101,11 @@ menu "Lift motor (step motor)"
         default y
         help
             NC (recommended): the contact opens when pressed, so a broken wire reads as
-            "pressed" and homing stops with an error instead of driving into the base.
+            "pressed". At boot, homing then stops with an error instead of driving into
+            the base; later, a press read more than 3 mm above the closed position (or
+            not released when opening) stops the motor and homes again, which finds the
+            broken wire and turns the motor off. With NO, a broken wire is never seen as
+            pressed: homing pushes against the base for the whole search.
             Say n for a normally open (NO) contact.
 
     config MOTOR_DIR_INVERT
@@ -154,8 +161,9 @@ menu "Lift motor (step motor)"
         range 1 100
         default 8
         help
-            Speed towards the end stop at boot. The second, precise touch runs at a
-            quarter of it.
+            Speed towards the end stop at boot and for the last 10 mm of every closing.
+            The second, precise touch at boot runs at a quarter of it. Limited to 10000
+            steps/s like the speed.
 
     config MOTOR_IDLE_OFF_MS
         int "Driver off at rest after (ms, 0 = keep holding)"

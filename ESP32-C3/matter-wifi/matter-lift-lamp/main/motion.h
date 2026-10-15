@@ -13,9 +13,9 @@ extern "C" {
  *
  * Speed is in steps per tick as a Q32 fraction (2^32 = one step every tick); a phase accumulator turns it into
  * steps. The speed is capped at half the tick rate, so a step pulse always has one tick high and one tick low.
- * The target can change at any time, even while moving: the planner brakes in time to stop exactly on it, and
- * when the new target is behind, it brakes first and comes back (it never stops abruptly, except within the
- * last step).
+ * The target can change at any time, even while moving: the planner brakes in time to stop exactly on it. When
+ * the new target is behind, or ahead but closer than the braking distance, it brakes past it and comes back: it
+ * only ever stops from the speed of the last couple of steps (about sqrt(4 * accel)).
  */
 typedef struct {
     /* Limits (Q32 steps per tick, Q32 steps per tick per tick) */

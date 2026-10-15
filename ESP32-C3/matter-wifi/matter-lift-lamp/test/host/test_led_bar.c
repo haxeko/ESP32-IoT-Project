@@ -191,6 +191,72 @@ static void test_identify(void)
     CHECK(lit() == 0 && !IDENTIFY_TIMER->running);
 }
 
+/* Lift mode: the target callback (height) and the exposed LEDs */
+static int g_cb_calls;
+static bool g_cb_on;
+static uint8_t g_cb_level;
+static void target_cb(bool on, uint8_t level)
+{
+    g_cb_calls++;
+    g_cb_on = on;
+    g_cb_level = level;
+}
+
+static void test_lift_mode(void)
+{
+    led_bar_set_state(false, 127, 255, 255, 255);
+    led_bar_set_target_callback(target_cb);
+    CHECK(g_cb_calls == 1 && !g_cb_on && g_cb_level == 127); /* told once at registration */
+
+    /* On: the target follows, the LEDs show only what the lamp has exposed so far */
+    led_bar_set_exposed(0);
+    led_bar_set_power(true);
+    CHECK(g_cb_calls == 2 && g_cb_on && g_cb_level == 127);
+    CHECK(lit() == 0); /* still closed */
+    led_bar_set_exposed(4);
+    CHECK(lit() == 4);
+    led_bar_set_exposed(15);
+    CHECK(lit() == 15);
+    led_bar_set_exposed(99);
+    CHECK(lit() == 30); /* clamped */
+
+    /* The Matter On fade-in (level dropped to MinLevel, then back up) does not move the target */
+    led_bar_set_power(false);
+    CHECK(g_cb_calls == 3 && !g_cb_on && lit() == 0);
+    int calls = g_cb_calls;
+    led_bar_set_power(true);
+    led_bar_set_level(1);
+    for (int l = 2; l <= 127; l++) {
+        led_bar_set_level((uint8_t)l);
+    }
+    CHECK(g_cb_calls == calls + 1 && g_cb_on && g_cb_level == 127); /* only the "on" change, level kept at 127 */
+
+    /* A level change while on: one call per change, none when nothing changes */
+    led_bar_set_level(200);
+    CHECK(g_cb_level == 200);
+    calls = g_cb_calls;
+    led_bar_set_level(200);
+    led_bar_set_rgb(1, 2, 3);
+    CHECK(g_cb_calls == calls);
+
+    /* Identify blinks the exposed part, at least one LED */
+    led_bar_set_exposed(6);
+    led_bar_identify_start(1);
+    CHECK(lit() == 6);
+    fire(IDENTIFY_TIMER);
+    fire(IDENTIFY_TIMER);
+    led_bar_set_exposed(0);
+    led_bar_identify_start(1);
+    CHECK(lit() == 1);
+    led_bar_identify_stop();
+    CHECK(lit() == 0);
+
+    /* Back to a plain bar (no motor): the level decides again */
+    led_bar_follow_level();
+    CHECK(lit() == led_bar_count_for_level(200));
+    led_bar_set_target_callback(NULL);
+}
+
 #else
 static void test_init_failure(void)
 {
@@ -222,6 +288,7 @@ int main(void)
     test_intensity_color_and_refreshes();
     test_fade_in_hold();
     test_identify();
+    test_lift_mode();
 #endif
     return check_report();
 }
