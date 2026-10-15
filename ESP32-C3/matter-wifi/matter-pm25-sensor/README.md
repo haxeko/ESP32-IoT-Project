@@ -160,6 +160,12 @@ File update chỉ ghi vùng chọn phân vùng OTA và firmware, nên vẫn ch�
 |---|---|---|
 | Button GPIO | 7 | Chân nối nút factory reset (nút nối xuống GND). `-1` = không có nút |
 
+*Wi-Fi Power Save*:
+
+| Tùy chọn | Mặc định | Ý nghĩa |
+|---|---|---|
+| No Wi-Fi power save once commissioned (`WIFI_NO_POWER_SAVE`) | bật | Cảm biến là thiết bị cắm điện nên sau khi ghép nối xong (Bluetooth đã tắt), firmware tắt chế độ tiết kiệm điện Wi-Fi (modem sleep, mặc định của ESP-IDF): sóng Wi-Fi luôn bật, nhận lệnh và gói mDNS từ ứng dụng ngay thay vì chờ beacon tiếp theo của router. Tốn thêm khoảng vài chục mA. Trong lúc ghép nối qua Bluetooth vẫn giữ modem sleep, vì ESP-IDF bắt buộc khi Wi-Fi và Bluetooth dùng chung bộ thu phát. Log khi đã tắt: `Wi-Fi power save off (mains powered)`. |
+
 ### Thông tin thiết bị và phiên bản firmware
 
 Ứng dụng nhà thông minh hiển thị các thông tin sau:
@@ -263,6 +269,7 @@ matter-pm25-sensor/
 │   ├── chip_project_config.h # Tên/loại thiết bị khi dò tìm ghép nối
 │   ├── app_main.cpp          # Matter node, endpoint Air Quality Sensor, factory reset
 │   ├── device_info.cpp       # Manufacturer / Model / Hardware (Basic Information)
+│   ├── wifi_power.cpp        # Tắt tiết kiệm điện Wi-Fi sau khi ghép nối (thiết bị cắm điện)
 │   ├── local_ui.cpp          # Logic màn hình / LED / radar chạy tại chỗ
 │   ├── Kconfig.projbuild     # Cấu hình chân và tham số
 │   ├── idf_component.yml

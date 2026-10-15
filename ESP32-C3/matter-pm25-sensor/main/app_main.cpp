@@ -33,6 +33,7 @@
 #include <drivers/button.h>
 #include <drivers/pm_sensor.h>
 #include <local_ui.h>
+#include <wifi_power.h>
 
 static const char *TAG = "app_main";
 
@@ -352,6 +353,10 @@ static void matter_status_timer_cb(void *arg)
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
     switch (event->Type) {
+    case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
+        wifi_power_update();
+        break;
+
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete");
         break;
@@ -367,6 +372,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kBLEDeinitialized:
         ESP_LOGI(TAG, "BLE deinitialized and memory reclaimed");
+        wifi_power_update(); /* Bluetooth off: Wi-Fi no longer needs modem sleep */
         break;
 
     default:
