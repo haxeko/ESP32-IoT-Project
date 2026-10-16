@@ -1,0 +1,9 @@
+# Applied after ESP32-H2/matter-presence-ld2410-learning/sdkconfig.defaults and
+# sdkconfig.defaults.esp32c3 (the ESP32-C3 settings: Wi-Fi, pins, product ID),
+# see ESP32-H2/matter-presence-ld2410-learning/presence.cmake.
+CONFIG_IDF_TARGET="esp32c3"
+
+# Files of the shared project, relative to this directory (CONFIG_PARTITION_TABLE_FILENAME
+# follows CONFIG_PARTITION_TABLE_CUSTOM_FILENAME)
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../ESP32-H2/matter-presence-ld2410-learning/partitions.csv"
+CONFIG_CHIP_PROJECT_CONFIG="../../ESP32-H2/matter-presence-ld2410-learning/main/chip_project_config.h"

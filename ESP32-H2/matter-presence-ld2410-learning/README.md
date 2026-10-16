@@ -6,6 +6,8 @@ Cảm biến hiện diện chuẩn **Matter over Thread** chạy trên **ESP32-H
 
 Radar LD2410 phát hiện được cả người đang ngồi yên (thở, cử động nhẹ), khác với cảm biến PIR chỉ thấy chuyển động.
 
+**Bản ESP32-C3 (Matter over Wi-Fi):** cùng mã nguồn này build được cho **ESP32-C3 SuperMini** + LD2410C (radar TX → GPIO3, RX ← GPIO4, LED xanh GPIO8), chạy Matter qua Wi-Fi vì ESP32-C3 không có radio Thread. Project riêng ở [`ESP32-C3/matter-wifi-presence`](../../ESP32-C3/matter-wifi-presence) (chỉ gồm `CMakeLists.txt` và `sdkconfig.defaults`, dùng thư mục `main` ở đây), hoặc `idf.py set-target esp32c3` ngay trong thư mục này. Bản ESP32-H2 không đổi: cùng cấu hình, chân, endpoint, VID/PID. Chi tiết, chân và khác biệt: README của bản C3.
+
 ## Từ Zigbee sang Matter
 
 | Zigbee (Occupancy Sensing 0x0406) | Matter (bản này) |
@@ -242,10 +244,11 @@ Yêu cầu: **ESP-IDF v6.0.2** + **esp-matter release/v1.6** (giống CI). Cách
 
 ```bash
 cd ESP32-H2/matter-presence-ld2410-learning
-docker run --rm -it -v $PWD/../..:/project -w /project/ESP32-H2/matter-presence-ld2410-learning \
-    espressif/esp-matter:release-v1.6.1_idf_v6.0.2 \
-    bash -c 'git config --global --add safe.directory "*" && idf.py set-target esp32h2 && idf.py build'
+docker run --rm -it -v $PWD/../..:/project espressif/esp-matter:release-v1.6.1_idf_v6.0.2 \
+    bash -c 'cd /project/ESP32-H2/matter-presence-ld2410-learning && git config --global --add safe.directory "*" && idf.py set-target esp32h2 && idf.py build'
 ```
+
+Image tự `cd` vào thư mục esp-matter khi khởi động (bỏ qua `-w`), nên lệnh phải `cd` vào thư mục project.
 
 Hoặc cài local:
 
@@ -256,6 +259,14 @@ idf.py set-target esp32h2
 idf.py menuconfig          # (tuỳ chọn)
 idf.py build
 idf.py -p /dev/ttyUSB0 erase-flash flash monitor
+```
+
+Cùng thư mục build được bản ESP32-C3 (Wi-Fi). Đổi chip bằng `set-target`; lệnh này đã tự `fullclean` và chuyển `sdkconfig` cũ thành `sdkconfig.old` (`fullclean` riêng là không bắt buộc):
+
+```bash
+idf.py set-target esp32h2 && idf.py build     # build/matter_presence_h2_learn.bin (Thread)
+idf.py fullclean
+idf.py set-target esp32c3 && idf.py build     # build/matter_presence_c3_wifi.bin (Wi-Fi)
 ```
 
 Mỗi lần push, GitHub Actions (`.github/workflows/matter-presence-h2-learn.yml`) build firmware và đính kèm file `matter_presence_h2_learn_merged.bin`, nạp một lần ở địa chỉ `0x0`:
@@ -290,8 +301,8 @@ Mỗi bản build có thêm file `matter_presence_h2_learn.ota` (trong Artifacts
 
 | Tuỳ chọn | Mặc định | Ý nghĩa |
 |---|---|---|
-| ESP32-H2 UART RX pin | 11 | Nối với TX của LD2410 |
-| ESP32-H2 UART TX pin | 12 | Nối với RX của LD2410 |
+| UART RX pin | 11 | Nối với TX của LD2410 |
+| UART TX pin | 12 | Nối với RX của LD2410 |
 | Only count targets closer than | 0 (tắt) | Bỏ qua mục tiêu xa hơn khoảng cách này (cm) |
 | Default hold time | 30 s | HoldTime lúc mới nạp / sau factory reset. Đổi trong app thì giá trị mới được lưu lại |
 | Report unoccupied when the radar sends nothing for | 10 s | Coi radar mất kết nối sau khoảng thời gian này |
@@ -300,7 +311,14 @@ Mỗi bản build có thêm file `matter_presence_h2_learn.ota` (trong Artifacts
 | WS2812 brightness | 20 | Độ sáng LED WS2812 (1–255) |
 | Button pin | 9 | Nút BOOT: bấm đúp = chế độ ghép nối, bấm 3 lần = học phòng trống, giữ 5 giây = reset. `-1` để tắt |
 
-Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc nếu chọn chân flash (GPIO15–GPIO21).
+Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc nếu chọn chân flash (GPIO15–GPIO21). Mặc định của bản ESP32-C3 khác (GPIO3/4, LED một màu): xem README bản C3.
+
+Lúc khởi động, log in chip, board và chân đang dùng:
+
+```
+I app_main: Target esp32h2, board ESP32-H2 SuperMini / DevKitM-1, Matter over Thread
+I app_main: Pins: LD2410 RX GPIO11 (radar TX), TX GPIO12 (radar RX), button GPIO9, LED GPIO8 (WS2812)
+```
 
 *Device Information*:
 
@@ -402,15 +420,18 @@ Phân tích đầy đủ, bảng định danh và bộ test nhiều thiết bị
 
 ```
 matter-presence-ld2410-learning/
-├── CMakeLists.txt              # project esp-matter, phiên bản firmware theo số commit
+├── CMakeLists.txt              # project esp-matter (tên theo chip)
+├── presence.cmake              # dùng chung với ESP32-C3/matter-wifi-presence: phiên bản firmware theo số commit, component
 ├── partitions.csv              # 4 MB, 2 phân vùng OTA
 ├── docs/wiring.png             # Sơ đồ đấu dây
-├── sdkconfig.defaults          # Matter/BLE, tắt các cluster không dùng
+├── sdkconfig.defaults          # Matter/BLE, tắt các cluster không dùng (chung hai chip)
 ├── sdkconfig.defaults.esp32h2  # OpenThread (FTD, SRP client), chân radar, LED
+├── sdkconfig.defaults.esp32c3  # Bản ESP32-C3: Wi-Fi, console USB, PID 0x8001, chân radar / LED
 ├── sdkconfig.defaults.unique_setup  # Mã ghép nối riêng từng bo (tùy chọn)
 ├── sdkconfig.defaults.factory       # Factory data riêng từng bo (tùy chọn)
 └── main/
-    ├── app_main.cpp            # Matter node, endpoint Occupancy Sensor, OpenThread
+    ├── app_main.cpp            # Matter node, endpoint Occupancy Sensor, OpenThread (H2) / Wi-Fi (C3)
+    ├── board.h                 # Chọn board_esp32h2.h / board_esp32c3.h theo chip: tên board, mạng, chân cấm
     ├── radar_control.cpp       # Mode Select "Learn empty room" / "Range" / "Radar resolution" / "Radar Bluetooth", task cấu hình radar, Bluetooth, học phòng trống (Home Assistant hoặc nút bấm)
     ├── radar_settings.cpp      # Danh sách lựa chọn, đọc/ghi thông số LD2410 (khởi động lại radar khi đổi độ phân giải, Bluetooth)
     ├── quiet_learn.cpp         # Học phòng trống: engineering mode, tính và ghi ngưỡng vào LD2410
@@ -418,7 +439,7 @@ matter-presence-ld2410-learning/
     ├── device_info.cpp         # Manufacturer / Model / Serial (Basic Information)
     ├── chip_project_config.h   # Tên thiết bị trong DNS-SD khi chưa ghép nối
     ├── thread_diag.cpp         # Log chẩn đoán Thread/SRP khi chưa ghép nối
-    ├── identity_diag.cpp       # Log danh tính / Thread / SRP / fabric / subscription (id_diag)
+    ├── identity_diag.cpp       # Log danh tính / Thread / SRP (H2) hoặc Wi-Fi (C3) / fabric / subscription (id_diag)
     ├── setup_code.cpp          # In mã QR; mã ghép nối riêng từng bo (unique_setup)
     ├── Kconfig.projbuild       # Cấu hình chân và tham số
     └── drivers/

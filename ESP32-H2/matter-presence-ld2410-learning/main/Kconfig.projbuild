@@ -36,6 +36,7 @@ menu "Device Information"
 
     config DEVICE_HARDWARE_VERSION_STRING
         string "Hardware (Basic Information HardwareVersionString)"
+        default "ESP32C3-LD2410" if IDF_TARGET_ESP32C3
         default "ESP32H2-LD2410"
         help
             Shown as Hardware by controllers. Max 64 characters.
@@ -45,17 +46,23 @@ endmenu
 menu "Presence Sensor Configuration"
 
     config LD2410_UART_RX_PIN
-        int "ESP32-H2 UART RX pin (connect to LD2410 TX)"
+        int "UART RX pin (connect to LD2410 TX)"
+        range 0 21 if IDF_TARGET_ESP32C3
         range 0 27
+        default 3 if IDF_TARGET_ESP32C3
         default 11
         help
-            Avoid the strapping pins (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25),
-            the flash pins (GPIO15-GPIO21) and the console UART pins
+            ESP32-H2: avoid the strapping pins (GPIO2, GPIO3, GPIO8, GPIO9,
+            GPIO25), the flash pins (GPIO15-GPIO21) and the console UART pins
             (GPIO23, GPIO24).
+            ESP32-C3: avoid the strapping pins (GPIO2, GPIO8, GPIO9), the
+            flash pins (GPIO11-GPIO17) and the USB pins (GPIO18, GPIO19).
 
     config LD2410_UART_TX_PIN
-        int "ESP32-H2 UART TX pin (connect to LD2410 RX)"
+        int "UART TX pin (connect to LD2410 RX)"
+        range 0 21 if IDF_TARGET_ESP32C3
         range 0 27
+        default 4 if IDF_TARGET_ESP32C3
         default 12
 
     config PRESENCE_MAX_DISTANCE_CM
@@ -84,6 +91,7 @@ menu "Presence Sensor Configuration"
 
     choice STATUS_LED_TYPE
         prompt "Status LED"
+        default STATUS_LED_TYPE_GPIO if IDF_TARGET_ESP32C3
         default STATUS_LED_TYPE_WS2812
         help
             Blinks blue while the device waits to be commissioned (pairing
@@ -91,13 +99,14 @@ menu "Presence Sensor Configuration"
             device to identify itself. Empty room learning: cyan while there
             is time to leave the room, slow cyan blink while recording, then
             green for 10 s once the new thresholds are saved, or red for 10 s
-            when the learning failed.
+            when the learning failed. A single-colour LED shows every colour
+            as on.
 
         config STATUS_LED_TYPE_WS2812
             bool "Addressable WS2812 RGB LED (ESP32-H2-DevKitM-1: GPIO8)"
 
         config STATUS_LED_TYPE_GPIO
-            bool "Single-colour LED on a GPIO"
+            bool "Single-colour LED on a GPIO (ESP32-C3 SuperMini: GPIO8)"
 
         config STATUS_LED_TYPE_NONE
             bool "None"
@@ -106,13 +115,17 @@ menu "Presence Sensor Configuration"
     config STATUS_LED_GPIO
         int "Status LED pin"
         depends on !STATUS_LED_TYPE_NONE
+        range 0 21 if IDF_TARGET_ESP32C3
         range 0 27
         default 8
 
     config STATUS_LED_ACTIVE_HIGH
         bool "Status LED is on when the pin is high"
         depends on STATUS_LED_TYPE_GPIO
+        default n if IDF_TARGET_ESP32C3
         default y
+        help
+            The blue LED of the ESP32-C3 SuperMini is on when GPIO8 is low.
 
     config STATUS_LED_BRIGHTNESS
         int "WS2812 brightness (1-255)"
@@ -122,16 +135,18 @@ menu "Presence Sensor Configuration"
 
     config RESET_BUTTON_GPIO
         int "Button pin (-1 = none)"
+        range -1 21 if IDF_TARGET_ESP32C3
         range -1 27
         default 9
         help
-            Active-low push button, GPIO9 is the BOOT button.
+            Active-low push button, GPIO9 is the BOOT button (ESP32-H2 and
+            ESP32-C3).
             Double click: pairing mode (opens the commissioning window for
             15 minutes, also to add the device to a second app).
             Triple click: empty room learning, as "Learning" in Home
             Assistant.
-            Hold 5 seconds: factory reset (erases the Thread network and the
-            Matter pairing).
+            Hold 5 seconds: factory reset (erases the Thread network or the
+            Wi-Fi credentials, and the Matter pairing).
 
 endmenu
 
@@ -166,6 +181,7 @@ menu "Empty Room Learning"
 endmenu
 
 menu "Thread Diagnostics"
+    depends on OPENTHREAD_ENABLED
 
     config THREAD_DIAG_LOG
         bool "Log Thread addresses and SRP state until commissioned"
@@ -181,18 +197,22 @@ endmenu
 menu "Identity Diagnostics and Setup Code"
 
     config IDENTITY_DIAG_PERIOD_SEC
-        int "Identity / Thread / Matter diagnostics period (seconds, 0 = off)"
+        int "Identity / network / Matter diagnostics period (seconds, 0 = off)"
         range 0 86400
         default 300
         help
-            Logs (tag "id_diag") at boot, at this period and on Thread, fabric and
-            session events: reset reason, factory MAC, IEEE EUI-64, serial number,
-            UniqueID, discriminator, Thread role, RLOC16, extended address, ML-EID,
-            partition ID, leader, network name, Ext PAN ID, channel, neighbours, MLE
-            counters, on-mesh prefixes, SRP server and registration state, Matter
-            fabrics (index, node ID, fabric ID, compressed fabric ID, controller
-            vendor), CASE sessions, subscriptions and NVS usage.
-            Never logs the setup passcode, private keys or the Thread network key.
+            Logs (tag "id_diag") at boot, at this period and on Thread or Wi-Fi,
+            fabric and session events: reset reason, factory MAC, serial number,
+            UniqueID, discriminator, Matter fabrics (index, node ID, fabric ID,
+            compressed fabric ID, controller vendor), CASE sessions, subscriptions
+            and NVS usage.
+            ESP32-H2: IEEE EUI-64, Thread role, RLOC16, extended address, ML-EID,
+            partition ID, leader, network name, Ext PAN ID, channel, neighbours,
+            MLE counters, on-mesh prefixes, SRP server and registration state.
+            ESP32-C3: Wi-Fi station MAC, SSID, BSSID, channel, RSSI, power save,
+            IPv4 address and IPv6 addresses per kind.
+            Never logs the setup passcode, private keys, the Thread network key
+            or the Wi-Fi password.
 
     config IDENTITY_DIAG_SUBSCRIPTION_LOG
         bool "Log every subscription request, establishment and termination"
