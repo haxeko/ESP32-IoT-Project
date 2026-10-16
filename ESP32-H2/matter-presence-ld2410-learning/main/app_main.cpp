@@ -19,8 +19,9 @@
 // clusters that Home Assistant shows as select entities and Apple Home
 // ignores: "Learn empty room" on the occupancy endpoint (records the radar's
 // background energy and raises the LD2410 thresholds above it, see
-// quiet_learn.cpp), "Duration" (no-one duration) and "Range" (farthest
-// detection gate) on endpoints of their own.
+// quiet_learn.cpp; also started by a triple click on the button), "Range"
+// (farthest detection gate), "Radar resolution" (gate length) and "Radar
+// Bluetooth" (off by default) on endpoints of their own.
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
@@ -46,8 +47,10 @@
 #include <drivers/ld2410.h>
 #include <drivers/status_led.h>
 #include <drivers/user_button.h>
+#include <identity_diag.h>
 #include <mem_monitor.h>
 #include <radar_control.h>
+#include <setup_code.h>
 #include <thread_diag.h>
 
 static const char *TAG = "app_main";
@@ -224,7 +227,8 @@ static bool is_commissioned()
 }
 
 // Runs on the Matter task. The LED blinks blue while the commissioning window
-// is open (waiting to be added to an app) and stays dark otherwise.
+// is open (waiting to be added to an app) and stays dark otherwise; an empty
+// room learning (radar_control.cpp) shows over this.
 static void update_led_mode()
 {
     const bool pairing = chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen();
@@ -251,6 +255,7 @@ static void open_commissioning_window(uint32_t timeout_sec)
     }
     ESP_LOGI(TAG, "Commissioning window open for %" PRIu32 " s (%s)", timeout_sec,
              s_ble_released ? "network only" : "BLE and network");
+    setup_code_print(s_ble_released);
 }
 
 static void open_commissioning_window_if_necessary()
@@ -263,12 +268,17 @@ static void open_commissioning_window_if_necessary()
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
+    identity_diag_on_event(event);
+
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kServerReady:
         apply_hold_time_config();
         // Already commissioned: no need for the periodic Thread diagnostics
         if (is_commissioned()) {
             thread_diag_stop();
+        } else {
+            // The SDK opened the boot commissioning window (BLE and network)
+            setup_code_print(false);
         }
         break;
 
@@ -343,7 +353,6 @@ static esp_err_t start_matter()
     device_info_init();
 
     node::config_t node_config;
-    device_info_set_name(&node_config);
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
     VerifyOrReturnError(node != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create Matter node"));
     device_info_add_attributes(node);
@@ -367,9 +376,16 @@ static esp_err_t start_matter()
     };
     set_openthread_platform_config(&ot_config);
 
+    // Per-board setup code (sdkconfig.defaults.unique_setup); nothing to do in the default build
+    setup_code_init();
+
     esp_err_t err = esp_matter::start(app_event_cb);
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
+    // First boot of a unique_setup build: generate the setup code on the Matter task (nothing in the default build)
+    setup_code_preload();
+    // Device name "Presence-B2C3": NodeLabel when none is stored yet, Bluetooth name
+    device_info_apply_name();
 
     if (radar_control && radar_control_start() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the radar configuration task");
@@ -377,6 +393,11 @@ static esp_err_t start_matter()
 
     /* Log Thread addresses / SRP state until commissioned (see README, troubleshooting) */
     thread_diag_start();
+
+    /* Identity / Thread / Matter state at boot, on events and every CONFIG_IDENTITY_DIAG_PERIOD_SEC */
+    if (identity_diag_start(CONFIG_IDENTITY_DIAG_PERIOD_SEC) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start the identity diagnostics");
+    }
 
 #if CONFIG_ENABLE_CHIP_SHELL
     esp_matter::console::diagnostics_register_commands();
@@ -392,13 +413,25 @@ static esp_err_t start_matter()
 
 // Double click: pairing mode. Not commissioned: the device can be added again
 // (e.g. after the boot window timed out). Commissioned: another app can add it
-// with the same setup code (Multi-Admin). Runs in the esp_timer task.
+// with the same setup code (Multi-Admin). Runs in the esp_timer task: the work is handed to the Matter
+// task instead of waiting here for the Matter stack lock, which would stall every esp_timer callback.
 static void pairing_button_cb()
 {
     VerifyOrReturn(s_matter_started, ESP_LOGW(TAG, "Matter is not running, cannot open pairing mode"));
-    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
-    open_commissioning_window(kPairingWindowSec);
-    update_led_mode();
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork([](intptr_t) {
+        open_commissioning_window(kPairingWindowSec);
+        update_led_mode();
+    });
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "Pairing mode ignored, Matter task busy: %" CHIP_ERROR_FORMAT, err.Format());
+    }
+}
+
+// Triple click: empty room learning, like "Learning" in Home Assistant. Runs in
+// the esp_timer task: the radar task does the work and the LED shows it.
+static void learning_button_cb()
+{
+    radar_control_request_learning();
 }
 
 // Long press: factory reset. Runs in the esp_timer task.
@@ -428,6 +461,7 @@ extern "C" void app_main()
     status_led_init();
     const user_button_config_t button_config = {
         .on_double_click = pairing_button_cb,
+        .on_triple_click = learning_button_cb,
         .on_long_press = factory_reset_cb,
         .long_press_ms = kFactoryResetHoldMs,
     };

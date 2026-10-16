@@ -142,12 +142,21 @@ Firmware dùng chứng chỉ test (DAC test) của esp-matter, mã ghép nối m
 
 Mở Apple Home / Google Home / SmartThings / Home Assistant → *Add Matter device* → quét QR hoặc nhập mã ở trên. Vì dùng chứng chỉ test, app sẽ cảnh báo "Uncertified accessory": chọn tiếp tục.
 
-Mọi mạch nạp firmware này đều dùng **chung mã ghép nối** trên: khi có nhiều mạch, ghép nối **từng mạch một** (các mạch khác chưa ghép thì để tắt nguồn).
+### Nhiều bo cùng firmware
+
+Bản build mặc định cho mọi bo **chung một mã ghép nối** (mã test của SDK ở trên). Mã này chỉ dùng lúc ghép nối, không ảnh hưởng các bo đã ghép, nhưng:
+
+- Ghép **từng bo một**: các bo chưa ghép khác để tắt nguồn, không bấm đúp hai bo cùng lúc. Nếu không, app có thể ghép nhầm bo (mọi bo quảng bá cùng tên BLE, cùng discriminator).
+- Sau khi ghép, kiểm tra đúng bo bằng **Identify** hoặc so **Serial** trong app với dòng `id_diag: dev serial=` trong log.
+- Thêm vào hệ thứ hai (Multi-Admin): ưu tiên chức năng chia sẻ của hệ đang quản lý (Apple Home: *Bật chế độ ghép nối*; HA: *Share device*), vì mã do app tạo ngẫu nhiên. Bấm đúp nút thì mở bằng mã chung.
+- chip-tool: mỗi bo một Node ID (`0x7283`, `0x7284`, ...). Hai bo cùng Node ID trong cùng fabric sẽ trùng tên dịch vụ `_matter._tcp`.
+- Muốn mỗi bo một mã riêng: xem mục **Mã ghép nối riêng cho từng bo**.
+- Khi bấm nút BOOT trên bo mà Apple Home vẫn cập nhật nhưng lệnh từ Apple không tới bo, thì lỗi nằm ở đường controller → thiết bị (Border Router, SRP, định tuyến), không phải danh tính bo. Xem mục **Log chẩn đoán danh tính**.
 
 Với chip-tool (lấy dataset từ Border Router, ví dụ `ot-ctl dataset active -x`):
 
 ```bash
-chip-tool pairing ble-thread 0x7283 hex:<ACTIVE_DATASET> 20202021 3840
+chip-tool pairing ble-thread 0x7283 hex:<ACTIVE_DATASET> 20202021 3840   # mỗi bo một Node ID
 chip-tool onoff toggle 0x7283 1
 chip-tool basicinformation read serial-number 0x7283 0
 ```
@@ -157,6 +166,35 @@ Sau khi bật nguồn, thiết bị quảng bá BLE nhanh trong 30 s rồi chuy�
 Thêm vào hệ thứ hai (ví dụ đã có Home Assistant, muốn thêm Apple Home): nhấn đúp BOOT, LED nháy xanh dương, rồi trong 15 phút quét mã QR gốc (hoặc nhập mã ghép nối gốc) ở hệ mới. Lúc này thiết bị chỉ quảng bá qua mạng Thread (BLE đã tắt sau lần ghép đầu), nên điện thoại/hub của hệ mới phải thấy được mạng Thread đó (cùng Border Router hoặc cùng mạng LAN với Border Router). Cũng có thể dùng chức năng chia sẻ của hệ đang quản lý (HA: *Share device*; Apple Home: *Bật chế độ ghép nối*) để lấy mã mới. Chuyển sang mạng Thread khác: giữ BOOT 5 s để factory reset trước.
 
 > Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại.
+
+## Mã ghép nối riêng cho từng bo
+
+| Bản build | Mã ghép nối | DAC (chứng thực) |
+|---|---|---|
+| Mặc định | mã test chung `20202021` / `3840` | DAC test của SDK (chung mọi bo) |
+| `sdkconfig.defaults.unique_setup` | mỗi bo tự sinh mã ngẫu nhiên lần đầu, lưu ở phân vùng `fctry` | DAC test của SDK (chung) |
+| `sdkconfig.defaults.factory` | nạp từ file factory riêng từng bo (`ESP32-H2/tools/matter-mfg`) | DAC riêng từng bo |
+
+```bash
+idf.py -B build-unique -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.unique \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.unique_setup" build
+idf.py -B build-unique -p /dev/ttyUSB0 flash monitor
+```
+
+Khi bo có thể được ghép (lần đầu khởi động, hoặc sau khi bấm đúp), log in mã của chính bo đó:
+
+```
+W setup_code: New per-board setup code generated and stored in fctry/setup-code, discriminator 2294
+I setup_code: Setup code of this board (BLE):
+I setup_code:   QR code: MT:Y.K90...
+I setup_code:   QR image: https://project-chip.github.io/connectedhomeip/qrcode.html?data=MT%3AY.K90...
+I setup_code:   Manual pairing code: 21137749112
+```
+
+- Mã giữ nguyên qua khởi động lại, OTA, factory reset và nạp file merged. Chỉ `erase-flash` mới làm bo sinh mã mới (và in lại).
+- Bo đã ghép vẫn giữ các hệ hiện có; mã mới chỉ dùng cho lần ghép sau.
+- Bản mặc định cũng in mã (mã test chung). Làm sản phẩm thật thì tắt `CONFIG_PRINT_ONBOARDING_CODES`, vì QR chứa passcode.
+- Factory data và chứng chỉ test: `ESP32-H2/tools/matter-mfg/README.md` và `ESP32-H2/docs/multi-device-audit.md` (mục G, H).
 
 ## Xử lý sự cố: điện thoại không tìm thấy thiết bị
 
@@ -182,12 +220,39 @@ I thread_diag: Role: router, RLOC16: 0x7c00
 I thread_diag: Address: fd61:c2f3:2668:ad22:0:ff:fe00:7c00  [mesh-local RLOC]
 I thread_diag: Address: fd12:3456:789a:1:abcd:...  [OMR (reachable from Wi-Fi/LAN)]
 I thread_diag: On-mesh prefix: fd12:3456:789a:1::/64 (border router RLOC16 0x2c00, SLAAC)
-I thread_diag: SRP host: 744DBDA1B2C3..., state: Registered
+I thread_diag: SRP host: 8E7D3F1A2B4C6D9E..., state: Registered
 I thread_diag: SRP service: 2AB1...-....._matter._tcp, state: Registered
 I thread_diag: Summary: OMR address YES, on-mesh prefixes 1, SRP host Registered, SRP service Registered
 ```
 
-Chỉ cần xem log, không phải gõ lệnh. `OMR address NO` hoặc SRP không `Registered` nghĩa là lỗi phía Border Router / mạng LAN.
+Chỉ cần xem log, không phải gõ lệnh. `OMR address NO` hoặc SRP không `Registered` nghĩa là lỗi phía Border Router / mạng LAN. Tên host SRP là Thread Extended Address của bo (16 ký tự hex, ngẫu nhiên, đổi sau factory reset), không phải số sê-ri.
+
+### Log chẩn đoán danh tính (`id_diag`)
+
+Firmware in một khối log lúc khởi động, sau đó 5 phút một lần (`CONFIG_IDENTITY_DIAG_PERIOD_SEC`, 0 = tắt), và in thêm khi có sự kiện Thread, fabric hoặc phiên. Log không bao giờ chứa passcode, khóa riêng hay network key.
+
+```
+I id_diag: hw   efuse_mac=744DBDA1B2C3 eui64=744DBDFFFEA1B2C3 reset=power-on up=300s heap=... min_heap=...
+I id_diag: dev  vid=0xFFF1 pid=0x8000 serial=... unique_id=... discriminator=3840 test_setup_code=yes
+I id_diag: mtr  commissioned=yes fabrics=2 window_open=no failsafe=no sessions: case=2 pase=0, subscriptions=3 reads=0
+I id_diag: fab  index=1 vendor=0x.... node_id=... fabric_id=... compressed_fabric_id=... case=1 subscriptions=2 label="..."
+I id_diag: ot   role=router rloc16=0x5400 ext_addr=8E7D3F1A2B4C6D9E eui64=... ml_eid=fd...
+I id_diag: ot   dataset=yes net="..." ext_panid=... panid=0x.... ch=15 partition=0x... leader_rid=...
+I id_diag: mle  roles: ... attach_attempts=1 partition_changes=0 better_partition=0 parent_changes=0
+I id_diag: br   on-mesh prefixes=1 (default route 1), OMR address=yes
+I id_diag: srp  server=[fd...]:53 host=8E7D3F1A2B4C6D9E state=Registered services=2/2 registered
+I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
+```
+
+Khi thêm bo thứ hai mà các bo chập chờn, so log giữa các bo:
+
+- `efuse_mac`, `serial`, `unique_id`, `ext_addr`, `ml_eid`, `srp host` phải **khác nhau**. Trùng nghĩa là bo bị chép nguyên NVS từ bo khác: factory reset hoặc `erase-flash` bo đó rồi ghép lại.
+- `ext_panid`, `partition` phải **giống nhau** giữa các bo và với Border Router. Khác nghĩa là các Border Router (Apple, HA, Aqara) không cùng một mạng Thread.
+- `srp state` phải là `Registered`. `server=` cho biết Border Router nào đang giữ bản ghi của bo.
+- `reset=` là `BROWNOUT`, `PANIC` hoặc `WATCHDOG` nghĩa là bo bị khởi động lại (nguồn yếu, lỗi firmware).
+- Có dòng `SUB request` mà không có `SUB established`, hoặc `SUB terminated` lặp lại: controller mất subscription.
+
+Phân tích đầy đủ, bảng định danh và bộ test nhiều thiết bị: `ESP32-H2/docs/multi-device-audit.md`.
 
 ### Gõ lệnh OpenThread CLI (chỉ bản build debug)
 
@@ -212,6 +277,8 @@ CMakeLists.txt             project esp-matter (esp32h2), phiên bản firmware t
 sdkconfig.defaults         cấu hình chung: Matter, BLE tối giản, OTA + rollback, tối ưu flash, cluster không dùng
 sdkconfig.defaults.esp32h2 OpenThread (FTD, SRP client), chỉ IPv6, relay GPIO4, LED trạng thái
 sdkconfig.defaults.debug   bật thêm CHIP shell + OpenThread CLI (bản build debug)
+sdkconfig.defaults.unique_setup  mã ghép nối riêng từng bo (tùy chọn)
+sdkconfig.defaults.factory       factory data riêng từng bo (tùy chọn)
 partitions.csv             4 MB, 2 phân vùng OTA
 dependencies.lock          phiên bản cố định của các managed component
 main/app_main.cpp          node + endpoint On/Off Plug-in Unit, Identify, sự kiện Matter, xác nhận OTA
@@ -219,7 +286,9 @@ main/app_driver.cpp        relay GPIO (giữ trạng thái qua reset mềm), nú
 main/app_priv.h            khai báo dùng chung của driver
 main/device_info.cpp       nhà sản xuất, kiểu máy, phần cứng, số sê-ri MAC (custom Device Instance Info provider)
 main/thread_diag.cpp       log chẩn đoán Thread/SRP khi chưa ghép nối
-main/Kconfig.projbuild     menu Relay Configuration / Thread Diagnostics / Device Identity
+main/identity_diag.cpp     log danh tính / Thread / SRP / fabric / subscription (id_diag)
+main/setup_code.cpp        in mã QR; mã ghép nối riêng từng bo (unique_setup)
+main/Kconfig.projbuild     menu Relay Configuration / Thread Diagnostics / Identity Diagnostics and Setup Code / Device Identity
 ```
 
 ## Sơ đồ đấu nối

@@ -11,6 +11,8 @@
 
 #include <app_priv.h>
 #include <device_info.h>
+#include <identity_diag.h>
+#include <setup_code.h>
 #include <thread_diag.h>
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <esp_openthread.h>
@@ -119,6 +121,8 @@ static void app_pairing_led_update()
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
+    identity_diag_on_event(event);
+
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "Interface IP Address changed");
@@ -152,6 +156,9 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
         /* Already commissioned: no need for the periodic Thread diagnostics */
         if (chip::Server::GetInstance().GetFabricTable().FabricCount() > 0) {
             thread_diag_stop();
+        } else {
+            /* The SDK opened the boot commissioning window (BLE and network) */
+            setup_code_print(false);
         }
         app_pairing_led_update();
         break;
@@ -269,7 +276,19 @@ extern "C" void app_main()
     app_driver_handle_t relay_handle = app_driver_relay_init();
     app_driver_button_init();
 
-    nvs_flash_init();
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        /* Matter cannot start on this NVS (full, or written by a newer ESP-IDF): erase it instead of aborting at
+         * every boot. Pairing and Thread network are lost, the device boots uncommissioned. */
+        ESP_LOGE(TAG, "NVS unusable (%s): erasing it, the device must be added again", esp_err_to_name(err));
+        err = nvs_flash_erase();
+        if (err == ESP_OK) {
+            err = nvs_flash_init();
+        }
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
+    }
 
 #if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
     ota_check_pending_verify();
@@ -314,11 +333,21 @@ extern "C" void app_main()
     set_openthread_platform_config(&config);
 #endif
 
+    /* Per-board setup code (sdkconfig.defaults.unique_setup); nothing to do in the default build */
+    setup_code_init();
+
     err = esp_matter::start(app_event_cb);
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
+    /* First boot of a unique_setup build: generate the setup code on the Matter task (nothing in the default build) */
+    setup_code_preload();
 
     /* Log Thread addresses / SRP state until commissioned (see README, troubleshooting) */
     thread_diag_start();
+
+    /* Identity / Thread / Matter state at boot, on events and every CONFIG_IDENTITY_DIAG_PERIOD_SEC */
+    if (identity_diag_start(CONFIG_IDENTITY_DIAG_PERIOD_SEC) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start the identity diagnostics");
+    }
 
     /* Apply the persisted OnOff (last state, via StartUpOnOff = null) to the relay */
     app_driver_relay_set_defaults(relay_endpoint_id);

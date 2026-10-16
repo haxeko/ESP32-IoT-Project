@@ -20,6 +20,8 @@
 // Accepted range of the farthest detection gate
 #define LD2410_MIN_MAX_GATE 2
 #define LD2410_MAX_MAX_GATE (LD2410_GATE_COUNT - 1)
+// Bluetooth of the LD2410B/C (HLKRadarTool app)
+#define LD2410_MAC_LEN 6
 
 // Latest target report from the HLK-LD2410 24 GHz presence radar.
 typedef struct {
@@ -86,6 +88,13 @@ esp_err_t ld2410_set_gate_length(uint16_t gate_cm);
 // Restarts the radar, which leaves the configuration mode; it answers
 // commands again about a second later.
 esp_err_t ld2410_restart(void);
+// Bluetooth of the LD2410B/C, read from its MAC address query: the radar
+// answers a placeholder address while its Bluetooth is off. mac (optional)
+// receives the address when *enabled. Radars without Bluetooth refuse the
+// query or do not answer it.
+esp_err_t ld2410_read_bluetooth(bool *enabled, uint8_t mac[LD2410_MAC_LEN]);
+// Stored in the radar's flash; takes effect after ld2410_restart().
+esp_err_t ld2410_set_bluetooth(bool enable);
 
 // Between start and stop, engineering frames update the per-gate maxima.
 void ld2410_capture_start(void);

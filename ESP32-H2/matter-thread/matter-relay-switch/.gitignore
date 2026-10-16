@@ -4,3 +4,7 @@ sdkconfig.old
 managed_components/
 sdkconfig.debug
 build-debug/
+sdkconfig.unique
+build-unique/
+sdkconfig.factory
+build-factory/

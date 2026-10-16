@@ -16,6 +16,7 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <nvs.h>
 #include <sdkconfig.h>
 #include <stdio.h>
 #include <string.h>
@@ -24,6 +25,7 @@
 #include <atomic>
 
 #include <drivers/ld2410.h>
+#include <drivers/status_led.h>
 #include <quiet_learn.h>
 #include <radar_control.h>
 #include <radar_settings.h>
@@ -45,16 +47,22 @@ static constexpr uint32_t kSyncRetryMaxMs = 5 * 60 * 1000;
 static constexpr uint8_t kLearnOff = 0;
 static constexpr uint8_t kLearnOn = 1;
 
-// Detection accuracy modes: the LD2410 resolution codes
+// Radar resolution modes: the LD2410 resolution codes
 static constexpr uint8_t kAccuracyCoarse = 0; // 0.75 m gates
 static constexpr uint8_t kAccuracyFine = 1;   // 0.2 m gates
 
+static constexpr uint8_t kBluetoothOff = 0;
+static constexpr uint8_t kBluetoothOn = 1;
+
 static constexpr size_t kRangeOptionCount = LD2410_MAX_MAX_GATE - LD2410_MIN_MAX_GATE + 1;
-// LD2410 factory no-one duration, shown until the radar has been read
-static constexpr uint16_t kFactoryDurationS = 5;
 
 static constexpr size_t kDistanceLabelLen = 12; // "5.25 m"
 static constexpr size_t kCustomLabelLen = 48;   // "Moving 5.25 m, still 5.25 m"
+static constexpr size_t kMacLabelLen = 18;      // "8F:27:2E:B8:0F:65"
+
+// Root, occupancy sensor, Range, Radar resolution and Radar Bluetooth
+static_assert(CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT >= 5,
+              "CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT must be at least 5 (see sdkconfig.defaults)");
 
 // ---------------------------------------------------------------------------
 // Mode options. The worker changes them with the Matter stack lock held (or
@@ -71,18 +79,17 @@ struct ModeList {
 
 static ModeOption s_learn_options[2];
 static ModeOption s_accuracy_options[2];
-static ModeOption s_duration_options[RADAR_DURATION_OPTION_COUNT + 1];
 static ModeOption s_range_options[kRangeOptionCount + 1];
 static char s_range_labels[kRangeOptionCount][kDistanceLabelLen];
-static char s_duration_custom_label[kCustomLabelLen];
 static char s_range_custom_label[kCustomLabelLen];
+// Off, On, then "Not available" (RADAR_MODE_CUSTOM) listed alone
+static ModeOption s_bluetooth_options[3];
 
 static ModeList s_learn = { chip::kInvalidEndpointId, s_learn_options, 2, 2, nullptr };
 static ModeList s_accuracy = { chip::kInvalidEndpointId, s_accuracy_options, 2, 2, nullptr };
-static ModeList s_duration = { chip::kInvalidEndpointId, s_duration_options, RADAR_DURATION_OPTION_COUNT,
-                               RADAR_DURATION_OPTION_COUNT, s_duration_custom_label };
 static ModeList s_range = { chip::kInvalidEndpointId, s_range_options, kRangeOptionCount, kRangeOptionCount,
                             s_range_custom_label };
+static ModeList s_bluetooth = { chip::kInvalidEndpointId, s_bluetooth_options, 2, 2, nullptr };
 
 static void set_option(ModeOption &option, const char *label, uint8_t mode)
 {
@@ -115,6 +122,19 @@ static bool set_accuracy_options(bool resolution_settable)
     const size_t count = resolution_settable ? 2 : 1;
     const bool changed = s_accuracy.count != count;
     s_accuracy.count = count;
+    return changed;
+}
+
+// Off and On, or only "Not available" when the radar does not answer the
+// Bluetooth query (LD2410 without Bluetooth). Returns true when the list
+// changed.
+static bool set_bluetooth_options(bool bluetooth_known)
+{
+    ModeOption *options = bluetooth_known ? &s_bluetooth_options[0] : &s_bluetooth_options[2];
+    const size_t count = bluetooth_known ? 2 : 1;
+    const bool changed = s_bluetooth.options != options || s_bluetooth.count != count;
+    s_bluetooth.options = options;
+    s_bluetooth.count = count;
     return changed;
 }
 
@@ -166,7 +186,7 @@ public:
 private:
     static const ModeList *find(chip::EndpointId endpointId)
     {
-        for (const ModeList *list : { &s_learn, &s_duration, &s_range, &s_accuracy }) {
+        for (const ModeList *list : { &s_learn, &s_range, &s_accuracy, &s_bluetooth }) {
             if (list->endpoint_id == endpointId) {
                 return list;
             }
@@ -180,15 +200,16 @@ static RadarModesManager s_modes;
 // ---------------------------------------------------------------------------
 // Requests from the Matter task to the worker
 
-// Empty room learning: requested by Home Assistant, run by the worker.
+// Empty room learning: requested by Home Assistant or the button, run by the
+// worker.
 enum LearnState : uint8_t { kLearnIdle, kLearnRequested, kLearnRunning, kLearnCancelling };
 static std::atomic<LearnState> s_learn_state{kLearnIdle};
 
-// Duration (seconds), Range (gate) and Detection accuracy (gate length) chosen
-// in Home Assistant, RADAR_KEEP once taken.
-static std::atomic<int32_t> s_want_duration_s{RADAR_KEEP};
+// Range (gate), Radar resolution (gate length) and Radar Bluetooth (off / on)
+// chosen in Home Assistant, RADAR_KEEP once taken.
 static std::atomic<int32_t> s_want_gate{RADAR_KEEP};
 static std::atomic<int32_t> s_want_gate_cm{RADAR_KEEP};
+static std::atomic<int32_t> s_want_bluetooth{RADAR_KEEP};
 
 // Set by the worker once the radar settings have been read.
 static std::atomic<bool> s_synced{false};
@@ -207,6 +228,59 @@ static void request_learning(bool on)
             next = state == kLearnRequested ? kLearnIdle : state == kLearnRunning ? kLearnCancelling : state;
         }
     } while (next != state && !s_learn_state.compare_exchange_weak(state, next));
+}
+
+// ---------------------------------------------------------------------------
+// Bluetooth of the radar. Off until it is turned on from Home Assistant: the
+// choice is kept in NVS and the worker brings the radar back to it at boot
+// (the LD2410 leaves the factory with Bluetooth on). Every change is applied
+// by a restart of the radar. Its password is left as stored in the radar.
+
+static constexpr const char *kNvsNamespace = "ld2410";
+static constexpr const char *kNvsBtOnKey = "bt_on";
+
+// Worker only (and radar_control_start() before the worker runs)
+static bool s_bt_wanted; // chosen in Home Assistant, off until then
+// The last Bluetooth on/off change did not work: not tried again before the
+// next boot or the next change from Home Assistant, so a radar that does not
+// follow is not restarted over and over.
+static bool s_bt_change_failed;
+
+static void load_bt_state()
+{
+    nvs_handle_t nvs;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &nvs) != ESP_OK) {
+        return; // nothing stored yet: Bluetooth off
+    }
+    uint8_t on = 0;
+    size_t len = sizeof(on);
+    s_bt_wanted = nvs_get_blob(nvs, kNvsBtOnKey, &on, &len) == ESP_OK && len == sizeof(on) && on != 0;
+    nvs_close(nvs);
+}
+
+static void store_nvs(const char *key, const void *data, size_t len)
+{
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(nvs, key, data, len);
+        if (err == ESP_OK) {
+            err = nvs_commit(nvs);
+        }
+        nvs_close(nvs);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Could not save %s in NVS, err:%d", key, err);
+    }
+}
+
+static void set_bt_wanted(bool on)
+{
+    if (on != s_bt_wanted) {
+        s_bt_wanted = on;
+        const uint8_t value = on ? 1 : 0;
+        store_nvs(kNvsBtOnKey, &value, sizeof(value));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -236,16 +310,20 @@ static bool is_range_option(const ld2410_config_t &cfg)
            cfg.max_moving_gate <= LD2410_MAX_MAX_GATE;
 }
 
-// Shows the radar settings in the Duration, Range and Detection accuracy selects.
+static uint8_t bluetooth_mode(const radar_settings_t &settings)
+{
+    if (!settings.bluetooth_known) {
+        return RADAR_MODE_CUSTOM;
+    }
+    return settings.bluetooth_on ? kBluetoothOn : kBluetoothOff;
+}
+
+// Shows the radar settings in the Range, Radar resolution and Radar Bluetooth
+// selects.
 static void publish(const radar_settings_t &settings)
 {
     const ld2410_config_t &cfg = settings.config;
     const uint16_t gate_cm = settings.gate_cm;
-    const int duration_option = radar_duration_option(cfg.no_one_duration_s);
-    char duration_label[kCustomLabelLen] = "";
-    if (duration_option < 0) {
-        radar_format_duration(cfg.no_one_duration_s, duration_label, sizeof(duration_label));
-    }
     const bool range_option = is_range_option(cfg);
     char range_label[kCustomLabelLen] = "";
     if (!range_option) {
@@ -258,9 +336,6 @@ static void publish(const radar_settings_t &settings)
 
     {
         esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
-        if (set_custom_option(s_duration, duration_option < 0 ? duration_label : nullptr)) {
-            report_supported_modes(s_duration.endpoint_id);
-        }
         const bool labels_changed = set_range_labels(gate_cm);
         if (set_custom_option(s_range, range_option ? nullptr : range_label) || labels_changed) {
             report_supported_modes(s_range.endpoint_id);
@@ -268,11 +343,16 @@ static void publish(const radar_settings_t &settings)
         if (set_accuracy_options(settings.resolution_settable)) {
             report_supported_modes(s_accuracy.endpoint_id);
         }
+        if (set_bluetooth_options(settings.bluetooth_known) && s_bluetooth.endpoint_id != chip::kInvalidEndpointId) {
+            report_supported_modes(s_bluetooth.endpoint_id);
+        }
     }
     // report() takes the stack lock itself
-    report_current_mode(s_duration.endpoint_id, duration_option >= 0 ? duration_option : RADAR_MODE_CUSTOM);
     report_current_mode(s_range.endpoint_id, range_option ? cfg.max_moving_gate : RADAR_MODE_CUSTOM);
     report_current_mode(s_accuracy.endpoint_id, gate_cm == LD2410_FINE_GATE_CM ? kAccuracyFine : kAccuracyCoarse);
+    if (s_bluetooth.endpoint_id != chip::kInvalidEndpointId) {
+        report_current_mode(s_bluetooth.endpoint_id, bluetooth_mode(settings));
+    }
 }
 
 static void log_settings(const char *what, const radar_settings_t &settings)
@@ -284,15 +364,22 @@ static void log_settings(const char *what, const radar_settings_t &settings)
     radar_format_duration(cfg.no_one_duration_s, duration, sizeof(duration));
     radar_format_distance((uint32_t)cfg.max_moving_gate * settings.gate_cm, moving, sizeof(moving));
     radar_format_distance((uint32_t)cfg.max_still_gate * settings.gate_cm, still, sizeof(still));
-    ESP_LOGI(TAG, "%s: no-one duration %s, range moving %s (gate %u), still %s (gate %u), %u cm per gate%s", what,
-             duration, moving, cfg.max_moving_gate, still, cfg.max_still_gate, settings.gate_cm,
-             settings.resolution_settable ? "" : " (fixed)");
+    char mac[kMacLabelLen];
+    radar_format_mac(settings.bt_mac, mac, sizeof(mac));
+    ESP_LOGI(TAG, "%s: no-one duration %s, range moving %s (gate %u), still %s (gate %u), %u cm per gate%s, "
+                  "Bluetooth %s%s", what, duration, moving, cfg.max_moving_gate, still, cfg.max_still_gate,
+             settings.gate_cm, settings.resolution_settable ? "" : " (fixed)",
+             !settings.bluetooth_known ? "not available" : settings.bluetooth_on ? "on, MAC " : "off",
+             settings.bluetooth_known && settings.bluetooth_on ? mac : "");
 }
 
 static bool is_change(const radar_settings_request_t &want)
 {
-    return want.duration_s != RADAR_KEEP || want.gate != RADAR_KEEP || want.gate_cm != RADAR_KEEP;
+    return want.duration_s != RADAR_KEEP || want.gate != RADAR_KEEP || want.gate_cm != RADAR_KEEP ||
+           want.bluetooth != RADAR_KEEP;
 }
+
+static esp_err_t s_session_err; // result of the last session
 
 // Reads the radar settings, applies the requested ones and shows the result
 // in Home Assistant. False when the radar did not answer as expected, so the
@@ -302,6 +389,7 @@ static bool settings_session(const radar_settings_request_t &want)
     const bool change = is_change(want);
     radar_settings_t now = {};
     const esp_err_t err = radar_settings_session(&want, &now);
+    s_session_err = err;
     if (err != ESP_OK) {
         if (change && s_synced) {
             ESP_LOGE(TAG, "Changing the radar settings failed, err:%d", err);
@@ -318,9 +406,34 @@ static bool settings_session(const radar_settings_request_t &want)
     return true;
 }
 
+// After a successful session: brings the radar's Bluetooth to the state
+// chosen in Home Assistant (off by default). False when the radar did not
+// answer as expected.
+static bool fix_bluetooth()
+{
+    if (!s_settings.bluetooth_known || s_bt_change_failed || s_settings.bluetooth_on == s_bt_wanted) {
+        return true;
+    }
+    ESP_LOGI(TAG, "Turning the LD2410 Bluetooth %s (%s)", s_bt_wanted ? "on" : "off",
+             s_bt_wanted ? "as chosen in Home Assistant" : "default, or as chosen in Home Assistant");
+    radar_settings_request_t fix = {};
+    fix.bluetooth = s_bt_wanted ? kBluetoothOn : kBluetoothOff;
+    const bool answered = settings_session(fix);
+    if (!answered || s_settings.bluetooth_on != s_bt_wanted) {
+        s_bt_change_failed = true;
+    }
+    return answered;
+}
+
 static bool learning_cancelled()
 {
     return s_learn_state.load() == kLearnCancelling;
+}
+
+static void show_learning_phase(quiet_learn_phase_t phase)
+{
+    status_led_set_learning(phase == QUIET_LEARN_RECORDING ? STATUS_LED_LEARNING_RECORDING
+                                                           : STATUS_LED_LEARNING_WAITING);
 }
 
 static void run_requested_learning()
@@ -329,9 +442,14 @@ static void run_requested_learning()
     if (!s_learn_state.compare_exchange_strong(state, kLearnRunning)) {
         return;
     }
-    // Normally shown already; covers a request made while the previous learning ended.
+    // Shown already when chosen in Home Assistant; covers the button and a
+    // request made while the previous learning ended.
     report_current_mode(s_learn.endpoint_id, kLearnOn);
-    quiet_learn_run(learning_cancelled);
+    const quiet_learn_result_t result = quiet_learn_run(learning_cancelled, show_learning_phase);
+    // Green or red for a while; back to normal at once when cancelled
+    status_led_set_learning(result == QUIET_LEARN_SAVED    ? STATUS_LED_LEARNING_DONE
+                            : result == QUIET_LEARN_FAILED ? STATUS_LED_LEARNING_FAILED
+                                                           : STATUS_LED_LEARNING_NONE);
     s_learn_state = kLearnIdle;
     report_current_mode(s_learn.endpoint_id, kLearnOff);
 }
@@ -342,20 +460,38 @@ static void radar_task(void *arg)
     uint32_t retry_ms = kSyncRetryFirstMs;
     while (true) {
         // Settings first: a session takes a few seconds at most, a learning minutes.
+        const int32_t bluetooth = s_want_bluetooth.exchange(RADAR_KEEP);
+        if (bluetooth != RADAR_KEEP) {
+            // Kept even if this session fails: applied again at the next boot.
+            set_bt_wanted(bluetooth == kBluetoothOn);
+            s_bt_change_failed = false;
+        }
         const radar_settings_request_t want = {
-            .duration_s = s_want_duration_s.exchange(RADAR_KEEP),
+            .duration_s = RADAR_KEEP,
             .gate = s_want_gate.exchange(RADAR_KEEP),
             .gate_cm = s_want_gate_cm.exchange(RADAR_KEEP),
+            .bluetooth = bluetooth,
         };
         if (stale || is_change(want)) {
             stale = !settings_session(want);
+            if (bluetooth != RADAR_KEEP && (stale || s_settings.bluetooth_on != (bluetooth == kBluetoothOn))) {
+                s_bt_change_failed = true; // not retried before the next boot or the next choice
+            }
+        }
+        if (!stale) {
+            stale = !fix_bluetooth();
         }
         run_requested_learning();
 
         TickType_t wait = portMAX_DELAY;
         if (stale) {
-            ESP_LOGW(TAG, "Could not read the LD2410 settings (check the wire from GPIO%d to the radar RX pin), "
-                          "next try in %" PRIu32 " s", CONFIG_LD2410_UART_TX_PIN, retry_ms / 1000);
+            if (s_session_err == ESP_ERR_TIMEOUT) {
+                ESP_LOGW(TAG, "Could not read the LD2410 settings (check the wire from GPIO%d to the radar RX pin), "
+                              "next try in %" PRIu32 " s", CONFIG_LD2410_UART_TX_PIN, retry_ms / 1000);
+            } else {
+                ESP_LOGW(TAG, "The LD2410 did not take the settings as expected (err:%d), read again in %" PRIu32 " s",
+                         s_session_err, retry_ms / 1000);
+            }
             wait = pdMS_TO_TICKS(retry_ms);
             retry_ms = std::min(retry_ms * 2, kSyncRetryMaxMs);
         } else {
@@ -392,12 +528,12 @@ esp_err_t radar_control_create(node_t *node, endpoint_t *occupancy_endpoint)
 {
     set_option(s_learn_options[0], "Off", kLearnOff);
     set_option(s_learn_options[1], "Learning", kLearnOn);
-    for (size_t i = 0; i < RADAR_DURATION_OPTION_COUNT; i++) {
-        set_option(s_duration_options[i], radar_duration_options[i].label, (uint8_t)i);
-    }
     set_range_labels(LD2410_DEFAULT_GATE_CM);
     set_option(s_accuracy_options[0], "0.75 m", kAccuracyCoarse);
     set_option(s_accuracy_options[1], "0.2 m", kAccuracyFine);
+    set_option(s_bluetooth_options[0], "Off", kBluetoothOff);
+    set_option(s_bluetooth_options[1], "On", kBluetoothOn);
+    set_option(s_bluetooth_options[2], "Not available", RADAR_MODE_CUSTOM);
 
     // CurrentMode is persisted, so a learning cut by a power loss would come
     // back as Learning: start from Off.
@@ -410,33 +546,59 @@ esp_err_t radar_control_create(node_t *node, endpoint_t *occupancy_endpoint)
     VerifyOrReturnError(err == ESP_OK || err == ESP_ERR_NOT_FINISHED, err); // NOT_FINISHED: already Off
     s_learn.endpoint_id = endpoint::get_id(occupancy_endpoint);
 
-    // Until the worker has read the radar, Duration and Range show the last
-    // persisted mode, or the LD2410 factory settings.
-    endpoint_t *ep = create_mode_select_endpoint(node, "Duration", (uint8_t)radar_duration_option(kFactoryDurationS));
-    VerifyOrReturnError(ep != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the Duration endpoint"));
-    s_duration.endpoint_id = endpoint::get_id(ep);
-
-    ep = create_mode_select_endpoint(node, "Range", LD2410_MAX_MAX_GATE);
+    // Until the worker has read the radar, Range, Radar resolution and Radar
+    // Bluetooth show the last persisted mode, or the LD2410 factory settings
+    // (Bluetooth: off, the default the worker applies). Home Assistant sorts
+    // the entities by name: Hold time, Learn empty room, Radar Bluetooth,
+    // Radar resolution, Range.
+    endpoint_t *ep = create_mode_select_endpoint(node, "Range", LD2410_MAX_MAX_GATE);
     VerifyOrReturnError(ep != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the Range endpoint"));
     s_range.endpoint_id = endpoint::get_id(ep);
 
-    ep = create_mode_select_endpoint(node, "Detection accuracy", kAccuracyCoarse);
-    VerifyOrReturnError(ep != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the Detection accuracy endpoint"));
+    ep = create_mode_select_endpoint(node, "Radar resolution", kAccuracyCoarse);
+    VerifyOrReturnError(ep != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the Radar resolution endpoint"));
     s_accuracy.endpoint_id = endpoint::get_id(ep);
 
-    ESP_LOGI(TAG, "Endpoints: Learn empty room %u, Duration %u, Range %u, Detection accuracy %u", s_learn.endpoint_id,
-             s_duration.endpoint_id, s_range.endpoint_id, s_accuracy.endpoint_id);
+    // Created last, so the endpoints above keep their numbers. The other
+    // controls keep working without it.
+    ep = create_mode_select_endpoint(node, "Radar Bluetooth", kBluetoothOff);
+    if (ep != nullptr) {
+        s_bluetooth.endpoint_id = endpoint::get_id(ep);
+    } else {
+        ESP_LOGE(TAG, "Failed to create the Radar Bluetooth endpoint");
+    }
+
+    ESP_LOGI(TAG, "Endpoints: Learn empty room %u, Range %u, Radar resolution %u, Radar Bluetooth %u",
+             s_learn.endpoint_id, s_range.endpoint_id, s_accuracy.endpoint_id, s_bluetooth.endpoint_id);
     return ESP_OK;
 }
 
 esp_err_t radar_control_start(void)
 {
+    load_bt_state();
     TaskHandle_t task = nullptr;
     if (xTaskCreate(radar_task, "radar_cfg", kTaskStack, nullptr, kTaskPriority, &task) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     s_task = task;
     return ESP_OK;
+}
+
+bool radar_control_request_learning(void)
+{
+    TaskHandle_t task = s_task;
+    if (task == nullptr) {
+        ESP_LOGW(TAG, "Cannot start the empty room learning: the radar task is not running");
+        status_led_set_learning(STATUS_LED_LEARNING_FAILED);
+        return false;
+    }
+    LearnState state = kLearnIdle;
+    if (!s_learn_state.compare_exchange_strong(state, kLearnRequested)) {
+        ESP_LOGI(TAG, "Empty room learning already requested or running");
+        return false;
+    }
+    xTaskNotifyGive(task);
+    return true;
 }
 
 esp_err_t radar_control_pre_update(uint16_t endpoint_id, uint32_t cluster_id, uint32_t attribute_id,
@@ -454,8 +616,8 @@ esp_err_t radar_control_pre_update(uint16_t endpoint_id, uint32_t cluster_id, ui
             return ESP_ERR_INVALID_STATE;
         }
         request_learning(mode == kLearnOn);
-    } else if (endpoint_id == s_duration.endpoint_id || endpoint_id == s_range.endpoint_id ||
-               endpoint_id == s_accuracy.endpoint_id) {
+    } else if (endpoint_id == s_range.endpoint_id || endpoint_id == s_accuracy.endpoint_id ||
+               endpoint_id == s_bluetooth.endpoint_id) {
         if (mode == RADAR_MODE_CUSTOM) {
             return ESP_OK; // the radar's own value: nothing to change
         }
@@ -464,15 +626,15 @@ esp_err_t radar_control_pre_update(uint16_t endpoint_id, uint32_t cluster_id, ui
             ESP_LOGW(TAG, "The LD2410 settings have not been read yet, change ignored");
             return ESP_ERR_INVALID_STATE;
         }
-        if (endpoint_id == s_duration.endpoint_id) {
-            VerifyOrReturnError(mode < RADAR_DURATION_OPTION_COUNT, ESP_ERR_INVALID_ARG);
-            s_want_duration_s = radar_duration_options[mode].seconds;
-        } else if (endpoint_id == s_range.endpoint_id) {
+        if (endpoint_id == s_range.endpoint_id) {
             VerifyOrReturnError(mode >= LD2410_MIN_MAX_GATE && mode <= LD2410_MAX_MAX_GATE, ESP_ERR_INVALID_ARG);
             s_want_gate = mode;
-        } else {
+        } else if (endpoint_id == s_accuracy.endpoint_id) {
             VerifyOrReturnError(mode == kAccuracyCoarse || mode == kAccuracyFine, ESP_ERR_INVALID_ARG);
             s_want_gate_cm = mode == kAccuracyFine ? LD2410_FINE_GATE_CM : LD2410_DEFAULT_GATE_CM;
+        } else {
+            VerifyOrReturnError(mode == kBluetoothOff || mode == kBluetoothOn, ESP_ERR_INVALID_ARG);
+            s_want_bluetooth = mode;
         }
     } else {
         return ESP_OK;

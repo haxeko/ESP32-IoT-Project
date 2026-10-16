@@ -17,7 +17,7 @@ static const char *TAG = "user_button";
 static constexpr uint32_t kPollMs = 20;
 static constexpr uint32_t kDebounceSamples = 2;    // a level must hold for 40 ms
 static constexpr uint32_t kClickMaxMs = 500;       // longer presses are not clicks
-static constexpr uint32_t kDoubleClickGapMs = 400; // release of the first click -> press of the second
+static constexpr uint32_t kClickGapMs = 400;       // release of a click -> press of the next one
 static constexpr uint32_t kHoldHintMs = 1000;      // log the long-press hint after this
 
 static int s_gpio;
@@ -34,11 +34,31 @@ static uint8_t s_clicks;    // short presses in the current sequence
 static bool s_hint_logged;
 static bool s_long_fired;
 
+// The sequence of clicks is over: 2 is a double click, 3 a triple click.
+static void end_sequence()
+{
+    const uint8_t clicks = s_clicks;
+    s_clicks = 0;
+    if (clicks == 2) {
+        ESP_LOGI(TAG, "Double click");
+        if (s_config.on_double_click) {
+            s_config.on_double_click();
+        }
+    } else if (clicks == 3) {
+        ESP_LOGI(TAG, "Triple click");
+        if (s_config.on_triple_click) {
+            s_config.on_triple_click();
+        }
+    } else if (clicks > 3) {
+        ESP_LOGI(TAG, "%u clicks, ignored", (unsigned)clicks);
+    }
+}
+
 static void on_press()
 {
     // A press too long after the previous click starts a new sequence.
-    if (s_clicks > 0 && s_now_ms - s_release_ms > kDoubleClickGapMs) {
-        s_clicks = 0;
+    if (s_clicks > 0 && s_now_ms - s_release_ms > kClickGapMs) {
+        end_sequence();
     }
     s_press_start_ms = s_now_ms;
     s_hint_logged = false;
@@ -48,16 +68,12 @@ static void on_press()
 static void on_release()
 {
     if (s_long_fired || s_now_ms - s_press_start_ms > kClickMaxMs) {
-        s_clicks = 0;
+        s_clicks = 0; // a long press cancels the clicks before it
         return;
     }
     s_release_ms = s_now_ms;
-    if (++s_clicks == 2) {
-        s_clicks = 0;
-        ESP_LOGI(TAG, "Double click");
-        if (s_config.on_double_click) {
-            s_config.on_double_click();
-        }
+    if (s_clicks < UINT8_MAX) {
+        s_clicks++;
     }
 }
 
@@ -78,7 +94,14 @@ static void poll_cb(void *arg)
         }
     }
 
-    if (!s_pressed || s_long_fired) {
+    if (!s_pressed) {
+        // Released for kClickGapMs: no more clicks in this sequence.
+        if (s_clicks > 0 && s_now_ms - s_release_ms > kClickGapMs) {
+            end_sequence();
+        }
+        return;
+    }
+    if (s_long_fired) {
         return;
     }
     const uint32_t held_ms = s_now_ms - s_press_start_ms;

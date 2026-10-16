@@ -53,6 +53,8 @@ static constexpr uint16_t kCmdEngineeringOn = 0x0062;
 static constexpr uint16_t kCmdEngineeringOff = 0x0063;
 static constexpr uint16_t kCmdGateSensitivity = 0x0064;
 static constexpr uint16_t kCmdRestart = 0x00A3;
+static constexpr uint16_t kCmdBluetooth = 0x00A4;
+static constexpr uint16_t kCmdReadMac = 0x00A5;
 static constexpr uint16_t kCmdSetResolution = 0x00AA;
 static constexpr uint16_t kCmdReadResolution = 0x00AB;
 static constexpr uint16_t kAckFlag = 0x0100;
@@ -407,6 +409,43 @@ esp_err_t ld2410_set_gate_length(uint16_t gate_cm)
 esp_err_t ld2410_restart(void)
 {
     return command(kCmdRestart, NULL, 0, NULL);
+}
+
+esp_err_t ld2410_read_bluetooth(bool *enabled, uint8_t mac[LD2410_MAC_LEN])
+{
+    // Address the radar answers while its Bluetooth is off (as handled by
+    // ESPHome); all-zero and all-0xFF are no address either.
+    static const uint8_t k_no_mac[LD2410_MAC_LEN] = { 0x08, 0x05, 0x04, 0x03, 0x02, 0x01 };
+    static const uint8_t k_zero_mac[LD2410_MAC_LEN] = {};
+    static const uint8_t k_ff_mac[LD2410_MAC_LEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    // Command value 0x0001, return value: MAC address (6)
+    static const uint8_t value[] = { 0x01, 0x00 };
+    ld2410_ack_t ack;
+    esp_err_t err = command(kCmdReadMac, value, sizeof(value), &ack);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (ack.len < LD2410_MAC_LEN) {
+        ESP_LOGW(TAG, "Unexpected MAC address reply (%u bytes)", ack.len);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    *enabled = memcmp(ack.data, k_no_mac, LD2410_MAC_LEN) != 0 && memcmp(ack.data, k_zero_mac, LD2410_MAC_LEN) != 0 &&
+               memcmp(ack.data, k_ff_mac, LD2410_MAC_LEN) != 0;
+    if (mac) {
+        if (*enabled) {
+            memcpy(mac, ack.data, LD2410_MAC_LEN);
+        } else {
+            memset(mac, 0, LD2410_MAC_LEN);
+        }
+    }
+    return ESP_OK;
+}
+
+esp_err_t ld2410_set_bluetooth(bool enable)
+{
+    // 0x0001 on, 0x0000 off
+    const uint8_t value[] = { enable ? (uint8_t)0x01 : (uint8_t)0x00, 0x00 };
+    return command(kCmdBluetooth, value, sizeof(value), NULL);
 }
 
 void ld2410_capture_start(void)

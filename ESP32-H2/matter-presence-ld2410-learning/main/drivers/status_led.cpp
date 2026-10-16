@@ -20,12 +20,17 @@
 #endif
 
 static std::atomic<status_led_mode_t> s_mode{STATUS_LED_OFF};
+static std::atomic<status_led_learning_t> s_learning{STATUS_LED_LEARNING_NONE};
+// Counts status_led_set_learning() calls: setting the same state again (a
+// second failure) restarts its 10 s
+static std::atomic<uint32_t> s_learning_sets{0};
 static std::atomic<bool> s_identify{false};
 
 #if !CONFIG_STATUS_LED_TYPE_NONE
 static const char *TAG = "status_led";
 
 static constexpr uint64_t kTickUs = 100 * 1000;
+static constexpr uint32_t kLearningResultTicks = 100; // green or red for 10 s
 
 typedef struct {
     uint8_t r, g, b;
@@ -34,8 +39,15 @@ typedef struct {
 static constexpr color_t kOff = {0, 0, 0};
 static constexpr color_t kBlue = {0, 0, 255};
 static constexpr color_t kWhite = {255, 255, 255};
+static constexpr color_t kCyan = {0, 255, 255};
+static constexpr color_t kGreen = {0, 255, 0};
+static constexpr color_t kRed = {255, 0, 0};
 
-static uint32_t s_ticks; // only touched by the status_led timer callback
+// Only touched by the status_led timer callback
+static uint32_t s_ticks;
+static status_led_learning_t s_shown_learning = STATUS_LED_LEARNING_NONE;
+static uint32_t s_shown_learning_sets;
+static uint32_t s_learning_ticks; // since s_shown_learning was set
 #endif
 
 #if CONFIG_STATUS_LED_TYPE_WS2812
@@ -76,16 +88,24 @@ static void led_hw_write(color_t c)
 
 #elif CONFIG_STATUS_LED_TYPE_GPIO
 
+// Kconfig leaves CONFIG_STATUS_LED_ACTIVE_HIGH undefined when it is off.
+#if CONFIG_STATUS_LED_ACTIVE_HIGH
+static constexpr bool kActiveHigh = true;
+#else
+static constexpr bool kActiveHigh = false;
+#endif
+
 static esp_err_t led_hw_init()
 {
     gpio_reset_pin((gpio_num_t)CONFIG_STATUS_LED_GPIO);
+    gpio_set_level((gpio_num_t)CONFIG_STATUS_LED_GPIO, kActiveHigh ? 0 : 1); // dark once the output is on
     return gpio_set_direction((gpio_num_t)CONFIG_STATUS_LED_GPIO, GPIO_MODE_OUTPUT);
 }
 
 static void led_hw_write(color_t c)
 {
     const bool on = c.r || c.g || c.b;
-    gpio_set_level((gpio_num_t)CONFIG_STATUS_LED_GPIO, on == CONFIG_STATUS_LED_ACTIVE_HIGH ? 1 : 0);
+    gpio_set_level((gpio_num_t)CONFIG_STATUS_LED_GPIO, on == kActiveHigh ? 1 : 0);
 }
 
 #endif
@@ -95,6 +115,24 @@ static color_t current_color()
 {
     if (s_identify) {
         return (s_ticks % 2) ? kWhite : kOff;            // 5 Hz
+    }
+    switch (s_shown_learning) {
+    case STATUS_LED_LEARNING_WAITING:
+        return kCyan;
+    case STATUS_LED_LEARNING_RECORDING:
+        return ((s_learning_ticks / 10) % 2) ? kCyan : kOff; // 0.5 Hz, dark first
+    case STATUS_LED_LEARNING_DONE:
+        if (s_learning_ticks < kLearningResultTicks) {
+            return kGreen;
+        }
+        break;
+    case STATUS_LED_LEARNING_FAILED:
+        if (s_learning_ticks < kLearningResultTicks) {
+            return kRed;
+        }
+        break;
+    case STATUS_LED_LEARNING_NONE:
+        break;
     }
     switch (s_mode.load()) {
     case STATUS_LED_PAIRING:
@@ -109,6 +147,14 @@ static void tick_cb(void *arg)
 {
     static color_t s_last = {1, 1, 1}; // forces the first write
     s_ticks++;
+    const uint32_t sets = s_learning_sets.load();
+    if (sets != s_shown_learning_sets) {
+        s_shown_learning_sets = sets;
+        s_shown_learning = s_learning.load();
+        s_learning_ticks = 0;
+    } else if (s_learning_ticks < UINT32_MAX) {
+        s_learning_ticks++;
+    }
     const color_t c = current_color();
     if (c.r != s_last.r || c.g != s_last.g || c.b != s_last.b) {
         s_last = c;
@@ -144,6 +190,12 @@ esp_err_t status_led_init(void)
 void status_led_set_mode(status_led_mode_t mode)
 {
     s_mode = mode;
+}
+
+void status_led_set_learning(status_led_learning_t learning)
+{
+    s_learning = learning;
+    s_learning_sets++;
 }
 
 void status_led_set_identify(bool identify)

@@ -26,15 +26,17 @@ CONFIG_ENABLE_CHIP_SHELL=y
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
 CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
 
-# Root, occupancy sensor, Duration, Range and Detection accuracy (Mode Select) endpoints
+# Root, occupancy sensor, Range, Radar resolution and Radar Bluetooth (Mode Select)
+# endpoints
 CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=5
 
 # Manufacturer / Model / Serial number come from main/device_info.cpp
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 
-# Bluetooth name while waiting for commissioning: "Occupancy-<discriminator>"
-# (at most 16 characters in total)
-CONFIG_BLE_DEVICE_NAME_PREFIX="Occupancy-"
+# Bluetooth (GAP) name while waiting for commissioning when CONFIG_DEVICE_NAME_PREFIX
+# is empty: "Presence-<discriminator>" (at most 16 characters in total). By
+# default the device name "Presence-<last 4 serial characters>" is used instead.
+CONFIG_BLE_DEVICE_NAME_PREFIX="Presence-"
 
 # Name and device type in commissionable discovery (DNS-SD "DN" and "DT"),
 # shown by controllers before pairing. 263 = 0x0107 Occupancy Sensor.
@@ -44,6 +46,11 @@ CONFIG_DEVICE_TYPE=263
 
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
+
+# Also build build/matter_presence_h2_learn-ota.bin: the app image with the Matter
+# OTA header (VID/PID from the config, version = PROJECT_VER_NUMBER/PROJECT_VER),
+# the file a Matter controller (e.g. the Home Assistant Matter Server) serves
+CONFIG_CHIP_OTA_IMAGE_BUILD=y
 
 # Exclude unused clusters to optimize flash and memory usage
 CONFIG_SUPPORT_ACCOUNT_LOGIN_CLUSTER=n
