@@ -8,12 +8,25 @@ menu "Device Information"
         string "Model (Basic Information ProductName)"
         default "Presence LD2410"
 
+    config DEVICE_NAME_PREFIX
+        string "Device name prefix, followed by the last 4 characters of the serial number"
+        default "Presence-"
+        help
+            Default device name (Basic Information NodeLabel / ProductLabel) and
+            Bluetooth name while waiting to be commissioned: this prefix and the
+            last 4 characters of the serial number (factory MAC in eFuse), e.g.
+            "Presence-B2C3", so boards flashed with the same firmware get
+            different names. Max 11 characters. The name can be changed later
+            in the app. Empty: CONFIG_DEVICE_DISPLAY_NAME and the Bluetooth
+            name "<BLE_DEVICE_NAME_PREFIX><discriminator>" as before.
+
     config DEVICE_DISPLAY_NAME
-        string "Device name (Basic Information NodeLabel / ProductLabel)"
+        string "Name advertised before commissioning (DNS-SD)"
         default "Presence Sensor"
         help
-            Default name that controllers show when the device is added.
-            Max 32 characters. It can be renamed later in the app.
+            Name in commissionable node discovery (DNS-SD "DN"), the same for
+            every board. Also the device name when DEVICE_NAME_PREFIX is
+            empty. Max 32 characters.
 
     config DEVICE_HARDWARE_VERSION_STRING
         string "Hardware (Basic Information HardwareVersionString)"

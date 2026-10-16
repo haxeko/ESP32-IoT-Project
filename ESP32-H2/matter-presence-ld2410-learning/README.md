@@ -1,6 +1,6 @@
 # Matter Presence Sensor + học phòng trống (ESP32-H2 + HLK-LD2410, Thread)
 
-> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt; mật khẩu app HLKRadarTool cố định `solana`); thời gian chờ chỉnh bằng **Hold time**. Tên thiết bị: **Presence Sensor**. Phần cứng, chân nối, ghép nối, LED, nút bấm giống hệt bản gốc.
+> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt; mật khẩu app HLKRadarTool cố định `solana`); thời gian chờ chỉnh bằng **Hold time**. Tên thiết bị: **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C3** (mỗi mạch một tên). Phần cứng, chân nối, ghép nối, LED, nút bấm giống hệt bản gốc.
 
 Cảm biến hiện diện chuẩn **Matter over Thread** chạy trên **ESP32-H2** với radar 24 GHz **HLK-LD2410**. Đây là bản chuyển từ Zigbee (`ESP32-H2/zigbee-presence-occupancy`) sang Matter: cùng chip ESP32-H2, cùng radio 802.15.4, nhưng thay Zigbee bằng Thread + Matter. Thêm trực tiếp vào **Apple Home**, Google Home, Home Assistant, SmartThings, Alexa... mà không cần Zigbee coordinator / Zigbee2MQTT.
 
@@ -300,7 +300,8 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 | Nhà sản xuất (Manufacturer) | `Haxeko` |
 | Kiểu máy (Model) | `Presence LD2410` |
 | Phần cứng (Hardware) | `ESP32H2-LD2410` |
-| Tên thiết bị khi ghép nối | `Presence Sensor` (cũng là tên DNS-SD; tên Bluetooth là `Presence-<discriminator>`, ví dụ `Presence-3840`) |
+| Tên thiết bị | `Presence-` + 4 ký tự cuối của số serial, ví dụ `Presence-B2C3` (*Device name prefix*). Dùng cho tên thiết bị (NodeLabel, ProductLabel) và tên Bluetooth khi chờ ghép nối, nên nạp cùng một firmware cho nhiều mạch thì mỗi mạch một tên. Mạch đã ghép nối từ bản cũ có thể giữ tên cũ trong app: đổi tên trong app hoặc ghép lại. 4 ký tự hex có 65 536 tổ hợp, hiếm khi hai mạch trùng |
+| Tên quảng bá trước khi ghép nối (DNS-SD) | `Presence Sensor`, giống nhau cho mọi mạch (*Name advertised before commissioning*) |
 | Số serial | Địa chỉ MAC gốc trong eFuse, ví dụ `744DBDA1B2C3`. Tự động, riêng cho từng chip |
 | Firmware | `1.0.<số commit>`, tự tăng sau mỗi commit; cũng là số phiên bản Matter dùng cho OTA |
 

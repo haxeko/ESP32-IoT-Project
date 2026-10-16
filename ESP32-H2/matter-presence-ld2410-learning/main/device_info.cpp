@@ -13,7 +13,9 @@
 
 #include <esp_log.h>
 #include <esp_mac.h>
+#include <esp_matter.h>
 #include <esp_matter_providers.h>
+#include <platform/CHIPDeviceLayer.h>
 #include <platform/ESP32/ESP32Config.h>
 #include <platform/internal/GenericDeviceInstanceInfoProvider.h>
 #include <soc/soc_caps.h>
@@ -36,7 +38,12 @@ public:
 
     CHIP_ERROR GetVendorName(char * buf, size_t bufSize) override { return CopyString(buf, bufSize, CONFIG_DEVICE_VENDOR_NAME); }
     CHIP_ERROR GetProductName(char * buf, size_t bufSize) override { return CopyString(buf, bufSize, CONFIG_DEVICE_PRODUCT_NAME); }
-    CHIP_ERROR GetProductLabel(char * buf, size_t bufSize) override { return CopyString(buf, bufSize, CONFIG_DEVICE_DISPLAY_NAME); }
+    CHIP_ERROR GetProductLabel(char * buf, size_t bufSize) override
+    {
+        char name[kDeviceNameSize];
+        device_info_get_name(name, sizeof(name));
+        return CopyString(buf, bufSize, name);
+    }
     CHIP_ERROR GetHardwareVersionString(char * buf, size_t bufSize) override
     {
         return CopyString(buf, bufSize, CONFIG_DEVICE_HARDWARE_VERSION_STRING);
@@ -63,6 +70,8 @@ private:
 static_assert(sizeof(CONFIG_DEVICE_VENDOR_NAME) - 1 <= 32, "Manufacturer must be at most 32 characters");
 static_assert(sizeof(CONFIG_DEVICE_PRODUCT_NAME) - 1 <= 32, "Model must be at most 32 characters");
 static_assert(sizeof(CONFIG_DEVICE_DISPLAY_NAME) - 1 <= 32, "Device name must be at most 32 characters");
+// The Bluetooth name (prefix + 4 serial characters) must be shorter than 16 characters.
+static_assert(sizeof(CONFIG_DEVICE_NAME_PREFIX) - 1 <= 11, "Device name prefix must be at most 11 characters");
 static_assert(sizeof(CONFIG_DEVICE_HARDWARE_VERSION_STRING) - 1 <= ConfigurationManager::kMaxHardwareVersionStringLength,
               "Hardware must be at most 64 characters");
 
@@ -84,6 +93,19 @@ void device_info_get_serial(char *buf, size_t size)
     snprintf(buf, size, "%02X%02X%02X%02X%02X%02X", eui64[0], eui64[1], eui64[2], eui64[5], eui64[6], eui64[7]);
 }
 
+void device_info_get_name(char *buf, size_t size)
+{
+    if (sizeof(CONFIG_DEVICE_NAME_PREFIX) == 1) {
+        snprintf(buf, size, "%s", CONFIG_DEVICE_DISPLAY_NAME);
+        return;
+    }
+    // Last 4 characters of the serial number: differ from chip to chip
+    char serial[ConfigurationManager::kMaxSerialNumberLength + 1];
+    device_info_get_serial(serial, sizeof(serial));
+    const size_t len = strlen(serial);
+    snprintf(buf, size, "%s%s", CONFIG_DEVICE_NAME_PREFIX, &serial[len > 4 ? len - 4 : 0]);
+}
+
 void device_info_init(void)
 {
     static DeviceInstanceInfo s_device_instance_info;
@@ -91,13 +113,40 @@ void device_info_init(void)
 
     char serial[ConfigurationManager::kMaxSerialNumberLength + 1];
     device_info_get_serial(serial, sizeof(serial));
-    ESP_LOGI("device_info", "Serial number: %s", serial);
+    char name[kDeviceNameSize];
+    device_info_get_name(name, sizeof(name));
+    ESP_LOGI("device_info", "Serial number: %s, device name: %s", serial, name);
 }
 
 void device_info_set_name(esp_matter::node::config_t *node_config)
 {
-    strlcpy(node_config->root_node.basic_information.node_label, CONFIG_DEVICE_DISPLAY_NAME,
+    char name[kDeviceNameSize];
+    device_info_get_name(name, sizeof(name));
+    strlcpy(node_config->root_node.basic_information.node_label, name,
             sizeof(node_config->root_node.basic_information.node_label));
+}
+
+void device_info_set_ble_name(void)
+{
+    if (sizeof(CONFIG_DEVICE_NAME_PREFIX) == 1) {
+        return; // default "<CONFIG_BLE_DEVICE_NAME_PREFIX><discriminator>"
+    }
+    char name[kDeviceNameSize];
+    device_info_get_name(name, sizeof(name));
+    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    CHIP_ERROR err = ConnectivityMgr().SetBLEDeviceName(name);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGW("device_info", "Bluetooth name not set: %" CHIP_ERROR_FORMAT, err.Format());
+        return;
+    }
+    // The advertising data is built again on each refresh: one already started
+    // with the default name is restarted with this one.
+    if (ConnectivityMgr().IsBLEAdvertising()) {
+        err = ConnectivityMgr().SetBLEAdvertisingMode(ConnectivityManager::BLEAdvertisingMode::kFastAdvertising);
+        if (err != CHIP_NO_ERROR) {
+            ESP_LOGW("device_info", "Bluetooth advertising not refreshed: %" CHIP_ERROR_FORMAT, err.Format());
+        }
+    }
 }
 
 void device_info_add_attributes(esp_matter::node_t *node)

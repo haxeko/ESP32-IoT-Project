@@ -33,8 +33,9 @@ CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=5
 # Manufacturer / Model / Serial number come from main/device_info.cpp
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 
-# Bluetooth name while waiting for commissioning: "Presence-<discriminator>"
-# (at most 16 characters in total)
+# Bluetooth name while waiting for commissioning when CONFIG_DEVICE_NAME_PREFIX
+# is empty: "Presence-<discriminator>" (at most 15 characters in total). By
+# default the device name "Presence-<last 4 serial characters>" is used instead.
 CONFIG_BLE_DEVICE_NAME_PREFIX="Presence-"
 
 # Name and device type in commissionable discovery (DNS-SD "DN" and "DT"),

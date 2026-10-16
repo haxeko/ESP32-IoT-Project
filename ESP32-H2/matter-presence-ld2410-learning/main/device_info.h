@@ -14,8 +14,18 @@
 // Manufacturer and Model by controllers). Must be called before esp_matter::start().
 void device_info_init(void);
 
+// Device name: CONFIG_DEVICE_NAME_PREFIX + the last 4 characters of the
+// serial number, e.g. "Presence-B2C3", or CONFIG_DEVICE_DISPLAY_NAME when the
+// prefix is empty. kDeviceNameSize holds either.
+constexpr size_t kDeviceNameSize = 33;
+void device_info_get_name(char *buf, size_t size);
+
 // Sets the default device name (NodeLabel) in the node config.
 void device_info_set_name(esp_matter::node::config_t *node_config);
+
+// After esp_matter::start(): the Bluetooth name used while waiting to be
+// commissioned becomes the device name (instead of prefix + discriminator).
+void device_info_set_ble_name(void);
 
 // Adds the ProductLabel and SerialNumber attributes to Basic Information.
 void device_info_add_attributes(esp_matter::node_t *node);

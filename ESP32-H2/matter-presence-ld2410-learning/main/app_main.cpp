@@ -384,6 +384,8 @@ static esp_err_t start_matter()
     s_matter_started = true;
     // First boot of a unique_setup build: generate the setup code on the Matter task (nothing in the default build)
     setup_code_preload();
+    // Bluetooth name while waiting to be commissioned: the device name, e.g. "Presence-B2C3"
+    device_info_set_ble_name();
 
     if (radar_control && radar_control_start() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the radar configuration task");
