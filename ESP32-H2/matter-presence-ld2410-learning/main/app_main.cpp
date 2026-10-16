@@ -352,7 +352,6 @@ static esp_err_t start_matter()
     device_info_init();
 
     node::config_t node_config;
-    device_info_set_name(&node_config);
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
     VerifyOrReturnError(node != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create Matter node"));
     device_info_add_attributes(node);
@@ -384,8 +383,8 @@ static esp_err_t start_matter()
     s_matter_started = true;
     // First boot of a unique_setup build: generate the setup code on the Matter task (nothing in the default build)
     setup_code_preload();
-    // Bluetooth name while waiting to be commissioned: the device name, e.g. "Presence-B2C3"
-    device_info_set_ble_name();
+    // Device name "Presence-B2C3": NodeLabel when none is stored yet, Bluetooth name
+    device_info_apply_name();
 
     if (radar_control && radar_control_start() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the radar configuration task");

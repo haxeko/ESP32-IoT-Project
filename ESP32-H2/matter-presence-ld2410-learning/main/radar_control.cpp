@@ -268,10 +268,11 @@ static constexpr const char *kNvsBtPasswordKey = "bt_password";
 static bool s_bt_wanted; // chosen in Home Assistant, off until then
 static BtPasswordRecord s_bt_record;
 static bool s_bt_record_valid;
-// The last Bluetooth change or password write did not work: not tried again
-// before the next boot or the next change from Home Assistant, so a radar
-// that does not come back after its restart is not restarted over and over.
-static bool s_bt_failed;
+// The last Bluetooth on/off change, or password write, did not work: not
+// tried again before the next boot or the next change from Home Assistant, so
+// a radar that does not follow is not restarted over and over.
+static bool s_bt_change_failed;
+static bool s_bt_password_failed;
 
 static const char *bt_password()
 {
@@ -433,6 +434,8 @@ static bool is_change(const radar_settings_request_t &want)
            want.bluetooth != RADAR_KEEP || want.bt_password != nullptr;
 }
 
+static esp_err_t s_session_err; // result of the last session
+
 // Reads the radar settings, applies the requested ones and shows the result
 // in Home Assistant. False when the radar did not answer as expected, so the
 // settings must be read again.
@@ -441,6 +444,7 @@ static bool settings_session(const radar_settings_request_t &want)
     const bool change = is_change(want);
     radar_settings_t now = {};
     const esp_err_t err = radar_settings_session(&want, &now);
+    s_session_err = err;
     if (err != ESP_OK) {
         if (change && s_synced) {
             ESP_LOGE(TAG, "Changing the radar settings failed, err:%d", err);
@@ -456,7 +460,7 @@ static bool settings_session(const radar_settings_request_t &want)
             ESP_LOGI(TAG, "LD2410 Bluetooth password set (CONFIG_LD2410_BT_PASSWORD)");
             store_bt_record(now.bt_mac);
         } else {
-            s_bt_failed = true;
+            s_bt_password_failed = true;
         }
     }
     s_settings = now;
@@ -466,30 +470,38 @@ static bool settings_session(const radar_settings_request_t &want)
 }
 
 // After a successful session: brings the radar's Bluetooth to the state
-// chosen in Home Assistant (off by default) and gives the password to a radar
-// whose Bluetooth is on. One session at most. False when the radar did not
-// answer as expected.
+// chosen in Home Assistant (off by default), then gives the password to a
+// radar whose Bluetooth is on, chosen or not (one that refused to turn off
+// must not keep the factory password). False when the radar did not answer as
+// expected.
 static bool fix_bluetooth()
 {
-    if (s_bt_failed || !s_settings.bluetooth_known) {
+    if (!s_settings.bluetooth_known) {
         return true;
     }
-    radar_settings_request_t fix = {};
-    if (s_settings.bluetooth_on != s_bt_wanted) {
+    if (!s_bt_change_failed && s_settings.bluetooth_on != s_bt_wanted) {
         ESP_LOGI(TAG, "Turning the LD2410 Bluetooth %s (%s)", s_bt_wanted ? "on" : "off",
                  s_bt_wanted ? "as chosen in Home Assistant" : "default, or as chosen in Home Assistant");
+        radar_settings_request_t fix = {};
         fix.bluetooth = s_bt_wanted ? kBluetoothOn : kBluetoothOff;
-        fix.bt_password = s_bt_wanted ? bt_password() : nullptr;
-    } else if (bt_password_needed(s_settings)) {
+        fix.bt_password = s_bt_wanted && !s_bt_password_failed ? bt_password() : nullptr;
+        const bool answered = settings_session(fix);
+        if (!answered || s_settings.bluetooth_on != s_bt_wanted) {
+            s_bt_change_failed = true;
+        }
+        if (!answered) {
+            return false;
+        }
+    }
+    if (!s_bt_password_failed && bt_password_needed(s_settings)) {
+        radar_settings_request_t fix = {};
         fix.bt_password = bt_password();
-    } else {
-        return true;
+        if (!settings_session(fix)) {
+            s_bt_password_failed = true;
+            return false;
+        }
     }
-    const bool answered = settings_session(fix);
-    if (!answered || s_settings.bluetooth_on != s_bt_wanted) {
-        s_bt_failed = true;
-    }
-    return answered;
+    return true;
 }
 
 static bool learning_cancelled()
@@ -518,9 +530,12 @@ static void radar_task(void *arg)
         // Settings first: a session takes a few seconds at most, a learning minutes.
         const int32_t bluetooth = s_want_bluetooth.exchange(RADAR_KEEP);
         if (bluetooth != RADAR_KEEP) {
-            // Kept even if this session fails: fix_bluetooth() applies it later.
+            // Kept even if this session fails: applied again at the next boot.
             set_bt_wanted(bluetooth == kBluetoothOn);
-            s_bt_failed = false;
+            s_bt_change_failed = false;
+            if (bluetooth == kBluetoothOn) {
+                s_bt_password_failed = false;
+            }
         }
         const radar_settings_request_t want = {
             .duration_s = RADAR_KEEP,
@@ -532,6 +547,9 @@ static void radar_task(void *arg)
         };
         if (stale || is_change(want)) {
             stale = !settings_session(want);
+            if (bluetooth != RADAR_KEEP && (stale || s_settings.bluetooth_on != (bluetooth == kBluetoothOn))) {
+                s_bt_change_failed = true; // not retried before the next boot or the next choice
+            }
         }
         if (!stale) {
             stale = !fix_bluetooth();
@@ -540,8 +558,13 @@ static void radar_task(void *arg)
 
         TickType_t wait = portMAX_DELAY;
         if (stale) {
-            ESP_LOGW(TAG, "Could not read the LD2410 settings (check the wire from GPIO%d to the radar RX pin), "
-                          "next try in %" PRIu32 " s", CONFIG_LD2410_UART_TX_PIN, retry_ms / 1000);
+            if (s_session_err == ESP_ERR_TIMEOUT) {
+                ESP_LOGW(TAG, "Could not read the LD2410 settings (check the wire from GPIO%d to the radar RX pin), "
+                              "next try in %" PRIu32 " s", CONFIG_LD2410_UART_TX_PIN, retry_ms / 1000);
+            } else {
+                ESP_LOGW(TAG, "The LD2410 did not take the settings as expected (err:%d), read again in %" PRIu32 " s",
+                         s_session_err, retry_ms / 1000);
+            }
             wait = pdMS_TO_TICKS(retry_ms);
             retry_ms = std::min(retry_ms * 2, kSyncRetryMaxMs);
         } else {

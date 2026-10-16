@@ -26,15 +26,15 @@ CONFIG_ENABLE_CHIP_SHELL=y
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
 CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
 
-# Root, occupancy sensor, Range, Radar accuracy and Radar Bluetooth (Mode Select)
+# Root, occupancy sensor, Range, Radar resolution and Radar Bluetooth (Mode Select)
 # endpoints
 CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=5
 
 # Manufacturer / Model / Serial number come from main/device_info.cpp
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 
-# Bluetooth name while waiting for commissioning when CONFIG_DEVICE_NAME_PREFIX
-# is empty: "Presence-<discriminator>" (at most 15 characters in total). By
+# Bluetooth (GAP) name while waiting for commissioning when CONFIG_DEVICE_NAME_PREFIX
+# is empty: "Presence-<discriminator>" (at most 16 characters in total). By
 # default the device name "Presence-<last 4 serial characters>" is used instead.
 CONFIG_BLE_DEVICE_NAME_PREFIX="Presence-"
 
