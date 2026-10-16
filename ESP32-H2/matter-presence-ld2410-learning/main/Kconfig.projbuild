@@ -6,7 +6,7 @@ menu "Device Information"
 
     config DEVICE_PRODUCT_NAME
         string "Model (Basic Information ProductName)"
-        default "H2 Occupancy"
+        default "Presence LD2410"
 
     config DEVICE_DISPLAY_NAME
         string "Device name (Basic Information NodeLabel / ProductLabel)"
@@ -136,6 +136,24 @@ menu "Empty Room Learning"
             New threshold of each gate = highest energy recorded in the empty
             room + this margin, never below the LD2410 factory default and
             at most 100 (gate ignored).
+
+endmenu
+
+menu "LD2410 Bluetooth"
+
+    config LD2410_BT_PASSWORD
+        string "Bluetooth password of the radar (6 characters, empty = leave unchanged)"
+        default "solana"
+        help
+            Password the HLKRadarTool app asks for when it connects to the
+            LD2410B/C over Bluetooth (factory default "HiLink"). Exactly 6
+            printable ASCII characters without spaces; the build fails
+            otherwise.
+            Written to the radar while its Bluetooth is on: once per radar
+            (remembered by its Bluetooth MAC address in NVS, namespace
+            "ld2410") and again each time "Radar Bluetooth" is turned on in
+            Home Assistant. The radar restarts (about 2 s) to apply it.
+            Empty: the radar password is never changed.
 
 endmenu
 

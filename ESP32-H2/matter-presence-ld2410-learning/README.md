@@ -1,6 +1,6 @@
 # Matter Presence Sensor + học phòng trống (ESP32-H2 + HLK-LD2410, Thread)
 
-> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 3 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar accuracy** chỉnh khoảng cách phát hiện và độ phân giải của radar; thời gian chờ chỉnh bằng **Hold time**. Tên thiết bị: **Presence Sensor**. Phần cứng, chân nối, ghép nối, LED, nút bấm giống hệt bản gốc.
+> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar accuracy** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mật khẩu app HLKRadarTool cố định `solana`); thời gian chờ chỉnh bằng **Hold time**. Tên thiết bị: **Presence Sensor**. Phần cứng, chân nối, ghép nối, LED, nút bấm giống hệt bản gốc.
 
 Cảm biến hiện diện chuẩn **Matter over Thread** chạy trên **ESP32-H2** với radar 24 GHz **HLK-LD2410**. Đây là bản chuyển từ Zigbee (`ESP32-H2/zigbee-presence-occupancy`) sang Matter: cùng chip ESP32-H2, cùng radio 802.15.4, nhưng thay Zigbee bằng Thread + Matter. Thêm trực tiếp vào **Apple Home**, Google Home, Home Assistant, SmartThings, Alexa... mà không cần Zigbee coordinator / Zigbee2MQTT.
 
@@ -56,14 +56,15 @@ I quiet_learn: Learning done: new thresholds saved in the LD2410 (300 reports)
 - Radar không trả lời lệnh: không ghi gì, log báo kiểm tra dây **GPIO12 → chân RX của LD2410** (bản gốc chỉ đọc radar nên có thể chưa nối dây này).
 - Thời gian chờ, thời gian ghi và mức +10 chỉnh được trong `menuconfig` → *Empty Room Learning*.
 
-## Hold time, Range và Radar accuracy
+## Hold time, Range, Radar accuracy và Radar Bluetooth
 
-Trong mục *Cấu hình* của thiết bị trên Home Assistant, các entity xếp theo tên: **Hold time**, **Learn empty room**, **Radar accuracy**, **Range** (Home Assistant luôn xếp theo thứ tự chữ cái, nên tên được chọn để ra đúng thứ tự này).
+Trong mục *Cấu hình* của thiết bị trên Home Assistant, các entity xếp theo tên: **Hold time**, **Learn empty room**, **Radar accuracy**, **Radar Bluetooth**, **Range** (Home Assistant luôn xếp theo thứ tự chữ cái, nên tên được chọn để ra đúng thứ tự này).
 
 | Entity | Ý nghĩa | Lựa chọn |
 |---|---|---|
 | **Hold time** | Thời gian giữ "có người" sau khi radar hết thấy người (Matter HoldTime, lưu trong ESP32) | 1–300 s, mặc định 30 s |
 | **Radar accuracy** | *Distance resolution* của LD2410: độ dài mỗi gate | `0.75 m` (mặc định nhà sản xuất, xa tới 6 m), `0.2 m` (chỉ LD2410B/C: đo khoảng cách mịn hơn nhưng chỉ xa tới 1,6 m) |
+| **Radar Bluetooth** | Bluetooth của LD2410B/C, dùng cho app HLKRadarTool | `On` (mặc định nhà sản xuất), `Off`. Radar không có Bluetooth (LD2410 đời đầu) thì chỉ có `Not available` |
 | **Range** | *Detection range* của LD2410: gate xa nhất radar còn xét, đặt cùng lúc cho mục tiêu chuyển động và đứng yên | `1.5 m`, `2.25 m`, `3 m`, `3.75 m`, `4.5 m`, `5.25 m`, `6 m` (gate 2–8, mỗi gate 0,75 m; mặc định 6 m). Ở độ phân giải 0,2 m là `0.4 m` … `1.6 m` |
 
 - **Thời gian chờ chỉnh bằng Hold time.** Từ lúc người rời đi tới khi báo "không có người" ≈ *unmanned duration* của radar + Hold time. Firmware không đổi *unmanned duration*: radar giữ giá trị đang lưu (mặc định nhà sản xuất 5 s, xem trong log `radar_ctl: LD2410 settings: no-one duration ...`; đổi bằng app HLKRadarTool nếu cần). Muốn đèn tắt nhanh thì giảm Hold time; hay bị báo "không có người" khi ngồi yên thì tăng Hold time.
@@ -72,17 +73,32 @@ Trong mục *Cấu hình* của thiết bị trên Home Assistant, các entity x
 - **Range** do radar xử lý: mục tiêu xa hơn bị bỏ qua hoàn toàn (ví dụ không bắt người ở phòng bên qua vách mỏng). Tuỳ chọn *Only count targets closer than* trong menuconfig thì lọc trong firmware, sau khi radar đã báo.
 - Radar chưa trả lời lệnh (chưa nối dây **GPIO12 → chân RX của LD2410**): thay đổi trong Home Assistant bị bỏ qua, entity giữ giá trị cũ; firmware thử đọc lại radar sau 15 s, 30 s, 1 min... (tối đa 5 min một lần).
 - **Radar accuracy**: radar có 9 gate (0–8) nên gate 0,2 m chỉ phủ tới khoảng 1,6 m, hợp với chỗ ngồi gần như bàn làm việc, đầu giường. Đổi độ phân giải thì firmware ghi vào LD2410 rồi **khởi động lại radar** (mất tín hiệu khoảng 1–3 s) và đọc lại; các lựa chọn của Range tự đổi theo (ví dụ `6 m` thành `1.6 m`). Ngưỡng từng gate đã học là cho độ dài gate cũ, nên **học lại phòng trống** sau khi đổi. Radar không trả lời lệnh độ phân giải (LD2410 đời đầu, firmware cũ) thì entity chỉ có `0.75 m`.
-- Đang học phòng trống thì thay đổi Range/Radar accuracy được áp dụng ngay sau khi học xong.
-- Mỗi endpoint Matter chỉ có một cluster *Mode Select*, nên Range và Radar accuracy nằm trên 2 endpoint riêng (2 và 3) kiểu thiết bị *Mode Select* (0x0027). Apple Home không hỗ trợ kiểu thiết bị này nên vẫn chỉ hiện cảm biến chiếm chỗ (dự kiến theo tài liệu, chưa thử trên thiết bị Apple thật).
+- Đang học phòng trống thì thay đổi Range/Radar accuracy/Radar Bluetooth được áp dụng ngay sau khi học xong.
+- Mỗi endpoint Matter chỉ có một cluster *Mode Select*, nên Range, Radar accuracy và Radar Bluetooth nằm trên 3 endpoint riêng (2, 3 và 4) kiểu thiết bị *Mode Select* (0x0027). Apple Home không hỗ trợ kiểu thiết bị này nên vẫn chỉ hiện cảm biến chiếm chỗ (dự kiến theo tài liệu, chưa thử trên thiết bị Apple thật).
 - Nâng cấp từ bản có entity Duration mà giữ ghép nối: các endpoint đổi số, nên trong Home Assistant xoá thiết bị rồi thêm lại (hoặc nạp file merged và ghép nối lại) để entity cũ không còn sót.
 
-Với chip-tool (endpoint 2 = Range, mode = số gate; endpoint 3 = Radar accuracy, mode 0 = 0,75 m, 1 = 0,2 m):
+### Radar Bluetooth và mật khẩu HLKRadarTool
+
+LD2410B/C có Bluetooth để app **HLKRadarTool** đọc và chỉnh radar. Mặc định nhà sản xuất Bluetooth luôn bật, mật khẩu `HiLink` ai cũng biết. Bản này:
+
+- **Radar Bluetooth = Off**: tắt hẳn Bluetooth của radar, app không còn thấy radar. Chọn **On** để bật lại. Mỗi lần đổi, firmware ghi vào bộ nhớ của LD2410 rồi **khởi động lại radar** (mất tín hiệu khoảng 1–3 s) và đọc lại trạng thái thật để hiển thị. Lệnh bật/tắt (0x00A4) theo tài liệu giao thức LD2410B V1.07, chỉ có hiệu lực sau khi khởi động lại radar.
+- **Mật khẩu cố định `solana`** (`menuconfig` → *LD2410 Bluetooth* → `LD2410_BT_PASSWORD`, đúng 6 ký tự ASCII in được, không có dấu cách; build báo lỗi nếu sai; để trống = không đụng tới mật khẩu của radar). Firmware chỉ ghi mật khẩu khi Bluetooth của radar đang bật:
+  - **một lần cho mỗi radar**: lần khởi động đầu tiên với bản này (hoặc khi thay radar khác), radar được ghi mật khẩu rồi khởi động lại một lần. Radar nào đã được ghi thì nhớ theo địa chỉ MAC Bluetooth của radar trong NVS của ESP32-H2 (namespace `ld2410`), các lần khởi động sau không ghi lại;
+  - và **mỗi lần chọn On** trong Home Assistant (ghi cùng lúc với lệnh bật, một lần khởi động lại radar).
+- Radar không cho đọc lại mật khẩu, nên firmware chỉ biết radar đã nhận lệnh (log `radar_ctl: LD2410 Bluetooth password set`). Nếu ai đó reset radar về mặc định bằng app (mật khẩu về `HiLink`), chọn **Off** rồi **On** để ghi lại `solana`. Radar firmware cũ không nhận lệnh mật khẩu thì log báo lỗi, các thông số khác vẫn được áp dụng. Ghi không thành công (radar từ chối, hoặc không trả lời sau khi khởi động lại) thì firmware không thử lại cho tới lần khởi động sau hoặc lần chọn On tiếp theo, để radar không bị khởi động lại liên tục.
+- Mật khẩu nằm trong mã nguồn công khai: muốn mật khẩu riêng thì đổi trong `menuconfig` rồi tự build.
+- **Tên Bluetooth của radar** (dạng `HLK-LD2410_xxxx` trong app) do firmware radar đặt, giao thức UART không có lệnh đổi tên. Để biết radar nào gắn với bo nào, xem MAC Bluetooth trong log khởi động: `radar_ctl: LD2410 settings: ... Bluetooth on, MAC 8F:27:2E:B8:0F:65`.
+- Trạng thái Bluetooth được đọc qua lệnh hỏi địa chỉ MAC (0x00A5): khi Bluetooth tắt, radar trả về địa chỉ giả `08:05:04:03:02:01` (cách ESPHome xử lý). Cách đọc này chưa được thử trên radar thật trong repo này.
+- Cập nhật OTA từ bản cũ vẫn **giữ ghép nối**: endpoint 1–3 giữ nguyên số, Radar Bluetooth là endpoint mới số 4. Nếu entity chưa hiện trong Home Assistant sau khi thiết bị khởi động lại, vào trang thiết bị → menu ⋮ → **Re-interview**.
+
+Với chip-tool (endpoint 2 = Range, mode = số gate; endpoint 3 = Radar accuracy, mode 0 = 0,75 m, 1 = 0,2 m; endpoint 4 = Radar Bluetooth, mode 0 = Off, 1 = On):
 
 ```bash
 chip-tool occupancysensing write hold-time 60 0x7283 1
 chip-tool modeselect read supported-modes 0x7283 2
 chip-tool modeselect change-to-mode 6 0x7283 2    # Range gate 6 = 4.5 m
 chip-tool modeselect change-to-mode 1 0x7283 3    # Radar accuracy 0.2 m
+chip-tool modeselect change-to-mode 0 0x7283 4    # Radar Bluetooth Off
 ```
 
 ## Phần cứng
@@ -253,7 +269,7 @@ Mỗi bản build có thêm file `matter_presence_h2_learn.ota` (trong Artifacts
 > - Phiên bản trong file phải **lớn hơn** bản đang chạy, nếu không sẽ báo "No update available".
 > - Kiểm tra số phiên bản trước khi bấm cài: `0xFFF1`/`0x8000` là mã test dùng chung, test-net DCL có thể có firmware khác cùng mã.
 > - Nếu sau khi upload vẫn báo không có cập nhật, bật tuỳ chọn test-net DCL trong cấu hình add-on.
-> - Bản đổi số endpoint (như bản bỏ entity Duration) vẫn nên xoá thiết bị và ghép nối lại sau khi cập nhật.
+> - Bản đổi số endpoint (như bản bỏ entity Duration) vẫn nên xoá thiết bị và ghép nối lại sau khi cập nhật. Bản chỉ thêm endpoint mới ở cuối (như Radar Bluetooth, endpoint 4) thì không cần: nếu entity mới chưa hiện, dùng **Re-interview** trên trang thiết bị.
 > - Sau khi đã cập nhật OTA, thiết bị chạy từ phân vùng `ota_1`: nạp USB thì dùng file merged (hoặc `idf.py flash`, ghi cả `otadata`), không ghi riêng `0x20000`.
 
 ## Cấu hình (`idf.py menuconfig`)
@@ -279,7 +295,7 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 | Mục | Giá trị mặc định |
 |---|---|
 | Nhà sản xuất (Manufacturer) | `Haxeko` |
-| Kiểu máy (Model) | `H2 Occupancy` |
+| Kiểu máy (Model) | `Presence LD2410` |
 | Phần cứng (Hardware) | `ESP32H2-LD2410` |
 | Tên thiết bị khi ghép nối | `Presence Sensor` (cũng là tên DNS-SD; tên Bluetooth là `Presence-<discriminator>`, ví dụ `Presence-3840`) |
 | Số serial | Địa chỉ MAC gốc trong eFuse, ví dụ `744DBDA1B2C3`. Tự động, riêng cho từng chip |
@@ -292,6 +308,12 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 | Delay before recording | 10 s | Thời gian để rời phòng sau khi chọn Learning |
 | Recording time | 30 s | Thời gian ghi năng lượng nền của phòng trống |
 | Margin above the recorded noise | 10 | Ngưỡng mới = năng lượng nền cao nhất + giá trị này |
+
+*LD2410 Bluetooth*:
+
+| Tuỳ chọn | Mặc định | Ý nghĩa |
+|---|---|---|
+| Bluetooth password of the radar | `solana` | Mật khẩu app HLKRadarTool ghi vào radar (đúng 6 ký tự ASCII in được, không dấu cách; trống = không đổi mật khẩu của radar), xem mục **Radar Bluetooth và mật khẩu HLKRadarTool** |
 
 *Thread Diagnostics*: `THREAD_DIAG_LOG` (bật mặc định) in khối chẩn đoán Thread ra log mỗi 10 s cho tới khi ghép nối xong.
 
@@ -307,7 +329,7 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 | RAM tĩnh (DIRAM 252 KB) | 166,9 KB (66,2 %) | 168,1 KB (66,7 %) | 169,3 KB (67,2 %) |
 | DIRAM còn trống (vùng dành cho heap) | 85,1 KB | 83,8 KB | 82,7 KB |
 
-Phần thêm Range và Radar accuracy tốn khoảng 5 KB flash và 1,2 KB RAM tĩnh. Khi chạy còn thêm task `radar_cfg` thường trực với stack 4 KB (bản trước chỉ tạo task 4 KB trong lúc học) và dữ liệu của 2 endpoint Matter mới. Flash và RAM tĩnh còn dư nhiều; heap thật khi chạy phụ thuộc Matter/Thread/BLE nên chỉ đo được trên thiết bị, bằng log `mem`:
+Phần thêm Range và Radar accuracy tốn khoảng 5 KB flash và 1,2 KB RAM tĩnh. Khi chạy còn thêm task `radar_cfg` thường trực với stack 4 KB (bản trước chỉ tạo task 4 KB trong lúc học) và dữ liệu của 2 endpoint Matter mới. Bản hiện tại (thêm log chẩn đoán `id_diag` và Radar Bluetooth): firmware 1 758 KB, trống 162 KB (8 %); RAM tĩnh 171,0 KB (67,9 %). Riêng Radar Bluetooth (endpoint 4) tốn 2,5 KB flash và 0,5 KB RAM tĩnh so với bản 1.0.110. Flash và RAM tĩnh còn dư nhiều; heap thật khi chạy phụ thuộc Matter/Thread/BLE nên chỉ đo được trên thiết bị, bằng log `mem`:
 
 ```
 I mem: Heap: <còn trống> bytes free, lowest <thấp nhất> since boot, largest block <khối lớn nhất>
@@ -382,8 +404,8 @@ matter-presence-ld2410-learning/
 ├── sdkconfig.defaults.factory       # Factory data riêng từng bo (tùy chọn)
 └── main/
     ├── app_main.cpp            # Matter node, endpoint Occupancy Sensor, OpenThread
-    ├── radar_control.cpp       # Mode Select "Learn empty room" / "Range" / "Radar accuracy", task cấu hình radar
-    ├── radar_settings.cpp      # Danh sách lựa chọn, đọc/ghi thông số LD2410 (khởi động lại radar khi đổi độ phân giải)
+    ├── radar_control.cpp       # Mode Select "Learn empty room" / "Range" / "Radar accuracy" / "Radar Bluetooth", task cấu hình radar, mật khẩu Bluetooth
+    ├── radar_settings.cpp      # Danh sách lựa chọn, đọc/ghi thông số LD2410 (khởi động lại radar khi đổi độ phân giải, Bluetooth, mật khẩu)
     ├── quiet_learn.cpp         # Học phòng trống: engineering mode, tính và ghi ngưỡng vào LD2410
     ├── mem_monitor.cpp         # Log heap / stack định kỳ
     ├── device_info.cpp         # Manufacturer / Model / Serial (Basic Information)

@@ -26,8 +26,9 @@ CONFIG_ENABLE_CHIP_SHELL=y
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
 CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
 
-# Root, occupancy sensor, Range and Radar accuracy (Mode Select) endpoints
-CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=4
+# Root, occupancy sensor, Range, Radar accuracy and Radar Bluetooth (Mode Select)
+# endpoints
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=5
 
 # Manufacturer / Model / Serial number come from main/device_info.cpp
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y

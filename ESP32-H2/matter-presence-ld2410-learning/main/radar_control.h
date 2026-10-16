@@ -18,6 +18,10 @@
 //  - "Range": farthest detection gate (moving and still), on its own endpoint
 //  - "Radar accuracy": gate length 0.75 m or 0.2 m (LD2410B/C), on its own
 //    endpoint
+//  - "Radar Bluetooth": Off / On (LD2410B/C, HLKRadarTool app), on its own
+//    endpoint created after the others. While it is on, the radar holds
+//    CONFIG_LD2410_BT_PASSWORD (written once per radar and each time it is
+//    turned on here)
 // The delay before "unoccupied" is set with Matter HoldTime; the radar's own
 // no-one duration is left as stored in the radar.
 // One worker task sends all the radar commands, one session at a time.
@@ -25,8 +29,8 @@
 // Before esp_matter::start().
 esp_err_t radar_control_create(esp_matter::node_t *node, esp_matter::endpoint_t *occupancy_endpoint);
 
-// After esp_matter::start(): starts the worker, which first reads the radar
-// settings.
+// After esp_matter::start() (reads NVS): starts the worker, which first reads
+// the radar settings.
 esp_err_t radar_control_start(void);
 
 // PRE_UPDATE attribute callback, on the Matter task: handles the CurrentMode
