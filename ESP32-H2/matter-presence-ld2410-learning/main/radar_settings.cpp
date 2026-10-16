@@ -110,13 +110,12 @@ static void read_bluetooth(radar_settings_t *out)
 typedef struct {
     bool gate_cm;
     bool bluetooth;
-    bool password;
     uint16_t old_gate_cm;
     bool old_bluetooth;
 } pending_t;
 
-// In configuration mode: stores the requested gate length, Bluetooth state
-// (bluetooth_on) and password.
+// In configuration mode: stores the requested gate length and Bluetooth state
+// (bluetooth_on).
 static esp_err_t store_changes(const radar_settings_request_t *want, const radar_settings_t *now, bool bluetooth_on,
                                pending_t *pending)
 {
@@ -146,29 +145,11 @@ static esp_err_t store_changes(const radar_settings_request_t *want, const radar
         }
         pending->bluetooth = true;
     }
-    if (want->bt_password != nullptr && now->bluetooth_known && bluetooth_on) {
-        // A password that is not stored does not stop the rest of the request.
-        err = ld2410_set_bluetooth_password(want->bt_password);
-        if (err == ESP_ERR_INVALID_ARG) {
-            ESP_LOGE(TAG, "The Bluetooth password must have %d printable ASCII characters", LD2410_BT_PASSWORD_LEN);
-            return ESP_OK;
-        }
-        if (err == ESP_FAIL || err == ESP_ERR_TIMEOUT) {
-            // A radar that stopped answering fails at the next command.
-            ESP_LOGE(TAG, "The radar %s the Bluetooth password (firmware without password support?)",
-                     err == ESP_FAIL ? "refused" : "did not answer");
-            return ESP_OK;
-        }
-        if (err != ESP_OK) {
-            return err;
-        }
-        pending->password = true;
-    }
     return ESP_OK;
 }
 
 // In configuration mode: sets back the gate length and Bluetooth stored by
-// store_changes(). The previous password is not known, the new one stays.
+// store_changes().
 static void undo_changes(const pending_t *pending)
 {
     if (pending->gate_cm) {
@@ -222,14 +203,13 @@ esp_err_t radar_settings_session(const radar_settings_request_t *want, radar_set
     bool in_config = true;
     read_gate_length(out);
     read_bluetooth(out);
-    out->bt_password_set = false;
 
-    // Gate length, Bluetooth and password: stored first, then applied by one restart
+    // Gate length and Bluetooth: stored first, then applied by one restart
     const bool bluetooth_on = want->bluetooth != RADAR_KEEP ? want->bluetooth != 0 : out->bluetooth_on;
     pending_t pending = {};
     err = store_changes(want, out, bluetooth_on, &pending);
     bool restarted = false;
-    if (err == ESP_OK && (pending.gate_cm || pending.bluetooth || pending.password)) {
+    if (err == ESP_OK && (pending.gate_cm || pending.bluetooth)) {
         // The radar may restart before its answer is sent: only a refusal is an error.
         err = ld2410_restart();
         if (err == ESP_FAIL) {
@@ -244,7 +224,6 @@ esp_err_t radar_settings_session(const radar_settings_request_t *want, radar_set
     }
     if (err == ESP_OK && restarted) {
         err = check_applied(want, bluetooth_on, &pending, out);
-        out->bt_password_set = err == ESP_OK && pending.password;
     }
     if (err == ESP_OK) {
         err = ld2410_read_config(&out->config);

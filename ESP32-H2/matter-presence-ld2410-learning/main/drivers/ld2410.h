@@ -22,7 +22,6 @@
 #define LD2410_MAX_MAX_GATE (LD2410_GATE_COUNT - 1)
 // Bluetooth of the LD2410B/C (HLKRadarTool app)
 #define LD2410_MAC_LEN 6
-#define LD2410_BT_PASSWORD_LEN 6
 
 // Latest target report from the HLK-LD2410 24 GHz presence radar.
 typedef struct {
@@ -96,10 +95,6 @@ esp_err_t ld2410_restart(void);
 esp_err_t ld2410_read_bluetooth(bool *enabled, uint8_t mac[LD2410_MAC_LEN]);
 // Stored in the radar's flash; takes effect after ld2410_restart().
 esp_err_t ld2410_set_bluetooth(bool enable);
-// Password the HLKRadarTool app asks for: exactly LD2410_BT_PASSWORD_LEN
-// printable ASCII characters (factory default "HiLink"). Stored in the
-// radar's flash, takes effect after ld2410_restart(). It cannot be read back.
-esp_err_t ld2410_set_bluetooth_password(const char *password);
 
 // Between start and stop, engineering frames update the per-gate maxima.
 void ld2410_capture_start(void);

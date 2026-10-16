@@ -1,6 +1,6 @@
 # Matter Presence Sensor + học phòng trống (ESP32-H2 + HLK-LD2410, Thread)
 
-> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt; mật khẩu app HLKRadarTool cố định `solana`); thời gian chờ chỉnh bằng **Hold time**. Tên thiết bị: **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C3** (mỗi mạch một tên). Phần cứng, chân nối, ghép nối, LED, nút bấm giống hệt bản gốc.
+> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt); thời gian chờ chỉnh bằng **Hold time**. Học phòng trống cũng bắt đầu được bằng cách **bấm nút BOOT 3 lần**, LED báo từng bước. Tên thiết bị: **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C3** (mỗi mạch một tên). Phần cứng, chân nối, ghép nối giống hệt bản gốc; LED và nút bấm thêm phần học phòng trống.
 
 Cảm biến hiện diện chuẩn **Matter over Thread** chạy trên **ESP32-H2** với radar 24 GHz **HLK-LD2410**. Đây là bản chuyển từ Zigbee (`ESP32-H2/zigbee-presence-occupancy`) sang Matter: cùng chip ESP32-H2, cùng radio 802.15.4, nhưng thay Zigbee bằng Thread + Matter. Thêm trực tiếp vào **Apple Home**, Google Home, Home Assistant, SmartThings, Alexa... mà không cần Zigbee coordinator / Zigbee2MQTT.
 
@@ -30,10 +30,12 @@ Trong phòng không có ai, radar vẫn nhận được "năng lượng" từ qu
 
 **Trong Home Assistant:** trang thiết bị → mục *Cấu hình* (Configuration) có entity **Learn empty room** với hai lựa chọn `Off` / `Learning`. Đây là cluster Matter *Mode Select*; Apple Home không hỗ trợ cluster này nên không hiện gì.
 
-1. Chọn **Learning**.
-2. **Rời khỏi phòng** trong 10 giây đầu, đóng cửa, tắt những thứ chuyển động bất thường (không cần tắt quạt nếu quạt vẫn thường chạy, vì đó chính là nhiễu cần học).
-3. Thiết bị bật *engineering mode* của LD2410 và ghi lại năng lượng chuyển động / đứng yên **cao nhất** của từng vùng (gate, mỗi gate 0,75 m) trong **30 giây**.
-4. Thiết bị tính ngưỡng mới, ghi vào LD2410, đọc lại để kiểm tra. **LD2410 tự lưu ngưỡng vào bộ nhớ của nó**, giữ nguyên khi mất điện hay khi nạp lại firmware ESP32-H2.
+**Bằng nút BOOT:** bấm nhanh **3 lần** (mỗi lần cách nhau dưới 0,4 s). Kết quả giống hệt chọn **Learning**, entity trong Home Assistant cũng chuyển sang `Learning`. Không cần ghép nối hay mạng, chỉ cần radar đã nối dây đủ.
+
+1. Chọn **Learning** (hoặc bấm nút BOOT 3 lần).
+2. **Rời khỏi phòng** trong 10 giây đầu (**LED tím sáng liên tục**), đóng cửa, tắt những thứ chuyển động bất thường (không cần tắt quạt nếu quạt vẫn thường chạy, vì đó chính là nhiễu cần học).
+3. Thiết bị bật *engineering mode* của LD2410 và ghi lại năng lượng chuyển động / đứng yên **cao nhất** của từng vùng (gate, mỗi gate 0,75 m) trong **30 giây** (**LED tím nháy chậm**: 1 s tắt, 1 s sáng).
+4. Thiết bị tính ngưỡng mới, ghi vào LD2410, đọc lại để kiểm tra. **LD2410 tự lưu ngưỡng vào bộ nhớ của nó**, giữ nguyên khi mất điện hay khi nạp lại firmware ESP32-H2. Ghi xong: **LED xanh lá trong 10 giây**.
 5. Entity tự trở về **Off** (khoảng 40 giây sau khi chọn). Kết quả xem trong log `quiet_learn`.
 
 Ngưỡng mới của mỗi gate = **năng lượng nền cao nhất + 10**, nhưng:
@@ -52,9 +54,10 @@ I quiet_learn: Gate 6:   8 ->  18 ( 15) |  36 ->  46 ( 20)
 I quiet_learn: Learning done: new thresholds saved in the LD2410 (300 reports)
 ```
 
-- Chọn **Off** trong lúc đang học: huỷ, không ghi gì vào radar.
-- Radar không trả lời lệnh: không ghi gì, log báo kiểm tra dây **GPIO12 → chân RX của LD2410** (bản gốc chỉ đọc radar nên có thể chưa nối dây này).
-- Thời gian chờ, thời gian ghi và mức +10 chỉnh được trong `menuconfig` → *Empty Room Learning*.
+- Chọn **Off** trong lúc đang học: huỷ, không ghi gì vào radar. LED trở lại bình thường ngay, không có màu xanh.
+- Bấm 3 lần khi đang học: không có tác dụng (log `Empty room learning already requested or running`).
+- Radar không trả lời lệnh: không ghi gì; LED có thể chậm vài giây mới chuyển tím, tím khoảng 13 s rồi trở lại bình thường (không có màu xanh), log báo kiểm tra dây **GPIO12 → chân RX của LD2410** (bản gốc chỉ đọc radar nên có thể chưa nối dây này).
+- Thời gian chờ, thời gian ghi và mức +10 chỉnh được trong `menuconfig` → *Empty Room Learning*; LED tím và tím nháy theo đúng hai thời gian này, màu xanh luôn 10 s.
 
 ## Hold time, Radar Bluetooth, Radar resolution và Range
 
@@ -78,18 +81,14 @@ Trong mục *Cấu hình* của thiết bị trên Home Assistant, các entity x
 - Nâng cấp từ bản có entity Duration mà giữ ghép nối: các endpoint đổi số, nên trong Home Assistant xoá thiết bị rồi thêm lại (hoặc nạp file merged và ghép nối lại) để entity cũ không còn sót.
 - Đổi tên *Radar accuracy* → *Radar resolution* không đổi endpoint (vẫn là 3) và giữ ghép nối. Home Assistant lấy tên từ thiết bị; nếu tên cũ vẫn hiện sau khi cập nhật, dùng **Re-interview** trên trang thiết bị (chưa thử). Tên đã tự đặt trong Home Assistant thì được giữ.
 
-### Radar Bluetooth và mật khẩu HLKRadarTool
+### Radar Bluetooth
 
 LD2410B/C có Bluetooth để app **HLKRadarTool** đọc và chỉnh radar. Radar xuất xưởng bật sẵn Bluetooth, mật khẩu `HiLink` ai cũng biết. Bản này:
 
 - **Mặc định tắt**: khi chưa chọn gì trong Home Assistant, lúc khởi động firmware tắt Bluetooth của radar (radar khởi động lại một lần). Chọn **On** để bật, **Off** để tắt lại. Lựa chọn được lưu trong NVS của ESP32-H2 (namespace `ld2410`): giữ qua khởi động lại, cập nhật OTA và reset bằng nút BOOT; mất khi `erase-flash` hoặc nạp file merged (về lại Off). Mỗi lần khởi động, nếu Bluetooth của radar khác lựa chọn đã lưu (ví dụ thay radar mới), firmware đặt lại theo lựa chọn đó.
 - Mỗi lần đổi, firmware ghi vào bộ nhớ của LD2410 rồi **khởi động lại radar** (mất tín hiệu khoảng 1–3 s) và đọc lại trạng thái thật để hiển thị. Lệnh bật/tắt (0x00A4) theo tài liệu giao thức LD2410B V1.07, chỉ có hiệu lực sau khi khởi động lại radar.
-- **Mật khẩu cố định `solana`** (`menuconfig` → *LD2410 Bluetooth* → `LD2410_BT_PASSWORD`, đúng 6 ký tự ASCII in được, không có dấu cách; build báo lỗi nếu sai; để trống = không đụng tới mật khẩu của radar). Firmware chỉ ghi mật khẩu khi Bluetooth của radar đang bật:
-  - **mỗi lần chọn On** trong Home Assistant (ghi cùng lúc với lệnh bật, một lần khởi động lại radar);
-  - và **một lần cho mỗi radar** đang bật Bluetooth mà chưa được ghi: thay radar khác khi đang chọn On, hoặc radar không chịu tắt Bluetooth (để không còn mật khẩu `HiLink`). Radar nào đã được ghi thì nhớ theo địa chỉ MAC Bluetooth của radar trong cùng namespace `ld2410`, các lần khởi động sau không ghi lại.
-- Radar không cho đọc lại mật khẩu, nên firmware chỉ biết radar đã nhận lệnh (log `radar_ctl: LD2410 Bluetooth password set`). Nếu ai đó reset radar về mặc định bằng app (mật khẩu về `HiLink`), chọn **Off** rồi **On** để ghi lại `solana`. Radar firmware cũ không nhận lệnh mật khẩu (từ chối hoặc không trả lời) thì log báo lỗi, các thông số khác vẫn được áp dụng.
-- Bật/tắt hoặc ghi mật khẩu không thành công (radar từ chối, không làm theo, hoặc không trả lời sau khi khởi động lại) thì firmware không thử lại cho tới lần khởi động sau hoặc lần chọn tiếp theo trong Home Assistant, để radar không bị khởi động lại liên tục; Home Assistant hiện lại trạng thái thật của radar.
-- Mật khẩu nằm trong mã nguồn công khai: muốn mật khẩu riêng thì đổi trong `menuconfig` rồi tự build.
+- **Không đổi mật khẩu của radar.** App HLKRadarTool hỏi mật khẩu đang lưu trong radar: `HiLink` nếu chưa ai đổi. Radar từng được bản 1.0.111–1.0.115 ghi mật khẩu (khi Bluetooth của radar đang bật, log `radar_ctl: LD2410 Bluetooth password set`) thì vẫn giữ `solana` trong bộ nhớ của radar, cho tới khi đổi bằng app HLKRadarTool hoặc reset radar về mặc định nhà sản xuất. Bản ghi `bt_password` mà các bản đó lưu trong NVS (namespace `ld2410`) không còn được dùng và được để nguyên.
+- Bật/tắt không thành công (radar từ chối, không làm theo, hoặc không trả lời sau khi khởi động lại) thì firmware không thử lại cho tới lần khởi động sau hoặc lần chọn tiếp theo trong Home Assistant, để radar không bị khởi động lại liên tục; Home Assistant hiện lại trạng thái thật của radar.
 - **Tên Bluetooth của radar** (dạng `HLK-LD2410_xxxx` trong app) do firmware radar đặt, giao thức UART không có lệnh đổi tên. Để biết radar nào gắn với bo nào, bật Bluetooth rồi xem MAC trong log: `radar_ctl: New LD2410 settings: ... Bluetooth on, MAC 8F:27:2E:B8:0F:65`.
 - Trạng thái Bluetooth được đọc qua lệnh hỏi địa chỉ MAC (0x00A5): khi Bluetooth tắt, radar trả về địa chỉ giả `08:05:04:03:02:01` (cách ESPHome xử lý). Cách đọc này chưa được thử trên radar thật trong repo này.
 - Cập nhật OTA từ bản cũ vẫn **giữ ghép nối**: endpoint 1–3 giữ nguyên số, Radar Bluetooth là endpoint số 4. Nếu entity chưa hiện trong Home Assistant sau khi thiết bị khởi động lại, vào trang thiết bị → menu ⋮ → **Re-interview**. Từ bản 1.0.111/1.0.112 lên bản này: chưa có lựa chọn nào được lưu nên lần khởi động đầu tiên firmware tắt Bluetooth của radar; chọn On nếu cần.
@@ -128,7 +127,7 @@ LD2410 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng
 |---|---|
 | Radar LD2410 (UART1) | RX = GPIO11, TX = GPIO12 |
 | LED RGB WS2812 trên board | GPIO8 |
-| Nút BOOT: bấm đúp = chế độ ghép nối, giữ 5 s = factory reset | GPIO9 |
+| Nút BOOT: bấm đúp = chế độ ghép nối, bấm 3 lần = học phòng trống, giữ 5 s = factory reset | GPIO9 |
 
 ### Đèn LED
 
@@ -137,6 +136,11 @@ LD2410 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng
 | Xanh dương nháy chậm (1 s sáng, 1 s tắt) | Chế độ ghép nối: đang chờ thêm vào ứng dụng Matter |
 | Tắt | Hoạt động bình thường (đã ghép nối), hoặc chế độ ghép nối đã hết giờ |
 | Trắng nháy nhanh | Ứng dụng yêu cầu *Identify* (xác định thiết bị) |
+| Tím sáng liên tục | Vừa bắt đầu học phòng trống: rời khỏi phòng (10 s) |
+| Tím nháy chậm (1 s tắt, 1 s sáng) | Đang ghi năng lượng nền của phòng trống (30 s) |
+| Xanh lá trong 10 s | Học xong, ngưỡng mới đã lưu vào radar |
+
+Trong lúc học, LED báo việc học thay cho chế độ ghép nối (học xong thì nháy xanh dương lại nếu vẫn đang chờ ghép nối); *Identify* vẫn được ưu tiên. Huỷ hoặc học không thành công thì LED trở lại bình thường ngay, không có màu xanh lá. Học bắt đầu từ Home Assistant cũng báo LED như vậy. LED một màu (*Single-colour LED on a GPIO*) không đổi màu được: sáng 10 s, nháy chậm 30 s, sáng 10 s.
 
 Trạng thái radar (có người / mất tín hiệu) chỉ xem được trong app và trong log, LED không báo.
 
@@ -147,7 +151,10 @@ Board không có LED WS2812: chọn *Single-colour LED on a GPIO* hoặc *None* 
 | Thao tác | Kết quả |
 |---|---|
 | **Bấm đúp** (2 lần nhanh) | Vào **chế độ ghép nối** trong 15 phút, LED nháy xanh. Chưa ghép nối: thêm lại thiết bị khi chế độ ghép nối lúc khởi động đã hết giờ. Đã ghép nối: thêm thiết bị vào ứng dụng thứ hai (Multi-Admin) bằng chính mã ghép nối của thiết bị |
+| **Bấm 3 lần** (nhanh) | Bắt đầu **học phòng trống**, như chọn *Learning* trong Home Assistant: LED tím (rời phòng), tím nháy chậm (đang ghi), xanh lá 10 s (xong). Xem mục **Học phòng trống** |
 | **Giữ 5 giây** | **Factory reset**: xoá mạng Thread và toàn bộ thông tin ghép nối Matter, khởi động lại. Sau đó LED nháy xanh chờ ghép nối |
+
+Các lần bấm được đếm cho tới khi nhả nút quá 0,4 s, nên bấm đúp có tác dụng sau khi nhả nút khoảng 0,4 s (để phân biệt với bấm 3 lần). Bấm 4 lần trở lên thì không làm gì. Một lần bấm giữ quá 0,5 s huỷ các lần bấm trước nó.
 
 Sau khi đã ghép nối, BLE được tắt để tiết kiệm RAM. Khi đó chế độ ghép nối bằng nút bấm chỉ quảng bá qua mạng Thread (Border Router), nên ứng dụng thứ hai cần dùng cùng mạng Wi-Fi/LAN với Border Router.
 
@@ -289,7 +296,7 @@ Mỗi bản build có thêm file `matter_presence_h2_learn.ota` (trong Artifacts
 | Status LED | WS2812 | WS2812 / LED một màu trên GPIO / không có |
 | Status LED pin | 8 | Chân LED |
 | WS2812 brightness | 20 | Độ sáng LED WS2812 (1–255) |
-| Button pin | 9 | Nút BOOT: bấm đúp = chế độ ghép nối, giữ 5 giây = reset. `-1` để tắt |
+| Button pin | 9 | Nút BOOT: bấm đúp = chế độ ghép nối, bấm 3 lần = học phòng trống, giữ 5 giây = reset. `-1` để tắt |
 
 Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc nếu chọn chân flash (GPIO15–GPIO21).
 
@@ -309,15 +316,9 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 
 | Tuỳ chọn | Mặc định | Ý nghĩa |
 |---|---|---|
-| Delay before recording | 10 s | Thời gian để rời phòng sau khi chọn Learning |
-| Recording time | 30 s | Thời gian ghi năng lượng nền của phòng trống |
+| Delay before recording | 10 s | Thời gian để rời phòng sau khi chọn Learning hoặc bấm nút 3 lần (LED tím) |
+| Recording time | 30 s | Thời gian ghi năng lượng nền của phòng trống (LED tím nháy chậm) |
 | Margin above the recorded noise | 10 | Ngưỡng mới = năng lượng nền cao nhất + giá trị này |
-
-*LD2410 Bluetooth*:
-
-| Tuỳ chọn | Mặc định | Ý nghĩa |
-|---|---|---|
-| Bluetooth password of the radar | `solana` | Mật khẩu app HLKRadarTool ghi vào radar (đúng 6 ký tự ASCII in được, không dấu cách; trống = không đổi mật khẩu của radar), xem mục **Radar Bluetooth và mật khẩu HLKRadarTool** |
 
 *Thread Diagnostics*: `THREAD_DIAG_LOG` (bật mặc định) in khối chẩn đoán Thread ra log mỗi 10 s cho tới khi ghép nối xong.
 
@@ -333,7 +334,7 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 | RAM tĩnh (DIRAM 252 KB) | 166,9 KB (66,2 %) | 168,1 KB (66,7 %) | 169,3 KB (67,2 %) |
 | DIRAM còn trống (vùng dành cho heap) | 85,1 KB | 83,8 KB | 82,7 KB |
 
-Phần thêm Range và Radar resolution tốn khoảng 5 KB flash và 1,2 KB RAM tĩnh. Khi chạy còn thêm task `radar_cfg` thường trực với stack 4 KB (bản trước chỉ tạo task 4 KB trong lúc học) và dữ liệu của 2 endpoint Matter mới. Bản hiện tại (thêm log chẩn đoán `id_diag` và Radar Bluetooth): firmware 1 758 KB, trống 162 KB (8 %); RAM tĩnh 171,0 KB (67,9 %). Riêng Radar Bluetooth (endpoint 4) tốn 2,5 KB flash và 0,5 KB RAM tĩnh so với bản 1.0.110. Flash và RAM tĩnh còn dư nhiều; heap thật khi chạy phụ thuộc Matter/Thread/BLE nên chỉ đo được trên thiết bị, bằng log `mem`:
+Phần thêm Range và Radar resolution tốn khoảng 5 KB flash và 1,2 KB RAM tĩnh. Khi chạy còn thêm task `radar_cfg` thường trực với stack 4 KB (bản trước chỉ tạo task 4 KB trong lúc học) và dữ liệu của 2 endpoint Matter mới. Bản hiện tại (thêm log chẩn đoán `id_diag`, Radar Bluetooth, học bằng nút bấm): firmware 1 760 KB, trống 160 KB (8 %); RAM tĩnh 171,0 KB (67,9 %). Riêng Radar Bluetooth (endpoint 4) tốn 2,5 KB flash và 0,5 KB RAM tĩnh so với bản 1.0.110. Flash và RAM tĩnh còn dư nhiều; heap thật khi chạy phụ thuộc Matter/Thread/BLE nên chỉ đo được trên thiết bị, bằng log `mem`:
 
 ```
 I mem: Heap: <còn trống> bytes free, lowest <thấp nhất> since boot, largest block <khối lớn nhất>
@@ -408,8 +409,8 @@ matter-presence-ld2410-learning/
 ├── sdkconfig.defaults.factory       # Factory data riêng từng bo (tùy chọn)
 └── main/
     ├── app_main.cpp            # Matter node, endpoint Occupancy Sensor, OpenThread
-    ├── radar_control.cpp       # Mode Select "Learn empty room" / "Range" / "Radar resolution" / "Radar Bluetooth", task cấu hình radar, Bluetooth và mật khẩu
-    ├── radar_settings.cpp      # Danh sách lựa chọn, đọc/ghi thông số LD2410 (khởi động lại radar khi đổi độ phân giải, Bluetooth, mật khẩu)
+    ├── radar_control.cpp       # Mode Select "Learn empty room" / "Range" / "Radar resolution" / "Radar Bluetooth", task cấu hình radar, Bluetooth, học phòng trống (Home Assistant hoặc nút bấm)
+    ├── radar_settings.cpp      # Danh sách lựa chọn, đọc/ghi thông số LD2410 (khởi động lại radar khi đổi độ phân giải, Bluetooth)
     ├── quiet_learn.cpp         # Học phòng trống: engineering mode, tính và ghi ngưỡng vào LD2410
     ├── mem_monitor.cpp         # Log heap / stack định kỳ
     ├── device_info.cpp         # Manufacturer / Model / Serial (Basic Information)
@@ -420,6 +421,6 @@ matter-presence-ld2410-learning/
     ├── Kconfig.projbuild       # Cấu hình chân và tham số
     └── drivers/
         ├── ld2410.cpp          # Radar LD2410 (UART1, 256000 baud): đọc báo cáo, gửi lệnh cấu hình
-        ├── status_led.cpp      # LED trạng thái (WS2812 hoặc LED thường)
-        └── user_button.cpp     # Nút BOOT: bấm đúp, giữ lâu
+        ├── status_led.cpp      # LED trạng thái (WS2812 hoặc LED thường): ghép nối, Identify, học phòng trống
+        └── user_button.cpp     # Nút BOOT: bấm đúp, bấm 3 lần, giữ lâu
 ```

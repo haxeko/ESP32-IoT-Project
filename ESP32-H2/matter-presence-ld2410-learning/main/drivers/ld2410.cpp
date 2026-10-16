@@ -55,7 +55,6 @@ static constexpr uint16_t kCmdGateSensitivity = 0x0064;
 static constexpr uint16_t kCmdRestart = 0x00A3;
 static constexpr uint16_t kCmdBluetooth = 0x00A4;
 static constexpr uint16_t kCmdReadMac = 0x00A5;
-static constexpr uint16_t kCmdBluetoothPassword = 0x00A9;
 static constexpr uint16_t kCmdSetResolution = 0x00AA;
 static constexpr uint16_t kCmdReadResolution = 0x00AB;
 static constexpr uint16_t kAckFlag = 0x0100;
@@ -447,20 +446,6 @@ esp_err_t ld2410_set_bluetooth(bool enable)
     // 0x0001 on, 0x0000 off
     const uint8_t value[] = { enable ? (uint8_t)0x01 : (uint8_t)0x00, 0x00 };
     return command(kCmdBluetooth, value, sizeof(value), NULL);
-}
-
-esp_err_t ld2410_set_bluetooth_password(const char *password)
-{
-    if (password == NULL || strlen(password) != LD2410_BT_PASSWORD_LEN) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    for (size_t i = 0; i < LD2410_BT_PASSWORD_LEN; i++) {
-        if (password[i] < 0x21 || password[i] > 0x7E) {
-            return ESP_ERR_INVALID_ARG;
-        }
-    }
-    // The 6 ASCII characters in order: "HiLink" is 48 69 4C 69 6E 6B
-    return command(kCmdBluetoothPassword, (const uint8_t *)password, LD2410_BT_PASSWORD_LEN, NULL);
 }
 
 void ld2410_capture_start(void)

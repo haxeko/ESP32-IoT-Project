@@ -25,6 +25,7 @@
 #include <atomic>
 
 #include <drivers/ld2410.h>
+#include <drivers/status_led.h>
 #include <quiet_learn.h>
 #include <radar_control.h>
 #include <radar_settings.h>
@@ -62,23 +63,6 @@ static constexpr size_t kMacLabelLen = 18;      // "8F:27:2E:B8:0F:65"
 // Root, occupancy sensor, Range, Radar resolution and Radar Bluetooth
 static_assert(CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT >= 5,
               "CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT must be at least 5 (see sdkconfig.defaults)");
-
-// Password of the HLKRadarTool app stored in the radar, empty: left as it is
-static constexpr char kBtPassword[] = CONFIG_LD2410_BT_PASSWORD;
-
-static constexpr bool is_valid_bt_password(const char *password)
-{
-    size_t len = 0;
-    for (; password[len] != '\0'; len++) {
-        if (password[len] < 0x21 || password[len] > 0x7E) {
-            return false;
-        }
-    }
-    return len == 0 || len == LD2410_BT_PASSWORD_LEN;
-}
-static_assert(is_valid_bt_password(kBtPassword),
-              "CONFIG_LD2410_BT_PASSWORD: 6 printable ASCII characters without spaces, or empty");
-static constexpr size_t kBtPasswordLen = sizeof(kBtPassword) - 1; // LD2410_BT_PASSWORD_LEN or 0
 
 // ---------------------------------------------------------------------------
 // Mode options. The worker changes them with the Matter stack lock held (or
@@ -216,7 +200,8 @@ static RadarModesManager s_modes;
 // ---------------------------------------------------------------------------
 // Requests from the Matter task to the worker
 
-// Empty room learning: requested by Home Assistant, run by the worker.
+// Empty room learning: requested by Home Assistant or the button, run by the
+// worker.
 enum LearnState : uint8_t { kLearnIdle, kLearnRequested, kLearnRunning, kLearnCancelling };
 static std::atomic<LearnState> s_learn_state{kLearnIdle};
 
@@ -248,49 +233,28 @@ static void request_learning(bool on)
 // ---------------------------------------------------------------------------
 // Bluetooth of the radar. Off until it is turned on from Home Assistant: the
 // choice is kept in NVS and the worker brings the radar back to it at boot
-// (the LD2410 leaves the factory with Bluetooth on).
-// Password: stored once in each radar whose Bluetooth is on (known by its
-// Bluetooth MAC address, which the radar only reports while its Bluetooth is
-// on), and again each time Bluetooth is turned on from Home Assistant. The
-// radar cannot report its password.
-// Every change is applied by a restart of the radar.
-
-struct BtPasswordRecord {
-    uint8_t mac[LD2410_MAC_LEN];          // radar that holds the password
-    char password[LD2410_BT_PASSWORD_LEN]; // kBtPassword when it was stored
-};
+// (the LD2410 leaves the factory with Bluetooth on). Every change is applied
+// by a restart of the radar. Its password is left as stored in the radar.
 
 static constexpr const char *kNvsNamespace = "ld2410";
 static constexpr const char *kNvsBtOnKey = "bt_on";
-static constexpr const char *kNvsBtPasswordKey = "bt_password";
 
 // Worker only (and radar_control_start() before the worker runs)
 static bool s_bt_wanted; // chosen in Home Assistant, off until then
-static BtPasswordRecord s_bt_record;
-static bool s_bt_record_valid;
-// The last Bluetooth on/off change, or password write, did not work: not
-// tried again before the next boot or the next change from Home Assistant, so
-// a radar that does not follow is not restarted over and over.
+// The last Bluetooth on/off change did not work: not tried again before the
+// next boot or the next change from Home Assistant, so a radar that does not
+// follow is not restarted over and over.
 static bool s_bt_change_failed;
-static bool s_bt_password_failed;
-
-static const char *bt_password()
-{
-    return kBtPassword[0] != '\0' ? kBtPassword : nullptr;
-}
 
 static void load_bt_state()
 {
     nvs_handle_t nvs;
     if (nvs_open(kNvsNamespace, NVS_READONLY, &nvs) != ESP_OK) {
-        return; // nothing stored yet: Bluetooth off, no password written
+        return; // nothing stored yet: Bluetooth off
     }
     uint8_t on = 0;
     size_t len = sizeof(on);
     s_bt_wanted = nvs_get_blob(nvs, kNvsBtOnKey, &on, &len) == ESP_OK && len == sizeof(on) && on != 0;
-    len = sizeof(s_bt_record);
-    s_bt_record_valid = nvs_get_blob(nvs, kNvsBtPasswordKey, &s_bt_record, &len) == ESP_OK &&
-                        len == sizeof(s_bt_record);
     nvs_close(nvs);
 }
 
@@ -317,25 +281,6 @@ static void set_bt_wanted(bool on)
         const uint8_t value = on ? 1 : 0;
         store_nvs(kNvsBtOnKey, &value, sizeof(value));
     }
-}
-
-static void store_bt_record(const uint8_t mac[LD2410_MAC_LEN])
-{
-    memcpy(s_bt_record.mac, mac, LD2410_MAC_LEN);
-    memcpy(s_bt_record.password, kBtPassword, kBtPasswordLen);
-    s_bt_record_valid = true;
-    // When not saved: kept for this boot, written again after the next one
-    store_nvs(kNvsBtPasswordKey, &s_bt_record, sizeof(s_bt_record));
-}
-
-// The radar's Bluetooth is on and it has not received kBtPassword yet.
-static bool bt_password_needed(const radar_settings_t &settings)
-{
-    if (bt_password() == nullptr || !settings.bluetooth_known || !settings.bluetooth_on) {
-        return false;
-    }
-    return !s_bt_record_valid || memcmp(s_bt_record.mac, settings.bt_mac, LD2410_MAC_LEN) != 0 ||
-           memcmp(s_bt_record.password, kBtPassword, kBtPasswordLen) != 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -431,7 +376,7 @@ static void log_settings(const char *what, const radar_settings_t &settings)
 static bool is_change(const radar_settings_request_t &want)
 {
     return want.duration_s != RADAR_KEEP || want.gate != RADAR_KEEP || want.gate_cm != RADAR_KEEP ||
-           want.bluetooth != RADAR_KEEP || want.bt_password != nullptr;
+           want.bluetooth != RADAR_KEEP;
 }
 
 static esp_err_t s_session_err; // result of the last session
@@ -455,14 +400,6 @@ static bool settings_session(const radar_settings_request_t &want)
     if (!s_synced || change) {
         log_settings(s_synced ? "New LD2410 settings" : "LD2410 settings", now);
     }
-    if (want.bt_password != nullptr && now.bluetooth_on) {
-        if (now.bt_password_set) {
-            ESP_LOGI(TAG, "LD2410 Bluetooth password set (CONFIG_LD2410_BT_PASSWORD)");
-            store_bt_record(now.bt_mac);
-        } else {
-            s_bt_password_failed = true;
-        }
-    }
     s_settings = now;
     s_synced = true;
     publish(now);
@@ -470,43 +407,33 @@ static bool settings_session(const radar_settings_request_t &want)
 }
 
 // After a successful session: brings the radar's Bluetooth to the state
-// chosen in Home Assistant (off by default), then gives the password to a
-// radar whose Bluetooth is on, chosen or not (one that refused to turn off
-// must not keep the factory password). False when the radar did not answer as
-// expected.
+// chosen in Home Assistant (off by default). False when the radar did not
+// answer as expected.
 static bool fix_bluetooth()
 {
-    if (!s_settings.bluetooth_known) {
+    if (!s_settings.bluetooth_known || s_bt_change_failed || s_settings.bluetooth_on == s_bt_wanted) {
         return true;
     }
-    if (!s_bt_change_failed && s_settings.bluetooth_on != s_bt_wanted) {
-        ESP_LOGI(TAG, "Turning the LD2410 Bluetooth %s (%s)", s_bt_wanted ? "on" : "off",
-                 s_bt_wanted ? "as chosen in Home Assistant" : "default, or as chosen in Home Assistant");
-        radar_settings_request_t fix = {};
-        fix.bluetooth = s_bt_wanted ? kBluetoothOn : kBluetoothOff;
-        fix.bt_password = s_bt_wanted && !s_bt_password_failed ? bt_password() : nullptr;
-        const bool answered = settings_session(fix);
-        if (!answered || s_settings.bluetooth_on != s_bt_wanted) {
-            s_bt_change_failed = true;
-        }
-        if (!answered) {
-            return false;
-        }
+    ESP_LOGI(TAG, "Turning the LD2410 Bluetooth %s (%s)", s_bt_wanted ? "on" : "off",
+             s_bt_wanted ? "as chosen in Home Assistant" : "default, or as chosen in Home Assistant");
+    radar_settings_request_t fix = {};
+    fix.bluetooth = s_bt_wanted ? kBluetoothOn : kBluetoothOff;
+    const bool answered = settings_session(fix);
+    if (!answered || s_settings.bluetooth_on != s_bt_wanted) {
+        s_bt_change_failed = true;
     }
-    if (!s_bt_password_failed && bt_password_needed(s_settings)) {
-        radar_settings_request_t fix = {};
-        fix.bt_password = bt_password();
-        if (!settings_session(fix)) {
-            s_bt_password_failed = true;
-            return false;
-        }
-    }
-    return true;
+    return answered;
 }
 
 static bool learning_cancelled()
 {
     return s_learn_state.load() == kLearnCancelling;
+}
+
+static void show_learning_phase(quiet_learn_phase_t phase)
+{
+    status_led_set_learning(phase == QUIET_LEARN_RECORDING ? STATUS_LED_LEARNING_RECORDING
+                                                           : STATUS_LED_LEARNING_WAITING);
 }
 
 static void run_requested_learning()
@@ -515,9 +442,12 @@ static void run_requested_learning()
     if (!s_learn_state.compare_exchange_strong(state, kLearnRunning)) {
         return;
     }
-    // Normally shown already; covers a request made while the previous learning ended.
+    // Shown already when chosen in Home Assistant; covers the button and a
+    // request made while the previous learning ended.
     report_current_mode(s_learn.endpoint_id, kLearnOn);
-    quiet_learn_run(learning_cancelled);
+    const bool saved = quiet_learn_run(learning_cancelled, show_learning_phase);
+    // Green for a while when new thresholds are saved; nothing when cancelled or failed
+    status_led_set_learning(saved ? STATUS_LED_LEARNING_DONE : STATUS_LED_LEARNING_NONE);
     s_learn_state = kLearnIdle;
     report_current_mode(s_learn.endpoint_id, kLearnOff);
 }
@@ -533,17 +463,12 @@ static void radar_task(void *arg)
             // Kept even if this session fails: applied again at the next boot.
             set_bt_wanted(bluetooth == kBluetoothOn);
             s_bt_change_failed = false;
-            if (bluetooth == kBluetoothOn) {
-                s_bt_password_failed = false;
-            }
         }
         const radar_settings_request_t want = {
             .duration_s = RADAR_KEEP,
             .gate = s_want_gate.exchange(RADAR_KEEP),
             .gate_cm = s_want_gate_cm.exchange(RADAR_KEEP),
             .bluetooth = bluetooth,
-            // Turning Bluetooth on from Home Assistant also stores the password.
-            .bt_password = bluetooth == kBluetoothOn ? bt_password() : nullptr,
         };
         if (stale || is_change(want)) {
             stale = !settings_session(want);
@@ -655,6 +580,22 @@ esp_err_t radar_control_start(void)
     }
     s_task = task;
     return ESP_OK;
+}
+
+bool radar_control_request_learning(void)
+{
+    TaskHandle_t task = s_task;
+    if (task == nullptr) {
+        ESP_LOGW(TAG, "Cannot start the empty room learning: the radar task is not running");
+        return false;
+    }
+    LearnState state = kLearnIdle;
+    if (!s_learn_state.compare_exchange_strong(state, kLearnRequested)) {
+        ESP_LOGI(TAG, "Empty room learning already requested or running");
+        return false;
+    }
+    xTaskNotifyGive(task);
+    return true;
 }
 
 esp_err_t radar_control_pre_update(uint16_t endpoint_id, uint32_t cluster_id, uint32_t attribute_id,

@@ -107,12 +107,15 @@ static bool apply_thresholds(const ld2410_capture_t *noise)
     return true;
 }
 
-bool quiet_learn_run(quiet_learn_cancelled_cb_t cancelled)
+bool quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase)
 {
     const uint32_t delay_s = CONFIG_LD2410_LEARN_DELAY_SEC;
     const uint32_t duration_s = CONFIG_LD2410_LEARN_DURATION_SEC;
     ESP_LOGI(TAG, "Empty room learning: leave the room, recording starts in %" PRIu32 " s and lasts %" PRIu32 " s",
              delay_s, duration_s);
+    if (on_phase) {
+        on_phase(QUIET_LEARN_WAITING);
+    }
     if (!wait_unless_cancelled(delay_s * 1000, cancelled)) {
         ESP_LOGI(TAG, "Learning cancelled, nothing changed");
         return false;
@@ -133,6 +136,9 @@ bool quiet_learn_run(quiet_learn_cancelled_cb_t cancelled)
     }
 
     ESP_LOGI(TAG, "Recording the empty room for %" PRIu32 " s", duration_s);
+    if (on_phase) {
+        on_phase(QUIET_LEARN_RECORDING);
+    }
     ld2410_capture_start();
     const bool completed = wait_unless_cancelled(duration_s * 1000, cancelled);
     ld2410_capture_t noise;

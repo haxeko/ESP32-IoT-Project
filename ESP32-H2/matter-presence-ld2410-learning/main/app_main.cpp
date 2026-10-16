@@ -19,9 +19,9 @@
 // clusters that Home Assistant shows as select entities and Apple Home
 // ignores: "Learn empty room" on the occupancy endpoint (records the radar's
 // background energy and raises the LD2410 thresholds above it, see
-// quiet_learn.cpp), "Range" (farthest detection gate), "Radar resolution"
-// (gate length) and "Radar Bluetooth" (off by default, with the fixed
-// password CONFIG_LD2410_BT_PASSWORD) on endpoints of their own.
+// quiet_learn.cpp; also started by a triple click on the button), "Range"
+// (farthest detection gate), "Radar resolution" (gate length) and "Radar
+// Bluetooth" (off by default) on endpoints of their own.
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
@@ -227,7 +227,8 @@ static bool is_commissioned()
 }
 
 // Runs on the Matter task. The LED blinks blue while the commissioning window
-// is open (waiting to be added to an app) and stays dark otherwise.
+// is open (waiting to be added to an app) and stays dark otherwise; an empty
+// room learning (radar_control.cpp) shows over this.
 static void update_led_mode()
 {
     const bool pairing = chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen();
@@ -426,6 +427,13 @@ static void pairing_button_cb()
     }
 }
 
+// Triple click: empty room learning, like "Learning" in Home Assistant. Runs in
+// the esp_timer task: the radar task does the work and the LED shows it.
+static void learning_button_cb()
+{
+    radar_control_request_learning();
+}
+
 // Long press: factory reset. Runs in the esp_timer task.
 static void factory_reset_cb()
 {
@@ -453,6 +461,7 @@ extern "C" void app_main()
     status_led_init();
     const user_button_config_t button_config = {
         .on_double_click = pairing_button_cb,
+        .on_triple_click = learning_button_cb,
         .on_long_press = factory_reset_cb,
         .long_press_ms = kFactoryResetHoldMs,
     };
