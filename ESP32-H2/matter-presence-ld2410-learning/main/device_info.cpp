@@ -80,22 +80,29 @@ static_assert(sizeof(CONFIG_DEVICE_NAME_PREFIX) - 1 <= 11, "Device name prefix m
 static_assert(sizeof(CONFIG_DEVICE_HARDWARE_VERSION_STRING) - 1 <= ConfigurationManager::kMaxHardwareVersionStringLength,
               "Hardware must be at most 64 characters");
 
-#if !SOC_IEEE802154_SUPPORTED
-#error "device_info_get_serial() expects the EUI-64 MAC of an 802.15.4 chip"
-#endif
-
 void device_info_get_serial(char *buf, size_t size)
 {
-    // ESP32-H2 has no Wi-Fi: use the factory base MAC burned in eFuse,
-    // e.g. "744DBDA1B2C3". Unique per chip, survives erase-flash.
-    // On 802.15.4 chips the MAC comes as an EUI-64: the 3 OUI bytes, the 2
-    // MAC_EXT bytes (FF FE), then the 3 bytes that differ from chip to chip.
+    // The factory base MAC burned in eFuse, e.g. "744DBDA1B2C3". Unique per
+    // chip, survives erase-flash.
+#if SOC_IEEE802154_SUPPORTED
+    // ESP32-H2: on 802.15.4 chips the MAC comes as an EUI-64: the 3 OUI bytes,
+    // the 2 MAC_EXT bytes (FF FE), then the 3 bytes that differ from chip to
+    // chip.
     uint8_t eui64[8] = {};
     esp_err_t err = esp_efuse_mac_get_default(eui64);
     if (err != ESP_OK) {
         ESP_LOGE("device_info", "Failed to read the MAC address from eFuse, err:%d", err);
     }
     snprintf(buf, size, "%02X%02X%02X%02X%02X%02X", eui64[0], eui64[1], eui64[2], eui64[5], eui64[6], eui64[7]);
+#else
+    // ESP32-C3: 6 bytes, also the Wi-Fi station MAC shown by the router.
+    uint8_t mac[6] = {};
+    esp_err_t err = esp_efuse_mac_get_default(mac);
+    if (err != ESP_OK) {
+        ESP_LOGE("device_info", "Failed to read the MAC address from eFuse, err:%d", err);
+    }
+    snprintf(buf, size, "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+#endif
 }
 
 void device_info_get_name(char *buf, size_t size)

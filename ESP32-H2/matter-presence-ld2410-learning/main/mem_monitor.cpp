@@ -11,16 +11,22 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <sdkconfig.h>
 #include <stdio.h>
 
 #include "mem_monitor.h"
 
 static const char *TAG = "mem";
 
-// Matter, OpenThread, the timers (LED, button, this log), the serial console
-// and the application tasks
+// Matter, OpenThread or Wi-Fi, the timers (LED, button, this log), the serial
+// console and the application tasks
+#if CONFIG_OPENTHREAD_ENABLED
 static const char *const kTasks[] = { "CHIP",     "ot_task", "esp_timer", "console",
                                       "presence", "ld2410",  "radar_cfg", "id_diag" };
+#else
+static const char *const kTasks[] = { "CHIP",     "wifi",   "esp_timer", "console",
+                                      "presence", "ld2410", "radar_cfg", "id_diag" };
+#endif
 
 // Below these the device is close to failing allocations or overflowing a stack.
 static constexpr size_t kLowHeapBytes = 16 * 1024;

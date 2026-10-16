@@ -69,7 +69,7 @@ static esp_err_t led_hw_init()
         .resolution_hz = 10 * 1000 * 1000,
         .mem_block_symbols = 0,
         .flags = {
-            .with_dma = false, /* ESP32-H2 RMT has no DMA */
+            .with_dma = false, /* the RMT of ESP32-H2 and ESP32-C3 has no DMA */
         },
     };
     esp_err_t err = led_strip_new_rmt_device(&strip_config, &rmt_config, &s_strip);

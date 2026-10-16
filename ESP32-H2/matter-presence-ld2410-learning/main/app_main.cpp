@@ -6,14 +6,15 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-// Matter Occupancy Sensor (device type 0x0107) over Thread on ESP32-H2, fed
-// by an HLK-LD2410 24 GHz presence radar. The Occupancy Sensing cluster has
-// the Radar feature and the HoldTime attribute, so controllers can tune how
-// long the room stays "occupied" after the radar stops seeing anyone.
+// Matter Occupancy Sensor (device type 0x0107) over Thread on ESP32-H2, or
+// over Wi-Fi on ESP32-C3 (board.h), fed by an HLK-LD2410 24 GHz presence
+// radar. The Occupancy Sensing cluster has the Radar feature and the HoldTime
+// attribute, so controllers can tune how long the room stays "occupied" after
+// the radar stops seeing anyone.
 //
-// The phone sends the Thread network credentials over BLE during
-// commissioning; afterwards the device talks to the controllers through a
-// Thread Border Router.
+// The phone sends the network credentials (Thread dataset or Wi-Fi SSID and
+// password) over BLE during commissioning; afterwards the device talks to the
+// controllers through a Thread Border Router, or directly over the Wi-Fi LAN.
 //
 // Home Assistant controls of the LD2410 (radar_control.cpp), Mode Select
 // clusters that Home Assistant shows as select entities and Apple Home
@@ -37,12 +38,16 @@
 #include <freertos/task.h>
 #include <nvs_flash.h>
 #include <platform/KeyValueStoreManager.h>
+#include <stdio.h>
 
+#if CONFIG_OPENTHREAD_ENABLED
 #include <esp_openthread_types.h>
 #include <platform/ESP32/OpenthreadLauncher.h>
+#endif
 
 #include <atomic>
 
+#include <board.h>
 #include <device_info.h>
 #include <drivers/ld2410.h>
 #include <drivers/status_led.h>
@@ -62,7 +67,8 @@ using namespace chip::app::Clusters;
 static constexpr uint32_t kRadarPollMs = 100;
 static constexpr uint32_t kPresenceTaskStack = 4096;
 // Above the Matter task (CONFIG_CHIP_TASK_PRIORITY = 1) so radar sampling keeps
-// its pace, below OpenThread (5); the task sleeps between polls.
+// its pace, below OpenThread (5) or the Wi-Fi and lwIP tasks; the task sleeps
+// between polls.
 static constexpr UBaseType_t kPresenceTaskPriority = 2;
 static constexpr uint32_t kFactoryResetHoldMs = 5000;
 // Pairing mode opened by a double click on the button, same length as the
@@ -79,22 +85,30 @@ static constexpr uint16_t kHoldTimeMax = 300;
 // default HoldTime from menuconfig has been applied.
 static const char kHoldTimeInitKey[] = "app/hold-init";
 
-// Catch pin mistakes from menuconfig at build time. GPIO15-GPIO21 connect the
-// in-package flash of ESP32-H2.
-static constexpr bool is_flash_pin(int gpio)
+// Catch pin mistakes from menuconfig at build time: the board's flash (and on
+// ESP32-C3 USB) pins, see board_<target>.h.
+static constexpr bool is_reserved_pin(int gpio)
 {
-    return gpio >= 15 && gpio <= 21;
+    return BOARD_PIN_RESERVED(gpio);
 }
 static_assert(CONFIG_LD2410_UART_RX_PIN != CONFIG_LD2410_UART_TX_PIN, "LD2410 RX and TX must be different pins");
-static_assert(!is_flash_pin(CONFIG_LD2410_UART_RX_PIN) && !is_flash_pin(CONFIG_LD2410_UART_TX_PIN),
-              "LD2410 pins must not be flash pins (GPIO15-GPIO21)");
+static_assert(!is_reserved_pin(CONFIG_LD2410_UART_RX_PIN) && !is_reserved_pin(CONFIG_LD2410_UART_TX_PIN),
+              "LD2410 pins must not be " BOARD_PIN_RESERVED_TEXT);
 static_assert(CONFIG_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_RX_PIN &&
-                  CONFIG_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_TX_PIN && !is_flash_pin(CONFIG_RESET_BUTTON_GPIO),
-              "Button pin conflicts with the radar or flash pins");
+                  CONFIG_RESET_BUTTON_GPIO != CONFIG_LD2410_UART_TX_PIN && !is_reserved_pin(CONFIG_RESET_BUTTON_GPIO),
+              "Button pin conflicts with the radar or " BOARD_PIN_RESERVED_TEXT);
 #if !CONFIG_STATUS_LED_TYPE_NONE
 static_assert(CONFIG_STATUS_LED_GPIO != CONFIG_LD2410_UART_RX_PIN && CONFIG_STATUS_LED_GPIO != CONFIG_LD2410_UART_TX_PIN &&
-                  CONFIG_STATUS_LED_GPIO != CONFIG_RESET_BUTTON_GPIO && !is_flash_pin(CONFIG_STATUS_LED_GPIO),
-              "Status LED pin conflicts with the radar, the button or flash pins");
+                  CONFIG_STATUS_LED_GPIO != CONFIG_RESET_BUTTON_GPIO && !is_reserved_pin(CONFIG_STATUS_LED_GPIO),
+              "Status LED pin conflicts with the radar, the button or " BOARD_PIN_RESERVED_TEXT);
+#endif
+
+#if CONFIG_STATUS_LED_TYPE_WS2812
+static const char kLedText[] = "WS2812";
+#elif CONFIG_STATUS_LED_TYPE_GPIO && CONFIG_STATUS_LED_ACTIVE_HIGH
+static const char kLedText[] = "single colour, on when high";
+#elif CONFIG_STATUS_LED_TYPE_GPIO
+static const char kLedText[] = "single colour, on when low";
 #endif
 
 static std::atomic<bool> s_matter_started{false};
@@ -245,7 +259,8 @@ static void open_commissioning_window(uint32_t timeout_sec)
     }
 
     // Once BLE is released the device is only found over the network: DNS-SD
-    // through the SRP server of the Thread Border Router.
+    // through the SRP server of the Thread Border Router, or mDNS on the Wi-Fi
+    // LAN.
     const auto advertisement = s_ble_released ? chip::CommissioningWindowAdvertisement::kDnssdOnly
                                               : chip::CommissioningWindowAdvertisement::kAllSupported;
     CHIP_ERROR err = commissionMgr.OpenBasicCommissioningWindow(chip::System::Clock::Seconds32(timeout_sec), advertisement);
@@ -260,8 +275,8 @@ static void open_commissioning_window(uint32_t timeout_sec)
 
 static void open_commissioning_window_if_necessary()
 {
-    // After removing the last fabric the Thread credentials are kept, so the
-    // device can be added again over the network right away.
+    // After removing the last fabric the Thread or Wi-Fi credentials are kept,
+    // so the device can be added again over the network right away.
     VerifyOrReturn(!is_commissioned());
     open_commissioning_window(kRecommissioningWindowSec);
 }
@@ -286,9 +301,17 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
         ESP_LOGI(TAG, "Interface IP Address changed");
         break;
 
+#if CONFIG_OPENTHREAD_ENABLED
     case chip::DeviceLayer::DeviceEventType::kThreadConnectivityChange:
         ESP_LOGI(TAG, "Thread connectivity changed");
         break;
+#endif
+
+#if CONFIG_ENABLE_WIFI_STATION
+    case chip::DeviceLayer::DeviceEventType::kWiFiConnectivityChange:
+        ESP_LOGI(TAG, "Wi-Fi connectivity changed");
+        break;
+#endif
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete");
@@ -368,6 +391,7 @@ static esp_err_t start_matter()
         ESP_LOGE(TAG, "Failed to create the LD2410 controls");
     }
 
+#if CONFIG_OPENTHREAD_ENABLED
     /* OpenThread on the ESP32-H2 native 802.15.4 radio (no RCP, no host) */
     esp_openthread_platform_config_t ot_config = {
         .radio_config = { .radio_mode = RADIO_MODE_NATIVE },
@@ -375,6 +399,8 @@ static esp_err_t start_matter()
         .port_config = { .storage_partition_name = "nvs", .netif_queue_size = 10, .task_queue_size = 10 },
     };
     set_openthread_platform_config(&ot_config);
+#endif
+    /* Wi-Fi (ESP32-C3): station started by the Matter stack with the credentials from commissioning */
 
     // Per-board setup code (sdkconfig.defaults.unique_setup); nothing to do in the default build
     setup_code_init();
@@ -391,10 +417,10 @@ static esp_err_t start_matter()
         ESP_LOGE(TAG, "Failed to start the radar configuration task");
     }
 
-    /* Log Thread addresses / SRP state until commissioned (see README, troubleshooting) */
+    /* Log Thread addresses / SRP state until commissioned (see README, troubleshooting); nothing on Wi-Fi */
     thread_diag_start();
 
-    /* Identity / Thread / Matter state at boot, on events and every CONFIG_IDENTITY_DIAG_PERIOD_SEC */
+    /* Identity / network / Matter state at boot, on events and every CONFIG_IDENTITY_DIAG_PERIOD_SEC */
     if (identity_diag_start(CONFIG_IDENTITY_DIAG_PERIOD_SEC) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the identity diagnostics");
     }
@@ -437,9 +463,9 @@ static void learning_button_cb()
 // Long press: factory reset. Runs in the esp_timer task.
 static void factory_reset_cb()
 {
-    ESP_LOGW(TAG, "Factory reset: erasing the Thread network and Matter pairing");
+    ESP_LOGW(TAG, "Factory reset: erasing the " BOARD_NETWORK " network and Matter pairing");
     if (s_matter_started) {
-        esp_matter::factory_reset(); // also clears the Thread dataset, then restarts
+        esp_matter::factory_reset(); // also clears the Thread dataset or the Wi-Fi credentials, then restarts
     } else {
         nvs_flash_erase();
         esp_restart();
@@ -457,6 +483,18 @@ extern "C" void app_main()
 
     ESP_LOGI(TAG, "%s %s, firmware %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME,
              esp_app_get_description()->version);
+    ESP_LOGI(TAG, "Target %s, board %s, Matter over %s", CONFIG_IDF_TARGET, BOARD_NAME, BOARD_NETWORK);
+    char button[12] = "none";
+    if (CONFIG_RESET_BUTTON_GPIO >= 0) {
+        snprintf(button, sizeof(button), "GPIO%d", CONFIG_RESET_BUTTON_GPIO);
+    }
+#if CONFIG_STATUS_LED_TYPE_NONE
+    ESP_LOGI(TAG, "Pins: LD2410 RX GPIO%d (radar TX), TX GPIO%d (radar RX), button %s, no LED",
+             CONFIG_LD2410_UART_RX_PIN, CONFIG_LD2410_UART_TX_PIN, button);
+#else
+    ESP_LOGI(TAG, "Pins: LD2410 RX GPIO%d (radar TX), TX GPIO%d (radar RX), button %s, LED GPIO%d (%s)",
+             CONFIG_LD2410_UART_RX_PIN, CONFIG_LD2410_UART_TX_PIN, button, CONFIG_STATUS_LED_GPIO, kLedText);
+#endif
 
     status_led_init();
     const user_button_config_t button_config = {

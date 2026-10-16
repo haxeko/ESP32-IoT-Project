@@ -38,7 +38,7 @@ using ModeOption = ModeSelect::Structs::ModeOptionStruct::Type;
 using chip::Protocols::InteractionModel::Status;
 
 static constexpr uint32_t kTaskStack = 4096;
-// Above the Matter task (1), below OpenThread (5), like the presence task
+// Above the Matter task (1), below OpenThread (5) or the Wi-Fi and lwIP tasks, like the presence task
 static constexpr UBaseType_t kTaskPriority = 2;
 // Next reads while the radar does not answer (not connected, still starting)
 static constexpr uint32_t kSyncRetryFirstMs = 15 * 1000;
