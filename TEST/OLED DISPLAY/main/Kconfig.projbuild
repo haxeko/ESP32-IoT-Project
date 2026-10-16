@@ -1,0 +1,44 @@
+menu "OLED Display (SSD1306 SPI)"
+
+    config OLED_SCK_GPIO
+        int "SCK (D0) GPIO"
+        range 0 21
+        default 5
+        help
+            Do not use the flash pins (GPIO11 to 17) or the USB pins
+            (GPIO18, 19). This applies to all the OLED pins.
+
+    config OLED_SDA_GPIO
+        int "SDA (D1, SPI MOSI) GPIO"
+        range 0 21
+        default 6
+
+    config OLED_RES_GPIO
+        int "RES (reset) GPIO"
+        range 0 21
+        default 7
+
+    config OLED_DC_GPIO
+        int "DC (data/command) GPIO"
+        range 0 21
+        default 8
+
+    config OLED_CS_GPIO
+        int "CS (chip select) GPIO"
+        range 0 21
+        default 9
+
+    config OLED_SPI_CLOCK_KHZ
+        int "SPI clock (kHz)"
+        range 100 10000
+        default 8000
+        help
+            The SSD1306 accepts up to 10 MHz. Lower it (e.g. to 1000) if
+            random dots show up on the screen, which can happen with long
+            wires.
+
+    config OLED_ROTATE_180
+        bool "Rotate the picture 180 degrees"
+        default n
+
+endmenu
