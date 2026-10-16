@@ -91,10 +91,15 @@ static void read_gate_length(radar_settings_t *out)
 }
 
 // In configuration mode. A radar without the MAC address query has no
-// Bluetooth (LD2410 before the B/C versions).
+// Bluetooth (LD2410 before the B/C versions). Asked again once when not
+// answered: a missed answer would show "Not available" until the next session.
 static void read_bluetooth(radar_settings_t *out)
 {
-    out->bluetooth_known = ld2410_read_bluetooth(&out->bluetooth_on, out->bt_mac) == ESP_OK;
+    esp_err_t err = ld2410_read_bluetooth(&out->bluetooth_on, out->bt_mac);
+    if (err == ESP_ERR_TIMEOUT) {
+        err = ld2410_read_bluetooth(&out->bluetooth_on, out->bt_mac);
+    }
+    out->bluetooth_known = err == ESP_OK;
     if (!out->bluetooth_known) {
         out->bluetooth_on = false;
         memset(out->bt_mac, 0, sizeof(out->bt_mac));
@@ -117,12 +122,17 @@ static esp_err_t store_changes(const radar_settings_request_t *want, const radar
 {
     pending->old_gate_cm = now->gate_cm;
     pending->old_bluetooth = now->bluetooth_on;
+    const bool gate_cm_change = want->gate_cm != RADAR_KEEP && want->gate_cm != now->gate_cm;
+    if (gate_cm_change && !now->resolution_settable) {
+        ESP_LOGE(TAG, "This radar has a fixed 0.75 m resolution");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (want->bluetooth != RADAR_KEEP && !now->bluetooth_known) {
+        ESP_LOGE(TAG, "The Bluetooth query failed (radar without Bluetooth?)");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     esp_err_t err;
-    if (want->gate_cm != RADAR_KEEP && want->gate_cm != now->gate_cm) {
-        if (!now->resolution_settable) {
-            ESP_LOGE(TAG, "This radar has a fixed 0.75 m resolution");
-            return ESP_ERR_NOT_SUPPORTED;
-        }
+    if (gate_cm_change) {
         err = ld2410_set_gate_length((uint16_t)want->gate_cm);
         if (err != ESP_OK) {
             return err;
@@ -130,10 +140,6 @@ static esp_err_t store_changes(const radar_settings_request_t *want, const radar
         pending->gate_cm = true;
     }
     if (bluetooth_on != now->bluetooth_on) {
-        if (!now->bluetooth_known) {
-            ESP_LOGE(TAG, "This radar has no Bluetooth");
-            return ESP_ERR_NOT_SUPPORTED;
-        }
         err = ld2410_set_bluetooth(bluetooth_on);
         if (err != ESP_OK) {
             return err;
@@ -147,8 +153,10 @@ static esp_err_t store_changes(const radar_settings_request_t *want, const radar
             ESP_LOGE(TAG, "The Bluetooth password must have %d printable ASCII characters", LD2410_BT_PASSWORD_LEN);
             return ESP_OK;
         }
-        if (err == ESP_FAIL) {
-            ESP_LOGE(TAG, "The radar refused the Bluetooth password (firmware without password support?)");
+        if (err == ESP_FAIL || err == ESP_ERR_TIMEOUT) {
+            // A radar that stopped answering fails at the next command.
+            ESP_LOGE(TAG, "The radar %s the Bluetooth password (firmware without password support?)",
+                     err == ESP_FAIL ? "refused" : "did not answer");
             return ESP_OK;
         }
         if (err != ESP_OK) {

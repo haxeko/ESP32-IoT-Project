@@ -78,6 +78,7 @@ static constexpr bool is_valid_bt_password(const char *password)
 }
 static_assert(is_valid_bt_password(kBtPassword),
               "CONFIG_LD2410_BT_PASSWORD: 6 printable ASCII characters without spaces, or empty");
+static constexpr size_t kBtPasswordLen = sizeof(kBtPassword) - 1; // LD2410_BT_PASSWORD_LEN or 0
 
 // ---------------------------------------------------------------------------
 // Mode options. The worker changes them with the Matter stack lock held (or
@@ -286,7 +287,7 @@ static void load_bt_record()
 static void store_bt_record(const uint8_t mac[LD2410_MAC_LEN])
 {
     memcpy(s_bt_record.mac, mac, LD2410_MAC_LEN);
-    memcpy(s_bt_record.password, kBtPassword, LD2410_BT_PASSWORD_LEN);
+    memcpy(s_bt_record.password, kBtPassword, kBtPasswordLen);
     s_bt_record_valid = true;
     nvs_handle_t nvs;
     esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
@@ -310,7 +311,7 @@ static bool bt_password_needed(const radar_settings_t &settings)
         return false;
     }
     return !s_bt_record_valid || memcmp(s_bt_record.mac, settings.bt_mac, LD2410_MAC_LEN) != 0 ||
-           memcmp(s_bt_record.password, kBtPassword, LD2410_BT_PASSWORD_LEN) != 0;
+           memcmp(s_bt_record.password, kBtPassword, kBtPasswordLen) != 0;
 }
 
 // ---------------------------------------------------------------------------

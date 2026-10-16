@@ -57,10 +57,12 @@ typedef struct radar_settings_request {
 // One configuration session with the radar: reads its settings, writes the
 // requested ones and reads them back into *out. The gate length, Bluetooth
 // and its password are applied together by one restart of the radar; when a
-// step fails, the gate length and Bluetooth stored before it are set back.
-// Waits for the radar's answers: a few seconds when it does not answer, about
-// 2 s more for a restart. ESP_ERR_NOT_SUPPORTED: a gate length change asked to
-// a radar with a fixed 0.75 m resolution, or a Bluetooth change to a radar
-// without Bluetooth. A password the radar refuses is skipped
-// (bt_password_set stays false), the other settings are still applied.
+// step before the restart fails or the restart is refused, the gate length
+// and Bluetooth already stored are set back. Waits for the radar's answers: a
+// few seconds when it does not answer, about 2 s more for a restart.
+// ESP_ERR_NOT_SUPPORTED: a gate length change asked to a radar with a fixed
+// 0.75 m resolution, or a Bluetooth change to a radar that does not answer the
+// Bluetooth query (no Bluetooth). A password the radar refuses or does not
+// answer is skipped (bt_password_set stays false), the other settings are
+// still applied.
 esp_err_t radar_settings_session(const radar_settings_request_t *want, radar_settings_t *out);
