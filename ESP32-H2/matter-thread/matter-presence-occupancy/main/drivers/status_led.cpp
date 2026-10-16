@@ -76,16 +76,24 @@ static void led_hw_write(color_t c)
 
 #elif CONFIG_STATUS_LED_TYPE_GPIO
 
+// Kconfig leaves CONFIG_STATUS_LED_ACTIVE_HIGH undefined when it is off.
+#if CONFIG_STATUS_LED_ACTIVE_HIGH
+static constexpr bool kActiveHigh = true;
+#else
+static constexpr bool kActiveHigh = false;
+#endif
+
 static esp_err_t led_hw_init()
 {
     gpio_reset_pin((gpio_num_t)CONFIG_STATUS_LED_GPIO);
+    gpio_set_level((gpio_num_t)CONFIG_STATUS_LED_GPIO, kActiveHigh ? 0 : 1); // dark once the output is on
     return gpio_set_direction((gpio_num_t)CONFIG_STATUS_LED_GPIO, GPIO_MODE_OUTPUT);
 }
 
 static void led_hw_write(color_t c)
 {
     const bool on = c.r || c.g || c.b;
-    gpio_set_level((gpio_num_t)CONFIG_STATUS_LED_GPIO, on == CONFIG_STATUS_LED_ACTIVE_HIGH ? 1 : 0);
+    gpio_set_level((gpio_num_t)CONFIG_STATUS_LED_GPIO, on == kActiveHigh ? 1 : 0);
 }
 
 #endif
