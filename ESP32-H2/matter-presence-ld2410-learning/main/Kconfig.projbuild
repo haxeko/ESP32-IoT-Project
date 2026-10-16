@@ -149,10 +149,13 @@ menu "LD2410 Bluetooth"
             LD2410B/C over Bluetooth (factory default "HiLink"). Exactly 6
             printable ASCII characters without spaces; the build fails
             otherwise.
+            The radar's Bluetooth itself stays off until "Radar Bluetooth" is
+            turned on in Home Assistant (the choice is kept in NVS, namespace
+            "ld2410").
             Written to the radar while its Bluetooth is on: once per radar
-            (remembered by its Bluetooth MAC address in NVS, namespace
-            "ld2410") and again each time "Radar Bluetooth" is turned on in
-            Home Assistant. The radar restarts (about 2 s) to apply it.
+            (remembered by its Bluetooth MAC address in the same namespace)
+            and again each time "Radar Bluetooth" is turned on in Home
+            Assistant. The radar restarts (about 2 s) to apply it.
             Empty: the radar password is never changed.
 
 endmenu

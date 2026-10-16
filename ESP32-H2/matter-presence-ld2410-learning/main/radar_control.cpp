@@ -46,7 +46,7 @@ static constexpr uint32_t kSyncRetryMaxMs = 5 * 60 * 1000;
 static constexpr uint8_t kLearnOff = 0;
 static constexpr uint8_t kLearnOn = 1;
 
-// Radar accuracy modes: the LD2410 resolution codes
+// Radar resolution modes: the LD2410 resolution codes
 static constexpr uint8_t kAccuracyCoarse = 0; // 0.75 m gates
 static constexpr uint8_t kAccuracyFine = 1;   // 0.2 m gates
 
@@ -59,7 +59,7 @@ static constexpr size_t kDistanceLabelLen = 12; // "5.25 m"
 static constexpr size_t kCustomLabelLen = 48;   // "Moving 5.25 m, still 5.25 m"
 static constexpr size_t kMacLabelLen = 18;      // "8F:27:2E:B8:0F:65"
 
-// Root, occupancy sensor, Range, Radar accuracy and Radar Bluetooth
+// Root, occupancy sensor, Range, Radar resolution and Radar Bluetooth
 static_assert(CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT >= 5,
               "CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT must be at least 5 (see sdkconfig.defaults)");
 
@@ -220,7 +220,7 @@ static RadarModesManager s_modes;
 enum LearnState : uint8_t { kLearnIdle, kLearnRequested, kLearnRunning, kLearnCancelling };
 static std::atomic<LearnState> s_learn_state{kLearnIdle};
 
-// Range (gate), Radar accuracy (gate length) and Radar Bluetooth (off / on)
+// Range (gate), Radar resolution (gate length) and Radar Bluetooth (off / on)
 // chosen in Home Assistant, RADAR_KEEP once taken.
 static std::atomic<int32_t> s_want_gate{RADAR_KEEP};
 static std::atomic<int32_t> s_want_gate_cm{RADAR_KEEP};
@@ -246,10 +246,14 @@ static void request_learning(bool on)
 }
 
 // ---------------------------------------------------------------------------
-// Bluetooth password. Stored once in each radar (known by its Bluetooth MAC
-// address, which the radar only reports while its Bluetooth is on), and again
-// each time Bluetooth is turned on from Home Assistant: every write is
-// applied by a restart of the radar. The radar cannot report its password.
+// Bluetooth of the radar. Off until it is turned on from Home Assistant: the
+// choice is kept in NVS and the worker brings the radar back to it at boot
+// (the LD2410 leaves the factory with Bluetooth on).
+// Password: stored once in each radar whose Bluetooth is on (known by its
+// Bluetooth MAC address, which the radar only reports while its Bluetooth is
+// on), and again each time Bluetooth is turned on from Home Assistant. The
+// radar cannot report its password.
+// Every change is applied by a restart of the radar.
 
 struct BtPasswordRecord {
     uint8_t mac[LD2410_MAC_LEN];          // radar that holds the password
@@ -257,31 +261,61 @@ struct BtPasswordRecord {
 };
 
 static constexpr const char *kNvsNamespace = "ld2410";
+static constexpr const char *kNvsBtOnKey = "bt_on";
 static constexpr const char *kNvsBtPasswordKey = "bt_password";
 
 // Worker only (and radar_control_start() before the worker runs)
+static bool s_bt_wanted; // chosen in Home Assistant, off until then
 static BtPasswordRecord s_bt_record;
 static bool s_bt_record_valid;
-// The last write failed or was refused: not tried again before the next boot
-// or until Bluetooth is turned on from Home Assistant, so a radar that does
-// not come back after its restart is not restarted over and over.
-static bool s_bt_password_failed;
+// The last Bluetooth change or password write did not work: not tried again
+// before the next boot or the next change from Home Assistant, so a radar
+// that does not come back after its restart is not restarted over and over.
+static bool s_bt_failed;
 
 static const char *bt_password()
 {
     return kBtPassword[0] != '\0' ? kBtPassword : nullptr;
 }
 
-static void load_bt_record()
+static void load_bt_state()
 {
     nvs_handle_t nvs;
     if (nvs_open(kNvsNamespace, NVS_READONLY, &nvs) != ESP_OK) {
-        return; // nothing stored yet
+        return; // nothing stored yet: Bluetooth off, no password written
     }
-    size_t len = sizeof(s_bt_record);
+    uint8_t on = 0;
+    size_t len = sizeof(on);
+    s_bt_wanted = nvs_get_blob(nvs, kNvsBtOnKey, &on, &len) == ESP_OK && len == sizeof(on) && on != 0;
+    len = sizeof(s_bt_record);
     s_bt_record_valid = nvs_get_blob(nvs, kNvsBtPasswordKey, &s_bt_record, &len) == ESP_OK &&
                         len == sizeof(s_bt_record);
     nvs_close(nvs);
+}
+
+static void store_nvs(const char *key, const void *data, size_t len)
+{
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(nvs, key, data, len);
+        if (err == ESP_OK) {
+            err = nvs_commit(nvs);
+        }
+        nvs_close(nvs);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Could not save %s in NVS, err:%d", key, err);
+    }
+}
+
+static void set_bt_wanted(bool on)
+{
+    if (on != s_bt_wanted) {
+        s_bt_wanted = on;
+        const uint8_t value = on ? 1 : 0;
+        store_nvs(kNvsBtOnKey, &value, sizeof(value));
+    }
 }
 
 static void store_bt_record(const uint8_t mac[LD2410_MAC_LEN])
@@ -289,25 +323,14 @@ static void store_bt_record(const uint8_t mac[LD2410_MAC_LEN])
     memcpy(s_bt_record.mac, mac, LD2410_MAC_LEN);
     memcpy(s_bt_record.password, kBtPassword, kBtPasswordLen);
     s_bt_record_valid = true;
-    nvs_handle_t nvs;
-    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
-    if (err == ESP_OK) {
-        err = nvs_set_blob(nvs, kNvsBtPasswordKey, &s_bt_record, sizeof(s_bt_record));
-        if (err == ESP_OK) {
-            err = nvs_commit(nvs);
-        }
-        nvs_close(nvs);
-    }
-    if (err != ESP_OK) {
-        // Kept for this boot, stored again after the next one
-        ESP_LOGW(TAG, "Could not save which radar holds the Bluetooth password, err:%d", err);
-    }
+    // When not saved: kept for this boot, written again after the next one
+    store_nvs(kNvsBtPasswordKey, &s_bt_record, sizeof(s_bt_record));
 }
 
 // The radar's Bluetooth is on and it has not received kBtPassword yet.
 static bool bt_password_needed(const radar_settings_t &settings)
 {
-    if (bt_password() == nullptr || s_bt_password_failed || !settings.bluetooth_known || !settings.bluetooth_on) {
+    if (bt_password() == nullptr || !settings.bluetooth_known || !settings.bluetooth_on) {
         return false;
     }
     return !s_bt_record_valid || memcmp(s_bt_record.mac, settings.bt_mac, LD2410_MAC_LEN) != 0 ||
@@ -349,7 +372,7 @@ static uint8_t bluetooth_mode(const radar_settings_t &settings)
     return settings.bluetooth_on ? kBluetoothOn : kBluetoothOff;
 }
 
-// Shows the radar settings in the Range, Radar accuracy and Radar Bluetooth
+// Shows the radar settings in the Range, Radar resolution and Radar Bluetooth
 // selects.
 static void publish(const radar_settings_t &settings)
 {
@@ -432,13 +455,41 @@ static bool settings_session(const radar_settings_request_t &want)
         if (now.bt_password_set) {
             ESP_LOGI(TAG, "LD2410 Bluetooth password set (CONFIG_LD2410_BT_PASSWORD)");
             store_bt_record(now.bt_mac);
+        } else {
+            s_bt_failed = true;
         }
-        s_bt_password_failed = !now.bt_password_set;
     }
     s_settings = now;
     s_synced = true;
     publish(now);
     return true;
+}
+
+// After a successful session: brings the radar's Bluetooth to the state
+// chosen in Home Assistant (off by default) and gives the password to a radar
+// whose Bluetooth is on. One session at most. False when the radar did not
+// answer as expected.
+static bool fix_bluetooth()
+{
+    if (s_bt_failed || !s_settings.bluetooth_known) {
+        return true;
+    }
+    radar_settings_request_t fix = {};
+    if (s_settings.bluetooth_on != s_bt_wanted) {
+        ESP_LOGI(TAG, "Turning the LD2410 Bluetooth %s (%s)", s_bt_wanted ? "on" : "off",
+                 s_bt_wanted ? "as chosen in Home Assistant" : "default, or as chosen in Home Assistant");
+        fix.bluetooth = s_bt_wanted ? kBluetoothOn : kBluetoothOff;
+        fix.bt_password = s_bt_wanted ? bt_password() : nullptr;
+    } else if (bt_password_needed(s_settings)) {
+        fix.bt_password = bt_password();
+    } else {
+        return true;
+    }
+    const bool answered = settings_session(fix);
+    if (!answered || s_settings.bluetooth_on != s_bt_wanted) {
+        s_bt_failed = true;
+    }
+    return answered;
 }
 
 static bool learning_cancelled()
@@ -466,6 +517,11 @@ static void radar_task(void *arg)
     while (true) {
         // Settings first: a session takes a few seconds at most, a learning minutes.
         const int32_t bluetooth = s_want_bluetooth.exchange(RADAR_KEEP);
+        if (bluetooth != RADAR_KEEP) {
+            // Kept even if this session fails: fix_bluetooth() applies it later.
+            set_bt_wanted(bluetooth == kBluetoothOn);
+            s_bt_failed = false;
+        }
         const radar_settings_request_t want = {
             .duration_s = RADAR_KEEP,
             .gate = s_want_gate.exchange(RADAR_KEEP),
@@ -477,13 +533,8 @@ static void radar_task(void *arg)
         if (stale || is_change(want)) {
             stale = !settings_session(want);
         }
-        if (!stale && bt_password_needed(s_settings)) {
-            radar_settings_request_t password = {};
-            password.bt_password = bt_password();
-            stale = !settings_session(password);
-            if (stale) {
-                s_bt_password_failed = true;
-            }
+        if (!stale) {
+            stale = !fix_bluetooth();
         }
         run_requested_learning();
 
@@ -545,35 +596,36 @@ esp_err_t radar_control_create(node_t *node, endpoint_t *occupancy_endpoint)
     VerifyOrReturnError(err == ESP_OK || err == ESP_ERR_NOT_FINISHED, err); // NOT_FINISHED: already Off
     s_learn.endpoint_id = endpoint::get_id(occupancy_endpoint);
 
-    // Until the worker has read the radar, Range, Radar accuracy and Radar
-    // Bluetooth show the last persisted mode, or the LD2410 factory settings.
-    // Home Assistant sorts the entities by name: Hold time, Learn empty room,
-    // Radar accuracy, Radar Bluetooth, Range.
+    // Until the worker has read the radar, Range, Radar resolution and Radar
+    // Bluetooth show the last persisted mode, or the LD2410 factory settings
+    // (Bluetooth: off, the default the worker applies). Home Assistant sorts
+    // the entities by name: Hold time, Learn empty room, Radar Bluetooth,
+    // Radar resolution, Range.
     endpoint_t *ep = create_mode_select_endpoint(node, "Range", LD2410_MAX_MAX_GATE);
     VerifyOrReturnError(ep != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the Range endpoint"));
     s_range.endpoint_id = endpoint::get_id(ep);
 
-    ep = create_mode_select_endpoint(node, "Radar accuracy", kAccuracyCoarse);
-    VerifyOrReturnError(ep != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the Radar accuracy endpoint"));
+    ep = create_mode_select_endpoint(node, "Radar resolution", kAccuracyCoarse);
+    VerifyOrReturnError(ep != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the Radar resolution endpoint"));
     s_accuracy.endpoint_id = endpoint::get_id(ep);
 
     // Created last, so the endpoints above keep their numbers. The other
     // controls keep working without it.
-    ep = create_mode_select_endpoint(node, "Radar Bluetooth", kBluetoothOn);
+    ep = create_mode_select_endpoint(node, "Radar Bluetooth", kBluetoothOff);
     if (ep != nullptr) {
         s_bluetooth.endpoint_id = endpoint::get_id(ep);
     } else {
         ESP_LOGE(TAG, "Failed to create the Radar Bluetooth endpoint");
     }
 
-    ESP_LOGI(TAG, "Endpoints: Learn empty room %u, Range %u, Radar accuracy %u, Radar Bluetooth %u",
+    ESP_LOGI(TAG, "Endpoints: Learn empty room %u, Range %u, Radar resolution %u, Radar Bluetooth %u",
              s_learn.endpoint_id, s_range.endpoint_id, s_accuracy.endpoint_id, s_bluetooth.endpoint_id);
     return ESP_OK;
 }
 
 esp_err_t radar_control_start(void)
 {
-    load_bt_record();
+    load_bt_state();
     TaskHandle_t task = nullptr;
     if (xTaskCreate(radar_task, "radar_cfg", kTaskStack, nullptr, kTaskPriority, &task) != pdPASS) {
         return ESP_ERR_NO_MEM;

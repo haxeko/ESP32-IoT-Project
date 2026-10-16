@@ -16,12 +16,13 @@
 // Apple Home does not show Mode Select.
 //  - "Learn empty room" (Off / Learning) on the occupancy endpoint
 //  - "Range": farthest detection gate (moving and still), on its own endpoint
-//  - "Radar accuracy": gate length 0.75 m or 0.2 m (LD2410B/C), on its own
+//  - "Radar resolution": gate length 0.75 m or 0.2 m (LD2410B/C), on its own
 //    endpoint
 //  - "Radar Bluetooth": Off / On (LD2410B/C, HLKRadarTool app), on its own
-//    endpoint created after the others. While it is on, the radar holds
-//    CONFIG_LD2410_BT_PASSWORD (written once per radar and each time it is
-//    turned on here)
+//    endpoint created after the others. Off until it is turned on here (the
+//    choice is kept in NVS and applied at boot). While it is on, the radar
+//    holds CONFIG_LD2410_BT_PASSWORD (written once per radar and each time it
+//    is turned on here)
 // The delay before "unoccupied" is set with Matter HoldTime; the radar's own
 // no-one duration is left as stored in the radar.
 // One worker task sends all the radar commands, one session at a time.

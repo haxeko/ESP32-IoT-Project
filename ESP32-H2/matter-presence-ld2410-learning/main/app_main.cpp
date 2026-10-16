@@ -19,9 +19,9 @@
 // clusters that Home Assistant shows as select entities and Apple Home
 // ignores: "Learn empty room" on the occupancy endpoint (records the radar's
 // background energy and raises the LD2410 thresholds above it, see
-// quiet_learn.cpp), "Range" (farthest detection gate), "Radar accuracy"
-// (gate length) and "Radar Bluetooth" (Off / On, with the fixed password
-// CONFIG_LD2410_BT_PASSWORD) on endpoints of their own.
+// quiet_learn.cpp), "Range" (farthest detection gate), "Radar resolution"
+// (gate length) and "Radar Bluetooth" (off by default, with the fixed
+// password CONFIG_LD2410_BT_PASSWORD) on endpoints of their own.
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
