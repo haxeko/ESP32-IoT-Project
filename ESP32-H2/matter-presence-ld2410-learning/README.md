@@ -33,9 +33,9 @@ Trong phòng không có ai, radar vẫn nhận được "năng lượng" từ qu
 **Bằng nút BOOT:** bấm nhanh **3 lần** (mỗi lần cách nhau dưới 0,4 s). Kết quả giống hệt chọn **Learning**, entity trong Home Assistant cũng chuyển sang `Learning`. Không cần ghép nối hay mạng, chỉ cần radar đã nối dây đủ.
 
 1. Chọn **Learning** (hoặc bấm nút BOOT 3 lần).
-2. **Rời khỏi phòng** trong 10 giây đầu (**LED tím sáng liên tục**), đóng cửa, tắt những thứ chuyển động bất thường (không cần tắt quạt nếu quạt vẫn thường chạy, vì đó chính là nhiễu cần học).
-3. Thiết bị bật *engineering mode* của LD2410 và ghi lại năng lượng chuyển động / đứng yên **cao nhất** của từng vùng (gate, mỗi gate 0,75 m) trong **30 giây** (**LED tím nháy chậm**: 1 s tắt, 1 s sáng).
-4. Thiết bị tính ngưỡng mới, ghi vào LD2410, đọc lại để kiểm tra. **LD2410 tự lưu ngưỡng vào bộ nhớ của nó**, giữ nguyên khi mất điện hay khi nạp lại firmware ESP32-H2. Ghi xong: **LED xanh lá trong 10 giây**.
+2. **Rời khỏi phòng** trong 10 giây đầu (**LED cyan sáng liên tục**), đóng cửa, tắt những thứ chuyển động bất thường (không cần tắt quạt nếu quạt vẫn thường chạy, vì đó chính là nhiễu cần học).
+3. Thiết bị bật *engineering mode* của LD2410 và ghi lại năng lượng chuyển động / đứng yên **cao nhất** của từng vùng (gate, mỗi gate 0,75 m) trong **30 giây** (**LED cyan nháy chậm**: 1 s tắt, 1 s sáng).
+4. Thiết bị tính ngưỡng mới, ghi vào LD2410, đọc lại để kiểm tra. **LD2410 tự lưu ngưỡng vào bộ nhớ của nó**, giữ nguyên khi mất điện hay khi nạp lại firmware ESP32-H2. Ghi xong: **LED xanh lá trong 10 giây**. Học thất bại (xem bên dưới): **LED đỏ trong 10 giây**.
 5. Entity tự trở về **Off** (khoảng 40 giây sau khi chọn). Kết quả xem trong log `quiet_learn`.
 
 Ngưỡng mới của mỗi gate = **năng lượng nền cao nhất + 10**, nhưng:
@@ -54,10 +54,11 @@ I quiet_learn: Gate 6:   8 ->  18 ( 15) |  36 ->  46 ( 20)
 I quiet_learn: Learning done: new thresholds saved in the LD2410 (300 reports)
 ```
 
-- Chọn **Off** trong lúc đang học: huỷ, không ghi gì vào radar. LED trở lại bình thường ngay, không có màu xanh.
+- Chọn **Off** trong lúc đang học: huỷ, không ghi gì vào radar. LED trở lại bình thường ngay (không xanh, không đỏ).
 - Bấm 3 lần khi đang học: không có tác dụng (log `Empty room learning already requested or running`).
-- Radar không trả lời lệnh: không ghi gì; LED có thể chậm vài giây mới chuyển tím, tím khoảng 13 s rồi trở lại bình thường (không có màu xanh), log báo kiểm tra dây **GPIO12 → chân RX của LD2410** (bản gốc chỉ đọc radar nên có thể chưa nối dây này).
-- Thời gian chờ, thời gian ghi và mức +10 chỉnh được trong `menuconfig` → *Empty Room Learning*; LED tím và tím nháy theo đúng hai thời gian này, màu xanh luôn 10 s.
+- Radar không trả lời lệnh: học thất bại, không ghi gì; LED có thể chậm vài giây mới chuyển cyan, cyan khoảng 13 s rồi **đỏ 10 s**, log báo kiểm tra dây **GPIO12 → chân RX của LD2410** (bản gốc chỉ đọc radar nên có thể chưa nối dây này).
+- Cũng là học thất bại (LED đỏ 10 s): radar không gửi báo cáo engineering trong lúc ghi, không nhận ngưỡng mới hoặc đọc lại không khớp (khi đó radar có thể giữ lẫn ngưỡng cũ và mới: học lại; log `quiet_learn` ghi rõ lý do), hoặc bấm nút 3 lần khi task radar không chạy được.
+- Thời gian chờ, thời gian ghi và mức +10 chỉnh được trong `menuconfig` → *Empty Room Learning*; LED cyan và cyan nháy theo đúng hai thời gian này, màu xanh lá hoặc đỏ luôn 10 s.
 
 ## Hold time, Radar Bluetooth, Radar resolution và Range
 
@@ -136,11 +137,12 @@ LD2410 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng
 | Xanh dương nháy chậm (1 s sáng, 1 s tắt) | Chế độ ghép nối: đang chờ thêm vào ứng dụng Matter |
 | Tắt | Hoạt động bình thường (đã ghép nối), hoặc chế độ ghép nối đã hết giờ |
 | Trắng nháy nhanh | Ứng dụng yêu cầu *Identify* (xác định thiết bị) |
-| Tím sáng liên tục | Vừa bắt đầu học phòng trống: rời khỏi phòng (10 s) |
-| Tím nháy chậm (1 s tắt, 1 s sáng) | Đang ghi năng lượng nền của phòng trống (30 s) |
+| Cyan sáng liên tục | Vừa bắt đầu học phòng trống: rời khỏi phòng (10 s) |
+| Cyan nháy chậm (1 s tắt, 1 s sáng) | Đang ghi năng lượng nền của phòng trống (30 s) |
 | Xanh lá trong 10 s | Học xong, ngưỡng mới đã lưu vào radar |
+| Đỏ trong 10 s | Học thất bại, xem lý do trong log `quiet_learn` |
 
-Trong lúc học, LED báo việc học thay cho chế độ ghép nối (học xong thì nháy xanh dương lại nếu vẫn đang chờ ghép nối); *Identify* vẫn được ưu tiên. Huỷ hoặc học không thành công thì LED trở lại bình thường ngay, không có màu xanh lá. Học bắt đầu từ Home Assistant cũng báo LED như vậy. LED một màu (*Single-colour LED on a GPIO*) không đổi màu được: sáng 10 s, nháy chậm 30 s, sáng 10 s.
+Trong lúc học, LED báo việc học thay cho chế độ ghép nối (học xong thì nháy xanh dương lại nếu vẫn đang chờ ghép nối); *Identify* vẫn được ưu tiên. Huỷ học thì LED trở lại bình thường ngay. Học bắt đầu từ Home Assistant cũng báo LED như vậy. LED một màu (*Single-colour LED on a GPIO*) không đổi màu được: sáng 10 s, nháy chậm 30 s, rồi sáng 10 s cả khi xong lẫn khi thất bại.
 
 Trạng thái radar (có người / mất tín hiệu) chỉ xem được trong app và trong log, LED không báo.
 
@@ -151,7 +153,7 @@ Board không có LED WS2812: chọn *Single-colour LED on a GPIO* hoặc *None* 
 | Thao tác | Kết quả |
 |---|---|
 | **Bấm đúp** (2 lần nhanh) | Vào **chế độ ghép nối** trong 15 phút, LED nháy xanh. Chưa ghép nối: thêm lại thiết bị khi chế độ ghép nối lúc khởi động đã hết giờ. Đã ghép nối: thêm thiết bị vào ứng dụng thứ hai (Multi-Admin) bằng chính mã ghép nối của thiết bị |
-| **Bấm 3 lần** (nhanh) | Bắt đầu **học phòng trống**, như chọn *Learning* trong Home Assistant: LED tím (rời phòng), tím nháy chậm (đang ghi), xanh lá 10 s (xong). Xem mục **Học phòng trống** |
+| **Bấm 3 lần** (nhanh) | Bắt đầu **học phòng trống**, như chọn *Learning* trong Home Assistant: LED cyan (rời phòng), cyan nháy chậm (đang ghi), xanh lá 10 s (xong) hoặc đỏ 10 s (thất bại). Xem mục **Học phòng trống** |
 | **Giữ 5 giây** | **Factory reset**: xoá mạng Thread và toàn bộ thông tin ghép nối Matter, khởi động lại. Sau đó LED nháy xanh chờ ghép nối |
 
 Các lần bấm được đếm cho tới khi nhả nút quá 0,4 s, nên bấm đúp có tác dụng sau khi nhả nút khoảng 0,4 s (để phân biệt với bấm 3 lần). Bấm 4 lần trở lên thì không làm gì. Một lần bấm giữ quá 0,5 s huỷ các lần bấm trước nó.
@@ -316,8 +318,8 @@ Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc n�
 
 | Tuỳ chọn | Mặc định | Ý nghĩa |
 |---|---|---|
-| Delay before recording | 10 s | Thời gian để rời phòng sau khi chọn Learning hoặc bấm nút 3 lần (LED tím) |
-| Recording time | 30 s | Thời gian ghi năng lượng nền của phòng trống (LED tím nháy chậm) |
+| Delay before recording | 10 s | Thời gian để rời phòng sau khi chọn Learning hoặc bấm nút 3 lần (LED cyan) |
+| Recording time | 30 s | Thời gian ghi năng lượng nền của phòng trống (LED cyan nháy chậm) |
 | Margin above the recorded noise | 10 | Ngưỡng mới = năng lượng nền cao nhất + giá trị này |
 
 *Thread Diagnostics*: `THREAD_DIAG_LOG` (bật mặc định) in khối chẩn đoán Thread ra log mỗi 10 s cho tới khi ghép nối xong.

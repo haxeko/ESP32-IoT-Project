@@ -19,9 +19,10 @@ typedef enum {
 // Empty room learning, shown instead of the mode while it lasts
 typedef enum {
     STATUS_LED_LEARNING_NONE,      // not learning: the mode
-    STATUS_LED_LEARNING_WAITING,   // purple: leave the room, the recording starts soon
-    STATUS_LED_LEARNING_RECORDING, // slow purple blink: recording the empty room
+    STATUS_LED_LEARNING_WAITING,   // cyan: leave the room, the recording starts soon
+    STATUS_LED_LEARNING_RECORDING, // slow cyan blink: recording the empty room
     STATUS_LED_LEARNING_DONE,      // green for 10 s (new thresholds saved), then the mode
+    STATUS_LED_LEARNING_FAILED,    // red for 10 s (the learning failed), then the mode
 } status_led_learning_t;
 
 // Uses the LED chosen in menuconfig (WS2812, single-colour GPIO or none);

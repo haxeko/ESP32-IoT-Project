@@ -107,7 +107,7 @@ static bool apply_thresholds(const ld2410_capture_t *noise)
     return true;
 }
 
-bool quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase)
+quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase)
 {
     const uint32_t delay_s = CONFIG_LD2410_LEARN_DELAY_SEC;
     const uint32_t duration_s = CONFIG_LD2410_LEARN_DURATION_SEC;
@@ -118,7 +118,7 @@ bool quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_
     }
     if (!wait_unless_cancelled(delay_s * 1000, cancelled)) {
         ESP_LOGI(TAG, "Learning cancelled, nothing changed");
-        return false;
+        return QUIET_LEARN_CANCELLED;
     }
 
     // Engineering mode adds the energy of every gate to the reports.
@@ -132,7 +132,7 @@ bool quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "The radar does not answer commands (check the wire from GPIO%d to the LD2410 RX pin), "
                       "nothing changed", CONFIG_LD2410_UART_TX_PIN);
-        return false;
+        return QUIET_LEARN_FAILED;
     }
 
     ESP_LOGI(TAG, "Recording the empty room for %" PRIu32 " s", duration_s);
@@ -147,16 +147,17 @@ bool quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_
     if (ld2410_config_begin() != ESP_OK) {
         ESP_LOGE(TAG, "The radar stopped answering commands, nothing changed (engineering mode stays on "
                       "until the radar restarts)");
-        return false;
+        return QUIET_LEARN_FAILED;
     }
-    bool saved = false;
+    quiet_learn_result_t result = QUIET_LEARN_FAILED;
     if (!completed) {
         ESP_LOGI(TAG, "Learning cancelled, nothing changed");
+        result = QUIET_LEARN_CANCELLED;
     } else if (noise.frames < duration_s * kMinFramesPerSec) {
         ESP_LOGE(TAG, "Only %" PRIu32 " engineering reports in %" PRIu32 " s, nothing changed", noise.frames,
                  duration_s);
-    } else {
-        saved = apply_thresholds(&noise);
+    } else if (apply_thresholds(&noise)) {
+        result = QUIET_LEARN_SAVED;
     }
     if (ld2410_set_engineering_mode(false) != ESP_OK) {
         ESP_LOGW(TAG, "Could not leave engineering mode (it ends when the radar restarts)");
@@ -164,8 +165,8 @@ bool quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_
     if (ld2410_config_end() != ESP_OK) {
         ESP_LOGW(TAG, "Could not end the configuration mode");
     }
-    if (saved) {
+    if (result == QUIET_LEARN_SAVED) {
         ESP_LOGI(TAG, "Learning done: new thresholds saved in the LD2410 (%" PRIu32 " reports)", noise.frames);
     }
-    return saved;
+    return result;
 }

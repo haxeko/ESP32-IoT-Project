@@ -21,13 +21,16 @@
 
 static std::atomic<status_led_mode_t> s_mode{STATUS_LED_OFF};
 static std::atomic<status_led_learning_t> s_learning{STATUS_LED_LEARNING_NONE};
+// Counts status_led_set_learning() calls: setting the same state again (a
+// second failure) restarts its 10 s
+static std::atomic<uint32_t> s_learning_sets{0};
 static std::atomic<bool> s_identify{false};
 
 #if !CONFIG_STATUS_LED_TYPE_NONE
 static const char *TAG = "status_led";
 
 static constexpr uint64_t kTickUs = 100 * 1000;
-static constexpr uint32_t kLearningDoneTicks = 100; // green for 10 s
+static constexpr uint32_t kLearningResultTicks = 100; // green or red for 10 s
 
 typedef struct {
     uint8_t r, g, b;
@@ -36,13 +39,15 @@ typedef struct {
 static constexpr color_t kOff = {0, 0, 0};
 static constexpr color_t kBlue = {0, 0, 255};
 static constexpr color_t kWhite = {255, 255, 255};
-static constexpr color_t kPurple = {160, 0, 255};
+static constexpr color_t kCyan = {0, 255, 255};
 static constexpr color_t kGreen = {0, 255, 0};
+static constexpr color_t kRed = {255, 0, 0};
 
 // Only touched by the status_led timer callback
 static uint32_t s_ticks;
 static status_led_learning_t s_shown_learning = STATUS_LED_LEARNING_NONE;
-static uint32_t s_learning_ticks; // since s_shown_learning changed
+static uint32_t s_shown_learning_sets;
+static uint32_t s_learning_ticks; // since s_shown_learning was set
 #endif
 
 #if CONFIG_STATUS_LED_TYPE_WS2812
@@ -113,12 +118,17 @@ static color_t current_color()
     }
     switch (s_shown_learning) {
     case STATUS_LED_LEARNING_WAITING:
-        return kPurple;
+        return kCyan;
     case STATUS_LED_LEARNING_RECORDING:
-        return ((s_learning_ticks / 10) % 2) ? kPurple : kOff; // 0.5 Hz, dark first
+        return ((s_learning_ticks / 10) % 2) ? kCyan : kOff; // 0.5 Hz, dark first
     case STATUS_LED_LEARNING_DONE:
-        if (s_learning_ticks < kLearningDoneTicks) {
+        if (s_learning_ticks < kLearningResultTicks) {
             return kGreen;
+        }
+        break;
+    case STATUS_LED_LEARNING_FAILED:
+        if (s_learning_ticks < kLearningResultTicks) {
+            return kRed;
         }
         break;
     case STATUS_LED_LEARNING_NONE:
@@ -137,9 +147,10 @@ static void tick_cb(void *arg)
 {
     static color_t s_last = {1, 1, 1}; // forces the first write
     s_ticks++;
-    const status_led_learning_t learning = s_learning.load();
-    if (learning != s_shown_learning) {
-        s_shown_learning = learning;
+    const uint32_t sets = s_learning_sets.load();
+    if (sets != s_shown_learning_sets) {
+        s_shown_learning_sets = sets;
+        s_shown_learning = s_learning.load();
         s_learning_ticks = 0;
     } else if (s_learning_ticks < UINT32_MAX) {
         s_learning_ticks++;
@@ -184,6 +195,7 @@ void status_led_set_mode(status_led_mode_t mode)
 void status_led_set_learning(status_led_learning_t learning)
 {
     s_learning = learning;
+    s_learning_sets++;
 }
 
 void status_led_set_identify(bool identify)

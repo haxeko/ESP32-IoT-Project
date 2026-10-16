@@ -35,8 +35,9 @@ esp_err_t radar_control_start(void);
 
 // Starts the empty room learning like "Learning" chosen in Home Assistant
 // (triple click on the button). Does not wait, so it may run in an esp_timer
-// callback. False when the worker is not running or a learning is already
-// requested or running. The status LED shows the learning (status_led.h).
+// callback. False when the worker is not running (the status LED shows a
+// failure) or a learning is already requested or running. The status LED
+// shows the learning and its result (status_led.h).
 bool radar_control_request_learning(void);
 
 // PRE_UPDATE attribute callback, on the Matter task: handles the CurrentMode

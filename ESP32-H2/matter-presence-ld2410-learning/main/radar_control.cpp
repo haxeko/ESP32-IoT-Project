@@ -445,9 +445,11 @@ static void run_requested_learning()
     // Shown already when chosen in Home Assistant; covers the button and a
     // request made while the previous learning ended.
     report_current_mode(s_learn.endpoint_id, kLearnOn);
-    const bool saved = quiet_learn_run(learning_cancelled, show_learning_phase);
-    // Green for a while when new thresholds are saved; nothing when cancelled or failed
-    status_led_set_learning(saved ? STATUS_LED_LEARNING_DONE : STATUS_LED_LEARNING_NONE);
+    const quiet_learn_result_t result = quiet_learn_run(learning_cancelled, show_learning_phase);
+    // Green or red for a while; back to normal at once when cancelled
+    status_led_set_learning(result == QUIET_LEARN_SAVED    ? STATUS_LED_LEARNING_DONE
+                            : result == QUIET_LEARN_FAILED ? STATUS_LED_LEARNING_FAILED
+                                                           : STATUS_LED_LEARNING_NONE);
     s_learn_state = kLearnIdle;
     report_current_mode(s_learn.endpoint_id, kLearnOff);
 }
@@ -587,6 +589,7 @@ bool radar_control_request_learning(void)
     TaskHandle_t task = s_task;
     if (task == nullptr) {
         ESP_LOGW(TAG, "Cannot start the empty room learning: the radar task is not running");
+        status_led_set_learning(STATUS_LED_LEARNING_FAILED);
         return false;
     }
     LearnState state = kLearnIdle;
