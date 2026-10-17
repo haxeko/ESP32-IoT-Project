@@ -18,9 +18,9 @@
 static const char *TAG = "thread_diag";
 static constexpr uint32_t k_interval_ms = 10000;
 
-/* One-way flag set once commissioned. stop() can arrive (kServerReady) before start(); nothing ever clears it,
- * so a stop() racing with start() is still seen by the task at its next tick */
-static volatile bool s_done = false;
+/* Written by start()/stop() (CHIP task), read by the diag task at each tick. While false the task blocks on its
+ * notification with no timeout, so a stopped report costs no wakeups */
+static volatile bool s_enabled = false;
 static TaskHandle_t s_task = NULL;
 
 static bool is_link_local(const otIp6Address &addr)
@@ -111,32 +111,38 @@ static void thread_diag_dump()
 
 static void thread_diag_task(void *arg)
 {
-    while (!s_done) {
-        vTaskDelay(pdMS_TO_TICKS(k_interval_ms));
-        if (s_done) {
-            break;
+    for (;;) {
+        if (!s_enabled) {
+            ESP_LOGI(TAG, "Thread diagnostics stopped");
+            while (!s_enabled) {
+                ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            }
+            ESP_LOGI(TAG, "Thread diagnostics every %u s", (unsigned)(k_interval_ms / 1000));
         }
-        thread_diag_dump();
+        vTaskDelay(pdMS_TO_TICKS(k_interval_ms));
+        if (s_enabled) {
+            thread_diag_dump();
+        }
     }
-    ESP_LOGI(TAG, "Commissioned, Thread diagnostics stopped");
-    s_task = NULL;
-    vTaskDelete(NULL);
 }
 
 void thread_diag_start()
 {
-    if (s_task || s_done) {
+    s_enabled = true;
+    if (s_task) {
+        xTaskNotifyGive(s_task);
         return;
     }
     if (xTaskCreate(thread_diag_task, "thread_diag", 4096, NULL, 2, &s_task) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create diagnostics task");
+        s_task = NULL;
     }
 }
 
 void thread_diag_stop()
 {
     /* Only a flag here: this runs on the CHIP task, the OpenThread lock is taken by the diag task alone */
-    s_done = true;
+    s_enabled = false;
 }
 
 #else // CONFIG_THREAD_DIAG_LOG

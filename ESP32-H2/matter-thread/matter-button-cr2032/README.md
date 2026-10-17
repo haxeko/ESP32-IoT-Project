@@ -209,7 +209,7 @@ VBAT ──R9 1 MΩ──┬── GPIO1 (ADC1_CH0, ATTEN 12 dB, 0..3,3 V)
 | OK | áp nghỉ ≥ 2750 mV và áp dự đoán ≥ 2200 mV | `BatChargeLevel = OK` | bình thường |
 | Warning | áp nghỉ < 2750 mV hoặc dự đoán < 2200 mV | `BatChargeLevel = Warning` | LED nháy 2 lần sau mỗi cử chỉ; không tải OTA |
 | Critical | áp nghỉ < 2600 mV hoặc dự đoán < 1950 mV | `BatChargeLevel = Critical`, `BatReplacementNeeded = true` | như trên |
-| Lúc khởi động | áp có tải < 2200 mV hoặc ≥ 3 lần brownout liên tiếp | | Deep-sleep 1 giờ (7 µA), nút hoặc timer đánh thức để thử lại |
+| Lúc khởi động | áp có tải < 2200 mV hoặc ≥ 3 lần brownout liên tiếp | | Deep-sleep 1 giờ (7 µA); timer đánh thức để thử lại, hoặc nhấn nút (chỉ khi nút đang nhả lúc đi ngủ: nút bị đè sẽ không đánh thức liên tục) |
 
 Ngoài ra `BatVoltage` (mV) và `BatPercentRemaining` (bảng áp nghỉ → %, ước lượng [AS], hiệu chỉnh bằng một lần xả pin thật). Ngưỡng là [AS], hiệu chỉnh theo phép đo ở checklist (mục I).
 
@@ -435,7 +435,7 @@ Hỗ trợ của controller (tới 10/2026):
 | Child supervision interval / check timeout | 129 s / 190 s (mặc định) | 129 s / 279 s | check = interval + poll + 30 s |
 | TX 802.15.4 | 0 dBm | 0 dBm | `THREAD_TX_POWER_DBM` |
 
-**Chính sách LIT/SIT (bản `lit`, `main/power.cpp`):** thiết bị yêu cầu SIT (`NotifySITModeRequestNotification`) cho tới khi **mọi** fabric đều đã đăng ký Check-In client; khi đó mới rút yêu cầu và chạy LIT. Một fabric Apple Home (không đăng ký Check-In) trong Multi-Admin giữ thiết bị ở SIT, nên Apple vẫn thấy thiết bị bình thường. Chính sách được đánh giá lại khi thêm/xoá fabric và mỗi lần vào Active.
+**Chính sách LIT/SIT (bản `lit`, `main/power.cpp`):** thiết bị yêu cầu SIT (`NotifySITModeRequestNotification`) cho tới khi **mọi** fabric đều đã đăng ký Check-In client; khi đó mới rút yêu cầu và chạy LIT. Một fabric Apple Home (không đăng ký Check-In) trong Multi-Admin giữ thiết bị ở SIT, nên Apple vẫn thấy thiết bị bình thường. Chính sách được đánh giá lại khi thêm/xoá fabric, khi controller đăng ký/huỷ Check-In client (sự kiện `kTableUpdated` của ICD Management) và mỗi lần vào Active.
 
 **Khuyến nghị:** dùng **SIT (mặc định)** khi có Apple Home hoặc nhiều hệ. Dùng **`lit`** khi chỉ dùng Home Assistant và đã bật Battery Saving trong Matter Server add-on: +35 % tuổi pin (4,0 → 5,4 tháng ở 20 lần nhấn/ngày), đổi lại mỗi lần nhấn tốn gấp đôi (Active tối thiểu 5 s) và lệnh từ HA tới nút chậm tới 2 phút.
 
@@ -452,7 +452,7 @@ Hỗ trợ của controller (tới 10/2026):
 | bất kỳ lúc nào | **nhấn nút** → thử attach ngay (đang tạm dừng, hoặc đã detach > 60 s) | |
 | mạng trở lại | lần thử kế tiếp thành công; controller dựng lại phiên CASE/subscription | |
 
-Nếu để OpenThread tự xử lý (không tạm dừng), backoff tối đa 20 phút nghĩa là 3 lần thử/giờ ≈ 50 µA thêm ở 3,3 V: dòng tăng ~2 lần suốt thời gian mất mạng. Với chính sách tạm dừng, sau vài giờ đầu chỉ còn ~17 µA thêm (thử mỗi 4 giờ, ~0,25 C/lần), tức tổng dòng lúc mất mạng xấp xỉ lúc hoạt động bình thường. Không bao giờ tạm dừng khi đang ghép nối, khi cửa sổ ghép nối mở hoặc khi thiết bị chưa có fabric.
+Nếu để OpenThread tự xử lý (không tạm dừng), backoff tối đa 20 phút nghĩa là 3 lần thử/giờ ≈ 50 µA thêm ở 3,3 V: dòng tăng ~2 lần suốt thời gian mất mạng. Với chính sách tạm dừng, sau vài giờ đầu chỉ còn ~17 µA thêm (thử mỗi 4 giờ, ~0,25 C/lần), tức tổng dòng lúc mất mạng xấp xỉ lúc hoạt động bình thường. Không bao giờ tạm dừng khi đang ghép nối hoặc khi thiết bị chưa có fabric; nếu tới hạn mà cửa sổ ghép nối đang mở thì kiểm tra lại sau 5 phút. Khởi động lại giữa lúc mất mạng (thay pin, brownout, OTA) cũng áp dụng chính sách này, tính từ lúc khởi động.
 
 Sự kiện nhấn trong lúc mất mạng: vẫn được ghi vào bộ đệm sự kiện Matter và gửi nếu subscription còn sống khi mạng trở lại; nếu controller đã huỷ subscription (offline > max interval), việc controller có lấy lại sự kiện cũ hay không tùy controller. Nút không phải là thiết bị lưu-và-chuyển.
 
@@ -609,7 +609,7 @@ matter-button-cr2032/
 
 ### 7.3 Trình tự khởi động (`app_main.cpp`)
 
-1. LED, đo pin lúc khởi động, **boot guard** (pin quá yếu hoặc brownout lặp → Deep-sleep 1 giờ).
+1. LED; **cấu hình chân nút trước tiên** (sau reset, GPIO10 tắt bộ đệm vào và `gpio_get_level()` đọc 0 = "đang nhấn"); đo pin lúc khởi động; **boot guard** (pin quá yếu hoặc brownout lặp → Deep-sleep 1 giờ).
 2. Nút đang được giữ lúc lắp pin → chờ 5 s (LED nháy nhanh) → factory reset.
 3. NVS; `esp_pm_configure()` (Light-sleep tự động); kiểm tra image OTA chờ xác nhận.
 4. Tạo node (UAT hint ở bản LIT, thêm feature DSLS), endpoint Generic Switch, Power Source, `SerialNumber`.
@@ -626,7 +626,7 @@ Mục [2.5](#25-đo-pin-gần-như-không-tốn-dòng). Tóm tắt: Power Source
 |---|---|---|
 | Giữ nút | giữ **20 s** (LED nháy 50/100 ms) rồi nhả | 3 nháy 150 ms rồi khởi động lại |
 | Lúc lắp pin | giữ nút trong khi lắp pin, tiếp tục giữ **5 s** | nháy nhanh trong lúc chờ |
-| Từ controller | xoá thiết bị khỏi hệ cuối cùng (fabric cuối) → tự reset sau 1 s | |
+| Từ controller | xoá thiết bị khỏi hệ cuối cùng (fabric cuối) → tự reset sau 1 s; nếu lúc đó cửa sổ ghép nối đang mở thì reset khi cửa sổ đóng mà vẫn chưa có hệ nào | |
 | Lệnh (bản debug) | `matter device factoryreset` | |
 
 Factory reset xoá fabric, thông tin mạng Thread, cấu hình (NVS) rồi mở lại cửa sổ ghép nối BLE 15 phút. Phân vùng `fctry` (mã ghép nối riêng, factory data) được giữ.
@@ -639,7 +639,7 @@ Factory reset xoá fabric, thông tin mạng Thread, cấu hình (NVS) rồi m�
 
 ### 7.7 OTA
 
-Matter OTA Requestor, hỏi provider **1 lần/ngày** (`APP_OTA_QUERY_INTERVAL_H`). Bản tải về chỉ được nhận khi pin ở mức OK. Rollback: image mới chỉ được xác nhận sau **60 s** làm Thread child với fabric còn nguyên; reset trước đó thì bootloader quay về bản cũ. Mỗi lần build tạo `build/matter_button_h2-ota.bin` để đưa vào OTA provider. Tải 1,4 MB qua Thread mất vài phút tới hơn chục phút ở chế độ Active, ước lượng 1–5 mAh từ pin [AS] (đo ở checklist M): chỉ cập nhật khi cần.
+Matter OTA Requestor, hỏi provider **1 lần/ngày** (`APP_OTA_QUERY_INTERVAL_H`). Bản tải về chỉ được nhận khi pin ở mức OK. Rollback: image mới chỉ được xác nhận sau **60 s** làm Thread child với fabric còn nguyên; reset trước đó thì bootloader quay về bản cũ, và nếu **60 phút** sau khi khởi động vẫn chưa xác nhận được (image chạy nhưng không vào mạng) thì firmware tự đánh dấu image hỏng và quay về bản cũ. Mỗi lần build tạo `build/matter_button_h2-ota.bin` để đưa vào OTA provider. Tải 1,4 MB qua Thread mất vài phút tới hơn chục phút ở chế độ Active, ước lượng 1–5 mAh từ pin [AS] (đo ở checklist M): chỉ cập nhật khi cần.
 
 ### 7.8 Tùy chọn Kconfig chính
 
@@ -762,7 +762,7 @@ Log khi khởi động ở trạng thái chưa ghép nối in lại mã QR. Bả
 
 **Multi-Admin (Apple + HA):** ghép vào hệ thứ nhất, rồi dùng chức năng chia sẻ của hệ đó để lấy mã cho hệ thứ hai, hoặc giữ nút 10 s (mục 7.6). Mỗi controller thêm ~1 report keep-alive/giờ và 3 report/lần nhấn (bảng 9.1).
 
-Nếu app ghép xong bước BLE nhưng báo không tìm thấy thiết bị: điện thoại và Border Router phải cùng mạng LAN, router Wi-Fi bật IPv6 và mDNS; mỗi lần thử lại thì factory reset. Chẩn đoán qua log `thread_diag` (10 s/lần khi chưa ghép) và `id_diag`, cùng định dạng với [`matter-relay-switch`](../matter-relay-switch/README.md#xử-lý-sự-cố-điện-thoại-không-tìm-thấy-thiết-bị).
+Nếu app ghép xong bước BLE nhưng báo không tìm thấy thiết bị: điện thoại và Border Router phải cùng mạng LAN, router Wi-Fi bật IPv6 và mDNS; mỗi lần thử lại thì factory reset. Chẩn đoán qua log `thread_diag` (10 s/lần, chỉ khi chưa ghép và cửa sổ ghép nối đang mở) và `id_diag`, cùng định dạng với [`matter-relay-switch`](../matter-relay-switch/README.md#xử-lý-sự-cố-điện-thoại-không-tìm-thấy-thiết-bị).
 
 ### 8.5 Nhiều nút trên cùng mạng Thread
 

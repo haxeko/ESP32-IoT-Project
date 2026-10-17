@@ -31,6 +31,7 @@ Log: UART0 115200 baud (TP3/TP4). Các dòng log được nhắc tới: `id_diag
 | B6 | Lắp pin mới: dòng xung nạp tụ bulk | không reset lặp, khởi động trong < 1 s | |
 | B7 | Nạp firmware qua UART (tự reset hoặc BOOT/EN bằng tay) | `esptool` nạp và verify được | |
 | B8 | Log khởi động | có `battery: VBAT at boot ...`, `power: 802.15.4 TX power 0 dBm ...`, mã QR khi chưa ghép | |
+| B9 | Lắp pin / reset EN 10 lần **không chạm nút** | không lần nào có `Button held at boot`; thiết bị đã ghép vẫn giữ ghép nối (hồi quy: chân nút phải được cấu hình input trước khi đọc) | |
 
 ## C. Ghép nối Apple Home / Home Assistant
 
@@ -45,6 +46,8 @@ Log: UART0 115200 baud (TP3/TP4). Các dòng log được nhắc tới: `id_diag
 | C7 | Bản `lit` chỉ với HA (Battery Saving bật) | log `power: Every fabric has a Check-In client: LIT allowed`; HA vẫn nhận sự kiện | |
 | C8 | Bản `lit` thêm Apple Home | log `staying in SIT mode`; Apple vẫn nhận sự kiện | |
 | C9 | Xoá khỏi hệ cuối cùng | tự factory reset, mở lại cửa sổ BLE | |
+| C10 | Bản `lit`: HA huỷ đăng ký Check-In client (xoá thiết bị khỏi HA khi còn hệ khác, hoặc tắt Battery Saving) | log `staying in SIT mode` ngay sau thao tác, không phải chờ lần nhấn kế tiếp | |
+| C11 | Xoá khỏi hệ cuối cùng trong lúc cửa sổ ghép nối đang mở (giữ nút 10 s trước) | log `factory reset when it closes`; reset khi cửa sổ đóng (15 phút) | |
 
 ## D. Sự kiện nút
 
@@ -91,6 +94,7 @@ PPK2/Joulescope ở JP1 (phía pin, nguồn 3,0 V) và ở JP2 (phía 3,3 V). Đ
 | F8 | Dòng khi đang giữ nút 30 s | sàn + ~7 µA (qua R6), chip vẫn ngủ | |
 | F9 | Dòng khi cửa sổ ghép nối mở (đã ghép, giữ 10 s) | poll 200 ms; ghi lại; trở về sàn khi đóng cửa sổ | |
 | F10 | Đo pin có tải hằng ngày | xung CPU 500 ms ~10 mA, log `battery: Load test ...` | |
+| F11 | Thiết bị **chưa ghép**, sau khi cửa sổ BLE 15 phút đã đóng | chỉ còn dòng sàn, không có lần thức 10 s (log `thread_diag: Thread diagnostics stopped`) | |
 
 ## G. Dòng đỉnh khi phát
 
@@ -148,6 +152,7 @@ Mạng có 1 Border Router (trường hợp xấu nhất). PPK2 ghi liên tục 
 | J5 | Tắt BR 6 giờ rồi bật, không nhấn | attach lại ở lần thử kế tiếp (≤ 4 giờ) | |
 | J6 | Parent khởi động lại nhanh (router quên child) | re-attach trong ≤ 190 s (SIT) nhờ child supervision | |
 | J7 | Có 2 Border Router, tắt 1 | nút chuyển parent, không gián đoạn quá 1 phút | |
+| J8 | Tắt BR, rồi tháo/lắp pin nút (khởi động khi không có mạng) | sau 30 phút vẫn có `Thread detached for too long: paused`; nhấn nút sau > 60 s thì thử attach lại | |
 
 ## K. Nhiều nút
 
@@ -181,6 +186,7 @@ Bản phát hành, 2 controller (Apple + HA), ~20 lần nhấn/ngày (bằng tay
 | M2 | Điện tích của một lần OTA (JP1) | ghi lại (ước lượng 1–5 mAh) | |
 | M3 | OTA image hỏng/không vào mạng được | rút pin/lắp lại → quay về bản cũ | |
 | M4 | OTA khi pin Warning | bị huỷ (I5) | |
+| M5 | OTA lên image không vào được mạng (ví dụ tắt BR ngay sau khi tải xong) | 60 phút sau khởi động: `OTA image not confirmed ... rolling back`, chạy lại bản cũ | |
 
 ## N. Factory reset
 
@@ -189,3 +195,4 @@ Bản phát hành, 2 controller (Apple + HA), ~20 lần nhấn/ngày (bằng tay
 | N1 | Giữ 20 s | xoá fabric/Thread, mở cửa sổ BLE; `fctry` giữ nguyên (QR của `unique_setup`/`factory` không đổi) | |
 | N2 | Giữ khi lắp pin 5 s | như N1 | |
 | N3 | Xoá khỏi controller cuối cùng | như N1 | |
+| N4 | Giữ nút khi lắp pin với pin yếu (boot guard Deep-sleep) | không thức dậy liên tục khi nút đang bị giữ; thức bằng timer sau 1 giờ | |

@@ -52,11 +52,15 @@ static constexpr esp_openthread_platform_config_t k_openthread_config = {
 };
 
 /* ---------------------------------------------------------------------------------------------------------------
- * OTA rollback: a new image is confirmed after 60 s attached as a Thread child with its fabrics */
+ * OTA rollback: a new image is confirmed once attached as a Thread child for 60 s with its fabrics, and rolled back
+ * if that has not happened 60 min after boot (an image that runs but never joins the network) */
 
 #if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
-static constexpr uint64_t k_ota_confirm_delay_us = 60 * 1000 * 1000ULL;
+static constexpr uint64_t k_ota_check_period_us = 60 * 1000 * 1000ULL;
+static constexpr int64_t k_ota_confirm_after_us = 60 * 1000 * 1000LL;
+static constexpr int64_t k_ota_rollback_after_us = 60 * 60 * 1000 * 1000LL;
 static bool s_ota_pending_verify = false;
+static int64_t s_ota_attached_since = 0; // CHIP task; 0 = not attached
 static esp_timer_handle_t s_ota_confirm_timer = nullptr;
 
 static bool ota_attached_as_child()
@@ -77,21 +81,27 @@ static void ota_confirm_work(intptr_t)
     if (!s_ota_pending_verify) {
         return;
     }
+    const int64_t now = esp_timer_get_time();
     // Never confirm with 0 fabrics: after an OTA that means the new image lost its fabric table
-    if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0 || !ota_attached_as_child()) {
-        esp_timer_start_once(s_ota_confirm_timer, k_ota_confirm_delay_us);
-        return;
+    if (s_ota_attached_since != 0 && now - s_ota_attached_since >= k_ota_confirm_after_us &&
+        chip::Server::GetInstance().GetFabricTable().FabricCount() > 0 && ota_attached_as_child()) {
+        if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+            s_ota_pending_verify = false;
+            ESP_LOGI(TAG, "OTA image confirmed");
+            return;
+        }
     }
-    if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
-        s_ota_pending_verify = false;
-        ESP_LOGI(TAG, "OTA image confirmed");
+    if (now >= k_ota_rollback_after_us) {
+        ESP_LOGE(TAG, "OTA image not confirmed %d min after boot: rolling back", (int)(k_ota_rollback_after_us / 60000000));
+        esp_ota_mark_app_invalid_rollback_and_reboot();
     }
+    esp_timer_start_once(s_ota_confirm_timer, k_ota_check_period_us);
 }
 
 static void ota_confirm_cb(void *)
 {
     if (chip::DeviceLayer::PlatformMgr().ScheduleWork(ota_confirm_work) != CHIP_NO_ERROR) {
-        esp_timer_start_once(s_ota_confirm_timer, k_ota_confirm_delay_us);
+        esp_timer_start_once(s_ota_confirm_timer, k_ota_check_period_us);
     }
 }
 
@@ -109,6 +119,8 @@ static void ota_check_pending_verify()
         };
         if (esp_timer_create(&args, &s_ota_confirm_timer) == ESP_OK) {
             s_ota_pending_verify = true;
+            // Checked every minute until confirmed or rolled back (an hour at most)
+            esp_timer_start_once(s_ota_confirm_timer, k_ota_check_period_us);
             ESP_LOGW(TAG, "New OTA image pending verification");
         }
     }
@@ -118,10 +130,39 @@ static void ota_check_pending_verify()
 /* ---------------------------------------------------------------------------------------------------------------
  * Matter events (CHIP task) */
 
-static void pairing_led_update()
+// The last fabric was removed while a commissioning window was open: factory reset once the window closes
+static bool s_reset_when_window_closes = false;
+
+/* Pairing LED, and the Thread/SRP diagnostics log only while a first commissioning can happen (every 10 s it would
+ * cost ~5 uA on a device left uncommissioned) */
+static void commissioning_state_update()
 {
-    status_led_set(LedMode::PairingWindow,
-                   chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen());
+    chip::Server &server = chip::Server::GetInstance();
+    const bool open = server.GetCommissioningWindowManager().IsCommissioningWindowOpen();
+    status_led_set(LedMode::PairingWindow, open);
+    if (open && server.GetFabricTable().FabricCount() == 0) {
+        thread_diag_start();
+    } else {
+        thread_diag_stop();
+    }
+}
+
+/* Last fabric gone: erase the Thread network too and reboot into a fresh BLE commissioning window (BLE was shut down
+ * after the first commissioning). The 1 s delay lets the RemoveFabric response go out first. */
+static void factory_reset_if_no_fabric()
+{
+    CHIP_ERROR err = chip::DeviceLayer::SystemLayer().StartTimer(
+        chip::System::Clock::Milliseconds32(1000),
+        [](chip::System::Layer *, void *) {
+            if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
+                ESP_LOGW(TAG, "Last fabric removed, factory reset");
+                esp_matter::factory_reset();
+            }
+        },
+        nullptr);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Failed to schedule factory reset, err:%" CHIP_ERROR_FORMAT, err.Format());
+    }
 }
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
@@ -132,62 +173,56 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kThreadConnectivityChange:
 #if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
-        if (s_ota_pending_verify) {
-            if (event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Established) {
-                if (!esp_timer_is_active(s_ota_confirm_timer)) {
-                    esp_timer_start_once(s_ota_confirm_timer, k_ota_confirm_delay_us);
-                }
-            } else if (event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Lost) {
-                esp_timer_stop(s_ota_confirm_timer);
-            }
+        if (event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Established) {
+            s_ota_attached_since = esp_timer_get_time();
+        } else if (event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Lost) {
+            s_ota_attached_since = 0;
         }
 #endif
         break;
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete");
-        thread_diag_stop();
-        status_led_set(LedMode::PairingWindow, false);
+        s_reset_when_window_closes = false;
+        commissioning_state_update();
         break;
 
     case chip::DeviceLayer::DeviceEventType::kServerReady:
-        if (chip::Server::GetInstance().GetFabricTable().FabricCount() > 0) {
-            thread_diag_stop();
-        } else {
+        if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
             // The SDK opened the boot commissioning window (BLE and network)
             setup_code_print(false);
         }
-        pairing_led_update();
+        commissioning_state_update();
         break;
 
     case chip::DeviceLayer::DeviceEventType::kFailSafeTimerExpired:
         ESP_LOGI(TAG, "Commissioning failed, fail safe timer expired");
-        pairing_led_update();
+        commissioning_state_update();
         break;
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningWindowOpened:
+        commissioning_state_update();
+        break;
+
     case chip::DeviceLayer::DeviceEventType::kCommissioningWindowClosed:
-        pairing_led_update();
+        commissioning_state_update();
+        if (s_reset_when_window_closes) {
+            s_reset_when_window_closes = false;
+            factory_reset_if_no_fabric();
+        }
         break;
 
     case chip::DeviceLayer::DeviceEventType::kFabricRemoved: {
         chip::Server &server = chip::Server::GetInstance();
-        // The window is still open when a failed first commissioning reverts its AddNOC: leave that path alone
-        if (server.GetFabricTable().FabricCount() == 0 &&
-            !server.GetCommissioningWindowManager().IsCommissioningWindowOpen()) {
-            // Last fabric gone: erase the Thread network too and reboot into a fresh BLE commissioning window.
-            // The 1 s delay lets the RemoveFabric response go out first.
-            CHIP_ERROR err = chip::DeviceLayer::SystemLayer().StartTimer(
-                chip::System::Clock::Milliseconds32(1000),
-                [](chip::System::Layer *, void *) {
-                    if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
-                        ESP_LOGW(TAG, "Last fabric removed, factory reset");
-                        esp_matter::factory_reset();
-                    }
-                },
-                nullptr);
-            if (err != CHIP_NO_ERROR) {
-                ESP_LOGE(TAG, "Failed to schedule factory reset, err:%" CHIP_ERROR_FORMAT, err.Format());
+        if (server.GetFabricTable().FabricCount() == 0) {
+            if (server.GetCommissioningWindowManager().IsCommissioningWindowOpen()) {
+                // A failed first commissioning reverting its AddNOC, or the last controller removed while a window
+                // it (or the button) opened is still open: decide when the window closes, a new controller may
+                // still join through it
+                ESP_LOGI(TAG, "No fabric left, commissioning window open: factory reset when it closes");
+                s_reset_when_window_closes = true;
+            } else {
+                factory_reset_if_no_fabric();
             }
         }
         break;
@@ -255,6 +290,7 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
 /* ---------------------------------------------------------------------------------------------------------------
  * Boot: button held at power-up -> factory reset (works even when the runtime gestures cannot be used) */
 
+/* After button_gpio_init() */
 static bool boot_reset_requested()
 {
     if (!button_is_pressed_raw()) {
@@ -281,6 +317,11 @@ extern "C" void app_main()
     esp_err_t err = ESP_OK;
 
     status_led_init();
+    /* The button pad has no input buffer after reset: configure it before anything reads it (boot guard, boot reset) */
+    err = button_gpio_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Button GPIO init failed: %s", esp_err_to_name(err));
+    }
     /* Battery first: a cell too weak for Matter (or a brownout loop) sends the chip back to Deep-sleep */
     battery_init();
     battery_boot_guard();
@@ -373,7 +414,7 @@ extern "C" void app_main()
 
     battery_start();
 
-    thread_diag_start();
+    /* thread_diag runs while a first commissioning window is open (commissioning_state_update) */
     if (identity_diag_start(CONFIG_IDENTITY_DIAG_PERIOD_SEC) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the identity diagnostics");
     }

@@ -6,6 +6,7 @@
 
 #include <driver/gpio.h>
 #include <esp_log.h>
+#include <esp_rom_sys.h>
 #include <esp_sleep.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -29,6 +30,7 @@ static constexpr bool k_internal_pullup = false;
 
 static_assert(SOC_RTCIO_PIN_COUNT > 0, "the button needs an LP IO EXT1 wakeup source");
 
+static bool s_gpio_ready = false;
 static TaskHandle_t s_task = nullptr;
 static button_event_cb_t s_cb = nullptr;
 static ButtonFsm s_fsm;
@@ -128,13 +130,15 @@ static void button_task(void *)
     }
 }
 
-esp_err_t button_init(button_event_cb_t cb)
+esp_err_t button_gpio_init(void)
 {
+    if (s_gpio_ready) {
+        return ESP_OK;
+    }
     if (!esp_sleep_is_valid_wakeup_gpio(k_gpio)) {
         ESP_LOGE(TAG, "GPIO%d cannot wake the chip from Light-sleep: use an LP IO (GPIO7..GPIO14)", (int)k_gpio);
         return ESP_ERR_INVALID_ARG;
     }
-    s_cb = cb;
 
     gpio_config_t io = {};
     io.pin_bit_mask = 1ULL << k_gpio;
@@ -147,7 +151,7 @@ esp_err_t button_init(button_event_cb_t cb)
     // Input hysteresis: the RC-filtered release edge crosses the threshold slowly
     io.hys_ctrl_mode = GPIO_HYS_SOFT_ENABLE;
 #endif
-    esp_err_t err = gpio_config(&io);
+    const esp_err_t err = gpio_config(&io);
     if (err != ESP_OK) {
         return err;
     }
@@ -155,6 +159,19 @@ esp_err_t button_init(button_event_cb_t cb)
     // Latch the pad configuration (pull-up) while the IO MUX is powered down
     gpio_hold_en(k_gpio);
 #endif
+    // The internal pull-up charges the 1 nF filter capacitor in ~0.1 ms; the external one keeps the pad high anyway
+    esp_rom_delay_us(1000);
+    s_gpio_ready = true;
+    return ESP_OK;
+}
+
+esp_err_t button_init(button_event_cb_t cb)
+{
+    esp_err_t err = button_gpio_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+    s_cb = cb;
 
     // Not IRAM: during a flash operation the interrupt waits, the level is still there afterwards
     err = gpio_install_isr_service(0);

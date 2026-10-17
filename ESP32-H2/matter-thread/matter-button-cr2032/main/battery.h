@@ -5,8 +5,8 @@
  *
  * VBAT (after the reverse-polarity MOSFET, before the TPS63900) reaches an ADC pin through 1 MOhm with 100 nF to
  * GND: no divider, so nothing drains the cell except the pin leakage (<= 50 nA, ESP32-H2 datasheet IIL/IIH). The
- * 1 MOhm also limits the current into the pin while VDD is not up yet. The ADC is created and deleted for each
- * measurement, under a PM lock: SARADC has no Light-sleep context retention in ESP-IDF v6.0.
+ * 1 MOhm also limits the current into the pin while VDD is not up yet. The ADC unit is created and deleted for each
+ * measurement (it holds no power-domain reference in between) under a PM lock: no Light-sleep in a conversion.
  *
  * Two quantities:
  *  - rest voltage: the node is RC-filtered (100 ms), so it reads the voltage at the sleep load
@@ -28,7 +28,8 @@ enum class BatteryLevel : uint8_t { Ok = 0, Warning = 1, Critical = 2 }; // = Ma
 void battery_init(void);
 
 /** A battery too weak to start Matter (or a brownout reset loop): Deep-sleep for CONFIG_BATTERY_RECOVERY_SLEEP_S,
- *  woken earlier by the button, instead of draining it with boot attempts. Returns when booting may continue. */
+ *  woken earlier by a press (external pull-up builds, button released when going to sleep), instead of draining it
+ *  with boot attempts. Returns when booting may continue. Call after button_gpio_init(). */
 void battery_boot_guard(void);
 
 /** Power Source device type and cluster (Battery + Replaceable) on endpoint 0. Before esp_matter::start(). */

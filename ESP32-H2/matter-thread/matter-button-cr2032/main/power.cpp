@@ -111,13 +111,26 @@ static bool s_paused = false;
 static uint32_t s_retry_min = CONFIG_THREAD_RETRY_MIN_MIN;
 static System::Clock::Timestamp s_detached_since = System::Clock::kZero;
 
-static bool may_pause()
+// A window or a fail-safe blocking a pause is checked again after this long
+static constexpr uint32_t k_pause_recheck_s = 300;
+
+/* Commissioned, with a Thread network to attach to */
+static bool pause_applicable()
+{
+    return Server::GetInstance().GetFabricTable().FabricCount() > 0 && ConnectivityMgr().IsThreadProvisioned();
+}
+
+/* Never during (re)commissioning */
+static bool pause_blocked()
 {
     Server &server = Server::GetInstance();
-    // Never during (re)commissioning or with nothing to attach to
-    return server.GetFabricTable().FabricCount() > 0 && !server.GetFailSafeContext().IsFailSafeArmed() &&
-           !server.GetCommissioningWindowManager().IsCommissioningWindowOpen() &&
-           ConnectivityMgr().IsThreadProvisioned();
+    return server.GetFailSafeContext().IsFailSafeArmed() ||
+           server.GetCommissioningWindowManager().IsCommissioningWindowOpen();
+}
+
+static bool may_pause()
+{
+    return pause_applicable() && !pause_blocked();
 }
 
 static void resume_thread(const char *why);
@@ -129,7 +142,12 @@ static void retry_timer_cb(System::Layer *, void *)
 
 static void pause_timer_cb(System::Layer *, void *)
 {
-    if (s_paused || ThreadStackMgr().IsThreadAttached() || !may_pause()) {
+    if (s_paused || ThreadStackMgr().IsThreadAttached() || !pause_applicable()) {
+        return;
+    }
+    if (pause_blocked()) {
+        // Not dropped: OpenThread would keep retrying on its own backoff for as long as the outage lasts
+        SystemLayer().StartTimer(System::Clock::Seconds32(k_pause_recheck_s), pause_timer_cb, nullptr);
         return;
     }
     ESP_LOGW(TAG, "Thread detached for too long: paused, next attach attempt in %" PRIu32 " min", s_retry_min);
@@ -193,7 +211,9 @@ void power_on_user_activity(void)
 #if CHIP_CONFIG_ENABLE_ICD_DSLS
 namespace {
 
-class IcdModePolicy : public app::ICDStateObserver
+/* Evaluated when a fabric is added or removed (esp-matter device events), when a Check-In client registers or
+ * unregisters (ICDListener, kTableUpdated) and, as a safety net, each time the ICD enters Active mode */
+class IcdModePolicy : public app::ICDStateObserver, public app::ICDListener
 {
 public:
     void Evaluate()
@@ -208,21 +228,43 @@ public:
                 break;
             }
         }
+        // The flag first: the SIT request enters Active mode, which calls Evaluate() again
         if (every_fabric && mSitRequested) {
+            mSitRequested = false;
             ESP_LOGI(TAG, "Every fabric has a Check-In client: LIT allowed");
             app::ICDNotifier::GetInstance().NotifySITModeRequestWithdrawal();
-            mSitRequested = false;
         } else if (!every_fabric && !mSitRequested) {
+            mSitRequested = true;
             ESP_LOGI(TAG, "A fabric has no Check-In client: staying in SIT mode");
             app::ICDNotifier::GetInstance().NotifySITModeRequestNotification();
-            mSitRequested = true;
         }
     }
 
+    // ICDStateObserver
     void OnEnterActiveMode() override { Evaluate(); }
     void OnEnterIdleMode() override {}
     void OnTransitionToIdle() override {}
     void OnICDModeChange() override {}
+
+    // ICDListener
+    void OnICDManagementServerEvent(ICDManagementEvents event) override
+    {
+        if (event == ICDManagementEvents::kTableUpdated) {
+            // Raised inside the RegisterClient / UnregisterClient command: evaluate once the command has returned
+            LogErrorOnFailure(PlatformMgr().ScheduleWork(
+                [](intptr_t arg) { reinterpret_cast<IcdModePolicy *>(arg)->Evaluate(); },
+                reinterpret_cast<intptr_t>(this)));
+        }
+    }
+    void OnNetworkActivity() override {}
+    void OnKeepActiveRequest(KeepActiveFlags) override {}
+    void OnActiveRequestWithdrawal(KeepActiveFlags) override {}
+    void OnSITModeRequest() override {}
+    void OnSITModeRequestWithdrawal() override {}
+    void OnSubscriptionReport() override {}
+#if CHIP_CONFIG_ENABLE_ICD_SERVER && CHIP_CONFIG_ENABLE_ICD_CIP && CHIP_CONFIG_ENABLE_ICD_CHECK_IN_ON_REPORT_TIMEOUT
+    void OnSendCheckIn(Optional<Access::SubjectDescriptor>) override {}
+#endif
 
 private:
     bool mSitRequested = false;
@@ -238,7 +280,12 @@ void power_thread_setup(void)
     apply_thread_settings();
 #if CHIP_CONFIG_ENABLE_ICD_DSLS
     LogErrorOnFailure(PlatformMgr().ScheduleWork([](intptr_t) {
-        Server::GetInstance().GetICDManager().RegisterObserver(&s_icd_policy);
+        if (!Server::GetInstance().GetICDManager().RegisterObserver(&s_icd_policy)) {
+            ESP_LOGE(TAG, "ICD observer pool full (CHIP_CONFIG_ICD_OBSERVERS_POOL_SIZE)");
+        }
+        if (app::ICDNotifier::GetInstance().Subscribe(&s_icd_policy) != CHIP_NO_ERROR) {
+            ESP_LOGE(TAG, "ICD notifier full (CONFIG_ICD_MAX_NOTIFICATION_SUBSCRIBERS)");
+        }
         s_icd_policy.Evaluate();
     }));
 #endif
@@ -258,6 +305,15 @@ void power_on_event(const ChipDeviceEvent *event)
         }
 #endif
         break;
+#if CONFIG_THREAD_PAUSE_WHEN_DETACHED
+    case DeviceEventType::kServerReady:
+        // Booted without a network (Border Router down, battery swapped or brownout during an outage): a device that
+        // never attaches gets no connectivity change event, so start the detached timer here
+        if (pause_applicable() && !ThreadStackMgr().IsThreadAttached() && s_detached_since == System::Clock::kZero) {
+            on_connectivity(false);
+        }
+        break;
+#endif
 #if CHIP_CONFIG_ENABLE_ICD_DSLS
     case DeviceEventType::kFabricRemoved:
     case DeviceEventType::kFabricCommitted:

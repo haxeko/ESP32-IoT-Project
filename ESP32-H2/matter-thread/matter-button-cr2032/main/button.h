@@ -21,8 +21,13 @@
 
 typedef void (*button_event_cb_t)(const ButtonEventInfo &event);
 
-/** Configure the pin, the wakeup sources and start the button task. */
+/** Configure the pad as an input (external or internal pull-up, hysteresis). Call it first in app_main(): after
+ *  reset the input buffer of GPIO10 is off (ESP32-H2 datasheet, Table 2-1) and gpio_get_level() reads 0, which
+ *  for this active-low button means "pressed". Idempotent. */
+esp_err_t button_gpio_init(void);
+
+/** button_gpio_init() if not done yet, then the interrupt, the wakeup sources and the button task. */
 esp_err_t button_init(button_event_cb_t cb);
 
-/** Raw level now (true = pressed). Valid before button_init(). */
+/** Raw level now (true = pressed). Valid after button_gpio_init(). */
 bool button_is_pressed_raw(void);

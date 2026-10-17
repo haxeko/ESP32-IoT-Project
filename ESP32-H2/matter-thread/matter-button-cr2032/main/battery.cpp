@@ -22,6 +22,7 @@
 #include <lib/support/CodeUtils.h>
 #include <platform/CHIPDeviceLayer.h>
 
+#include "button.h"
 #include "status_led.h"
 
 using namespace esp_matter;
@@ -323,7 +324,13 @@ void battery_boot_guard(void)
     status_led_flash(LedFlash::LowBattery);
     vTaskDelay(pdMS_TO_TICKS(status_led_flash_duration_ms(LedFlash::LowBattery) + 50));
     esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(CONFIG_BATTERY_RECOVERY_SLEEP_S) * 1000000ULL);
-    esp_sleep_enable_ext1_wakeup_io(1ULL << CONFIG_BUTTON_GPIO, ESP_EXT1_WAKEUP_ANY_LOW);
+#if !CONFIG_BUTTON_INTERNAL_PULLUP
+    // The button also wakes the chip, but only with the external pull-up (defined level in Deep-sleep, no pad hold
+    // needed) and when it is released now: a held or stuck button would wake it at once, again and again
+    if (!button_is_pressed_raw()) {
+        esp_sleep_enable_ext1_wakeup_io(1ULL << CONFIG_BUTTON_GPIO, ESP_EXT1_WAKEUP_ANY_LOW);
+    }
+#endif
     esp_deep_sleep_start();
 }
 
