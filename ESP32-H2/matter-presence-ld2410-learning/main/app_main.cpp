@@ -285,8 +285,8 @@ static void open_commissioning_window_if_necessary()
 }
 
 #if CONFIG_ENABLE_WIFI_STATION
-// Many ESP32-C3 SuperMini boards find the access point but fail to connect at
-// full Wi-Fi power (the authentication times out). Called once the Wi-Fi layer
+// Some ESP32-C3 SuperMini boards are reported to find the access point but fail
+// to connect at full Wi-Fi power (the authentication times out). Called once the Wi-Fi layer
 // runs: after esp_matter::start() and at each station start, as the Matter
 // stack starts Wi-Fi itself, maybe before app_event_cb is registered.
 static void limit_wifi_tx_power()
