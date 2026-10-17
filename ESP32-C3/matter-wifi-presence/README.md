@@ -1,6 +1,6 @@
 # Matter Presence Sensor + học phòng trống (ESP32-C3 SuperMini + HLK-LD2410C, Wi-Fi)
 
-> Bản **ESP32-C3** của [`ESP32-H2/matter-presence-ld2410-learning`](../../ESP32-H2/matter-presence-ld2410-learning), dùng **chung mã nguồn**: thư mục này chỉ có `CMakeLists.txt` và `sdkconfig.defaults` (cùng README này), phần còn lại (thư mục `main`, bảng phân vùng, cấu hình) lấy từ thư mục ESP32-H2. Khác biệt chính là chạy **Matter over Wi-Fi** thay vì Matter over Thread, vì ESP32-C3 không có radio 802.15.4; chân nối, LED và PID cũng khác, và bản C3 không có console Matter (bảng bên dưới).
+> Bản **ESP32-C3** của [`ESP32-H2/matter-presence-ld2410-learning`](../../ESP32-H2/matter-presence-ld2410-learning), dùng **chung mã nguồn**: thư mục này chỉ có `CMakeLists.txt` và `sdkconfig.defaults` (cùng README này và [`REBUILD_PROMPT.md`](REBUILD_PROMPT.md), bản tổng hợp yêu cầu để viết lại firmware từ đầu), phần còn lại (thư mục `main`, bảng phân vùng, cấu hình) lấy từ thư mục ESP32-H2. Khác biệt chính là chạy **Matter over Wi-Fi** thay vì Matter over Thread, vì ESP32-C3 không có radio 802.15.4; chân nối, LED và PID cũng khác, và bản C3 không có console Matter (bảng bên dưới).
 
 Cảm biến hiện diện chuẩn Matter (device type **Occupancy Sensor 0x0107**) với radar 24 GHz **HLK-LD2410C**. Thêm trực tiếp vào **Apple Home**, Google Home, Home Assistant, SmartThings, Alexa... qua Wi-Fi nhà, **không cần Thread Border Router**.
 
@@ -274,7 +274,8 @@ Từ bản 1.0.132, bản C3 **không có console Matter** (gõ lệnh trong mon
 matter-wifi-presence/
 ├── CMakeLists.txt       # project ESP32-C3, dùng presence.cmake và main/ của thư mục ESP32-H2
 ├── sdkconfig.defaults   # target esp32c3, đường dẫn bảng phân vùng và chip_project_config.h dùng chung
-└── README.md
+├── README.md
+└── REBUILD_PROMPT.md    # tổng hợp yêu cầu của bản C3, dùng làm prompt viết lại firmware từ đầu
 
 ../../ESP32-H2/matter-presence-ld2410-learning/   # mã nguồn dùng chung
 ├── presence.cmake            # phiên bản firmware, component esp-matter, tên project theo chip
