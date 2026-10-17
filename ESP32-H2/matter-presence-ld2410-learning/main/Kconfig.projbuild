@@ -155,28 +155,55 @@ menu "Empty Room Learning"
     config LD2410_LEARN_DELAY_SEC
         int "Delay before recording (seconds)"
         range 0 120
-        default 10
+        default 20
         help
             Time to leave the room after choosing "Learning" in Home Assistant
             or a triple click on the button (the LED is cyan meanwhile).
-            The room must stay empty while the radar is recorded.
+            The room must stay empty while the radar is recorded: the radar
+            sees about 6 m, also through wooden doors and thin walls.
 
     config LD2410_LEARN_DURATION_SEC
         int "Recording time (seconds)"
         range 10 300
-        default 30
+        default 60
         help
             How long the per-gate energy of the empty room is recorded (the
-            LED blinks cyan slowly meanwhile).
+            LED blinks cyan slowly meanwhile). Long enough for a fan or an
+            air conditioner that sweeps the room to pass a few times.
+
+    config LD2410_LEARN_PERCENTILE
+        int "Noise percentile (%)"
+        range 50 100
+        default 95
+        help
+            Noise of each gate = the energy that this share of the recorded
+            reports stays at or below: the highest (100 - value) % of the
+            reports are left out, so a short burst (someone walking past the
+            door, a door closing) does not raise the threshold. At 95 % and
+            60 s of recording, bursts of less than 3 s in total are left out,
+            while something that moves more than 5 % of the time (fan,
+            curtain) is learned. 100 takes the highest energy recorded, like
+            older firmware.
 
     config LD2410_LEARN_MARGIN
         int "Margin above the recorded noise (energy 0-100)"
         range 0 50
         default 10
         help
-            New threshold of each gate = highest energy recorded in the empty
-            room + this margin, never below the LD2410 factory default and
-            at most 100 (gate ignored).
+            New threshold of each gate = recorded noise + this margin, never
+            below the LD2410 factory default, at most the factory default +
+            the highest raise below, and at most 100 (gate ignored).
+
+    config LD2410_LEARN_MAX_RAISE
+        int "Highest raise above the factory threshold (energy 0-100)"
+        range 0 100
+        default 30
+        help
+            A learned threshold is at most the factory default + this value,
+            so a person or something moving during the recording cannot make
+            a gate deaf. A gate limited this way is logged as a warning: what
+            moved there may still be reported as presence. 100: no limit, a
+            gate can be raised up to 100 (ignored).
 
 endmenu
 

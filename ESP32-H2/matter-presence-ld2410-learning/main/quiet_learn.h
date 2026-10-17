@@ -31,19 +31,43 @@ typedef void (*quiet_learn_phase_cb_t)(quiet_learn_phase_t phase);
 typedef enum {
     QUIET_LEARN_SAVED,     // new thresholds saved in the radar
     QUIET_LEARN_CANCELLED, // cancelled, nothing written
-    QUIET_LEARN_FAILED,    // the radar did not answer, sent no reports or did not keep the thresholds
+    QUIET_LEARN_FAILED,    // no memory for the recording, or the radar did not answer, sent no reports or did
+                           // not keep the thresholds
 } quiet_learn_result_t;
 
 // Runs one learning in the calling task: waits CONFIG_LD2410_LEARN_DELAY_SEC
 // (time to leave the room), records CONFIG_LD2410_LEARN_DURATION_SEC of
 // engineering data, then writes the new thresholds to the radar, which keeps
-// them in its flash. Sends radar commands, so no other task may configure the
-// radar meanwhile. Both callbacks are optional.
-quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase);
+// them in its flash. The recording (ld2410_capture_t) is allocated while the
+// learning runs. Sends radar commands, so no other task may configure the
+// radar meanwhile. Both callbacks are optional. gate_cm: length of one gate,
+// for the distances in the log (0: unknown).
+quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
+                                     uint16_t gate_cm);
 
-// New threshold per gate: recorded noise peak + margin, at least the factory
-// default (learning only makes the radar less sensitive, where the room is
-// noisy) and at most 100 (gate ignored). The still thresholds of gates 0 and 1
-// cannot be set on the LD2410 and are kept.
-void quiet_learn_compute_thresholds(const ld2410_capture_t *noise, const ld2410_thresholds_t *current,
-                                    uint8_t margin, ld2410_thresholds_t *out);
+// Writes the LD2410 factory thresholds to every gate and reads them back;
+// nothing is written when the radar holds them already. The farthest gates,
+// no-one duration, resolution and Bluetooth stay as they are. Sends radar
+// commands like quiet_learn_run(). True when the radar holds the factory
+// thresholds.
+bool quiet_learn_restore_factory(void);
+
+// Energy per gate (0-100)
+typedef struct {
+    uint8_t moving[LD2410_GATE_COUNT];
+    uint8_t still[LD2410_GATE_COUNT];
+} quiet_learn_levels_t;
+
+// Noise of each gate in a recording: the highest energy once the
+// (100 - percentile) % highest frames of the gate are left out, i.e. the
+// energy that percentile % of its frames stay at or below. 100 gives the
+// highest energy recorded, a gate without frames 0.
+void quiet_learn_noise(const ld2410_capture_t *capture, uint8_t percentile, quiet_learn_levels_t *out);
+
+// New threshold per gate: noise + margin, at least the factory default
+// (learning only makes the radar less sensitive, where the room is noisy), at
+// most the factory default + max_raise (a gate where something moved during
+// the recording does not go deaf) and at most 100 (gate ignored). The still
+// thresholds of gates 0 and 1 cannot be set on the LD2410 and are kept.
+void quiet_learn_compute_thresholds(const quiet_learn_levels_t *noise, const ld2410_thresholds_t *current,
+                                    uint8_t margin, uint8_t max_raise, ld2410_thresholds_t *out);

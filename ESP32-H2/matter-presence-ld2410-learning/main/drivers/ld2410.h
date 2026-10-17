@@ -48,10 +48,15 @@ typedef struct {
     uint16_t no_one_duration_s; // "unmanned duration": a lost target is still reported for this long
 } ld2410_config_t;
 
-// Highest per-gate energies seen in engineering frames while capturing.
+// Highest energy of a gate in engineering frames
+#define LD2410_MAX_ENERGY 100
+
+// Engineering frames counted per gate and energy while capturing, about
+// 3.6 KB: allocate it only for a capture. Energies above LD2410_MAX_ENERGY are
+// counted as LD2410_MAX_ENERGY, a count stops at UINT16_MAX.
 typedef struct {
-    uint8_t moving[LD2410_GATE_COUNT];
-    uint8_t still[LD2410_GATE_COUNT];
+    uint16_t moving[LD2410_GATE_COUNT][LD2410_MAX_ENERGY + 1];
+    uint16_t still[LD2410_GATE_COUNT][LD2410_MAX_ENERGY + 1];
     uint32_t frames;
 } ld2410_capture_t;
 
@@ -96,6 +101,7 @@ esp_err_t ld2410_read_bluetooth(bool *enabled, uint8_t mac[LD2410_MAC_LEN]);
 // Stored in the radar's flash; takes effect after ld2410_restart().
 esp_err_t ld2410_set_bluetooth(bool enable);
 
-// Between start and stop, engineering frames update the per-gate maxima.
-void ld2410_capture_start(void);
-void ld2410_capture_stop(ld2410_capture_t *out);
+// Between start and stop, every engineering frame is counted in *capture,
+// which start clears. It must stay allocated until ld2410_capture_stop().
+void ld2410_capture_start(ld2410_capture_t *capture);
+void ld2410_capture_stop(void);

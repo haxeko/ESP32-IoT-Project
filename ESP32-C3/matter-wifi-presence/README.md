@@ -65,9 +65,9 @@ LED của SuperMini chỉ có một màu, nên mọi màu của bản H2 đều 
 | Nháy chậm (1 s sáng, 1 s tắt) | Chế độ ghép nối: đang chờ thêm vào ứng dụng Matter |
 | Tắt | Hoạt động bình thường (đã ghép nối), hoặc chế độ ghép nối đã hết giờ |
 | Nháy nhanh | Ứng dụng yêu cầu *Identify* |
-| Sáng liên tục 10 s | Vừa bắt đầu học phòng trống: rời khỏi phòng |
-| Nháy chậm (1 s tắt, 1 s sáng) trong 30 s | Đang ghi năng lượng nền của phòng trống |
-| Sáng liên tục 10 s | Học xong **hoặc** học thất bại: xem kết quả trong log `quiet_learn` hoặc entity *Learn empty room* |
+| Sáng liên tục 20 s | Vừa bắt đầu học phòng trống: rời khỏi phòng |
+| Nháy chậm (1 s tắt, 1 s sáng) trong 60 s | Đang ghi năng lượng nền của phòng trống |
+| Sáng liên tục 10 s | Học xong **hoặc** học thất bại; cũng vậy sau *Factory thresholds* (ghi lại ngưỡng mặc định). Xem kết quả trong log `quiet_learn` |
 
 LED một màu không phân biệt được học xong (bản H2: xanh lá) và học thất bại (bản H2: đỏ). Trong lúc học, LED báo việc học thay cho chế độ ghép nối; *Identify* vẫn được ưu tiên.
 

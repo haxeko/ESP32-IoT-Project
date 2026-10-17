@@ -82,11 +82,21 @@ typedef struct {
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static ld2410_target_t s_target;
 static bool s_has_target;
-static bool s_capturing;
-static ld2410_capture_t s_capture;
+static ld2410_capture_t *s_capture; // engineering frames are counted here while set
 
 static QueueHandle_t s_ack_queue;
 static SemaphoreHandle_t s_cmd_mutex;
+
+// Adds the energies of one frame to the per-gate counts of the capture.
+static void count_energies(uint16_t (*counts)[LD2410_MAX_ENERGY + 1], const uint8_t *energy, size_t gates)
+{
+    for (size_t g = 0; g < gates; g++) {
+        uint16_t &count = counts[g][energy[g] > LD2410_MAX_ENERGY ? LD2410_MAX_ENERGY : energy[g]];
+        if (count < UINT16_MAX) {
+            count++;
+        }
+    }
+}
 
 static void handle_target_payload(const uint8_t *p, size_t len)
 {
@@ -124,18 +134,10 @@ static void handle_target_payload(const uint8_t *p, size_t len)
     taskENTER_CRITICAL(&s_lock);
     s_target = t;
     s_has_target = true;
-    if (s_capturing && moving_energy) {
-        for (size_t g = 0; g < moving_gates; g++) {
-            if (moving_energy[g] > s_capture.moving[g]) {
-                s_capture.moving[g] = moving_energy[g];
-            }
-        }
-        for (size_t g = 0; g < still_gates; g++) {
-            if (still_energy[g] > s_capture.still[g]) {
-                s_capture.still[g] = still_energy[g];
-            }
-        }
-        s_capture.frames++;
+    if (s_capture && moving_energy) {
+        count_energies(s_capture->moving, moving_energy, moving_gates);
+        count_energies(s_capture->still, still_energy, still_gates);
+        s_capture->frames++;
     }
     taskEXIT_CRITICAL(&s_lock);
 }
@@ -448,19 +450,18 @@ esp_err_t ld2410_set_bluetooth(bool enable)
     return command(kCmdBluetooth, value, sizeof(value), NULL);
 }
 
-void ld2410_capture_start(void)
+void ld2410_capture_start(ld2410_capture_t *capture)
 {
+    memset(capture, 0, sizeof(*capture));
     taskENTER_CRITICAL(&s_lock);
-    memset(&s_capture, 0, sizeof(s_capture));
-    s_capturing = true;
+    s_capture = capture;
     taskEXIT_CRITICAL(&s_lock);
 }
 
-void ld2410_capture_stop(ld2410_capture_t *out)
+void ld2410_capture_stop(void)
 {
     taskENTER_CRITICAL(&s_lock);
-    s_capturing = false;
-    *out = s_capture;
+    s_capture = nullptr;
     taskEXIT_CRITICAL(&s_lock);
 }
 
