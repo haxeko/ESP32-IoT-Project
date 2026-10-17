@@ -1,0 +1,35 @@
+// Host test stand-in for the generated sdkconfig.h: the Kconfig defaults of main/Kconfig.projbuild. A test can
+// override a value with -D on the command line (a bool option that is off is 0 here, undefined in ESP-IDF).
+#pragma once
+
+#define CONFIG_IDF_TARGET "esp32c3"
+#define CONFIG_IDF_TARGET_ESP32C3 1
+#define CONFIG_ENABLE_WIFI_STATION 1
+
+#define CONFIG_DEVICE_VENDOR_NAME "Haxeko"
+#define CONFIG_DEVICE_PRODUCT_NAME "Presence LD2410"
+#define CONFIG_DEVICE_NAME_PREFIX "Presence-"
+#define CONFIG_DEVICE_DISPLAY_NAME "Presence Sensor"
+#define CONFIG_DEVICE_HARDWARE_VERSION_STRING "ESP32C3-LD2410"
+
+#define CONFIG_LD2410_UART_RX_PIN 3
+#define CONFIG_LD2410_UART_TX_PIN 4
+#ifndef CONFIG_PRESENCE_MAX_DISTANCE_CM
+#define CONFIG_PRESENCE_MAX_DISTANCE_CM 0
+#endif
+#define CONFIG_PRESENCE_HOLD_TIME_SEC 30
+#define CONFIG_RADAR_TIMEOUT_SEC 10
+#define CONFIG_STATUS_LED_GPIO 8
+#ifndef CONFIG_STATUS_LED_ACTIVE_HIGH
+#define CONFIG_STATUS_LED_ACTIVE_HIGH 0
+#endif
+#define CONFIG_RESET_BUTTON_GPIO 9
+
+#define CONFIG_LD2410_LEARN_DELAY_SEC 20
+#define CONFIG_LD2410_LEARN_DURATION_SEC 60
+#ifndef CONFIG_LD2410_LEARN_RADAR_AUTO
+#define CONFIG_LD2410_LEARN_RADAR_AUTO 1
+#endif
+#define CONFIG_LD2410_LEARN_PERCENTILE 95
+#define CONFIG_LD2410_LEARN_MARGIN 10
+#define CONFIG_LD2410_LEARN_MAX_RAISE 30
