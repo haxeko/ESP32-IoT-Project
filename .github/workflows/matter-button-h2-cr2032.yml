@@ -1,0 +1,82 @@
+name: Build matter-button-h2-cr2032
+
+on:
+  push:
+    paths:
+      - 'ESP32-H2/matter-thread/matter-button-cr2032/**'
+      - '.github/workflows/matter-button-h2-cr2032.yml'
+  pull_request:
+    paths:
+      - 'ESP32-H2/matter-thread/matter-button-cr2032/**'
+      - '.github/workflows/matter-button-h2-cr2032.yml'
+  workflow_dispatch:
+
+jobs:
+  host-test:
+    # Button gesture state machine and battery model: no ESP-IDF needed
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ESP32-H2/matter-thread/matter-button-cr2032
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Button FSM host test
+        run: test/host/run.sh
+      - name: Battery model
+        run: python3 tools/battery_model.py --breakdown
+
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/esp-matter:release-v1.6.1_idf_v6.0.2
+    strategy:
+      fail-fast: false
+      matrix:
+        # default: ICD SIT (every controller, Apple Home included); lit: ICD LIT + DSLS (sdkconfig.defaults.lit)
+        variant: [default, lit]
+    defaults:
+      run:
+        working-directory: ESP32-H2/matter-thread/matter-button-cr2032
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # On pull_request, build the PR head commit rather than the synthetic merge commit.
+          # Empty on push/dispatch: default ref.
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Build (esp32h2, ${{ matrix.variant }})
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          pushd $IDF_PATH && . ./export.sh && popd
+          pushd $ESP_MATTER_PATH && . ./export.sh && popd
+          if [ "${{ matrix.variant }}" = default ]; then
+            idf.py set-target esp32h2
+            idf.py build
+            echo "SUFFIX=" >> "$GITHUB_ENV"
+          else
+            idf.py -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.${{ matrix.variant }} \
+              -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.${{ matrix.variant }}" build
+            echo "SUFFIX=-${{ matrix.variant }}" >> "$GITHUB_ENV"
+          fi
+          # Firmware version (also the name of the complete flash image the build creates)
+          echo "FW_VERSION=$(python3 -c "import json; print(json.load(open('build/project_description.json'))['project_version'])")" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matter_button_h2-${{ env.FW_VERSION }}${{ env.SUFFIX }}
+          if-no-files-found: error
+          path: |
+            ESP32-H2/matter-thread/matter-button-cr2032/build/matter_button_h2-${{ env.FW_VERSION }}.bin
+            ESP32-H2/matter-thread/matter-button-cr2032/build/matter_button_h2-ota.bin
+            ESP32-H2/matter-thread/matter-button-cr2032/build/matter_button_h2.bin
+            ESP32-H2/matter-thread/matter-button-cr2032/build/bootloader/bootloader.bin
+            ESP32-H2/matter-thread/matter-button-cr2032/build/partition_table/partition-table.bin
+            ESP32-H2/matter-thread/matter-button-cr2032/build/ota_data_initial.bin
+            ESP32-H2/matter-thread/matter-button-cr2032/build/flash_args
+      # ELF/map decode silent-assert and panic addresses from a CI-flashed device
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matter_button_h2-${{ env.FW_VERSION }}${{ env.SUFFIX }}-debug
+          path: |
+            ESP32-H2/matter-thread/matter-button-cr2032/build/matter_button_h2.elf
+            ESP32-H2/matter-thread/matter-button-cr2032/build/matter_button_h2.map

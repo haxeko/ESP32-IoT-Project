@@ -1,0 +1,35 @@
+CONFIG_IDF_TARGET="esp32h2"
+
+# Matter over Thread: 802.15.4 radio, commissioning over BLE
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_SRP_CLIENT=y
+CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
+CONFIG_OPENTHREAD_LOG_LEVEL_NOTE=y
+# OpenThread CLI ("matter esp ot_cli <command>") and factory diags only in the debug build (sdkconfig.defaults.debug)
+CONFIG_OPENTHREAD_CLI=n
+CONFIG_OPENTHREAD_DIAG=n
+# Battery device: Minimal Thread Device, attached as a Sleepy End Device (rx-off-when-idle, esp-matter sets it when
+# the ICD server is enabled). Periodic parent search (MTD default): only below -65 dBm, at most every 10 h
+CONFIG_OPENTHREAD_MTD=y
+
+# Disable lwip ipv6 autoconfig (Thread assigns the addresses)
+CONFIG_LWIP_IPV6_AUTOCONFIG=n
+# No IPv6 neighbour discovery timers: they would wake the chip every second
+CONFIG_LWIP_ND6=n
+
+# LwIP config for OpenThread
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=8
+
+# Matter over Thread is IPv6-only: drop lwIP IPv4 (DHCP, ARP, IGMP, ICMPv4) and the CHIP IPv4 paths.
+# Both must be set together (the chip component enforces it)
+CONFIG_LWIP_IPV4=n
+CONFIG_DISABLE_IPV4=y
+
+# MDNS platform: SRP over Thread instead of mDNS
+CONFIG_USE_MINIMAL_MDNS=n
+
+# No Wi-Fi on ESP32-H2
+CONFIG_ENABLE_WIFI_STATION=n
+
+# Size: shared __riscv_save/restore routines for function prologues/epilogues (about 12-16 KB less flash)
+CONFIG_COMPILER_SAVE_RESTORE_LIBCALLS=y

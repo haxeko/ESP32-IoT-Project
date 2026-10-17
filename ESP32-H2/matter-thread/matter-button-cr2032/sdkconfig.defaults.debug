@@ -1,0 +1,10 @@
+# Debug build: CHIP shell + OpenThread CLI on the UART0 console ("matter esp ot_cli <command>"), CHIP progress logs,
+# no automatic Light-sleep (the UART cannot wake the chip, the console would not answer).
+# Applied after sdkconfig.defaults and sdkconfig.defaults.esp32h2, see README "Bản build debug".
+# Current measurements: use the release build, this one stays awake.
+CONFIG_ENABLE_CHIP_SHELL=y
+CONFIG_OPENTHREAD_CLI=y
+CONFIG_OPENTHREAD_DIAG=y
+CONFIG_CHIP_LOG_DEFAULT_LEVEL_PROGRESS=y
+CONFIG_APP_LIGHT_SLEEP=n
+CONFIG_IDENTITY_DIAG_PERIOD_SEC=300

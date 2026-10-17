@@ -1,0 +1,362 @@
+menu "Button"
+
+    config BUTTON_GPIO
+        int "Button GPIO (LP IO)"
+        range 7 14
+        default 10
+        help
+            GPIO of the tact switch (to GND, active low). It must be an LP IO (GPIO7..GPIO14 on
+            ESP32-H2; GPIO8..GPIO14 are bonded out): with the digital peripherals powered down in
+            Light-sleep only an LP IO (EXT1) can wake the chip. Avoid GPIO8/GPIO9 (strapping, boot
+            mode) and GPIO13/GPIO14 if a 32.768 kHz crystal is fitted. GPIO10 is module pin 5 of
+            ESP32-H2-WROOM-02C.
+
+    config BUTTON_INTERNAL_PULLUP
+        bool "Use the internal pull-up (~45 kOhm) instead of an external one"
+        default n
+        help
+            The reference board has a 470 kOhm pull-up to 3V3 (7 uA only while pressed) and
+            1 kOhm + 1 nF in series for ESD / bounce filtering. The internal pull-up draws 73 uA
+            while pressed and needs the pad to be held in sleep.
+
+    config BUTTON_DEBOUNCE_MS
+        int "Debounce time (ms)"
+        range 5 100
+        default 20
+        help
+            The level is sampled once this long after the first edge; the interrupt stays off
+            meanwhile. Tact switches bounce for under 5-10 ms.
+
+    config BUTTON_LONG_PRESS_MS
+        int "Long press threshold (ms)"
+        range 300 5000
+        default 1000
+        help
+            Holding the first press of a sequence this long sends LongPress (and LongRelease on
+            release). Later presses of a multi-press sequence never become long presses.
+
+    config BUTTON_MULTI_PRESS_WINDOW_MS
+        int "Multi-press window (ms)"
+        depends on SWITCH_MULTI_PRESS
+        range 150 1500
+        default 350
+        help
+            Time allowed between a release and the next press of a double press. MultiPressComplete
+            (the event Home Assistant and Apple Home use for single/double press) is sent this long
+            after the last release, so it is also the extra latency of a single press.
+
+    config BUTTON_PAIRING_HOLD_MS
+        int "Hold time to open a commissioning window (ms, 0 = off)"
+        range 0 60000
+        default 10000
+
+    config BUTTON_RESET_HOLD_MS
+        int "Hold time for a factory reset (ms, 0 = off)"
+        range 0 60000
+        default 20000
+
+    config BUTTON_STUCK_HOLD_MS
+        int "Hold time after which the maintenance action is cancelled (ms)"
+        range 0 120000
+        default 40000
+        help
+            A button held this long is treated as stuck (object resting on it): releasing it does
+            nothing besides LongRelease.
+
+    config BOOT_RESET_HOLD_MS
+        int "Factory reset: hold the button this long while inserting the battery (ms)"
+        range 1000 30000
+        default 5000
+
+endmenu
+
+menu "Matter Switch"
+
+    config SWITCH_MULTI_PRESS
+        bool "Double press (MomentarySwitchMultiPress)"
+        default y
+        help
+            Feature map MS | MSR | MSL | MSM. Home Assistant creates multi_press_1, multi_press_2,
+            long_press and long_release event types and ignores InitialPress / ShortRelease for such
+            switches; Apple Home shows single, double and long press.
+            Off: MS | MSR | MSL, single press is reported at once (initial_press / short_release)
+            but there is no double press.
+
+    config SWITCH_MULTI_PRESS_MAX
+        int "MultiPressMax"
+        depends on SWITCH_MULTI_PRESS
+        range 2 8
+        default 2
+        help
+            Apple Home handles single and double press only. A longer sequence is reported as
+            MultiPressComplete with a count of 0 (aborted).
+
+    config SWITCH_ACTION
+        bool "ActionSwitch feature (Matter 1.4, fewer events)"
+        depends on SWITCH_MULTI_PRESS
+        default n
+        help
+            MS | AS | MSL | MSM: one InitialPress per sequence, no ShortRelease / MultiPressOngoing,
+            so fewer reports per press. Apple Home support is not confirmed: keep it off for Apple.
+
+    config SWITCH_FORCE_EVENT_DELIVERY
+        bool "Send Switch events at once to every subscriber"
+        default y
+        help
+            Events are sent right away only to controllers that subscribed to them as urgent;
+            others would get them at the next report (up to the ICD IdleModeDuration). This asks
+            the reporting engine for an immediate report after each event (the subscription's
+            min interval still applies).
+
+endmenu
+
+menu "Power and Thread"
+
+    config APP_LIGHT_SLEEP
+        bool "Automatic Light-sleep"
+        depends on FREERTOS_USE_TICKLESS_IDLE
+        default y
+        help
+            Off only for debugging with a console (the UART cannot wake the chip).
+
+    config THREAD_TX_POWER_DBM
+        int "802.15.4 TX power (dBm)"
+        range -24 20
+        default 0
+        help
+            ESP32-H2 TX current (datasheet, 3.3 V): 36 mA at 0 dBm, 60 mA at 9 dBm, 140 mA at 20 dBm.
+            The ESP-IDF driver starts at +20 dBm, far beyond what a CR2032 delivers: this value is
+            applied as soon as the driver is initialised (before the first frame) and after every
+            re-attach.
+
+    config THREAD_PAUSE_WHEN_DETACHED
+        bool "Pause Thread when the network is gone for long"
+        default y
+        help
+            OpenThread retries to attach with a backoff up to 20 min (each attempt ~2 s of RX at
+            25 mA). After THREAD_DETACHED_PAUSE_MIN without a parent Thread is paused and retried
+            every THREAD_RETRY_MIN_MIN, doubling up to THREAD_RETRY_MAX_MIN. A button press retries
+            at once (the press is reported once attached, if the subscription survived).
+
+    config THREAD_DETACHED_PAUSE_MIN
+        int "Detached time before pausing Thread (min)"
+        depends on THREAD_PAUSE_WHEN_DETACHED
+        range 5 240
+        default 30
+
+    config THREAD_RETRY_MIN_MIN
+        int "First retry interval while paused (min)"
+        depends on THREAD_PAUSE_WHEN_DETACHED
+        range 5 240
+        default 30
+
+    config THREAD_RETRY_MAX_MIN
+        int "Longest retry interval while paused (min)"
+        depends on THREAD_PAUSE_WHEN_DETACHED
+        range 30 1440
+        default 240
+
+    config THREAD_RETRY_ATTACH_WINDOW_S
+        int "Attach time allowed after a retry (s)"
+        depends on THREAD_PAUSE_WHEN_DETACHED
+        range 10 600
+        default 20
+        help
+            Resuming Thread restarts the OpenThread attach backoff at 251 ms (then 0.5, 1, 2, 4 s ...),
+            and every attempt keeps the receiver on for 2 s (Parent Requests to routers, then to
+            REEDs: ~50 mC). 20 s is enough to restore the former parent or attach to a new one
+            (~2-5 s when a router answers) and limits a failed retry to ~5 attempts.
+
+    config THREAD_KICK_AFTER_S
+        int "Restart the attach on a press when detached longer than (s)"
+        depends on THREAD_PAUSE_WHEN_DETACHED
+        range 10 3600
+        default 60
+
+    config APP_OTA_QUERY_INTERVAL_H
+        int "Matter OTA query interval (hours)"
+        depends on ENABLE_OTA_REQUESTOR
+        range 1 720
+        default 24
+
+endmenu
+
+menu "Battery"
+
+    config BATTERY_SENSE_GPIO
+        int "VBAT sense ADC GPIO"
+        range 1 5
+        default 1
+        help
+            ADC1 pin (GPIO1..GPIO5 on ESP32-H2) fed from VBAT through 1 MOhm, 100 nF to GND.
+
+    config BATTERY_SENSE_RATIO_X1000
+        int "VBAT / pin voltage ratio x 1000"
+        range 1000 4000
+        default 1000
+        help
+            1000 without divider (reference board: VBAT <= 3.3 V fits the ADC 12 dB range).
+
+    config BATTERY_CAPACITY_MAH
+        int "Nominal capacity (mAh), Power Source BatCapacity"
+        default 220
+
+    config BATTERY_FIRST_MEASURE_DELAY_S
+        int "First rest measurement after boot (s)"
+        range 10 3600
+        default 120
+
+    config BATTERY_MEASURE_INTERVAL_H
+        int "Rest voltage measurement interval (hours)"
+        range 1 168
+        default 12
+
+    config BATTERY_TEST_INTERVAL_H
+        int "Internal resistance load test interval (hours)"
+        range 1 168
+        default 24
+        help
+            A multiple of BATTERY_MEASURE_INTERVAL_H. The test loads the cell with the CPU for
+            BATTERY_TEST_LOAD_MS (~7 mC per test).
+
+    config BATTERY_TEST_LOAD_MS
+        int "Load test duration (ms)"
+        range 200 2000
+        default 500
+
+    config BATTERY_BURST_RATIO_X100
+        int "Radio burst / test load battery current ratio x 100"
+        range 100 1000
+        default 250
+        help
+            Assumption: the busy CPU draws ~15 mA from the cell, a Thread re-attach or BLE
+            commissioning ~40 mA for up to 2 s. Calibrate with the measurements of the test plan.
+
+    config BATTERY_WARNING_REST_MV
+        int "Warning: rest voltage below (mV)"
+        default 2750
+
+    config BATTERY_CRITICAL_REST_MV
+        int "Critical: rest voltage below (mV)"
+        default 2600
+
+    config BATTERY_WARNING_BURST_MV
+        int "Warning: predicted burst voltage below (mV)"
+        default 2200
+
+    config BATTERY_CRITICAL_BURST_MV
+        int "Critical: predicted burst voltage below (mV)"
+        default 1950
+        help
+            The TPS63900 stops below ~1.65 V (UVLO falling, datasheet): below this prediction the
+            next Thread re-attach is likely to brown out.
+
+    config BATTERY_BOOT_MIN_MV
+        int "Boot guard: loaded voltage at boot below (mV) -> Deep-sleep"
+        default 2200
+
+    config BATTERY_BROWNOUT_LIMIT
+        int "Boot guard: brownout resets in a row -> Deep-sleep"
+        range 1 20
+        default 3
+
+    config BATTERY_RECOVERY_SLEEP_S
+        int "Boot guard: Deep-sleep time (s)"
+        range 60 86400
+        default 3600
+
+endmenu
+
+menu "Status LED"
+
+    config STATUS_LED_GPIO
+        int "Status LED GPIO (-1 = none)"
+        range -1 27
+        default 22
+        help
+            GPIO22 (module pin 15) is a digital IO with no strapping function and no reset pull.
+
+    config STATUS_LED_ACTIVE_LEVEL
+        int "Level that lights the LED"
+        range 0 1
+        default 1
+
+    config STATUS_LED_PRESS_FEEDBACK
+        bool "Flash on every press"
+        default n
+        help
+            20 ms flash per press (~0.1 mC with the CPU kept awake).
+
+endmenu
+
+menu "Thread Diagnostics"
+
+    config THREAD_DIAG_LOG
+        bool "Log Thread addresses and SRP state until commissioned"
+        default y
+        help
+            Every 10 s, until commissioning completes, log the Thread role, IPv6 addresses
+            (link-local / mesh-local / OMR), on-mesh prefixes from the Border Router and
+            the SRP host/service registration state. Stops once the device is commissioned.
+
+endmenu
+
+menu "Identity Diagnostics and Setup Code"
+
+    config IDENTITY_DIAG_PERIOD_SEC
+        int "Identity / Thread / Matter diagnostics period (seconds, 0 = off)"
+        range 0 86400
+        default 86400
+        help
+            Logs (tag "id_diag") at boot, at this period and on Thread, fabric and session events:
+            factory MAC, IEEE EUI-64, serial number, UniqueID, discriminator, Thread role, extended
+            address, partition, SRP state, fabrics, CASE sessions, subscriptions and NVS usage.
+            A block costs ~0.1 s of UART time: once a day on the battery device.
+            Never logs the setup passcode, private keys or the Thread network key.
+
+    config IDENTITY_DIAG_SUBSCRIPTION_LOG
+        bool "Log every subscription request, establishment and termination"
+        default y
+
+    config PRINT_ONBOARDING_CODES
+        bool "Log the QR code and manual pairing code when pairing is possible"
+        default y
+        help
+            Development aid: the QR code contains the setup passcode, turn this off in production builds.
+
+    config UNIQUE_SETUP_CODE
+        bool "Per-board random setup code stored in flash"
+        depends on CUSTOM_COMMISSIONABLE_DATA_PROVIDER
+        default y
+        help
+            Enabled by sdkconfig.defaults.unique_setup. Each board generates its own passcode,
+            discriminator and SPAKE2+ salt on first use and keeps them in the partition below.
+
+    config UNIQUE_SETUP_CODE_PARTITION
+        string "Flash partition for the per-board setup code"
+        depends on UNIQUE_SETUP_CODE
+        default "fctry"
+
+endmenu
+
+menu "Device Identity"
+
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName)"
+        default "Matter Button"
+
+    config DEVICE_HARDWARE_VERSION_STRING
+        string "Hardware version (Basic Information HardwareVersionString)"
+        default "ESP32-H2-WROOM-02C CR2032 v1.0"
+
+    config SERIAL_NUMBER_PREFIX
+        string "Serial number prefix"
+        default ""
+        help
+            Prepended to the factory eFuse MAC (12 hex digits). At most 20 characters.
+
+endmenu

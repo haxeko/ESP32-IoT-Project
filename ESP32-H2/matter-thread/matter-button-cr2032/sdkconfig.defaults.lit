@@ -1,0 +1,16 @@
+# Long Idle Time ICD (Matter 1.4+ controllers that register a Check-In client: Home Assistant with the matter.js
+# server >= 9.1 "Battery Saver Mode", SmartThings). Apple Home registers no client (2026): the device then runs as
+# SIT, and main/power.cpp keeps it SIT while ANY fabric has no client, so a multi-admin Apple fabric still sees it.
+#   idf.py -B build-lit -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.lit \
+#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.lit" build
+# LIT: slow poll 120 s (child timeout / supervision raised by main/power.cpp), SIT fallback 15 s,
+# ActiveModeThreshold 5 s (spec minimum for LIT), the short SIT idle duration kept at 1 h (no 60 s keep-alives).
+CONFIG_ENABLE_ICD_LIT=y
+CONFIG_ENABLE_ICD_DSLS=y
+CONFIG_ENABLE_ICD_CIP=y
+CONFIG_ENABLE_ICD_USER_ACTIVE_MODE_TRIGGER=y
+CONFIG_ICD_SLOW_POLL_INTERVAL_MS=120000
+CONFIG_ICD_ACTIVE_MODE_THRESHOLD_MS=5000
+CONFIG_ICD_SHORT_IDLE_MODE_DURATION_SEC=3600
+CONFIG_ICD_CLIENTS_SUPPORTED_PER_FABRIC=2
+CONFIG_ICD_MAX_NOTIFICATION_SUBSCRIBERS=2

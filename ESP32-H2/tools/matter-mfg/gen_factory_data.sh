@@ -4,9 +4,10 @@
 # salt/verifier; the CD and the PAI certificate are the same for all boards. The partition also holds a random
 # "serial-num" that these firmwares do not use: they report the eFuse-MAC serial number (main/device_info.cpp).
 #
-#   gen_factory_data.sh -t occupancy|plug -n COUNT [--private]
+#   gen_factory_data.sh -t occupancy|plug|switch -n COUNT [--private]
 #     -t occupancy  ESP32-H2 presence sensors (device type 0x0107)
 #     -t plug       ESP32-H2 relay / plug (device type 0x010A)
+#     -t switch     ESP32-H2 CR2032 button, matter-button-cr2032 (Generic Switch, device type 0x000F)
 #     --private     sign the DACs with pki/private/PAI (gen_pki.sh --private) instead of the SDK test PAI
 #
 # Output: factory/<type>-<date>/fff1_8000/<uuid>/<uuid>-partition.bin   flash at the fctry offset
@@ -28,10 +29,12 @@ done
 case $TYPE in
     occupancy) CD=pki/cd/CD_example_FFF1.der; NAME="Presence Sensor" ;;
     plug) CD=pki/cd/CD_example_FFF1.der; NAME="ESP32-H2" ;;
-    *) echo "usage: $0 -t occupancy|plug -n COUNT [--private]"; exit 1 ;;
+    switch) CD=pki/cd/CD_example_FFF1.der; NAME="Matter Button" ;;
+    *) echo "usage: $0 -t occupancy|plug|switch -n COUNT [--private]"; exit 1 ;;
 esac
 # Default CD: the SDK example CD the firmware sends today (accepted by the same controllers as today).
-# CD=pki/cd/CD_test_occupancy_0107.der / CD_test_plug_010A.der: signed with the SDK test CD key instead.
+# CD=pki/cd/CD_test_occupancy_0107.der / CD_test_plug_010A.der / CD_test_switch_000F.der: signed with the SDK test
+# CD key instead.
 CD=${CD_FILE:-$CD}
 [ -f "$CD" ] || { echo "$CD missing: run gen_pki.sh first"; exit 1; }
 echo "Using CD: $CD" 
