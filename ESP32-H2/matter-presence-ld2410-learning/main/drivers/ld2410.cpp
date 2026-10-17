@@ -21,6 +21,8 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "ld2410.h"
@@ -57,6 +59,9 @@ static constexpr uint16_t kCmdBluetooth = 0x00A4;
 static constexpr uint16_t kCmdReadMac = 0x00A5;
 static constexpr uint16_t kCmdSetResolution = 0x00AA;
 static constexpr uint16_t kCmdReadResolution = 0x00AB;
+static constexpr uint16_t kCmdReadVersion = 0x00A0;
+static constexpr uint16_t kCmdNoiseDetection = 0x000B;
+static constexpr uint16_t kCmdNoiseStatus = 0x001B;
 static constexpr uint16_t kAckFlag = 0x0100;
 
 // Commands are retried: the radar sometimes misses a request while it is
@@ -82,11 +87,21 @@ typedef struct {
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static ld2410_target_t s_target;
 static bool s_has_target;
-static bool s_capturing;
-static ld2410_capture_t s_capture;
+static ld2410_capture_t *s_capture; // engineering frames are counted here while set
 
 static QueueHandle_t s_ack_queue;
 static SemaphoreHandle_t s_cmd_mutex;
+
+// Adds the energies of one frame to the per-gate counts of the capture.
+static void count_energies(uint16_t (*counts)[LD2410_MAX_ENERGY + 1], const uint8_t *energy, size_t gates)
+{
+    for (size_t g = 0; g < gates; g++) {
+        uint16_t &count = counts[g][energy[g] > LD2410_MAX_ENERGY ? LD2410_MAX_ENERGY : energy[g]];
+        if (count < UINT16_MAX) {
+            count++;
+        }
+    }
+}
 
 static void handle_target_payload(const uint8_t *p, size_t len)
 {
@@ -97,8 +112,10 @@ static void handle_target_payload(const uint8_t *p, size_t len)
         return;
     }
     ld2410_target_t t = {
-        .moving = (p[2] & 0x01) != 0,
-        .still = (p[2] & 0x02) != 0,
+        .state = p[2],
+        // Bits 0 and 1 only in states 0-3: states 4-6 report the background noise detection
+        .moving = p[2] <= 3 && (p[2] & 0x01) != 0,
+        .still = p[2] <= 3 && (p[2] & 0x02) != 0,
         .moving_cm = (uint16_t)(p[3] | (p[4] << 8)),
         .still_cm = (uint16_t)(p[6] | (p[7] << 8)),
         .detection_cm = (uint16_t)(p[9] | (p[10] << 8)),
@@ -124,18 +141,10 @@ static void handle_target_payload(const uint8_t *p, size_t len)
     taskENTER_CRITICAL(&s_lock);
     s_target = t;
     s_has_target = true;
-    if (s_capturing && moving_energy) {
-        for (size_t g = 0; g < moving_gates; g++) {
-            if (moving_energy[g] > s_capture.moving[g]) {
-                s_capture.moving[g] = moving_energy[g];
-            }
-        }
-        for (size_t g = 0; g < still_gates; g++) {
-            if (still_energy[g] > s_capture.still[g]) {
-                s_capture.still[g] = still_energy[g];
-            }
-        }
-        s_capture.frames++;
+    if (s_capture && moving_energy) {
+        count_energies(s_capture->moving, moving_energy, moving_gates);
+        count_energies(s_capture->still, still_energy, still_gates);
+        s_capture->frames++;
     }
     taskEXIT_CRITICAL(&s_lock);
 }
@@ -406,6 +415,50 @@ esp_err_t ld2410_set_gate_length(uint16_t gate_cm)
     return command(kCmdSetResolution, value, sizeof(value), NULL);
 }
 
+esp_err_t ld2410_read_firmware_version(ld2410_version_t *out)
+{
+    // Return value: firmware type (2), major version (2), minor version (4)
+    ld2410_ack_t ack;
+    esp_err_t err = command(kCmdReadVersion, NULL, 0, &ack);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (ack.len < 8) {
+        ESP_LOGW(TAG, "Unexpected firmware version reply (%u bytes)", ack.len);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    out->type = (uint16_t)(ack.data[0] | (ack.data[1] << 8));
+    out->major = (uint16_t)(ack.data[2] | (ack.data[3] << 8));
+    out->minor = (uint32_t)ack.data[4] | ((uint32_t)ack.data[5] << 8) | ((uint32_t)ack.data[6] << 16) |
+                 ((uint32_t)ack.data[7] << 24);
+    return ESP_OK;
+}
+
+void ld2410_format_version(const ld2410_version_t *version, char *buf, size_t len)
+{
+    snprintf(buf, len, "V%x.%02x.%08" PRIx32, version->major >> 8, version->major & 0xFF, version->minor);
+}
+
+esp_err_t ld2410_start_noise_detection(uint16_t seconds)
+{
+    const uint8_t value[] = { (uint8_t)(seconds & 0xFF), (uint8_t)(seconds >> 8) };
+    return command(kCmdNoiseDetection, value, sizeof(value), NULL);
+}
+
+esp_err_t ld2410_read_noise_detection_status(uint16_t *status)
+{
+    ld2410_ack_t ack;
+    esp_err_t err = command(kCmdNoiseStatus, NULL, 0, &ack);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (ack.len < 2) {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    *status = (uint16_t)(ack.data[0] | (ack.data[1] << 8));
+    return ESP_OK;
+}
+
 esp_err_t ld2410_restart(void)
 {
     return command(kCmdRestart, NULL, 0, NULL);
@@ -448,19 +501,18 @@ esp_err_t ld2410_set_bluetooth(bool enable)
     return command(kCmdBluetooth, value, sizeof(value), NULL);
 }
 
-void ld2410_capture_start(void)
+void ld2410_capture_start(ld2410_capture_t *capture)
 {
+    memset(capture, 0, sizeof(*capture));
     taskENTER_CRITICAL(&s_lock);
-    memset(&s_capture, 0, sizeof(s_capture));
-    s_capturing = true;
+    s_capture = capture;
     taskEXIT_CRITICAL(&s_lock);
 }
 
-void ld2410_capture_stop(ld2410_capture_t *out)
+void ld2410_capture_stop(void)
 {
     taskENTER_CRITICAL(&s_lock);
-    s_capturing = false;
-    *out = s_capture;
+    s_capture = nullptr;
     taskEXIT_CRITICAL(&s_lock);
 }
 

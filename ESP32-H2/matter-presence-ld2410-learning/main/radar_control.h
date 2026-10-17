@@ -14,7 +14,9 @@
 // LD2410 controls for Home Assistant, as Mode Select clusters: Home Assistant
 // shows each one as a select entity named after the cluster Description,
 // Apple Home does not show Mode Select.
-//  - "Learn empty room" (Off / Learning) on the occupancy endpoint
+//  - "Learn empty room" (Off / Learning / Factory thresholds) on the occupancy
+//    endpoint: Factory thresholds writes the LD2410 factory thresholds back
+//    (quiet_learn_restore_factory()), then the select shows Off again
 //  - "Range": farthest detection gate (moving and still), on its own endpoint
 //  - "Radar resolution": gate length 0.75 m or 0.2 m (LD2410B/C), on its own
 //    endpoint

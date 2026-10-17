@@ -148,6 +148,24 @@ menu "Presence Sensor Configuration"
             Hold 5 seconds: factory reset (erases the Thread network or the
             Wi-Fi credentials, and the Matter pairing).
 
+    config PRESENCE_WIFI_MAX_TX_POWER
+        int "Highest Wi-Fi transmit power (0.25 dBm, 0 = chip default)"
+        depends on ENABLE_WIFI_STATION
+        range 0 84
+        default 0
+        help
+            Limits the Wi-Fi transmit power, in steps of 0.25 dBm: 34 = 8.5 dBm,
+            80 = 20 dBm. Some ESP32-C3 SuperMini boards are reported to find the
+            access point but fail its authentication at full power (log
+            "wifi:state: auth -> init"); 8.5 dBm is the value most often
+            reported to fix it. It did not on the board this was tested with,
+            where the cause was beamforming on the access point. A lower power
+            also means a shorter range, so keep the board within reach of the
+            access point. The chip rounds
+            the value down to one of its steps (8, 20, 28, 34, 44, 52, 56, 60,
+            66, 72, 80); values from 1 to 7 count as 8. 0 keeps the chip default
+            (about 20 dBm).
+
 endmenu
 
 menu "Empty Room Learning"
@@ -155,28 +173,70 @@ menu "Empty Room Learning"
     config LD2410_LEARN_DELAY_SEC
         int "Delay before recording (seconds)"
         range 0 120
-        default 10
+        default 20
         help
             Time to leave the room after choosing "Learning" in Home Assistant
             or a triple click on the button (the LED is cyan meanwhile).
-            The room must stay empty while the radar is recorded.
+            The room must stay empty while the radar is recorded: the radar
+            sees about 6 m, also through wooden doors and thin walls.
 
     config LD2410_LEARN_DURATION_SEC
         int "Recording time (seconds)"
         range 10 300
-        default 30
+        default 60
         help
             How long the per-gate energy of the empty room is recorded (the
-            LED blinks cyan slowly meanwhile).
+            LED blinks cyan slowly meanwhile). Long enough for a fan or an
+            air conditioner that sweeps the room to pass a few times.
+
+    config LD2410_LEARN_RADAR_AUTO
+        bool "Let the radar measure the room itself when it can"
+        default y
+        help
+            LD2410B/C radars with newer firmware measure the background noise
+            of every gate themselves and set their moving and still
+            thresholds (command 0x000B of the LD2410C serial protocol V1.09,
+            the "Auto" button of the HLKRadarTool app; Hi-Link does not say
+            from which radar firmware on). With this option the learning asks the radar
+            first: it waits 10 s, then measures for the recording time. Hi-Link
+            does not document how the thresholds are computed; they may be
+            more sensitive than the factory defaults. A radar that refuses the
+            command is learned by the ESP32 as below (noise percentile, margin,
+            highest raise).
+
+    config LD2410_LEARN_PERCENTILE
+        int "Noise percentile (%)"
+        range 50 100
+        default 95
+        help
+            Noise of each gate = the energy that this share of the recorded
+            reports stays at or below: the highest (100 - value) % of the
+            reports are left out, so a short burst (someone walking past the
+            door, a door closing) does not raise the threshold. At 95 % and
+            60 s of recording, bursts of less than 3 s in total are left out,
+            while something that moves more than 5 % of the time (fan,
+            curtain) is learned. 100 takes the highest energy recorded, like
+            older firmware.
 
     config LD2410_LEARN_MARGIN
         int "Margin above the recorded noise (energy 0-100)"
         range 0 50
         default 10
         help
-            New threshold of each gate = highest energy recorded in the empty
-            room + this margin, never below the LD2410 factory default and
-            at most 100 (gate ignored).
+            New threshold of each gate = recorded noise + this margin, never
+            below the LD2410 factory default, at most the factory default +
+            the highest raise below, and at most 100 (gate ignored).
+
+    config LD2410_LEARN_MAX_RAISE
+        int "Highest raise above the factory threshold (energy 0-100)"
+        range 0 100
+        default 30
+        help
+            A learned threshold is at most the factory default + this value,
+            so a person or something moving during the recording cannot make
+            a gate deaf. A gate limited this way is logged as a warning: what
+            moved there may still be reported as presence. 100: no limit, a
+            gate can be raised up to 100 (ignored).
 
 endmenu
 

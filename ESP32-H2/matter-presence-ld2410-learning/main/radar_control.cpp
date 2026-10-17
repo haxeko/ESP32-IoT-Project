@@ -46,6 +46,7 @@ static constexpr uint32_t kSyncRetryMaxMs = 5 * 60 * 1000;
 
 static constexpr uint8_t kLearnOff = 0;
 static constexpr uint8_t kLearnOn = 1;
+static constexpr uint8_t kLearnFactory = 2; // writes the LD2410 factory thresholds, then back to Off
 
 // Radar resolution modes: the LD2410 resolution codes
 static constexpr uint8_t kAccuracyCoarse = 0; // 0.75 m gates
@@ -77,7 +78,7 @@ struct ModeList {
     char *custom_label;
 };
 
-static ModeOption s_learn_options[2];
+static ModeOption s_learn_options[3];
 static ModeOption s_accuracy_options[2];
 static ModeOption s_range_options[kRangeOptionCount + 1];
 static char s_range_labels[kRangeOptionCount][kDistanceLabelLen];
@@ -85,7 +86,7 @@ static char s_range_custom_label[kCustomLabelLen];
 // Off, On, then "Not available" (RADAR_MODE_CUSTOM) listed alone
 static ModeOption s_bluetooth_options[3];
 
-static ModeList s_learn = { chip::kInvalidEndpointId, s_learn_options, 2, 2, nullptr };
+static ModeList s_learn = { chip::kInvalidEndpointId, s_learn_options, 3, 3, nullptr };
 static ModeList s_accuracy = { chip::kInvalidEndpointId, s_accuracy_options, 2, 2, nullptr };
 static ModeList s_range = { chip::kInvalidEndpointId, s_range_options, kRangeOptionCount, kRangeOptionCount,
                             s_range_custom_label };
@@ -204,6 +205,10 @@ static RadarModesManager s_modes;
 // worker.
 enum LearnState : uint8_t { kLearnIdle, kLearnRequested, kLearnRunning, kLearnCancelling };
 static std::atomic<LearnState> s_learn_state{kLearnIdle};
+// Factory thresholds chosen in Home Assistant, not written yet. The last
+// choice wins: Factory thresholds cancels a learning, Learning or Off (or the
+// button) drops a Factory thresholds that has not started.
+static std::atomic<bool> s_want_factory{false};
 
 // Range (gate), Radar resolution (gate length) and Radar Bluetooth (off / on)
 // chosen in Home Assistant, RADAR_KEEP once taken.
@@ -445,13 +450,31 @@ static void run_requested_learning()
     // Shown already when chosen in Home Assistant; covers the button and a
     // request made while the previous learning ended.
     report_current_mode(s_learn.endpoint_id, kLearnOn);
-    const quiet_learn_result_t result = quiet_learn_run(learning_cancelled, show_learning_phase);
+    // gate_cm is 0 (unknown) before the radar settings were read
+    const quiet_learn_result_t result = quiet_learn_run(learning_cancelled, show_learning_phase, s_settings.gate_cm);
     // Green or red for a while; back to normal at once when cancelled
     status_led_set_learning(result == QUIET_LEARN_SAVED    ? STATUS_LED_LEARNING_DONE
                             : result == QUIET_LEARN_FAILED ? STATUS_LED_LEARNING_FAILED
                                                            : STATUS_LED_LEARNING_NONE);
     s_learn_state = kLearnIdle;
-    report_current_mode(s_learn.endpoint_id, kLearnOff);
+    // Cancelled by Factory thresholds: the select keeps showing it while they are written.
+    if (!s_want_factory) {
+        report_current_mode(s_learn.endpoint_id, kLearnOff);
+    }
+}
+
+// Factory thresholds chosen in Home Assistant: written, the LED green or red
+// for a while, then the select shows Off (or Learning when chosen meanwhile).
+static void run_requested_factory_thresholds()
+{
+    if (!s_want_factory.exchange(false)) {
+        return;
+    }
+    const bool restored = quiet_learn_restore_factory();
+    status_led_set_learning(restored ? STATUS_LED_LEARNING_DONE : STATUS_LED_LEARNING_FAILED);
+    if (s_learn_state.load() == kLearnIdle && !s_want_factory) {
+        report_current_mode(s_learn.endpoint_id, kLearnOff);
+    }
 }
 
 static void radar_task(void *arg)
@@ -481,6 +504,7 @@ static void radar_task(void *arg)
         if (!stale) {
             stale = !fix_bluetooth();
         }
+        run_requested_factory_thresholds();
         run_requested_learning();
 
         TickType_t wait = portMAX_DELAY;
@@ -528,6 +552,7 @@ esp_err_t radar_control_create(node_t *node, endpoint_t *occupancy_endpoint)
 {
     set_option(s_learn_options[0], "Off", kLearnOff);
     set_option(s_learn_options[1], "Learning", kLearnOn);
+    set_option(s_learn_options[2], "Factory thresholds", kLearnFactory);
     set_range_labels(LD2410_DEFAULT_GATE_CM);
     set_option(s_accuracy_options[0], "0.75 m", kAccuracyCoarse);
     set_option(s_accuracy_options[1], "0.2 m", kAccuracyFine);
@@ -597,6 +622,7 @@ bool radar_control_request_learning(void)
         ESP_LOGI(TAG, "Empty room learning already requested or running");
         return false;
     }
+    s_want_factory = false; // the last choice wins
     xTaskNotifyGive(task);
     return true;
 }
@@ -611,10 +637,13 @@ esp_err_t radar_control_pre_update(uint16_t endpoint_id, uint32_t cluster_id, ui
     TaskHandle_t task = s_task;
 
     if (endpoint_id == s_learn.endpoint_id) {
-        if (mode == kLearnOn && task == nullptr) {
-            ESP_LOGE(TAG, "Cannot start the empty room learning: the radar task is not running");
+        if (mode != kLearnOff && task == nullptr) {
+            ESP_LOGE(TAG, "Cannot %s: the radar task is not running",
+                     mode == kLearnFactory ? "restore the factory thresholds" : "start the empty room learning");
             return ESP_ERR_INVALID_STATE;
         }
+        // The last choice wins (see s_want_factory)
+        s_want_factory = mode == kLearnFactory;
         request_learning(mode == kLearnOn);
     } else if (endpoint_id == s_range.endpoint_id || endpoint_id == s_accuracy.endpoint_id ||
                endpoint_id == s_bluetooth.endpoint_id) {

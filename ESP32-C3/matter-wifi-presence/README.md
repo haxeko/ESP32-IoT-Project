@@ -65,9 +65,9 @@ LED của SuperMini chỉ có một màu, nên mọi màu của bản H2 đều 
 | Nháy chậm (1 s sáng, 1 s tắt) | Chế độ ghép nối: đang chờ thêm vào ứng dụng Matter |
 | Tắt | Hoạt động bình thường (đã ghép nối), hoặc chế độ ghép nối đã hết giờ |
 | Nháy nhanh | Ứng dụng yêu cầu *Identify* |
-| Sáng liên tục 10 s | Vừa bắt đầu học phòng trống: rời khỏi phòng |
-| Nháy chậm (1 s tắt, 1 s sáng) trong 30 s | Đang ghi năng lượng nền của phòng trống |
-| Sáng liên tục 10 s | Học xong **hoặc** học thất bại: xem kết quả trong log `quiet_learn` hoặc entity *Learn empty room* |
+| Sáng liên tục 20 s | Vừa bắt đầu học phòng trống: rời khỏi phòng |
+| Nháy chậm (1 s tắt, 1 s sáng) trong 60 s | Đang ghi năng lượng nền của phòng trống |
+| Sáng liên tục 10 s | Học xong **hoặc** học thất bại; cũng vậy sau *Factory thresholds* (ghi lại ngưỡng mặc định). Xem kết quả trong log `quiet_learn` |
 
 LED một màu không phân biệt được học xong (bản H2: xanh lá) và học thất bại (bản H2: đỏ). Trong lúc học, LED báo việc học thay cho chế độ ghép nối; *Identify* vẫn được ưu tiên.
 
@@ -162,6 +162,7 @@ Các tuỳ chọn giống bản H2 (*Presence Sensor Configuration*, *Empty Room
 | Status LED pin | 8 |
 | Status LED is on when the pin is high | tắt (LED sáng khi mức thấp) |
 | Button pin | 9 |
+| Highest Wi-Fi transmit power (0.25 dBm) | `0` = mặc định của chip, khoảng 20 dBm; `34` = 8,5 dBm (xem **Xử lý sự cố**) |
 | Hardware (Basic Information) | `ESP32C3-LD2410` |
 
 Chân hợp lệ: GPIO0–GPIO21, trừ chân flash (GPIO11–GPIO17) và USB (GPIO18, GPIO19). Không có menu *Thread Diagnostics* trên ESP32-C3.
@@ -176,7 +177,7 @@ Chân hợp lệ: GPIO0–GPIO21, trừ chân flash (GPIO11–GPIO17) và USB (G
 | RAM tĩnh | 171,1 KB / 252,0 KB DIRAM (67,9 %) | 175,2 KB / 313,8 KB DRAM (55,8 %) |
 | RAM còn trống cho heap | 80,9 KB | 138,6 KB |
 
-Wi-Fi và BLE cấp phát thêm bộ đệm từ heap khi chạy, nhiều nhất lúc ghép nối khi cả hai cùng bật, nên heap thật chỉ đo được trên thiết bị bằng log `mem` (như bản H2). Nếu heap thấp nhất xuống dưới 16 KB (log `W mem`), có thể tắt `CONFIG_ESP_WIFI_IRAM_OPT` và `CONFIG_ESP_WIFI_RX_IRAM_OPT` để có thêm RAM (Wi-Fi chậm hơn một chút); bản này giữ mặc định.
+Wi-Fi và BLE cấp phát thêm bộ đệm từ heap khi chạy, nhiều nhất lúc ghép nối khi cả hai cùng bật, nên heap thật chỉ đo được trên thiết bị bằng log `mem` (như bản H2). Trên bo thật (log ghép nối của bản 1.0.122): lúc khởi động heap còn 41,0 KB; đang ghép nối (BLE và Wi-Fi cùng bật) còn 30,7 KB, thấp nhất 25,9 KB. Nếu heap thấp nhất xuống dưới 16 KB (log `W mem`), có thể tắt `CONFIG_ESP_WIFI_IRAM_OPT` và `CONFIG_ESP_WIFI_RX_IRAM_OPT` để có thêm RAM (Wi-Fi chậm hơn một chút); bản này giữ mặc định.
 
 ## Log khởi động và chẩn đoán
 
@@ -207,13 +208,41 @@ Console (gõ trong monitor qua USB): lệnh của esp-matter như bản H2 (khô
 
 - **Không thấy log:** chọn đúng cổng USB của SuperMini; một số cáp USB-C chỉ có dây nguồn.
 - **Ghép nối dừng ở bước Wi-Fi:** mạng 2,4 GHz, đúng mật khẩu, router không chặn thiết bị mới. Log `id_diag: wifi not connected` sau khi ghép nối nghĩa là thiết bị không vào được Wi-Fi.
+- **Thấy mạng Wi-Fi nhưng không kết nối được**, log lặp lại:
+  ```
+  I wifi:state: init -> auth (0xb0)
+  I wifi:state: auth -> init (0x200)
+  I chip[DL]: WiFi station state change: Connecting -> Connecting_Failed
+  ```
+  Bo gửi yêu cầu xác thực nhưng router không trả lời: sau đúng 1 s thì bỏ, khoảng 5 s sau thử lại.
+  - Từ bản 1.0.126, mỗi lần như vậy có một dòng `W id_diag: EV wifi failed or left: reason 2 (authentication timed out, the access point did not answer), bssid=... rssi=-67 dBm`.
+    - **rssi** là tín hiệu của router mà bo nhận được. Khoảng −70 dBm trở lên là đủ mạnh. Dưới −80 dBm là quá yếu: đặt bo gần router hoặc nút mesh hơn.
+    - Khi vào được mạng, dòng `EV wifi joined ... security=WPA2` cho biết kiểu bảo mật đã dùng.
+  - Cộng đồng ESPHome và Arduino báo một số bo ESP32-C3 SuperMini không kết nối được khi phát Wi-Fi hết công suất (khoảng 20 dBm), và thường sửa bằng cách hạ xuống 8,5 dBm; Espressif không ghi lỗi này trong tài liệu. Trên bo đã thử, hạ công suất không giúp gì (xem **Mức độ kiểm tra**).
+    - Bản 1.0.125–1.0.127 giới hạn công suất ở 8,5 dBm. Từ bản 1.0.128 trở lại công suất mặc định của chip.
+    - Muốn thử hạ công suất: `menuconfig` → *Presence Sensor Configuration* → *Highest Wi-Fi transmit power* = `34`. Log khởi động khi đó có dòng `Wi-Fi transmit power limited to 8.50 dBm`, dòng `wifi` của `id_diag` có `tx_max=8.50dBm`. Công suất thấp hơn thì tầm xa ngắn hơn.
+  - **TP-Link Deco X10 (mesh):** người dùng đã sửa được lỗi này bằng cách **tắt Beamforming** trong app Deco; sau đó bo ghép nối được. Router mesh khác có tuỳ chọn tương tự thì thử tắt trước.
+  - Thử Wi-Fi mà không cần ghép nối: gõ trên console USB `matter wifi connect <tên mạng> <mật khẩu>`.
+    - Thử với router, rồi với điểm phát Wi-Fi của điện thoại (2,4 GHz, WPA2) đặt cạnh bo.
+    - Được với điện thoại mà không được với router: lỗi ở router. Không được với cả hai: lỗi ở bo (anten, thạch anh).
+    - Mạng nhập kiểu này không được lưu lại.
+  - Kiểm tra router:
+    - bảo mật **WPA2-PSK (AES)** hoặc WPA2/WPA3 hỗn hợp, không dùng WPA3 riêng;
+    - chế độ 2,4 GHz b/g/n hoặc b/g/n/ax, không chỉ ax: ESP32-C3 không có Wi-Fi 6;
+    - tắt lọc địa chỉ MAC;
+    - nếu 2,4 GHz và 5 GHz chung một tên mạng (band steering), thử tạm một tên riêng cho 2,4 GHz;
+    - dùng nguồn USB khoẻ, vì radar và Wi-Fi cùng lấy điện từ cổng USB.
 - **Ghép nối xong phần Wi-Fi nhưng app báo không tìm thấy thiết bị:** điện thoại và thiết bị phải cùng LAN, router không chặn mDNS/multicast, có IPv6 (xem dòng `ip` của `id_diag`).
 - Mỗi lần thử lại: factory reset (giữ BOOT 5 s) hoặc `erase-flash`.
 
 ## Mức độ kiểm tra
 
 - **Đã kiểm tra bằng build:** firmware ESP32-C3 build không lỗi, không cảnh báo, từ thư mục này và từ thư mục ESP32-H2 (`set-target esp32c3`); firmware ESP32-H2 vẫn build như trước. Kiểm tra cấu hình sinh ra (Wi-Fi bật, OpenThread tắt, console USB, PID `0x8001`, chân), kích thước firmware so với phân vùng OTA, và test trên máy tính cho phần số serial (MAC 6 byte của ESP32-C3).
-- **Cần thử trên thiết bị thật:** ghép nối qua BLE + Wi-Fi với Apple Home / Home Assistant, đọc radar trên GPIO3/GPIO4, LED GPIO8 (đúng chiều sáng khi mức thấp hay không), nút BOOT, học phòng trống, OTA qua Wi-Fi, RAM khi chạy (log `mem`, nhất là lúc ghép nối khi BLE và Wi-Fi cùng chạy), độ ổn định Wi-Fi lâu dài.
+- **Đã chạy trên thiết bị thật (log của người dùng):** ghép nối với Apple Home qua BLE. Các bước PASE, kiểm tra chứng chỉ DAC/PAI test, CSR và AddNOC đều đạt. Ghép nối dừng ở bước kết nối Wi-Fi, với lỗi xác thực ở trên.
+  - Lỗi giống hệt ở bản 1.0.122 (công suất mặc định), ở bản 1.0.125 (`tx_max=8.50dBm`) và ở một firmware đèn Matter khác trên cùng bo, cùng router.
+  - Vậy hạ công suất không sửa được lỗi trên bo này.
+  - Nguyên nhân là Beamforming của router TP-Link Deco X10: tắt đi thì bo vào được Wi-Fi và ghép nối được (người dùng báo lại, chưa có log của lần thành công). Lần đó bo chạy bản giới hạn 8,5 dBm; công suất mặc định (từ 1.0.128) với Beamforming tắt chưa được thử.
+- **Cần thử trên thiết bị thật:** ghép nối qua BLE + Wi-Fi với Apple Home / Home Assistant (đến hết bước Wi-Fi), đọc radar trên GPIO3/GPIO4, LED GPIO8 (đúng chiều sáng khi mức thấp hay không), nút BOOT, học phòng trống, OTA qua Wi-Fi, RAM khi chạy (log `mem`, nhất là lúc ghép nối khi BLE và Wi-Fi cùng chạy), độ ổn định Wi-Fi lâu dài.
 
 ## Cấu trúc thư mục
 

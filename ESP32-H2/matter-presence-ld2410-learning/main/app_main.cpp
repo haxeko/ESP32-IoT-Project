@@ -44,6 +44,9 @@
 #include <esp_openthread_types.h>
 #include <platform/ESP32/OpenthreadLauncher.h>
 #endif
+#if CONFIG_ENABLE_WIFI_STATION
+#include <esp_wifi.h>
+#endif
 
 #include <atomic>
 
@@ -281,6 +284,27 @@ static void open_commissioning_window_if_necessary()
     open_commissioning_window(kRecommissioningWindowSec);
 }
 
+#if CONFIG_ENABLE_WIFI_STATION
+// Some ESP32-C3 SuperMini boards are reported to find the access point but fail
+// to connect at full Wi-Fi power (the authentication times out). Called once the Wi-Fi layer
+// runs: after esp_matter::start() and at each station start, as the Matter
+// stack starts Wi-Fi itself, maybe before app_event_cb is registered.
+static void limit_wifi_tx_power()
+{
+    if (CONFIG_PRESENCE_WIFI_MAX_TX_POWER == 0) {
+        return;
+    }
+    const int8_t limit = CONFIG_PRESENCE_WIFI_MAX_TX_POWER < 8 ? 8 : CONFIG_PRESENCE_WIFI_MAX_TX_POWER;
+    const esp_err_t err = esp_wifi_set_max_tx_power(limit);
+    int8_t power = 0;
+    if (err == ESP_OK && esp_wifi_get_max_tx_power(&power) == ESP_OK) {
+        ESP_LOGI(TAG, "Wi-Fi transmit power limited to %d.%02d dBm", power / 4, power % 4 * 25);
+    } else if (err != ESP_ERR_WIFI_NOT_STARTED) { // not started: applied at WIFI_EVENT_STA_START
+        ESP_LOGW(TAG, "Could not limit the Wi-Fi transmit power, err:%d", err);
+    }
+}
+#endif
+
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
     identity_diag_on_event(event);
@@ -310,6 +334,13 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 #if CONFIG_ENABLE_WIFI_STATION
     case chip::DeviceLayer::DeviceEventType::kWiFiConnectivityChange:
         ESP_LOGI(TAG, "Wi-Fi connectivity changed");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kESPSystemEvent:
+        if (event->Platform.ESPSystemEvent.Base == WIFI_EVENT &&
+            event->Platform.ESPSystemEvent.Id == WIFI_EVENT_STA_START) {
+            limit_wifi_tx_power();
+        }
         break;
 #endif
 
@@ -408,6 +439,9 @@ static esp_err_t start_matter()
     esp_err_t err = esp_matter::start(app_event_cb);
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
+#if CONFIG_ENABLE_WIFI_STATION
+    limit_wifi_tx_power();
+#endif
     // First boot of a unique_setup build: generate the setup code on the Matter task (nothing in the default build)
     setup_code_preload();
     // Device name "Presence-B2C3": NodeLabel when none is stored yet, Bluetooth name

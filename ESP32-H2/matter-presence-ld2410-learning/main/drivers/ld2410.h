@@ -10,6 +10,7 @@
 
 #include <esp_err.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 // Distance gates 0..8, 0.75 m each at the default resolution
@@ -23,10 +24,17 @@
 // Bluetooth of the LD2410B/C (HLKRadarTool app)
 #define LD2410_MAC_LEN 6
 
+// Target state byte of the reports: 0 none, 1 moving, 2 still, 3 both, and
+// while the radar runs its background noise detection (ld2410_start_noise_detection()):
+#define LD2410_STATE_NOISE_RUNNING 0x04 // measuring (also during its 10 s wait)
+#define LD2410_STATE_NOISE_DONE 0x05    // finished, new thresholds stored
+#define LD2410_STATE_NOISE_FAILED 0x06  // failed
+
 // Latest target report from the HLK-LD2410 24 GHz presence radar.
 typedef struct {
-    bool moving;            // a moving target is detected
-    bool still;             // a still (stationary) target is detected
+    uint8_t state;          // target state byte, see above
+    bool moving;            // a moving target is detected (state 1 or 3)
+    bool still;             // a still (stationary) target is detected (state 2 or 3)
     uint16_t moving_cm;     // distance of the moving target
     uint16_t still_cm;      // distance of the still target
     uint16_t detection_cm;  // "detection distance" reported by the radar
@@ -40,6 +48,14 @@ typedef struct {
     uint8_t still[LD2410_GATE_COUNT];
 } ld2410_thresholds_t;
 
+// Firmware version of the radar (command 0x00A0), shown as V<major>.<minor>:
+// V2.44.24073110 is major 0x0244, minor 0x24073110.
+typedef struct {
+    uint16_t type;
+    uint16_t major;
+    uint32_t minor;
+} ld2410_version_t;
+
 // Parameters stored in the radar.
 typedef struct {
     ld2410_thresholds_t thresholds;
@@ -48,10 +64,15 @@ typedef struct {
     uint16_t no_one_duration_s; // "unmanned duration": a lost target is still reported for this long
 } ld2410_config_t;
 
-// Highest per-gate energies seen in engineering frames while capturing.
+// Highest energy of a gate in engineering frames
+#define LD2410_MAX_ENERGY 100
+
+// Engineering frames counted per gate and energy while capturing, about
+// 3.6 KB: allocate it only for a capture. Energies above LD2410_MAX_ENERGY are
+// counted as LD2410_MAX_ENERGY, a count stops at UINT16_MAX.
 typedef struct {
-    uint8_t moving[LD2410_GATE_COUNT];
-    uint8_t still[LD2410_GATE_COUNT];
+    uint16_t moving[LD2410_GATE_COUNT][LD2410_MAX_ENERGY + 1];
+    uint16_t still[LD2410_GATE_COUNT][LD2410_MAX_ENERGY + 1];
     uint32_t frames;
 } ld2410_capture_t;
 
@@ -85,6 +106,17 @@ esp_err_t ld2410_read_gate_length(uint16_t *gate_cm);
 // Stores the gate length (LD2410_DEFAULT_GATE_CM or LD2410_FINE_GATE_CM) in
 // the radar's flash; it takes effect after ld2410_restart().
 esp_err_t ld2410_set_gate_length(uint16_t gate_cm);
+esp_err_t ld2410_read_firmware_version(ld2410_version_t *out);
+// "V2.44.24073110"
+void ld2410_format_version(const ld2410_version_t *version, char *buf, size_t len);
+// Background noise detection of the LD2410B/C (newer firmware, command 0x000B):
+// the radar waits 10 s, measures every gate for `seconds`, then stores new
+// moving and still thresholds itself. The reports carry
+// LD2410_STATE_NOISE_* meanwhile. Radars without it refuse the command or do
+// not answer it.
+esp_err_t ld2410_start_noise_detection(uint16_t seconds);
+// 0 not running, 1 running, 2 finished (command 0x001B)
+esp_err_t ld2410_read_noise_detection_status(uint16_t *status);
 // Restarts the radar, which leaves the configuration mode; it answers
 // commands again about a second later.
 esp_err_t ld2410_restart(void);
@@ -96,6 +128,7 @@ esp_err_t ld2410_read_bluetooth(bool *enabled, uint8_t mac[LD2410_MAC_LEN]);
 // Stored in the radar's flash; takes effect after ld2410_restart().
 esp_err_t ld2410_set_bluetooth(bool enable);
 
-// Between start and stop, engineering frames update the per-gate maxima.
-void ld2410_capture_start(void);
-void ld2410_capture_stop(ld2410_capture_t *out);
+// Between start and stop, every engineering frame is counted in *capture,
+// which start clears. It must stay allocated until ld2410_capture_stop().
+void ld2410_capture_start(ld2410_capture_t *capture);
+void ld2410_capture_stop(void);
