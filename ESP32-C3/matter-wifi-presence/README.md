@@ -169,15 +169,19 @@ Chân hợp lệ: GPIO0–GPIO21, trừ chân flash (GPIO11–GPIO17) và USB (G
 
 ## RAM và flash
 
-Đo bằng `idf.py size` (ESP-IDF v6.0.2, esp-matter 1.6.1, cấu hình mặc định, firmware 1.0.122):
+Đo bằng `idf.py size` (ESP-IDF v6.0.2, esp-matter 1.6.1, cấu hình mặc định, firmware 1.0.130):
 
 | | ESP32-H2 (Thread) | ESP32-C3 (Wi-Fi) |
 |---|---|---|
-| Firmware (phân vùng app 1 920 KB) | 1 760 KB, trống 160 KB (8 %) | 1 582 KB, trống 338 KB (18 %) |
-| RAM tĩnh | 171,1 KB / 252,0 KB DIRAM (67,9 %) | 175,2 KB / 313,8 KB DRAM (55,8 %) |
-| RAM còn trống cho heap | 80,9 KB | 138,6 KB |
+| Firmware (phân vùng app 1 920 KB) | 1 765 KB, trống 155 KB (8 %) | 1 587 KB, trống 333 KB (17 %) |
+| RAM tĩnh | 171,1 KB / 252,0 KB DIRAM (67,9 %) | 156,2 KB / 313,8 KB DRAM (49,8 %) |
+| RAM còn trống cho heap | 80,9 KB | 157,6 KB |
 
-Wi-Fi và BLE cấp phát thêm bộ đệm từ heap khi chạy, nhiều nhất lúc ghép nối khi cả hai cùng bật, nên heap thật chỉ đo được trên thiết bị bằng log `mem` (như bản H2). Trên bo thật (log ghép nối của bản 1.0.122): lúc khởi động heap còn 41,0 KB; đang ghép nối (BLE và Wi-Fi cùng bật) còn 30,7 KB, thấp nhất 25,9 KB. Nếu heap thấp nhất xuống dưới 16 KB (log `W mem`), có thể tắt `CONFIG_ESP_WIFI_IRAM_OPT` và `CONFIG_ESP_WIFI_RX_IRAM_OPT` để có thêm RAM (Wi-Fi chậm hơn một chút); bản này giữ mặc định.
+Wi-Fi và BLE cấp phát thêm bộ đệm từ heap khi chạy, nhiều nhất lúc ghép nối khi cả hai cùng bật, nên heap thật chỉ đo được trên thiết bị bằng log `mem` (như bản H2). Số đo trên bo thật (log của người dùng):
+- bản 1.0.122, lúc ghép nối: khi khởi động heap còn 41,0 KB; đang ghép nối (BLE và Wi-Fi cùng bật) còn 30,7 KB, thấp nhất 25,9 KB;
+- bản 1.0.128, sau 10 phút chạy: còn 96,6 KB, nhưng thấp nhất từ lúc bật chỉ còn **15,7 KB** (`W mem: Heap low: 96552 bytes free, lowest 16060 since boot`), sát mức báo động.
+
+Vì vậy từ bản 1.0.130, mã Wi-Fi của bản ESP32-C3 nằm trong flash thay vì IRAM (`CONFIG_ESP_WIFI_IRAM_OPT=n`, `CONFIG_ESP_WIFI_RX_IRAM_OPT=n`). Trên ESP32-C3, IRAM và DRAM dùng chung SRAM, nên heap có thêm **19,1 KB** (157,6 KB so với 138,6 KB ở bản 1.0.128, đo bằng build). Đổi lại, Wi-Fi chậm hơn một chút; Matter chỉ gửi rất ít dữ liệu nên không cần tốc độ đó. Heap thấp nhất thật sau thay đổi này cần đo lại trên bo.
 
 ## Log khởi động và chẩn đoán
 
