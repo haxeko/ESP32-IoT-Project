@@ -162,6 +162,7 @@ Các tuỳ chọn giống bản H2 (*Presence Sensor Configuration*, *Empty Room
 | Status LED pin | 8 |
 | Status LED is on when the pin is high | tắt (LED sáng khi mức thấp) |
 | Button pin | 9 |
+| Highest Wi-Fi transmit power (0.25 dBm) | 34 = 8,5 dBm (xem **Xử lý sự cố**; `0` = mặc định của chip, khoảng 20 dBm) |
 | Hardware (Basic Information) | `ESP32C3-LD2410` |
 
 Chân hợp lệ: GPIO0–GPIO21, trừ chân flash (GPIO11–GPIO17) và USB (GPIO18, GPIO19). Không có menu *Thread Diagnostics* trên ESP32-C3.
@@ -176,7 +177,7 @@ Chân hợp lệ: GPIO0–GPIO21, trừ chân flash (GPIO11–GPIO17) và USB (G
 | RAM tĩnh | 171,1 KB / 252,0 KB DIRAM (67,9 %) | 175,2 KB / 313,8 KB DRAM (55,8 %) |
 | RAM còn trống cho heap | 80,9 KB | 138,6 KB |
 
-Wi-Fi và BLE cấp phát thêm bộ đệm từ heap khi chạy, nhiều nhất lúc ghép nối khi cả hai cùng bật, nên heap thật chỉ đo được trên thiết bị bằng log `mem` (như bản H2). Nếu heap thấp nhất xuống dưới 16 KB (log `W mem`), có thể tắt `CONFIG_ESP_WIFI_IRAM_OPT` và `CONFIG_ESP_WIFI_RX_IRAM_OPT` để có thêm RAM (Wi-Fi chậm hơn một chút); bản này giữ mặc định.
+Wi-Fi và BLE cấp phát thêm bộ đệm từ heap khi chạy, nhiều nhất lúc ghép nối khi cả hai cùng bật, nên heap thật chỉ đo được trên thiết bị bằng log `mem` (như bản H2). Trên bo thật (log ghép nối của bản 1.0.122): lúc khởi động heap còn 41,0 KB; đang ghép nối (BLE và Wi-Fi cùng bật) còn 30,7 KB, thấp nhất 25,9 KB. Nếu heap thấp nhất xuống dưới 16 KB (log `W mem`), có thể tắt `CONFIG_ESP_WIFI_IRAM_OPT` và `CONFIG_ESP_WIFI_RX_IRAM_OPT` để có thêm RAM (Wi-Fi chậm hơn một chút); bản này giữ mặc định.
 
 ## Log khởi động và chẩn đoán
 
@@ -207,13 +208,28 @@ Console (gõ trong monitor qua USB): lệnh của esp-matter như bản H2 (khô
 
 - **Không thấy log:** chọn đúng cổng USB của SuperMini; một số cáp USB-C chỉ có dây nguồn.
 - **Ghép nối dừng ở bước Wi-Fi:** mạng 2,4 GHz, đúng mật khẩu, router không chặn thiết bị mới. Log `id_diag: wifi not connected` sau khi ghép nối nghĩa là thiết bị không vào được Wi-Fi.
+- **Thấy mạng Wi-Fi nhưng không kết nối được**, log lặp lại:
+  ```
+  I wifi:state: init -> auth (0xb0)
+  I wifi:state: auth -> init (0x200)
+  I chip[DL]: WiFi station state change: Connecting -> Connecting_Failed
+  ```
+  Bước xác thực với router hết thời gian chờ. Nhiều bo ESP32-C3 SuperMini bị lỗi này khi phát Wi-Fi hết công suất (khoảng 20 dBm). Cộng đồng ESPHome và Arduino thường sửa bằng cách hạ công suất xuống 8,5 dBm; Espressif không ghi lỗi này trong tài liệu.
+  - Từ bản 1.0.125, firmware ESP32-C3 giới hạn công suất ở **8,5 dBm**. Log khởi động có dòng `Wi-Fi transmit power limited to 8.50 dBm`, và dòng `wifi` của `id_diag` có `tx_max=8.50dBm`.
+  - Đổi mức này trong `menuconfig` → *Presence Sensor Configuration* → *Highest Wi-Fi transmit power*. Công suất thấp hơn thì tầm xa ngắn hơn: lần ghép nối đầu nên để bo gần router hoặc nút mesh.
+  - Vẫn không được thì kiểm tra router:
+    - bảo mật **WPA2-PSK (AES)** hoặc WPA2/WPA3 hỗn hợp, không dùng WPA3 riêng;
+    - tắt lọc địa chỉ MAC;
+    - nếu 2,4 GHz và 5 GHz chung một tên mạng (band steering), thử tạm một tên riêng cho 2,4 GHz;
+    - dùng nguồn USB khoẻ, vì radar và Wi-Fi cùng lấy điện từ cổng USB.
 - **Ghép nối xong phần Wi-Fi nhưng app báo không tìm thấy thiết bị:** điện thoại và thiết bị phải cùng LAN, router không chặn mDNS/multicast, có IPv6 (xem dòng `ip` của `id_diag`).
 - Mỗi lần thử lại: factory reset (giữ BOOT 5 s) hoặc `erase-flash`.
 
 ## Mức độ kiểm tra
 
 - **Đã kiểm tra bằng build:** firmware ESP32-C3 build không lỗi, không cảnh báo, từ thư mục này và từ thư mục ESP32-H2 (`set-target esp32c3`); firmware ESP32-H2 vẫn build như trước. Kiểm tra cấu hình sinh ra (Wi-Fi bật, OpenThread tắt, console USB, PID `0x8001`, chân), kích thước firmware so với phân vùng OTA, và test trên máy tính cho phần số serial (MAC 6 byte của ESP32-C3).
-- **Cần thử trên thiết bị thật:** ghép nối qua BLE + Wi-Fi với Apple Home / Home Assistant, đọc radar trên GPIO3/GPIO4, LED GPIO8 (đúng chiều sáng khi mức thấp hay không), nút BOOT, học phòng trống, OTA qua Wi-Fi, RAM khi chạy (log `mem`, nhất là lúc ghép nối khi BLE và Wi-Fi cùng chạy), độ ổn định Wi-Fi lâu dài.
+- **Đã chạy trên thiết bị thật (log của người dùng, bản 1.0.122):** ghép nối với Apple Home qua BLE. Các bước PASE, kiểm tra chứng chỉ DAC/PAI test, CSR và AddNOC đều đạt. Ghép nối dừng ở bước kết nối Wi-Fi, với lỗi xác thực ở trên; giới hạn 8,5 dBm là cách sửa cho lỗi này nhưng chưa được thử lại trên bo.
+- **Cần thử trên thiết bị thật:** ghép nối qua BLE + Wi-Fi với Apple Home / Home Assistant (đến hết bước Wi-Fi), đọc radar trên GPIO3/GPIO4, LED GPIO8 (đúng chiều sáng khi mức thấp hay không), nút BOOT, học phòng trống, OTA qua Wi-Fi, RAM khi chạy (log `mem`, nhất là lúc ghép nối khi BLE và Wi-Fi cùng chạy), độ ổn định Wi-Fi lâu dài.
 
 ## Cấu trúc thư mục
 

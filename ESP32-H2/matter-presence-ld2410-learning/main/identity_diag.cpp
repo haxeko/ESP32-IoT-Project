@@ -157,6 +157,8 @@ struct WifiSnap
     int8_t rssi;
     bool ps_ok;
     wifi_ps_type_t ps;
+    bool tx_ok;
+    int8_t tx_power; // highest transmit power, 0.25 dBm
     bool has_netif;
     bool has_ip4;
     esp_ip4_addr_t ip4;
@@ -552,6 +554,7 @@ static void collect_wifi(WifiSnap &w)
         w.rssi = ap.rssi;
     }
     w.ps_ok = esp_wifi_get_ps(&w.ps) == ESP_OK;
+    w.tx_ok = esp_wifi_get_max_tx_power(&w.tx_power) == ESP_OK;
 
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (!netif) {
@@ -681,15 +684,19 @@ static const char *ps_str(const WifiSnap &w)
 
 static void log_wifi(const WifiSnap &w)
 {
+    char tx_s[12] = "?";
+    if (w.tx_ok) {
+        snprintf(tx_s, sizeof(tx_s), "%d.%02ddBm", w.tx_power / 4, w.tx_power % 4 * 25);
+    }
     if (w.connected) {
         char bssid_s[13];
         to_hex(w.bssid, sizeof(w.bssid), bssid_s, sizeof(bssid_s));
-        ESP_LOGI(TAG, "wifi connected ssid=\"%s\" bssid=%s ch=%u rssi=%d power_save=%s", w.ssid, bssid_s, w.channel,
-                 w.rssi, ps_str(w));
+        ESP_LOGI(TAG, "wifi connected ssid=\"%s\" bssid=%s ch=%u rssi=%d power_save=%s tx_max=%s", w.ssid, bssid_s,
+                 w.channel, w.rssi, ps_str(w), tx_s);
     } else {
         ESP_LOGI(TAG, "wifi not connected (connecting, not commissioned yet, or the access point is out of reach) "
-                      "power_save=%s",
-                 ps_str(w));
+                      "power_save=%s tx_max=%s",
+                 ps_str(w), tx_s);
     }
     if (!w.has_netif) {
         ESP_LOGW(TAG, "wifi no station interface");
