@@ -214,11 +214,20 @@ Console (gõ trong monitor qua USB): lệnh của esp-matter như bản H2 (khô
   I wifi:state: auth -> init (0x200)
   I chip[DL]: WiFi station state change: Connecting -> Connecting_Failed
   ```
-  Bước xác thực với router hết thời gian chờ. Nhiều bo ESP32-C3 SuperMini bị lỗi này khi phát Wi-Fi hết công suất (khoảng 20 dBm). Cộng đồng ESPHome và Arduino thường sửa bằng cách hạ công suất xuống 8,5 dBm; Espressif không ghi lỗi này trong tài liệu.
-  - Từ bản 1.0.125, firmware ESP32-C3 giới hạn công suất ở **8,5 dBm**. Log khởi động có dòng `Wi-Fi transmit power limited to 8.50 dBm`, và dòng `wifi` của `id_diag` có `tx_max=8.50dBm`.
-  - Đổi mức này trong `menuconfig` → *Presence Sensor Configuration* → *Highest Wi-Fi transmit power*. Công suất thấp hơn thì tầm xa ngắn hơn: lần ghép nối đầu nên để bo gần router hoặc nút mesh.
-  - Vẫn không được thì kiểm tra router:
+  Bo gửi yêu cầu xác thực nhưng router không trả lời: sau đúng 1 s thì bỏ, khoảng 5 s sau thử lại.
+  - Từ bản 1.0.126, mỗi lần như vậy có một dòng `W id_diag: EV wifi failed or left: reason 2 (authentication timed out, the access point did not answer), bssid=... rssi=-67 dBm`.
+    - **rssi** là tín hiệu của router mà bo nhận được. Khoảng −70 dBm trở lên là đủ mạnh. Dưới −80 dBm là quá yếu: đặt bo gần router hoặc nút mesh hơn.
+    - Khi vào được mạng, dòng `EV wifi joined ... security=WPA2` cho biết kiểu bảo mật đã dùng.
+  - Nhiều bo ESP32-C3 SuperMini không kết nối được khi phát Wi-Fi hết công suất (khoảng 20 dBm). Cộng đồng ESPHome và Arduino thường sửa bằng cách hạ công suất xuống 8,5 dBm; Espressif không ghi lỗi này trong tài liệu.
+    - Từ bản 1.0.125, firmware ESP32-C3 giới hạn công suất ở **8,5 dBm**. Log khởi động có dòng `Wi-Fi transmit power limited to 8.50 dBm`, và dòng `wifi` của `id_diag` có `tx_max=8.50dBm`.
+    - Đổi mức này trong `menuconfig` → *Presence Sensor Configuration* → *Highest Wi-Fi transmit power*. Công suất thấp hơn thì tầm xa ngắn hơn.
+  - Thử Wi-Fi mà không cần ghép nối: gõ trên console USB `matter wifi connect <tên mạng> <mật khẩu>`.
+    - Thử với router, rồi với điểm phát Wi-Fi của điện thoại (2,4 GHz, WPA2) đặt cạnh bo.
+    - Được với điện thoại mà không được với router: lỗi ở router. Không được với cả hai: lỗi ở bo (anten, thạch anh).
+    - Mạng nhập kiểu này không được lưu lại.
+  - Kiểm tra router:
     - bảo mật **WPA2-PSK (AES)** hoặc WPA2/WPA3 hỗn hợp, không dùng WPA3 riêng;
+    - chế độ 2,4 GHz b/g/n hoặc b/g/n/ax, không chỉ ax: ESP32-C3 không có Wi-Fi 6;
     - tắt lọc địa chỉ MAC;
     - nếu 2,4 GHz và 5 GHz chung một tên mạng (band steering), thử tạm một tên riêng cho 2,4 GHz;
     - dùng nguồn USB khoẻ, vì radar và Wi-Fi cùng lấy điện từ cổng USB.
@@ -228,7 +237,9 @@ Console (gõ trong monitor qua USB): lệnh của esp-matter như bản H2 (khô
 ## Mức độ kiểm tra
 
 - **Đã kiểm tra bằng build:** firmware ESP32-C3 build không lỗi, không cảnh báo, từ thư mục này và từ thư mục ESP32-H2 (`set-target esp32c3`); firmware ESP32-H2 vẫn build như trước. Kiểm tra cấu hình sinh ra (Wi-Fi bật, OpenThread tắt, console USB, PID `0x8001`, chân), kích thước firmware so với phân vùng OTA, và test trên máy tính cho phần số serial (MAC 6 byte của ESP32-C3).
-- **Đã chạy trên thiết bị thật (log của người dùng, bản 1.0.122):** ghép nối với Apple Home qua BLE. Các bước PASE, kiểm tra chứng chỉ DAC/PAI test, CSR và AddNOC đều đạt. Ghép nối dừng ở bước kết nối Wi-Fi, với lỗi xác thực ở trên; giới hạn 8,5 dBm là cách sửa cho lỗi này nhưng chưa được thử lại trên bo.
+- **Đã chạy trên thiết bị thật (log của người dùng):** ghép nối với Apple Home qua BLE. Các bước PASE, kiểm tra chứng chỉ DAC/PAI test, CSR và AddNOC đều đạt. Ghép nối dừng ở bước kết nối Wi-Fi, với lỗi xác thực ở trên.
+  - Lỗi giống hệt ở bản 1.0.122 (công suất mặc định), ở bản 1.0.125 (`tx_max=8.50dBm`) và ở một firmware đèn Matter khác trên cùng bo, cùng router.
+  - Vậy hạ công suất không sửa được lỗi trên bo này. Nguyên nhân chưa xác định: tín hiệu, router hoặc phần cứng của bo.
 - **Cần thử trên thiết bị thật:** ghép nối qua BLE + Wi-Fi với Apple Home / Home Assistant (đến hết bước Wi-Fi), đọc radar trên GPIO3/GPIO4, LED GPIO8 (đúng chiều sáng khi mức thấp hay không), nút BOOT, học phòng trống, OTA qua Wi-Fi, RAM khi chạy (log `mem`, nhất là lúc ghép nối khi BLE và Wi-Fi cùng chạy), độ ổn định Wi-Fi lâu dài.
 
 ## Cấu trúc thư mục

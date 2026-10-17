@@ -712,6 +712,77 @@ static void log_wifi(const WifiSnap &w)
         ESP_LOGW(TAG, "No IPv6 link-local address yet: Matter controllers reach the device over IPv6");
     }
 }
+
+// Why the station could not join or left the access point; the other reasons by number (wifi_err_reason_t)
+static const char *wifi_reason_str(uint8_t reason)
+{
+    switch (reason) {
+    case WIFI_REASON_AUTH_EXPIRE:
+        return "authentication timed out, the access point did not answer";
+    case WIFI_REASON_AUTH_LEAVE:
+        return "deauthenticated by the access point";
+    case WIFI_REASON_ASSOC_LEAVE:
+        return "left the access point";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+        return "key handshake timed out, wrong password?";
+    case WIFI_REASON_BEACON_TIMEOUT:
+        return "access point lost";
+    case WIFI_REASON_NO_AP_FOUND:
+        return "access point not found";
+    case WIFI_REASON_AUTH_FAIL:
+        return "authentication refused, wrong password or security mode?";
+    case WIFI_REASON_ASSOC_FAIL:
+        return "association refused";
+    case WIFI_REASON_CONNECTION_FAIL:
+        return "connection failed";
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+        return "no access point with a compatible security mode";
+    case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
+        return "no access point with WPA2 or better";
+    case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
+        return "access point signal too weak";
+    default:
+        return "other";
+    }
+}
+
+static const char *wifi_auth_str(wifi_auth_mode_t mode)
+{
+    switch (mode) {
+    case WIFI_AUTH_OPEN:
+        return "open";
+    case WIFI_AUTH_WPA_PSK:
+        return "WPA";
+    case WIFI_AUTH_WPA2_PSK:
+        return "WPA2";
+    case WIFI_AUTH_WPA_WPA2_PSK:
+        return "WPA/WPA2";
+    case WIFI_AUTH_WPA3_PSK:
+        return "WPA3";
+    case WIFI_AUTH_WPA2_WPA3_PSK:
+        return "WPA2/WPA3";
+    default:
+        return "other";
+    }
+}
+
+// Each attempt to join the access point: the reason and the signal of a failed
+// one tell a weak signal from a refusal by the access point.
+static void log_wifi_system_event(int32_t id, const wifi_event_sta_connected_t &connected,
+                                  const wifi_event_sta_disconnected_t &disconnected)
+{
+    char bssid_s[13];
+    if (id == WIFI_EVENT_STA_CONNECTED) {
+        to_hex(connected.bssid, sizeof(connected.bssid), bssid_s, sizeof(bssid_s));
+        ESP_LOGI(TAG, "EV wifi joined bssid=%s ch=%u security=%s", bssid_s, connected.channel,
+                 wifi_auth_str(connected.authmode));
+    } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
+        to_hex(disconnected.bssid, sizeof(disconnected.bssid), bssid_s, sizeof(bssid_s));
+        ESP_LOGW(TAG, "EV wifi failed or left: reason %u (%s), bssid=%s rssi=%d dBm", disconnected.reason,
+                 wifi_reason_str(disconnected.reason), bssid_s, disconnected.rssi);
+    }
+}
 #endif // CONFIG_OPENTHREAD_ENABLED
 
 static void log_chip(const ChipSnap &c)
@@ -924,6 +995,14 @@ void identity_diag_on_event(const ChipDeviceEvent *event)
         // An IPv4 or IPv6 address assigned or lost: Wi-Fi block with the new addresses
         request(kNotifyNet);
         break;
+
+    case DeviceEventType::kESPSystemEvent: {
+        const auto &e = event->Platform.ESPSystemEvent;
+        if (e.Base == WIFI_EVENT) {
+            log_wifi_system_event(e.Id, e.Data.WiFiStaConnected, e.Data.WiFiStaDisconnected);
+        }
+        break;
+    }
 #endif
 
     case DeviceEventType::kCommissioningComplete:
