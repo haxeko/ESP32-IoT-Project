@@ -4,11 +4,11 @@ on:
   push:
     paths:
       - 'ESP32-C3/matter-presence-ld2410/**'
-      - '.github/workflows/matter-presence-ld2410.yml'
+      - '.github/workflows/matter-presence-ld2410-c3.yml'
   pull_request:
     paths:
       - 'ESP32-C3/matter-presence-ld2410/**'
-      - '.github/workflows/matter-presence-ld2410.yml'
+      - '.github/workflows/matter-presence-ld2410-c3.yml'
   workflow_dispatch:
 
 jobs:
