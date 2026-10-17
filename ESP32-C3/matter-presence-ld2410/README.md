@@ -19,13 +19,14 @@ Trong Home Assistant có thêm 5 điều khiển (Apple Home không hiện): **H
 | Biến thể build | mặc định, `unique_setup`, `factory` | mặc định, `unique_setup` (`factory` bỏ: PAI test chỉ cấp DAC cho PID `0x8000`) |
 | Mã Thread/OpenThread (`thread_diag`, phần OpenThread của `id_diag`, OT CLI) | có, tắt khi build C3 | bỏ |
 | Tên file build | `matter_presence_c3_wifi*` | giống hệt |
-| Kích thước (`idf.py size`, cùng Docker image) | 1 478 KB, RAM tĩnh 147,0 KB | 1 477 KB, RAM tĩnh 147,0 KB (nhỏ hơn 192 byte flash, 16 byte RAM) |
+| Kích thước (`idf.py size`, cùng Docker image) | 1 478 KB, RAM tĩnh 147,0 KB | 1 477 KB, RAM tĩnh 147,0 KB (nhỏ hơn 256 byte flash, 70 byte RAM) |
 
 Thay đổi cấu trúc mã (không đổi hành vi):
 - `radar_control.cpp` tách thành phần Matter (`radar_control.cpp`: 4 Mode Select) và phần logic (`radar_worker.cpp`: task `radar_cfg`, các yêu cầu, "lựa chọn cuối cùng thắng", Bluetooth của radar), để chạy được test trên máy tính.
 - Task presence chuyển từ `app_main.cpp` sang `presence.cpp`; log đổi tag từ `app_main` thành `presence`.
 - Lệnh khởi động lại radar (0x00A3) không có ACK được driver coi là thành công (trước đây phía gọi tự xử lý); không còn log cảnh báo `No ACK for command 0x00A3`.
 - `Learn empty room` từ chối mode ngoài 0/1/2 (`ESP_ERR_INVALID_ARG`), như các select khác.
+- Yêu cầu học phòng trống và yêu cầu ngưỡng mặc định được đổi cùng nhau trong một critical section. Bản 1.0.132 đổi hai biến riêng lẻ: nếu bấm nút 3 lần đúng lúc Home Assistant gửi *Factory thresholds*, có thể không việc nào chạy và entity kẹt ở `Factory thresholds` cho tới lựa chọn sau (rất hiếm, nhưng có thể xảy ra). "Lựa chọn cuối cùng thắng" giữ nguyên.
 - Bỏ mã chết: `identity_diag_request_dump()`, trường *no-one duration* trong yêu cầu đổi thông số (lệnh 0x0060 luôn ghi lại đúng giá trị radar đang giữ).
 
 ## Phần cứng
@@ -316,9 +317,9 @@ Console Matter (gõ lệnh trong monitor) tắt để có thêm khoảng 10 KB R
 
 | | 1.0.132 (`matter-wifi-presence`) | Bản này |
 |---|---|---|
-| Firmware (phân vùng app 1 920 KB) | 1 513 104 B (1 478 KB), trống 23 % | 1 512 912 B (1 477 KB), trống 23 % |
-| RAM tĩnh (DRAM 313,8 KB) | 150 565 B (147,0 KB, 46,86 %) | 150 549 B (147,0 KB, 46,86 %) |
-| Còn cho heap | 170 731 B (166,7 KB) | 170 747 B (166,7 KB) |
+| Firmware (phân vùng app 1 920 KB) | 1 513 104 B (1 478 KB), trống 23 % | 1 512 848 B (1 477 KB), trống 23 % |
+| RAM tĩnh (DRAM 313,8 KB) | 150 565 B (147,0 KB, 46,86 %) | 150 495 B (147,0 KB, 46,84 %) |
+| Còn cho heap | 170 731 B (166,7 KB) | 170 801 B (166,8 KB) |
 | Biến thể `unique_setup` | | 1 515 056 B |
 
 Task và stack (byte; số "còn trống" đo trên bo với bản 1.0.128–1.0.131, mã các task này không đổi):
@@ -395,10 +396,10 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 **Đã kiểm chứng bằng build và test trên máy tính (bản này):**
 - Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định và biến thể `unique_setup`.
 - `sdkconfig` sinh ra giống hệt bản 1.0.132 build trong cùng image, trừ đường dẫn file và mục chọn loại LED đã bỏ: Wi-Fi bật, OpenThread tắt, BLE chỉ để ghép nối, minimal mDNS, cửa sổ ghép nối 900 s, VID `0xFFF1` / PID `0x8001`, WPA3 SAE, coexistence, stack CHIP 8192, CPU 160 MHz, brownout bật, đúng 21 cluster.
-- Header file OTA: VID `0xFFF1`, PID `0x8001`, phiên bản 1.0.135 (lớn hơn 132).
+- Header file OTA (bản build 1.0.135): VID `0xFFF1`, PID `0x8001`, phiên bản 135 / `1.0.135` (lớn hơn 132).
 - Thứ tự tạo endpoint giống 1.0.132; esp-matter (`esp_matter_data_model.cpp`) cấp số endpoint theo thứ tự tạo trước `esp_matter::start()`, nên số endpoint giữ nguyên.
-- Kích thước so với 1.0.132 (bảng **RAM và flash**): nhỏ hơn 192 byte flash, 16 byte RAM tĩnh.
-- Host test (`test/host/run.sh`, 11 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED, tên thiết bị. Thử làm hỏng 15 chỗ trong firmware: test bắt được 14; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ.
+- Kích thước so với 1.0.132 (bảng **RAM và flash**): nhỏ hơn 256 byte flash, 70 byte RAM tĩnh.
+- Host test (`test/host/run.sh`, 11 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED, tên thiết bị. Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ.
 
 **Đã thấy chạy trên bo, nhưng với firmware cũ** (log của người dùng; theo README cũ là các bản 1.0.128–1.0.131, cùng thuật toán và mã radar): ghép nối với Apple Home và Home Assistant (3 controller cùng lúc), đọc radar, radar tự đo phòng trống (lệnh 0x000B), *Factory thresholds* từ Home Assistant; bật Bluetooth của radar (0x00A4 + 0x00A3, đọc MAC bằng 0x00A5) trên radar V2.44.25070917.
 

@@ -341,6 +341,19 @@ static void test_learning_requests()
         CHECK(modes(s_learn_modes) == "10" && leds() == "waiting recording done");
     }
 
+    test_begin("Learning chosen while the factory thresholds are written: no Off in between, then the learning");
+    {
+        RadarSim radar;
+        boot(radar);
+        radar_bluetooth_off(radar);
+        set_learned_thresholds(radar);
+        sim_at(5000, []() { radar_worker_select(RADAR_SELECT_LEARN, RADAR_LEARN_FACTORY); });
+        sim_at(5020, []() { radar_worker_select(RADAR_SELECT_LEARN, RADAR_LEARN_ON); }); // during the writes
+        run_worker(120000);
+        CHECK(factory_thresholds(radar) || radar.moving[0] == 45); // written, then learned by the radar
+        CHECK(modes(s_learn_modes) == "210" && leds() == "factory waiting recording done");
+    }
+
     test_begin("Button: three clicks while learning are ignored");
     {
         RadarSim radar;

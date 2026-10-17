@@ -36,12 +36,14 @@ static constexpr size_t kTextLen = 24;
 // ---------------------------------------------------------------------------------------------------------------------
 // Requests, from the Matter task and the button to the worker
 
-// Empty room learning: requested by Home Assistant or the button, run by the worker.
+// Empty room learning and factory thresholds, requested by Home Assistant (Matter task) or the button (esp_timer
+// task) and run by the worker. Both change together under s_requests_lock, so a choice from Home Assistant and a
+// click at the same moment cannot leave a request half made. The last choice wins: Factory thresholds cancels a
+// learning, Learning or Off (or three clicks) drops a Factory thresholds that has not started.
 enum LearnState : uint8_t { kLearnIdle, kLearnRequested, kLearnRunning, kLearnCancelling };
-static std::atomic<LearnState> s_learn_state{kLearnIdle};
-// Factory thresholds chosen in Home Assistant or with four clicks, not written yet. The last choice wins: Factory
-// thresholds cancels a learning, Learning or Off (or three clicks) drops a Factory thresholds that has not started.
-static std::atomic<bool> s_want_factory{false};
+static portMUX_TYPE s_requests_lock = portMUX_INITIALIZER_UNLOCKED;
+static LearnState s_learn_state = kLearnIdle; // s_requests_lock
+static bool s_want_factory;                   // s_requests_lock: chosen, not written yet
 
 // Range (gate), Radar resolution (gate length) and Radar Bluetooth (off / on) chosen in Home Assistant, RADAR_KEEP
 // once taken.
@@ -54,18 +56,15 @@ static std::atomic<bool> s_synced{false};
 static std::atomic<TaskHandle_t> s_task{nullptr};
 static radar_worker_view_t s_view;
 
-// Learning starts a learning (or keeps a cancelled one running), Off cancels it.
-static void request_learning(bool on)
+// s_requests_lock held. Learning starts a learning (or keeps a cancelled one running), Off cancels it.
+static void request_learning_locked(bool on)
 {
-    LearnState state = s_learn_state.load();
-    LearnState next;
-    do {
-        if (on) {
-            next = state == kLearnIdle ? kLearnRequested : state == kLearnCancelling ? kLearnRunning : state;
-        } else {
-            next = state == kLearnRequested ? kLearnIdle : state == kLearnRunning ? kLearnCancelling : state;
-        }
-    } while (next != state && !s_learn_state.compare_exchange_weak(state, next));
+    const LearnState state = s_learn_state;
+    if (on) {
+        s_learn_state = state == kLearnIdle ? kLearnRequested : state == kLearnCancelling ? kLearnRunning : state;
+    } else {
+        s_learn_state = state == kLearnRequested ? kLearnIdle : state == kLearnRunning ? kLearnCancelling : state;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -203,7 +202,10 @@ static bool fix_bluetooth()
 
 static bool learning_cancelled()
 {
-    return s_learn_state.load() == kLearnCancelling;
+    taskENTER_CRITICAL(&s_requests_lock);
+    const bool cancelled = s_learn_state == kLearnCancelling;
+    taskEXIT_CRITICAL(&s_requests_lock);
+    return cancelled;
 }
 
 static void show_learning_phase(quiet_learn_phase_t phase)
@@ -214,8 +216,13 @@ static void show_learning_phase(quiet_learn_phase_t phase)
 
 static void run_requested_learning()
 {
-    LearnState state = kLearnRequested;
-    if (!s_learn_state.compare_exchange_strong(state, kLearnRunning)) {
+    taskENTER_CRITICAL(&s_requests_lock);
+    const bool start = s_learn_state == kLearnRequested;
+    if (start) {
+        s_learn_state = kLearnRunning;
+    }
+    taskEXIT_CRITICAL(&s_requests_lock);
+    if (!start) {
         return;
     }
     // Shown already when chosen in Home Assistant; covers the button and a request made while the previous
@@ -227,9 +234,12 @@ static void run_requested_learning()
     status_led_set_learning(result == QUIET_LEARN_SAVED    ? STATUS_LED_LEARNING_DONE
                             : result == QUIET_LEARN_FAILED ? STATUS_LED_LEARNING_FAILED
                                                            : STATUS_LED_LEARNING_NONE);
+    taskENTER_CRITICAL(&s_requests_lock);
     s_learn_state = kLearnIdle;
+    const bool factory = s_want_factory;
+    taskEXIT_CRITICAL(&s_requests_lock);
     // Cancelled by Factory thresholds: the select keeps showing it while they are written.
-    if (!s_want_factory) {
+    if (!factory) {
         show_learn_mode(RADAR_LEARN_OFF);
     }
 }
@@ -238,14 +248,22 @@ static void run_requested_learning()
 // while, then the select shows Off (or Learning when chosen meanwhile).
 static void run_requested_factory_thresholds()
 {
-    if (!s_want_factory.exchange(false)) {
+    taskENTER_CRITICAL(&s_requests_lock);
+    const bool wanted = s_want_factory;
+    s_want_factory = false;
+    taskEXIT_CRITICAL(&s_requests_lock);
+    if (!wanted) {
         return;
     }
     // Shown already when chosen in Home Assistant; covers the button.
     show_learn_mode(RADAR_LEARN_FACTORY);
     const bool restored = quiet_learn_restore_factory();
     status_led_set_learning(restored ? STATUS_LED_LEARNING_FACTORY : STATUS_LED_LEARNING_FAILED);
-    if (s_learn_state.load() == kLearnIdle && !s_want_factory) {
+    // Nothing chosen meanwhile (no learning, no new factory thresholds)
+    taskENTER_CRITICAL(&s_requests_lock);
+    const bool idle = s_learn_state == kLearnIdle && !s_want_factory;
+    taskEXIT_CRITICAL(&s_requests_lock);
+    if (idle) {
         show_learn_mode(RADAR_LEARN_OFF);
     }
 }
@@ -323,8 +341,10 @@ esp_err_t radar_worker_select(radar_select_t select, uint8_t mode)
             return ESP_ERR_INVALID_STATE;
         }
         // The last choice wins (see s_want_factory)
+        taskENTER_CRITICAL(&s_requests_lock);
         s_want_factory = mode == RADAR_LEARN_FACTORY;
-        request_learning(mode == RADAR_LEARN_ON);
+        request_learning_locked(mode == RADAR_LEARN_ON);
+        taskEXIT_CRITICAL(&s_requests_lock);
     } else {
         if (mode == RADAR_MODE_CUSTOM) {
             return ESP_OK; // the radar's own value: nothing to change
@@ -368,12 +388,18 @@ bool radar_worker_request_learning(void)
         status_led_set_learning(STATUS_LED_LEARNING_FAILED);
         return false;
     }
-    LearnState state = kLearnIdle;
-    if (!s_learn_state.compare_exchange_strong(state, kLearnRequested)) {
+    // Only from idle; a factory thresholds request is dropped (the last choice wins)
+    taskENTER_CRITICAL(&s_requests_lock);
+    const bool requested = s_learn_state == kLearnIdle;
+    if (requested) {
+        s_learn_state = kLearnRequested;
+        s_want_factory = false;
+    }
+    taskEXIT_CRITICAL(&s_requests_lock);
+    if (!requested) {
         ESP_LOGI(TAG, "Empty room learning already requested or running");
         return false;
     }
-    s_want_factory = false; // the last choice wins
     xTaskNotifyGive(task);
     return true;
 }
@@ -387,8 +413,10 @@ bool radar_worker_request_factory_thresholds(void)
         return false;
     }
     // The last choice wins, as in Home Assistant: a learning requested or running is cancelled first.
+    taskENTER_CRITICAL(&s_requests_lock);
     s_want_factory = true;
-    request_learning(false);
+    request_learning_locked(false);
+    taskEXIT_CRITICAL(&s_requests_lock);
     xTaskNotifyGive(task);
     return true;
 }
