@@ -320,7 +320,8 @@ menu "Memory Monitor"
         help
             Logs the free heap (now, lowest since boot, largest block) and the
             unused stack of the main tasks at boot and then at this period,
-            as a warning when the heap drops below 16 KB or a stack below
-            512 bytes.
+            as a warning when a stack drops below 512 bytes, and once each
+            time the lowest free heap reaches a new low below 16 KB (with the
+            time window it happened in).
 
 endmenu

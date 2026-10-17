@@ -8,6 +8,13 @@ CONFIG_OPENTHREAD_ENABLED=n
 # No SoftAP (commissioning is over BLE only)
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
+# Wi-Fi code in flash instead of IRAM: on the ESP32-C3, IRAM and DRAM share
+# the same SRAM, so this leaves more heap. The lowest free heap measured on a
+# board during the first 10 minutes was 15.7 KB (BLE and Wi-Fi both on while
+# commissioning). Costs a little Wi-Fi throughput, which Matter does not need.
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+
 # IPv6 addresses from the router advertisements (SLAAC) on the Wi-Fi LAN
 CONFIG_LWIP_IPV6_AUTOCONFIG=y
 # Link-local address + up to 5 SLAAC addresses (as in the esp-matter Wi-Fi

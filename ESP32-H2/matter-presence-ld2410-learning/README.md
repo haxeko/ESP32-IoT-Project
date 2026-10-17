@@ -400,7 +400,13 @@ I mem: Heap: <còn trống> bytes free, lowest <thấp nhất> since boot, large
 I mem: Stack unused bytes: CHIP <n> ot_task <n> esp_timer <n> console <n> presence <n> ld2410 <n> radar_cfg <n>
 ```
 
-Log in lúc khởi động rồi 10 phút một lần; con số quan trọng là `lowest ... since boot` (heap thấp nhất kể từ khi bật, thường rơi vào lúc ghép nối khi BLE còn chạy). Log chuyển sang cảnh báo `W mem` khi heap thấp nhất dưới 16 KB hoặc một stack còn dưới 512 byte. Trên console còn có lệnh `matter esp diagnostics mem-dump`.
+Log in lúc khởi động rồi 10 phút một lần; con số quan trọng là `lowest ... since boot` (heap thấp nhất kể từ khi bật, thường rơi vào lúc ghép nối khi BLE còn chạy). Log chuyển sang cảnh báo `W mem` khi một stack còn dưới 512 byte, và khi heap thấp nhất xuống dưới 16 KB. Từ bản 1.0.130, cảnh báo heap chỉ in **một lần cho mỗi mức thấp mới**, kèm khoảng thời gian nó xảy ra (giữa hai lần log), rồi trở lại dòng `I mem: Heap` bình thường:
+
+```
+W mem: Heap low: lowest 16060 bytes free since boot, reached between 2 s and 602 s; now 96552 free, largest block 26624
+```
+
+Bản trước lặp lại cảnh báo mỗi 10 phút cho tới lần khởi động sau, dù heap đã hồi lại từ lâu. Trên console còn có lệnh `matter esp diagnostics mem-dump`.
 
 ## Xử lý sự cố: điện thoại không tìm thấy thiết bị
 

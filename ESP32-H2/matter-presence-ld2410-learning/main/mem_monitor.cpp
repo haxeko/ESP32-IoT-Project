@@ -12,6 +12,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <sdkconfig.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #include "mem_monitor.h"
@@ -32,14 +33,26 @@ static const char *const kTasks[] = { "CHIP",     "wifi",   "esp_timer", "consol
 static constexpr size_t kLowHeapBytes = 16 * 1024;
 static constexpr UBaseType_t kLowStackBytes = 512;
 
+// Lowest free heap at the previous log, and when that log ran
+static size_t s_prev_min = SIZE_MAX;
+static int64_t s_prev_s;
+
 static void log_memory(void *arg)
 {
     const size_t free_now = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
     const size_t free_min = heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT);
     const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
-    if (free_min < kLowHeapBytes) {
-        ESP_LOGW(TAG, "Heap low: %u bytes free, lowest %u since boot, largest block %u", (unsigned)free_now,
-                 (unsigned)free_min, (unsigned)largest);
+    const int64_t now_s = esp_timer_get_time() / 1000000;
+    // The lowest since boot only goes down: warn once each time it reaches a
+    // new low below the limit, with the time window it happened in.
+    const bool new_low = free_min < kLowHeapBytes && free_min < s_prev_min;
+    const int64_t since_s = s_prev_s;
+    s_prev_min = free_min;
+    s_prev_s = now_s;
+    if (new_low) {
+        ESP_LOGW(TAG, "Heap low: lowest %u bytes free since boot, reached between %lld s and %lld s; now %u free, "
+                      "largest block %u", (unsigned)free_min, (long long)since_s, (long long)now_s,
+                 (unsigned)free_now, (unsigned)largest);
     } else {
         ESP_LOGI(TAG, "Heap: %u bytes free, lowest %u since boot, largest block %u", (unsigned)free_now,
                  (unsigned)free_min, (unsigned)largest);
