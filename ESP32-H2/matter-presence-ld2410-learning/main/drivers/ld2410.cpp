@@ -21,6 +21,8 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "ld2410.h"
@@ -57,6 +59,9 @@ static constexpr uint16_t kCmdBluetooth = 0x00A4;
 static constexpr uint16_t kCmdReadMac = 0x00A5;
 static constexpr uint16_t kCmdSetResolution = 0x00AA;
 static constexpr uint16_t kCmdReadResolution = 0x00AB;
+static constexpr uint16_t kCmdReadVersion = 0x00A0;
+static constexpr uint16_t kCmdNoiseDetection = 0x000B;
+static constexpr uint16_t kCmdNoiseStatus = 0x001B;
 static constexpr uint16_t kAckFlag = 0x0100;
 
 // Commands are retried: the radar sometimes misses a request while it is
@@ -107,8 +112,10 @@ static void handle_target_payload(const uint8_t *p, size_t len)
         return;
     }
     ld2410_target_t t = {
-        .moving = (p[2] & 0x01) != 0,
-        .still = (p[2] & 0x02) != 0,
+        .state = p[2],
+        // Bits 0 and 1 only in states 0-3: states 4-6 report the background noise detection
+        .moving = p[2] <= 3 && (p[2] & 0x01) != 0,
+        .still = p[2] <= 3 && (p[2] & 0x02) != 0,
         .moving_cm = (uint16_t)(p[3] | (p[4] << 8)),
         .still_cm = (uint16_t)(p[6] | (p[7] << 8)),
         .detection_cm = (uint16_t)(p[9] | (p[10] << 8)),
@@ -406,6 +413,50 @@ esp_err_t ld2410_set_gate_length(uint16_t gate_cm)
     // Resolution (2): 0 = 0.75 m, 1 = 0.2 m
     const uint8_t value[] = { gate_cm == LD2410_FINE_GATE_CM ? (uint8_t)0x01 : (uint8_t)0x00, 0x00 };
     return command(kCmdSetResolution, value, sizeof(value), NULL);
+}
+
+esp_err_t ld2410_read_firmware_version(ld2410_version_t *out)
+{
+    // Return value: firmware type (2), major version (2), minor version (4)
+    ld2410_ack_t ack;
+    esp_err_t err = command(kCmdReadVersion, NULL, 0, &ack);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (ack.len < 8) {
+        ESP_LOGW(TAG, "Unexpected firmware version reply (%u bytes)", ack.len);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    out->type = (uint16_t)(ack.data[0] | (ack.data[1] << 8));
+    out->major = (uint16_t)(ack.data[2] | (ack.data[3] << 8));
+    out->minor = (uint32_t)ack.data[4] | ((uint32_t)ack.data[5] << 8) | ((uint32_t)ack.data[6] << 16) |
+                 ((uint32_t)ack.data[7] << 24);
+    return ESP_OK;
+}
+
+void ld2410_format_version(const ld2410_version_t *version, char *buf, size_t len)
+{
+    snprintf(buf, len, "V%x.%02x.%08" PRIx32, version->major >> 8, version->major & 0xFF, version->minor);
+}
+
+esp_err_t ld2410_start_noise_detection(uint16_t seconds)
+{
+    const uint8_t value[] = { (uint8_t)(seconds & 0xFF), (uint8_t)(seconds >> 8) };
+    return command(kCmdNoiseDetection, value, sizeof(value), NULL);
+}
+
+esp_err_t ld2410_read_noise_detection_status(uint16_t *status)
+{
+    ld2410_ack_t ack;
+    esp_err_t err = command(kCmdNoiseStatus, NULL, 0, &ack);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (ack.len < 2) {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    *status = (uint16_t)(ack.data[0] | (ack.data[1] << 8));
+    return ESP_OK;
 }
 
 esp_err_t ld2410_restart(void)

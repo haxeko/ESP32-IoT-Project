@@ -40,6 +40,22 @@ Trong phòng không có ai, radar vẫn nhận được "năng lượng" từ qu
 4. Thiết bị tính ngưỡng mới, ghi vào LD2410, đọc lại để kiểm tra. **LD2410 tự lưu ngưỡng vào bộ nhớ của nó**, giữ nguyên khi mất điện hay khi nạp lại firmware ESP32-H2. Ghi xong: **LED xanh lá trong 10 giây**. Học thất bại (xem bên dưới): **LED đỏ trong 10 giây**.
 5. Entity tự trở về **Off** (khoảng 80 giây sau khi chọn). Kết quả xem trong log `quiet_learn`.
 
+**Radar tự đo nhiễu nền (lệnh 0x000B):** một số LD2410B/C có firmware mới tự đo nhiễu nền và tự đặt độ nhạy, như nút *Auto* trong app HLKRadarTool. Lệnh này có trong tài liệu giao thức LD2410C V1.09 (mục 2.2.20–2.2.21); Hi-Link không ghi từ firmware radar nào thì có, cũng không ghi radar tính ngưỡng thế nào.
+- Mỗi lần học, sau 10 s đầu, thiết bị đọc phiên bản firmware và ngưỡng hiện tại của radar (log `LD2410 firmware V...`), rồi gửi lệnh 0x000B với thời gian đo bằng **thời gian ghi (60 s)**.
+- **Radar nhận lệnh:** radar tự chờ 10 s (vẫn trong 20 s để rời phòng), đo 60 s rồi tự lưu ngưỡng chuyển động và đứng yên của mọi gate. Thiết bị chỉ chờ kết quả, không dùng engineering mode và không ghi ngưỡng nào. Tổng cộng vẫn khoảng **80 s**, LED giống hệt: cyan 20 s, cyan nháy 60 s, rồi xanh lá hoặc đỏ.
+  ```
+  I quiet_learn: The LD2410 measures the empty room itself: 10 s more to leave, then 60 s
+  I quiet_learn: Thresholds before: moving 50,50,40,30,20,15,15,15,15 | still -,-,40,40,30,30,20,20,20
+  I quiet_learn: Thresholds set by the radar: moving 45,40,30,25,18,12,10,10,10 | still -,-,35,30,25,22,15,15,15
+  I quiet_learn: Learning done: thresholds set by the LD2410 background noise detection
+  ```
+  (số minh hoạ từ test trên máy tính, không phải từ radar thật)
+- Ngưỡng do radar đặt **không bị giới hạn** bởi mức 95 %, +10 hay +30: radar có thể đặt thấp hơn mặc định (nhạy hơn) hoặc cao hơn nhiều. Gate cao hơn mặc định + 30 có cảnh báo `W quiet_learn` trong log. Thấy radar báo nhầm có người nhiều hơn thì chọn **Factory thresholds**, hoặc tắt chức năng này để ESP32 tự học.
+- **Radar từ chối hoặc không trả lời lệnh** (log `This LD2410 firmware has no background noise detection: learning on the ESP32`): thiết bị tự học như bên dưới, ghi bắt đầu đúng lúc hết 20 s.
+- Radar nhận lệnh nhưng không chạy (không báo trạng thái "đang đo" trong 15 s), báo đo thất bại, hoặc chưa xong sau 10 + 60 + 30 s: học thất bại, **LED đỏ 10 s**. Trường hợp chưa xong thì thiết bị khởi động lại radar để dừng.
+- Chọn **Off** hoặc *Factory thresholds* trong lúc radar đang đo: thiết bị khởi động lại radar để dừng. Hi-Link không ghi radar giữ ngưỡng cũ hay đã đổi một phần trong trường hợp này (chưa kiểm chứng trên radar thật): nếu nghi ngờ, chọn *Factory thresholds* hoặc học lại.
+- Tắt trong `menuconfig` → *Empty Room Learning* → *Let the radar measure the room itself when it can*: luôn học trên ESP32.
+
 **Mức nhiễu của mỗi gate là mức 95 %:** bỏ 5 % số báo cáo có năng lượng cao nhất của gate đó, rồi lấy giá trị cao nhất trong phần còn lại.
 - 60 s là khoảng 600 báo cáo, nên các đợt nhiễu ngắn, tổng cộng dưới khoảng 3 s, bị bỏ qua và không làm radar kém nhạy. Ví dụ: người đi ngoài hành lang, cửa đóng mở.
 - Nguồn nhiễu chuyển động hơn 5 % thời gian vẫn được học, ví dụ quạt, rèm bay, máy lạnh.
@@ -77,7 +93,7 @@ I quiet_learn: Learning done: new thresholds saved in the LD2410 (600 reports)
 Các trường hợp khác:
 - Chọn **Off** trong lúc đang học: huỷ, không ghi gì vào radar. LED trở lại bình thường ngay (không xanh, không đỏ).
 - Bấm 3 lần khi đang học: không có tác dụng (log `Empty room learning already requested or running`).
-- Radar không trả lời lệnh: học thất bại, không ghi gì; LED có thể chậm vài giây mới chuyển cyan, cyan khoảng 23 s rồi **đỏ 10 s**, log báo kiểm tra dây **GPIO12 → chân RX của LD2410** (bản gốc chỉ đọc radar nên có thể chưa nối dây này).
+- Radar không trả lời lệnh: học thất bại, không ghi gì; LED có thể chậm vài giây mới chuyển cyan, cyan khoảng 13 s rồi **đỏ 10 s**, log báo kiểm tra dây **GPIO12 → chân RX của LD2410** (bản gốc chỉ đọc radar nên có thể chưa nối dây này).
 - Cũng là học thất bại (LED đỏ 10 s): radar không gửi báo cáo engineering trong lúc ghi, không nhận ngưỡng mới hoặc đọc lại không khớp (khi đó radar có thể giữ lẫn ngưỡng cũ và mới: học lại; log `quiet_learn` ghi rõ lý do), không đủ bộ nhớ cho bản ghi (khoảng 3,6 KB, chỉ cấp trong lúc học), hoặc bấm nút 3 lần khi task radar không chạy được.
 - Thời gian chờ, thời gian ghi, mức 95 %, mức +10 và giới hạn +30 chỉnh được trong `menuconfig` → *Empty Room Learning*; LED cyan và cyan nháy theo đúng hai thời gian, màu xanh lá hoặc đỏ luôn 10 s.
 - Build tại máy với file `sdkconfig` có sẵn từ bản trước: thời gian chờ và thời gian ghi vẫn là 10 s và 30 s. Chạy `idf.py set-target esp32h2` (tạo lại `sdkconfig` từ mặc định) hoặc đổi trong `menuconfig`. Firmware do GitHub Actions build luôn dùng mặc định mới.
@@ -361,6 +377,7 @@ I app_main: Pins: LD2410 RX GPIO11 (radar TX), TX GPIO12 (radar RX), button GPIO
 | Noise percentile | 95 % | Mức nhiễu = năng lượng mà 95 % số báo cáo của gate không vượt quá. `100` = giá trị cao nhất, như bản cũ |
 | Margin above the recorded noise | 10 | Ngưỡng mới = mức nhiễu + giá trị này |
 | Highest raise above the factory threshold | 30 | Ngưỡng học được tối đa = mặc định nhà sản xuất + giá trị này. `100` = không giới hạn |
+| Let the radar measure the room itself when it can | bật | Radar có lệnh đo nhiễu nền (0x000B) thì để radar tự đo và tự đặt ngưỡng; tắt = luôn học trên ESP32 |
 
 *Thread Diagnostics*: `THREAD_DIAG_LOG` (bật mặc định) in khối chẩn đoán Thread ra log mỗi 10 s cho tới khi ghép nối xong.
 

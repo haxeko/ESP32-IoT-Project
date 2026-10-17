@@ -221,6 +221,7 @@ Console (gõ trong monitor qua USB): lệnh của esp-matter như bản H2 (khô
   - Nhiều bo ESP32-C3 SuperMini không kết nối được khi phát Wi-Fi hết công suất (khoảng 20 dBm). Cộng đồng ESPHome và Arduino thường sửa bằng cách hạ công suất xuống 8,5 dBm; Espressif không ghi lỗi này trong tài liệu.
     - Từ bản 1.0.125, firmware ESP32-C3 giới hạn công suất ở **8,5 dBm**. Log khởi động có dòng `Wi-Fi transmit power limited to 8.50 dBm`, và dòng `wifi` của `id_diag` có `tx_max=8.50dBm`.
     - Đổi mức này trong `menuconfig` → *Presence Sensor Configuration* → *Highest Wi-Fi transmit power*. Công suất thấp hơn thì tầm xa ngắn hơn.
+  - **TP-Link Deco X10 (mesh):** người dùng đã sửa được lỗi này bằng cách **tắt Beamforming** trong app Deco; sau đó bo ghép nối được. Router mesh khác có tuỳ chọn tương tự thì thử tắt trước.
   - Thử Wi-Fi mà không cần ghép nối: gõ trên console USB `matter wifi connect <tên mạng> <mật khẩu>`.
     - Thử với router, rồi với điểm phát Wi-Fi của điện thoại (2,4 GHz, WPA2) đặt cạnh bo.
     - Được với điện thoại mà không được với router: lỗi ở router. Không được với cả hai: lỗi ở bo (anten, thạch anh).
@@ -239,7 +240,8 @@ Console (gõ trong monitor qua USB): lệnh của esp-matter như bản H2 (khô
 - **Đã kiểm tra bằng build:** firmware ESP32-C3 build không lỗi, không cảnh báo, từ thư mục này và từ thư mục ESP32-H2 (`set-target esp32c3`); firmware ESP32-H2 vẫn build như trước. Kiểm tra cấu hình sinh ra (Wi-Fi bật, OpenThread tắt, console USB, PID `0x8001`, chân), kích thước firmware so với phân vùng OTA, và test trên máy tính cho phần số serial (MAC 6 byte của ESP32-C3).
 - **Đã chạy trên thiết bị thật (log của người dùng):** ghép nối với Apple Home qua BLE. Các bước PASE, kiểm tra chứng chỉ DAC/PAI test, CSR và AddNOC đều đạt. Ghép nối dừng ở bước kết nối Wi-Fi, với lỗi xác thực ở trên.
   - Lỗi giống hệt ở bản 1.0.122 (công suất mặc định), ở bản 1.0.125 (`tx_max=8.50dBm`) và ở một firmware đèn Matter khác trên cùng bo, cùng router.
-  - Vậy hạ công suất không sửa được lỗi trên bo này. Nguyên nhân chưa xác định: tín hiệu, router hoặc phần cứng của bo.
+  - Vậy hạ công suất không sửa được lỗi trên bo này.
+  - Nguyên nhân là Beamforming của router TP-Link Deco X10: tắt đi thì bo vào được Wi-Fi và ghép nối được (người dùng báo lại, chưa có log của lần thành công).
 - **Cần thử trên thiết bị thật:** ghép nối qua BLE + Wi-Fi với Apple Home / Home Assistant (đến hết bước Wi-Fi), đọc radar trên GPIO3/GPIO4, LED GPIO8 (đúng chiều sáng khi mức thấp hay không), nút BOOT, học phòng trống, OTA qua Wi-Fi, RAM khi chạy (log `mem`, nhất là lúc ghép nối khi BLE và Wi-Fi cùng chạy), độ ổn định Wi-Fi lâu dài.
 
 ## Cấu trúc thư mục

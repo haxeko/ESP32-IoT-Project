@@ -188,6 +188,21 @@ menu "Empty Room Learning"
             LED blinks cyan slowly meanwhile). Long enough for a fan or an
             air conditioner that sweeps the room to pass a few times.
 
+    config LD2410_LEARN_RADAR_AUTO
+        bool "Let the radar measure the room itself when it can"
+        default y
+        help
+            LD2410B/C radars with newer firmware measure the background noise
+            of every gate themselves and set their moving and still
+            thresholds (command 0x000B of the LD2410C serial protocol V1.09,
+            the "Auto" button of the HLKRadarTool app; Hi-Link does not say
+            from which radar firmware on). With this option the learning asks the radar
+            first: it waits 10 s, then measures for the recording time. Hi-Link
+            does not document how the thresholds are computed; they may be
+            more sensitive than the factory defaults. A radar that refuses the
+            command is learned by the ESP32 as below (noise percentile, margin,
+            highest raise).
+
     config LD2410_LEARN_PERCENTILE
         int "Noise percentile (%)"
         range 50 100

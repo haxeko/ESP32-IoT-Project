@@ -38,10 +38,13 @@ typedef enum {
 // Runs one learning in the calling task: waits CONFIG_LD2410_LEARN_DELAY_SEC
 // (time to leave the room), records CONFIG_LD2410_LEARN_DURATION_SEC of
 // engineering data, then writes the new thresholds to the radar, which keeps
-// them in its flash. The recording (ld2410_capture_t) is allocated while the
-// learning runs. Sends radar commands, so no other task may configure the
-// radar meanwhile. Both callbacks are optional. gate_cm: length of one gate,
-// for the distances in the log (0: unknown).
+// them in its flash. With CONFIG_LD2410_LEARN_RADAR_AUTO, a radar that has its
+// own background noise detection (newer LD2410B/C firmware) measures
+// and sets its thresholds itself instead, over the same times. The recording
+// (ld2410_capture_t) is allocated while the ESP32 learns. Sends radar commands,
+// so no other task may configure the radar meanwhile. Both callbacks are
+// optional. gate_cm: length of one gate, for the distances in the log (0:
+// unknown).
 quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
                                      uint16_t gate_cm);
 
