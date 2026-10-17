@@ -1,0 +1,394 @@
+/*
+   This example code is in the Public Domain (or CC0 licensed, at your option.)
+
+   Unless required by applicable law or agreed to in writing, this
+   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+   CONDITIONS OF ANY KIND, either express or implied.
+*/
+
+#include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <inttypes.h>
+#include <nvs.h>
+#include <sdkconfig.h>
+
+#include <algorithm>
+#include <atomic>
+
+#include <drivers/ld2410.h>
+#include <drivers/status_led.h>
+
+#include "quiet_learn.h"
+#include "radar_worker.h"
+
+static const char *TAG = "radar_ctl";
+
+static constexpr uint32_t kTaskStack = 4096;
+// Above the Matter task (1), below the Wi-Fi and lwIP tasks, like the presence task
+static constexpr UBaseType_t kTaskPriority = 2;
+// Next reads while the radar does not answer (not connected, still starting)
+static constexpr uint32_t kSyncRetryFirstMs = 15 * 1000;
+static constexpr uint32_t kSyncRetryMaxMs = 5 * 60 * 1000;
+
+static constexpr size_t kTextLen = 24;
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Requests, from the Matter task and the button to the worker
+
+// Empty room learning: requested by Home Assistant or the button, run by the worker.
+enum LearnState : uint8_t { kLearnIdle, kLearnRequested, kLearnRunning, kLearnCancelling };
+static std::atomic<LearnState> s_learn_state{kLearnIdle};
+// Factory thresholds chosen in Home Assistant or with four clicks, not written yet. The last choice wins: Factory
+// thresholds cancels a learning, Learning or Off (or three clicks) drops a Factory thresholds that has not started.
+static std::atomic<bool> s_want_factory{false};
+
+// Range (gate), Radar resolution (gate length) and Radar Bluetooth (off / on) chosen in Home Assistant, RADAR_KEEP
+// once taken.
+static std::atomic<int32_t> s_want_gate{RADAR_KEEP};
+static std::atomic<int32_t> s_want_gate_cm{RADAR_KEEP};
+static std::atomic<int32_t> s_want_bluetooth{RADAR_KEEP};
+
+// Set by the worker once the radar settings have been read.
+static std::atomic<bool> s_synced{false};
+static std::atomic<TaskHandle_t> s_task{nullptr};
+static radar_worker_view_t s_view;
+
+// Learning starts a learning (or keeps a cancelled one running), Off cancels it.
+static void request_learning(bool on)
+{
+    LearnState state = s_learn_state.load();
+    LearnState next;
+    do {
+        if (on) {
+            next = state == kLearnIdle ? kLearnRequested : state == kLearnCancelling ? kLearnRunning : state;
+        } else {
+            next = state == kLearnRequested ? kLearnIdle : state == kLearnRunning ? kLearnCancelling : state;
+        }
+    } while (next != state && !s_learn_state.compare_exchange_weak(state, next));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Bluetooth of the radar. Off until it is turned on from Home Assistant: the choice is kept in NVS and the worker
+// brings the radar back to it at boot (the LD2410 leaves the factory with Bluetooth on). Every change is applied by
+// a restart of the radar. Its password is left as stored in the radar (the key "bt_password" that firmware
+// 1.0.111-1.0.115 stored in this namespace is left as it is).
+
+static constexpr const char *kNvsNamespace = "ld2410";
+static constexpr const char *kNvsBtOnKey = "bt_on"; // blob, 1 byte
+
+// Worker only (and radar_worker_start() before the worker runs)
+static bool s_bt_wanted; // chosen in Home Assistant, off until then
+// The last Bluetooth on/off change did not work: not tried again before the next boot or the next choice in Home
+// Assistant, so a radar that does not follow is not restarted over and over.
+static bool s_bt_change_failed;
+
+static void load_bt_choice()
+{
+    nvs_handle_t nvs;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &nvs) != ESP_OK) {
+        return; // nothing stored yet: Bluetooth off
+    }
+    uint8_t on = 0;
+    size_t len = sizeof(on);
+    s_bt_wanted = nvs_get_blob(nvs, kNvsBtOnKey, &on, &len) == ESP_OK && len == sizeof(on) && on != 0;
+    nvs_close(nvs);
+}
+
+static void set_bt_choice(bool on)
+{
+    if (on == s_bt_wanted) {
+        return;
+    }
+    s_bt_wanted = on;
+    const uint8_t value = on ? 1 : 0;
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(nvs, kNvsBtOnKey, &value, sizeof(value));
+        if (err == ESP_OK) {
+            err = nvs_commit(nvs);
+        }
+        nvs_close(nvs);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Could not save %s in NVS, err:%d", kNvsBtOnKey, err);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Worker task
+
+static radar_settings_t s_settings; // last settings read from the radar (s_synced)
+static esp_err_t s_session_err;     // result of the last session
+
+static void log_settings(const char *what, const radar_settings_t &settings)
+{
+    const ld2410_config_t &cfg = settings.config;
+    char duration[kTextLen];
+    char moving[kTextLen];
+    char still[kTextLen];
+    char mac[kTextLen];
+    radar_format_duration(cfg.no_one_duration_s, duration, sizeof(duration));
+    radar_format_distance((uint32_t)cfg.max_moving_gate * settings.gate_cm, moving, sizeof(moving));
+    radar_format_distance((uint32_t)cfg.max_still_gate * settings.gate_cm, still, sizeof(still));
+    radar_format_mac(settings.bt_mac, mac, sizeof(mac));
+    ESP_LOGI(TAG, "%s: no-one duration %s, range moving %s (gate %u), still %s (gate %u), %u cm per gate%s, "
+                  "Bluetooth %s%s", what, duration, moving, cfg.max_moving_gate, still, cfg.max_still_gate,
+             settings.gate_cm, settings.resolution_settable ? "" : " (fixed)",
+             !settings.bluetooth_known ? "not available" : settings.bluetooth_on ? "on, MAC " : "off",
+             settings.bluetooth_known && settings.bluetooth_on ? mac : "");
+}
+
+static void show_settings(const radar_settings_t &settings)
+{
+    if (s_view.show_settings) {
+        s_view.show_settings(&settings);
+    }
+}
+
+static void show_learn_mode(uint8_t mode)
+{
+    if (s_view.show_learn_mode) {
+        s_view.show_learn_mode(mode);
+    }
+}
+
+static bool is_change(const radar_settings_request_t &want)
+{
+    return want.gate != RADAR_KEEP || want.gate_cm != RADAR_KEEP || want.bluetooth != RADAR_KEEP;
+}
+
+// Reads the radar settings, applies the requested ones and shows the result in Home Assistant. False when the
+// radar did not answer as expected, so the settings must be read again.
+static bool settings_session(const radar_settings_request_t &want)
+{
+    const bool change = is_change(want);
+    radar_settings_t now = {};
+    const esp_err_t err = radar_settings_session(&want, &now);
+    s_session_err = err;
+    if (err != ESP_OK) {
+        if (change && s_synced) {
+            ESP_LOGE(TAG, "Changing the radar settings failed, err:%d", err);
+            show_settings(s_settings); // back to the settings last read from the radar
+        }
+        return err == ESP_ERR_NOT_SUPPORTED && s_synced; // nothing wrong with the radar
+    }
+    if (!s_synced || change) {
+        log_settings(s_synced ? "New LD2410 settings" : "LD2410 settings", now);
+    }
+    s_settings = now;
+    s_synced = true;
+    show_settings(now);
+    return true;
+}
+
+// After a successful session: brings the radar's Bluetooth to the state chosen in Home Assistant (off by
+// default). False when the radar did not answer as expected.
+static bool fix_bluetooth()
+{
+    if (!s_settings.bluetooth_known || s_bt_change_failed || s_settings.bluetooth_on == s_bt_wanted) {
+        return true;
+    }
+    ESP_LOGI(TAG, "Turning the LD2410 Bluetooth %s (%s)", s_bt_wanted ? "on" : "off",
+             s_bt_wanted ? "as chosen in Home Assistant" : "default, or as chosen in Home Assistant");
+    radar_settings_request_t fix = {};
+    fix.bluetooth = s_bt_wanted ? RADAR_BLUETOOTH_ON : RADAR_BLUETOOTH_OFF;
+    const bool answered = settings_session(fix);
+    if (!answered || s_settings.bluetooth_on != s_bt_wanted) {
+        s_bt_change_failed = true;
+    }
+    return answered;
+}
+
+static bool learning_cancelled()
+{
+    return s_learn_state.load() == kLearnCancelling;
+}
+
+static void show_learning_phase(quiet_learn_phase_t phase)
+{
+    status_led_set_learning(phase == QUIET_LEARN_RECORDING ? STATUS_LED_LEARNING_RECORDING
+                                                           : STATUS_LED_LEARNING_WAITING);
+}
+
+static void run_requested_learning()
+{
+    LearnState state = kLearnRequested;
+    if (!s_learn_state.compare_exchange_strong(state, kLearnRunning)) {
+        return;
+    }
+    // Shown already when chosen in Home Assistant; covers the button and a request made while the previous
+    // learning ended.
+    show_learn_mode(RADAR_LEARN_ON);
+    // gate_cm is 0 (unknown) before the radar settings were read
+    const quiet_learn_result_t result = quiet_learn_run(learning_cancelled, show_learning_phase, s_settings.gate_cm);
+    // On or blinking for 10 s; back to normal at once when cancelled
+    status_led_set_learning(result == QUIET_LEARN_SAVED    ? STATUS_LED_LEARNING_DONE
+                            : result == QUIET_LEARN_FAILED ? STATUS_LED_LEARNING_FAILED
+                                                           : STATUS_LED_LEARNING_NONE);
+    s_learn_state = kLearnIdle;
+    // Cancelled by Factory thresholds: the select keeps showing it while they are written.
+    if (!s_want_factory) {
+        show_learn_mode(RADAR_LEARN_OFF);
+    }
+}
+
+// Factory thresholds chosen in Home Assistant or with four clicks: written, the LED blinks or shows a failure for a
+// while, then the select shows Off (or Learning when chosen meanwhile).
+static void run_requested_factory_thresholds()
+{
+    if (!s_want_factory.exchange(false)) {
+        return;
+    }
+    // Shown already when chosen in Home Assistant; covers the button.
+    show_learn_mode(RADAR_LEARN_FACTORY);
+    const bool restored = quiet_learn_restore_factory();
+    status_led_set_learning(restored ? STATUS_LED_LEARNING_FACTORY : STATUS_LED_LEARNING_FAILED);
+    if (s_learn_state.load() == kLearnIdle && !s_want_factory) {
+        show_learn_mode(RADAR_LEARN_OFF);
+    }
+}
+
+static void radar_task(void *arg)
+{
+    bool stale = true; // the radar settings must be read (again)
+    uint32_t retry_ms = kSyncRetryFirstMs;
+    while (true) {
+        // Settings first: a session takes a few seconds at most, a learning minutes.
+        const int32_t bluetooth = s_want_bluetooth.exchange(RADAR_KEEP);
+        if (bluetooth != RADAR_KEEP) {
+            // Kept even if this session fails: applied again at the next boot.
+            set_bt_choice(bluetooth == RADAR_BLUETOOTH_ON);
+            s_bt_change_failed = false;
+        }
+        radar_settings_request_t want = {};
+        want.gate = s_want_gate.exchange(RADAR_KEEP);
+        want.gate_cm = s_want_gate_cm.exchange(RADAR_KEEP);
+        want.bluetooth = bluetooth;
+        if (stale || is_change(want)) {
+            stale = !settings_session(want);
+            if (bluetooth != RADAR_KEEP && (stale || s_settings.bluetooth_on != (bluetooth == RADAR_BLUETOOTH_ON))) {
+                s_bt_change_failed = true; // not retried before the next boot or the next choice
+            }
+        }
+        if (!stale) {
+            stale = !fix_bluetooth();
+        }
+        run_requested_factory_thresholds();
+        run_requested_learning();
+
+        TickType_t wait = portMAX_DELAY;
+        if (stale) {
+            if (s_session_err == ESP_ERR_TIMEOUT) {
+                ESP_LOGW(TAG, "Could not read the LD2410 settings (check the wire from GPIO%d to the radar RX pin), "
+                              "next try in %" PRIu32 " s", CONFIG_LD2410_UART_TX_PIN, retry_ms / 1000);
+            } else {
+                ESP_LOGW(TAG, "The LD2410 did not take the settings as expected (err:%d), read again in %" PRIu32 " s",
+                         s_session_err, retry_ms / 1000);
+            }
+            wait = pdMS_TO_TICKS(retry_ms);
+            retry_ms = std::min(retry_ms * 2, kSyncRetryMaxMs);
+        } else {
+            retry_ms = kSyncRetryFirstMs;
+        }
+        ulTaskNotifyTake(pdTRUE, wait);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+
+esp_err_t radar_worker_start(const radar_worker_view_t *view)
+{
+    s_view = *view;
+    load_bt_choice();
+    TaskHandle_t task = nullptr;
+    if (xTaskCreate(radar_task, "radar_cfg", kTaskStack, nullptr, kTaskPriority, &task) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+    s_task = task;
+    return ESP_OK;
+}
+
+esp_err_t radar_worker_select(radar_select_t select, uint8_t mode)
+{
+    TaskHandle_t task = s_task;
+    if (select == RADAR_SELECT_LEARN) {
+        if (mode != RADAR_LEARN_OFF && mode != RADAR_LEARN_ON && mode != RADAR_LEARN_FACTORY) {
+            return ESP_ERR_INVALID_ARG;
+        }
+        if (mode != RADAR_LEARN_OFF && task == nullptr) {
+            ESP_LOGE(TAG, "Cannot %s: the radar task is not running",
+                     mode == RADAR_LEARN_FACTORY ? "restore the factory thresholds" : "start the empty room learning");
+            return ESP_ERR_INVALID_STATE;
+        }
+        // The last choice wins (see s_want_factory)
+        s_want_factory = mode == RADAR_LEARN_FACTORY;
+        request_learning(mode == RADAR_LEARN_ON);
+    } else {
+        if (mode == RADAR_MODE_CUSTOM) {
+            return ESP_OK; // the radar's own value: nothing to change
+        }
+        if (task == nullptr || !s_synced) {
+            ESP_LOGW(TAG, "The LD2410 settings have not been read yet, change ignored");
+            return ESP_ERR_INVALID_STATE;
+        }
+        switch (select) {
+        case RADAR_SELECT_RANGE:
+            if (mode < LD2410_MIN_MAX_GATE || mode > LD2410_MAX_MAX_GATE) {
+                return ESP_ERR_INVALID_ARG;
+            }
+            s_want_gate = mode;
+            break;
+        case RADAR_SELECT_RESOLUTION:
+            if (mode != RADAR_RESOLUTION_COARSE && mode != RADAR_RESOLUTION_FINE) {
+                return ESP_ERR_INVALID_ARG;
+            }
+            s_want_gate_cm = mode == RADAR_RESOLUTION_FINE ? LD2410_FINE_GATE_CM : LD2410_DEFAULT_GATE_CM;
+            break;
+        default: // RADAR_SELECT_BLUETOOTH
+            if (mode != RADAR_BLUETOOTH_OFF && mode != RADAR_BLUETOOTH_ON) {
+                return ESP_ERR_INVALID_ARG;
+            }
+            s_want_bluetooth = mode;
+            break;
+        }
+    }
+    if (task != nullptr) {
+        xTaskNotifyGive(task);
+    }
+    return ESP_OK;
+}
+
+bool radar_worker_request_learning(void)
+{
+    TaskHandle_t task = s_task;
+    if (task == nullptr) {
+        ESP_LOGW(TAG, "Cannot start the empty room learning: the radar task is not running");
+        status_led_set_learning(STATUS_LED_LEARNING_FAILED);
+        return false;
+    }
+    LearnState state = kLearnIdle;
+    if (!s_learn_state.compare_exchange_strong(state, kLearnRequested)) {
+        ESP_LOGI(TAG, "Empty room learning already requested or running");
+        return false;
+    }
+    s_want_factory = false; // the last choice wins
+    xTaskNotifyGive(task);
+    return true;
+}
+
+bool radar_worker_request_factory_thresholds(void)
+{
+    TaskHandle_t task = s_task;
+    if (task == nullptr) {
+        ESP_LOGW(TAG, "Cannot restore the factory thresholds: the radar task is not running");
+        status_led_set_learning(STATUS_LED_LEARNING_FAILED);
+        return false;
+    }
+    // The last choice wins, as in Home Assistant: a learning requested or running is cancelled first.
+    s_want_factory = true;
+    request_learning(false);
+    xTaskNotifyGive(task);
+    return true;
+}
