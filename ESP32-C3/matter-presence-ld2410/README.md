@@ -320,7 +320,7 @@ Console Matter (gõ lệnh trong monitor) tắt để có thêm khoảng 10 KB R
 | Firmware (phân vùng app 1 920 KB) | 1 513 104 B (1 478 KB), trống 23 % | 1 512 848 B (1 477 KB), trống 23 % |
 | RAM tĩnh (DRAM 313,8 KB) | 150 565 B (147,0 KB, 46,86 %) | 150 495 B (147,0 KB, 46,84 %) |
 | Còn cho heap | 170 731 B (166,7 KB) | 170 801 B (166,8 KB) |
-| Biến thể `unique_setup` | | 1 515 056 B |
+| Biến thể `unique_setup` | | 1 515 008 B |
 
 Task và stack (byte; số "còn trống" đo trên bo với bản 1.0.128–1.0.131, mã các task này không đổi):
 
