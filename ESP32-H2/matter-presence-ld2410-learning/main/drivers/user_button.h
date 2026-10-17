@@ -14,14 +14,16 @@
 typedef void (*user_button_cb_t)(void);
 
 typedef struct {
-    user_button_cb_t on_double_click; // two short presses in a row
-    user_button_cb_t on_triple_click; // three short presses in a row
-    user_button_cb_t on_long_press;   // fires once when held for long_press_ms, while still held
+    user_button_cb_t on_double_click;    // two short presses in a row
+    user_button_cb_t on_triple_click;    // three short presses in a row
+    user_button_cb_t on_quadruple_click; // four short presses in a row
+    user_button_cb_t on_long_press;      // fires once when held for long_press_ms, while still held
     uint32_t long_press_ms;
 } user_button_config_t;
 
 // Active-low push button (e.g. BOOT), polled and debounced from an esp_timer.
 // Clicks are counted until the button stays released for a moment, so a
-// double click fires only once it is clear that no third click follows.
-// The callbacks run in the esp_timer task. gpio < 0 disables the button.
+// double click fires only once it is clear that no third click follows; five
+// clicks or more do nothing. The callbacks run in the esp_timer task. gpio < 0
+// disables the button.
 esp_err_t user_button_init(int gpio, const user_button_config_t *config);

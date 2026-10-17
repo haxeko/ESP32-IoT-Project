@@ -30,7 +30,7 @@ static std::atomic<bool> s_identify{false};
 static const char *TAG = "status_led";
 
 static constexpr uint64_t kTickUs = 100 * 1000;
-static constexpr uint32_t kLearningResultTicks = 100; // green or red for 10 s
+static constexpr uint32_t kLearningResultTicks = 100; // green, red or purple for 10 s
 
 typedef struct {
     uint8_t r, g, b;
@@ -42,6 +42,7 @@ static constexpr color_t kWhite = {255, 255, 255};
 static constexpr color_t kCyan = {0, 255, 255};
 static constexpr color_t kGreen = {0, 255, 0};
 static constexpr color_t kRed = {255, 0, 0};
+static constexpr color_t kPurple = {160, 0, 255};
 
 // Only touched by the status_led timer callback
 static uint32_t s_ticks;
@@ -129,6 +130,11 @@ static color_t current_color()
     case STATUS_LED_LEARNING_FAILED:
         if (s_learning_ticks < kLearningResultTicks) {
             return kRed;
+        }
+        break;
+    case STATUS_LED_LEARNING_FACTORY:
+        if (s_learning_ticks < kLearningResultTicks) {
+            return ((s_learning_ticks / 2) % 2) ? kOff : kPurple; // 2.5 Hz, lit first
         }
         break;
     case STATUS_LED_LEARNING_NONE:

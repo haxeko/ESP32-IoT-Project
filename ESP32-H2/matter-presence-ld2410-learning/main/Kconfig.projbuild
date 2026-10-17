@@ -148,23 +148,18 @@ menu "Presence Sensor Configuration"
             Hold 5 seconds: factory reset (erases the Thread network or the
             Wi-Fi credentials, and the Matter pairing).
 
-    config PRESENCE_WIFI_MAX_TX_POWER
-        int "Highest Wi-Fi transmit power (0.25 dBm, 0 = chip default)"
+    config PRESENCE_WIFI_STAY_AWAKE
+        bool "Keep Wi-Fi awake once BLE is released"
         depends on ENABLE_WIFI_STATION
-        range 0 84
-        default 0
+        default y
         help
-            Limits the Wi-Fi transmit power, in steps of 0.25 dBm: 34 = 8.5 dBm,
-            80 = 20 dBm. Some ESP32-C3 SuperMini boards are reported to find the
-            access point but fail its authentication at full power (log
-            "wifi:state: auth -> init"); 8.5 dBm is the value most often
-            reported to fix it. It did not on the board this was tested with,
-            where the cause was beamforming on the access point. A lower power
-            also means a shorter range, so keep the board within reach of the
-            access point. The chip rounds
-            the value down to one of its steps (8, 20, 28, 34, 44, 52, 56, 60,
-            66, 72, 80); values from 1 to 7 count as 8. 0 keeps the chip default
-            (about 20 dBm).
+            Turns the Wi-Fi modem sleep (power save) off once BLE is released
+            after commissioning, and at each boot of a commissioned device. In
+            modem sleep the access point keeps the frames for the device until
+            it wakes up for the next DTIM beacon, so the controllers'
+            acknowledgements arrive late and Matter messages are sent again or
+            time out. The device draws more current (it runs from USB anyway).
+            While BLE commissions, the ESP-IDF default (modem sleep) is kept.
 
 endmenu
 

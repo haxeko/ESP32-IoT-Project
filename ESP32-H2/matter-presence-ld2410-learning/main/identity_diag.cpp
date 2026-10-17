@@ -157,8 +157,6 @@ struct WifiSnap
     int8_t rssi;
     bool ps_ok;
     wifi_ps_type_t ps;
-    bool tx_ok;
-    int8_t tx_power; // highest transmit power, 0.25 dBm
     bool has_netif;
     bool has_ip4;
     esp_ip4_addr_t ip4;
@@ -554,7 +552,6 @@ static void collect_wifi(WifiSnap &w)
         w.rssi = ap.rssi;
     }
     w.ps_ok = esp_wifi_get_ps(&w.ps) == ESP_OK;
-    w.tx_ok = esp_wifi_get_max_tx_power(&w.tx_power) == ESP_OK;
 
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (!netif) {
@@ -684,19 +681,15 @@ static const char *ps_str(const WifiSnap &w)
 
 static void log_wifi(const WifiSnap &w)
 {
-    char tx_s[12] = "?";
-    if (w.tx_ok) {
-        snprintf(tx_s, sizeof(tx_s), "%d.%02ddBm", w.tx_power / 4, w.tx_power % 4 * 25);
-    }
     if (w.connected) {
         char bssid_s[13];
         to_hex(w.bssid, sizeof(w.bssid), bssid_s, sizeof(bssid_s));
-        ESP_LOGI(TAG, "wifi connected ssid=\"%s\" bssid=%s ch=%u rssi=%d power_save=%s tx_max=%s", w.ssid, bssid_s,
-                 w.channel, w.rssi, ps_str(w), tx_s);
+        ESP_LOGI(TAG, "wifi connected ssid=\"%s\" bssid=%s ch=%u rssi=%d power_save=%s", w.ssid, bssid_s, w.channel,
+                 w.rssi, ps_str(w));
     } else {
         ESP_LOGI(TAG, "wifi not connected (connecting, not commissioned yet, or the access point is out of reach) "
-                      "power_save=%s tx_max=%s",
-                 ps_str(w), tx_s);
+                      "power_save=%s",
+                 ps_str(w));
     }
     if (!w.has_netif) {
         ESP_LOGW(TAG, "wifi no station interface");
@@ -718,11 +711,20 @@ static const char *wifi_reason_str(uint8_t reason)
 {
     switch (reason) {
     case WIFI_REASON_AUTH_EXPIRE:
-        return "authentication timed out, the access point did not answer";
+        return "authentication not answered, or no longer valid for the access point";
     case WIFI_REASON_AUTH_LEAVE:
         return "deauthenticated by the access point";
+    case WIFI_REASON_DISASSOC_DUE_TO_INACTIVITY:
+        return "association not answered, or dropped by the access point for inactivity";
+    case WIFI_REASON_CLASS2_FRAME_FROM_NONAUTH_STA:
+    case WIFI_REASON_CLASS3_FRAME_FROM_NONASSOC_STA:
+        return "the access point no longer knows the device";
     case WIFI_REASON_ASSOC_LEAVE:
         return "left the access point";
+    case WIFI_REASON_ASSOC_TOOMANY:
+        return "the access point has too many devices";
+    case WIFI_REASON_STA_LEAVING:
+        return "station leaving (seen when the device stops an attempt, e.g. at the end of a failed commissioning)";
     case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
     case WIFI_REASON_HANDSHAKE_TIMEOUT:
         return "key handshake timed out, wrong password?";

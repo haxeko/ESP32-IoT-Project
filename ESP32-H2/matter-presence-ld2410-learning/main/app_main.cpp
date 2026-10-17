@@ -20,7 +20,8 @@
 // clusters that Home Assistant shows as select entities and Apple Home
 // ignores: "Learn empty room" on the occupancy endpoint (records the radar's
 // background energy and raises the LD2410 thresholds above it, see
-// quiet_learn.cpp; also started by a triple click on the button), "Range"
+// quiet_learn.cpp; also started by a triple click on the button, four clicks
+// write the factory thresholds back), "Range"
 // (farthest detection gate), "Radar resolution" (gate length) and "Radar
 // Bluetooth" (off by default) on endpoints of their own.
 
@@ -31,7 +32,9 @@
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_matter.h>
+#if CONFIG_ENABLE_CHIP_SHELL
 #include <esp_matter_console.h>
+#endif
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -284,23 +287,25 @@ static void open_commissioning_window_if_necessary()
     open_commissioning_window(kRecommissioningWindowSec);
 }
 
-#if CONFIG_ENABLE_WIFI_STATION
-// Some ESP32-C3 SuperMini boards are reported to find the access point but fail
-// to connect at full Wi-Fi power (the authentication times out). Called once the Wi-Fi layer
-// runs: after esp_matter::start() and at each station start, as the Matter
-// stack starts Wi-Fi itself, maybe before app_event_cb is registered.
-static void limit_wifi_tx_power()
+#if CONFIG_PRESENCE_WIFI_STAY_AWAKE
+// Wi-Fi modem sleep (the ESP-IDF default) lets the station sleep between DTIM
+// beacons and the access point keeps the frames for the device until then, so
+// the acknowledgements of the controllers arrive late and Matter messages are
+// sent again or time out. Turned off once BLE is released after commissioning;
+// while BLE commissions, the default coexistence setup of ESP-IDF is kept.
+// Called on the Matter task when BLE is released and at each connection after
+// that (the Wi-Fi driver may not run yet when BLE is released at boot).
+static void keep_wifi_awake()
 {
-    if (CONFIG_PRESENCE_WIFI_MAX_TX_POWER == 0) {
+    wifi_ps_type_t ps;
+    if (esp_wifi_get_ps(&ps) == ESP_OK && ps == WIFI_PS_NONE) {
         return;
     }
-    const int8_t limit = CONFIG_PRESENCE_WIFI_MAX_TX_POWER < 8 ? 8 : CONFIG_PRESENCE_WIFI_MAX_TX_POWER;
-    const esp_err_t err = esp_wifi_set_max_tx_power(limit);
-    int8_t power = 0;
-    if (err == ESP_OK && esp_wifi_get_max_tx_power(&power) == ESP_OK) {
-        ESP_LOGI(TAG, "Wi-Fi transmit power limited to %d.%02d dBm", power / 4, power % 4 * 25);
-    } else if (err != ESP_ERR_WIFI_NOT_STARTED) { // not started: applied at WIFI_EVENT_STA_START
-        ESP_LOGW(TAG, "Could not limit the Wi-Fi transmit power, err:%d", err);
+    const esp_err_t err = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "BLE released: Wi-Fi power save off");
+    } else {
+        ESP_LOGW(TAG, "Could not turn the Wi-Fi power save off, err:%d", err);
     }
 }
 #endif
@@ -336,12 +341,14 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
         ESP_LOGI(TAG, "Wi-Fi connectivity changed");
         break;
 
+#if CONFIG_PRESENCE_WIFI_STAY_AWAKE
     case chip::DeviceLayer::DeviceEventType::kESPSystemEvent:
-        if (event->Platform.ESPSystemEvent.Base == WIFI_EVENT &&
-            event->Platform.ESPSystemEvent.Id == WIFI_EVENT_STA_START) {
-            limit_wifi_tx_power();
+        if (s_ble_released && event->Platform.ESPSystemEvent.Base == WIFI_EVENT &&
+            event->Platform.ESPSystemEvent.Id == WIFI_EVENT_STA_CONNECTED) {
+            keep_wifi_awake();
         }
         break;
+#endif
 #endif
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
@@ -369,6 +376,9 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     case chip::DeviceLayer::DeviceEventType::kBLEDeinitialized:
         ESP_LOGI(TAG, "BLE deinitialized and memory reclaimed");
         s_ble_released = true;
+#if CONFIG_PRESENCE_WIFI_STAY_AWAKE
+        keep_wifi_awake();
+#endif
         break;
 
     default:
@@ -439,9 +449,6 @@ static esp_err_t start_matter()
     esp_err_t err = esp_matter::start(app_event_cb);
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
-#if CONFIG_ENABLE_WIFI_STATION
-    limit_wifi_tx_power();
-#endif
     // First boot of a unique_setup build: generate the setup code on the Matter task (nothing in the default build)
     setup_code_preload();
     // Device name "Presence-B2C3": NodeLabel when none is stored yet, Bluetooth name
@@ -494,6 +501,14 @@ static void learning_button_cb()
     radar_control_request_learning();
 }
 
+// Four clicks: the LD2410 factory thresholds, like "Factory thresholds" in Home
+// Assistant. Runs in the esp_timer task: the radar task writes them and the LED
+// blinks purple (or shows red).
+static void factory_thresholds_button_cb()
+{
+    radar_control_request_factory_thresholds();
+}
+
 // Long press: factory reset. Runs in the esp_timer task.
 static void factory_reset_cb()
 {
@@ -534,6 +549,7 @@ extern "C" void app_main()
     const user_button_config_t button_config = {
         .on_double_click = pairing_button_cb,
         .on_triple_click = learning_button_cb,
+        .on_quadruple_click = factory_thresholds_button_cb,
         .on_long_press = factory_reset_cb,
         .long_press_ms = kFactoryResetHoldMs,
     };
