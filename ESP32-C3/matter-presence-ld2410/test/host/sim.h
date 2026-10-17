@@ -65,7 +65,6 @@ void sim_at(int64_t at_ms, std::function<void()> fn);
 void sim_log(char level, const char *tag, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 bool sim_log_contains(const char *text);
 int sim_log_count(const char *text);
-void sim_print_log();
 
 // Test names and checks
 void test_begin(const char *name);

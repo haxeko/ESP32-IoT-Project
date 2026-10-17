@@ -94,13 +94,6 @@ int sim_log_count(const char *text)
     return n;
 }
 
-void sim_print_log()
-{
-    for (const std::string &line : g_sim.log) {
-        printf("      %s\n", line.c_str());
-    }
-}
-
 void test_begin(const char *name)
 {
     printf("  %s\n", name);
