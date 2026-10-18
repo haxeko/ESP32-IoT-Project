@@ -331,6 +331,7 @@ html.fluid-layout .track-info{position:static;grid-area:info;align-self:center}
 html.fluid-layout .seek-control{position:static;grid-area:seek}
 html.fluid-layout .transport{position:static;grid-area:transport;justify-content:space-around;align-items:center}
 html.fluid-layout .volume-card{order:2;height:58px;border-radius:var(--r-panel);border-top:1px solid var(--glass-border)}
+html.fluid-layout .volume-card input{min-width:0}
 html.fluid-layout .music-side{order:3;height:auto}
 html.fluid-layout .music-side .playlist{max-height:none}
 html.fluid-layout .music-source button,html.fluid-layout .playlist button,html.fluid-layout .volume-card button{min-height:42px}
@@ -373,4 +374,16 @@ html.fluid-layout #toast{bottom:calc(env(safe-area-inset-bottom) + 84px)}
   .device-type-list{grid-template-columns:repeat(3,minmax(0,1fr))}
   .sensor-icon-picker{grid-template-columns:repeat(4,minmax(0,1fr))}
   #entity-form{grid-template-columns:minmax(0,1fr)}
+  html.fluid-layout .track-info strong{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.25}
+  html.fluid-layout .volume-card{gap:8px;padding:0 10px}
+  html.fluid-layout .volume-card button{flex:0 0 40px;padding:0}
+  html.fluid-layout .volume-card b{width:44px;flex:0 0 44px}
+}
+/* very narrow phones (320 px): values wrap between number and unit instead of being cut */
+@media (max-width:359px){
+  html.fluid-layout #topbar{gap:8px}
+  html.fluid-layout .top-metric{padding:8px}
+  html.fluid-layout .top-metric-icon{display:none}
+  html.fluid-layout .top-metric div{font-size:12px}
+  html.fluid-layout .top-metric strong{font-size:15px;line-height:18px;white-space:normal}
 }
