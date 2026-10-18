@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta id="theme-color" name="theme-color" content="#f7f3eb">
+  <title>KEN Home</title>
+  <link rel="stylesheet" href="style.css?v=20261008-metric-row">
+  <link rel="stylesheet" href="themes.css?v=20261008-metric-row">
+</head>
+<body>
+  <div id="viewport">
+    <main id="stage" aria-label="Bảng điều khiển nhà KEN">
+      <div id="season-decor" aria-hidden="true"></div>
+      <section id="topbar" aria-label="Thông tin tổng quan">
+        <div id="brand-card" class="panel brand-card" aria-label="Trạng thái kết nối Home Assistant">
+          <img class="brand-mark" src="assets/xeko.png" alt="Xeko">
+          <span id="brand-status" class="brand-status">BẢN MẪU</span>
+        </div>
+        <article class="panel clock-card">
+          <span class="top-icon clock-icon blue"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Zm0 4v5l3 2"/></svg></span>
+          <strong id="clock">--:--</strong>
+          <span id="date">--/--/----</span>
+        </article>
+        <article class="panel weather-card">
+          <span id="weather-icon" class="top-icon weather-icon" aria-hidden="true"></span>
+          <strong id="weather-temp">--</strong>
+          <span id="weather-text">--</span>
+        </article>
+        <article class="panel top-metric power-card">
+          <div><span class="top-metric-icon blue"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-8 12h6l-1 8 8-12h-6z"/></svg></span><span>Điện</span></div>
+          <strong id="power-value">--</strong>
+        </article>
+        <article class="panel top-metric energy-card">
+          <div><span class="top-metric-icon green"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m5 10V5m5 14v-7m5 7V3"/></svg></span><span>Tháng này</span></div>
+          <strong id="energy-value">--</strong>
+        </article>
+        <article class="panel top-metric cost-card">
+          <div><span class="top-metric-icon gold"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v12H3zM7 9h.01M17 15h.01M9 12h6m-3-3v6"/></svg></span><span>Tiền điện</span></div>
+          <strong id="cost-value">--</strong>
+        </article>
+      </section>
+
+      <nav id="room-tabs" aria-label="Chọn phòng"></nav>
+      <nav id="side-nav" aria-label="Chọn nhóm chức năng"></nav>
+
+      <section id="metric-row" aria-label="Môi trường trong phòng"></section>
+
+      <section id="content" aria-live="polite"></section>
+      <div id="screen-shade" hidden><span>Chạm để mở màn hình</span></div>
+    </main>
+  </div>
+
+  <dialog id="config-dialog">
+    <form id="config-form">
+      <header class="dialog-head"><div><h2>Kết nối Home Assistant</h2><p>Entity đã được lấy từ ken_ui_2.yaml</p></div><button id="config-close" type="button" aria-label="Đóng">×</button></header>
+      <label>Địa chỉ Home Assistant<input id="ha-url" type="url" placeholder="http://192.168.1.10:8123" required></label>
+      <label>Long-lived access token<input id="ha-token" type="password" autocomplete="off" required></label>
+      <label class="remember"><input id="remember-token" type="checkbox"> Nhớ token trên thiết bị này</label>
+      <p class="help">Không bật “Nhớ token” nếu đây là thiết bị dùng chung. Token được gửi trực tiếp từ trình duyệt tới Home Assistant.</p>
+      <details>
+        <summary>Entity nâng cao</summary>
+        <p class="help">Giữ nguyên nếu hệ thống Home Assistant vẫn dùng đúng ID trong YAML.</p>
+        <div id="entity-form"></div>
+      </details>
+      <datalist id="entity-list"></datalist>
+      <footer class="dialog-actions">
+        <button id="demo-button" type="button">Chạy bản mẫu</button>
+        <button id="forget-button" type="button">Xóa token</button>
+        <button class="primary" type="submit">Kết nối / Lưu</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="detail-dialog">
+    <div id="detail-content"></div>
+    <button id="detail-close" class="dialog-close" type="button">Đóng</button>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="ha.js"></script>
+  <script src="direct-speaker.js"></script>
+  <script src="app.js?v=20261008-metric-row"></script>
+</body>
+</html>
