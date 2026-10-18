@@ -184,7 +184,8 @@ bool report_energy(uint64_t energy_mwh)
 {
     EEM::Structs::EnergyMeasurementStruct::Type imported;
     imported.energy = static_cast<int64_t>(energy_mwh);
-    imported.endSystime = MakeOptional(static_cast<uint64_t>(esp_timer_get_time()));
+    /* systime-ms: milliseconds since boot */
+    imported.endSystime = MakeOptional(static_cast<uint64_t>(esp_timer_get_time() / 1000));
     return EEM::NotifyCumulativeEnergyMeasured(s_endpoint_id, DataModel::MakeNullable(imported), DataModel::NullNullable);
 }
 

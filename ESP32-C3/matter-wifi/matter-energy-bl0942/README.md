@@ -12,7 +12,7 @@ Cấu trúc Matter giống hệt bản BL0937 ([haxeko/ESP32-C3-Matter](https://
 | BL0942 **TX** → ESP32 RX (UART1) | **GPIO0** |
 | BL0942 **RX** ← ESP32 TX (UART1) | **GPIO1** |
 
-Trạng thái relay được lưu NVS và khôi phục sau khi mất điện.
+Trạng thái relay được lưu NVS và khôi phục sau khi mất điện hoặc khởi động lại (`StartUpOnOff` để trống). Nếu đặt "Power-on behavior" trong Home Assistant thì relay theo cài đặt đó.
 
 ## Đo công suất (BL0942)
 
@@ -86,10 +86,24 @@ Hoặc cài local:
 . ~/esp/esp-matter/export.sh
 idf.py set-target esp32c3
 idf.py build
-idf.py -p /dev/ttyACM0 erase-flash flash monitor
+idf.py -p /dev/ttyACM0 erase-flash flash monitor   # ổ cắm mới
 ```
 
-GitHub Actions (`.github/workflows/matter-energy-bl0942.yml` ở gốc repo) tự build và upload file `.bin`, trong đó có `matter_plug_bl0942_merged.bin` để nạp một lần ở địa chỉ `0x0`. Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
+Cập nhật ổ cắm đang dùng thì bỏ `erase-flash`: `idf.py -p /dev/ttyACM0 flash monitor` giữ nguyên ghép nối và Wi-Fi.
+
+GitHub Actions (`.github/workflows/matter-energy-bl0942.yml` ở gốc repo) tự build và upload file `.bin`. Vào tab **Actions** → lần chạy mới nhất → **Artifacts**:
+
+| File | Dùng khi | Nạp tại | Ghép nối, Wi-Fi |
+|---|---|---|---|
+| `matter_plug_bl0942_update.bin` | Cập nhật ổ cắm đang dùng qua USB | `0x1D000` | Giữ nguyên |
+| `matter_plug_bl0942_merged.bin` | Ổ cắm mới, hoặc muốn xóa sạch | `0x0` | **Bị xóa**: file phủ cả vùng NVS |
+
+```bash
+# Cập nhật, giữ ghép nối
+esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x1d000 matter_plug_bl0942_update.bin
+```
+
+Đừng nạp file merged lên ổ cắm đang dùng: ổ cắm khởi động như mới (mất ghép nối, Unique ID mới) trong khi Apple Home và Home Assistant vẫn giữ phụ kiện cũ ở trạng thái "Không phản hồi", thêm lại sẽ thành hai phụ kiện.
 
 ## Phiên bản firmware
 

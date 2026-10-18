@@ -147,3 +147,10 @@ CONFIG_SUPPORT_GROUPCAST_CLUSTER=n
 CONFIG_SUPPORT_ELECTRICAL_ENERGY_MEASUREMENT_CLUSTER=y
 CONFIG_SUPPORT_ELECTRICAL_POWER_MEASUREMENT_CLUSTER=y
 CONFIG_SUPPORT_POWER_TOPOLOGY_CLUSTER=y
+
+# Basic Information from main/device_info.cpp: serial number = Wi-Fi MAC (unique per unit), names from menuconfig
+CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
+
+# Matter thread watchdog (main/app_health.cpp): restart if the Matter thread stops running for 30 s
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30

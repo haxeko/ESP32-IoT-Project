@@ -4,6 +4,7 @@
 #include <app_priv.h>
 #include <common_macros.h>
 #include <esp_matter.h>
+#include <platform/CHIPDeviceLayer.h>
 
 #include <button_gpio.h>
 #include <device.h>
@@ -17,27 +18,36 @@ extern uint16_t relay_endpoint_id;
 
 static constexpr gpio_num_t k_relay_gpio = (gpio_num_t)CONFIG_RELAY_GPIO;
 
+/* Last state driven on the relay, which mirrors the OnOff attribute */
+static bool s_relay_on = false;
+
 static esp_err_t app_driver_relay_set_power(bool on)
 {
     int level = on ? CONFIG_RELAY_ACTIVE_LEVEL : !CONFIG_RELAY_ACTIVE_LEVEL;
     ESP_LOGI(TAG, "Relay (GPIO%d) -> %s", (int)k_relay_gpio, on ? "ON" : "OFF");
+    s_relay_on = on;
     return gpio_set_level(k_relay_gpio, level);
 }
 
+/* Matter thread, stack lock held */
+static void toggle_work(intptr_t)
+{
+    /* The relay mirrors the OnOff attribute, so no data-model read is needed */
+    esp_matter_attr_val_t val = esp_matter_bool(!s_relay_on);
+    /* update() runs the attribute callback (drives the relay) and reports the new state to controllers */
+    attribute::update(relay_endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val);
+}
+
+/* esp_timer task (button driver) */
 static void app_driver_button_toggle_cb(void *arg, void *data)
 {
     ESP_LOGI(TAG, "Toggle button pressed");
-    uint16_t endpoint_id = relay_endpoint_id;
-    uint32_t cluster_id = OnOff::Id;
-    uint32_t attribute_id = OnOff::Attributes::OnOff::Id;
-
-    attribute_t *attribute = attribute::get(endpoint_id, cluster_id, attribute_id);
-
-    esp_matter_attr_val_t val = esp_matter_invalid(NULL);
-    attribute::get_val(attribute, &val);
-    val.val.b = !val.val.b;
-    /* update() runs the attribute callback (drives the relay) and reports the new state to controllers */
-    attribute::update(endpoint_id, cluster_id, attribute_id, &val);
+    /* The esp_timer task also runs the timers of Wi-Fi and BLE: never wait there for the Matter stack lock (held for
+     * a long time during commissioning crypto). ScheduleWork() only queues the toggle for the Matter thread. */
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork(toggle_work);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "Toggle dropped: %" CHIP_ERROR_FORMAT, err.Format());
+    }
 }
 
 esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle, uint16_t endpoint_id, uint32_t cluster_id,
@@ -53,6 +63,8 @@ esp_err_t app_driver_attribute_update(app_driver_handle_t driver_handle, uint16_
 
 esp_err_t app_driver_relay_set_defaults(uint16_t endpoint_id)
 {
+    /* get_val() reads through the Matter data model, which runs on the Matter thread */
+    lock::ScopedChipStackLock lock(portMAX_DELAY);
     esp_matter_attr_val_t val = esp_matter_invalid(NULL);
     attribute_t *attribute = attribute::get(endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id);
     esp_err_t err = attribute::get_val(attribute, &val);

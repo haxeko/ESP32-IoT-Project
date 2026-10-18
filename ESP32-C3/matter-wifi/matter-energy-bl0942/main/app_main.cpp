@@ -8,8 +8,10 @@
 
 #include <common_macros.h>
 
+#include <app_health.h>
 #include <app_priv.h>
 #include <app_reset.h>
+#include <device_info.h>
 #if CONFIG_BL0942_ENABLE
 #include <power_meter.h>
 #endif
@@ -29,6 +31,9 @@ constexpr auto k_timeout_seconds = 300;
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
+    /* Wi-Fi power save and transmit power, Wi-Fi disconnect logs, identity and fabric logs */
+    app_health_handle_event(event);
+
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "Interface IP Address changed");
@@ -100,20 +105,33 @@ extern "C" void app_main()
 {
     esp_err_t err = ESP_OK;
 
-    nvs_flash_init();
+    /* NVS holds the Matter fabrics and Wi-Fi credentials: never erase it here, a failure is only logged */
+    err = nvs_flash_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(err));
+    }
+    app_health_log_reset_reason();
 
     /* Relay on GPIO5 (CONFIG_RELAY_GPIO), BOOT button for toggle + factory reset */
     app_driver_handle_t relay_handle = app_driver_relay_init();
     app_driver_handle_t button_handle = app_driver_button_init();
     app_reset_button_register(button_handle);
 
+    /* Manufacturer / Model / serial number (Wi-Fi MAC, unique per unit) shown by controllers */
+    device_info_init();
+
     node::config_t node_config;
+    device_info_set_name(&node_config);
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
     ABORT_APP_ON_FAILURE(node != nullptr, ESP_LOGE(TAG, "Failed to create Matter node"));
+    device_info_add_attributes(node);
 
     /* On/Off Plug-in Unit device type: shows up as a switch/outlet in Apple Home, Google Home, Alexa, HA */
     on_off_plug_in_unit::config_t plug_config;
     plug_config.on_off.on_off = DEFAULT_POWER;
+    /* Null StartUpOnOff: after a power cut or a reboot, keep the last on/off state from NVS. The esp-matter default
+     * (0, Off) made the Matter stack turn the relay off at every boot except after an OTA update. */
+    plug_config.on_off_lighting.start_up_on_off = nullptr;
     endpoint_t *endpoint = on_off_plug_in_unit::create(node, &plug_config, ENDPOINT_FLAG_NONE, relay_handle);
     ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create on/off plug-in unit endpoint"));
 
@@ -128,6 +146,9 @@ extern "C" void app_main()
 
     err = esp_matter::start(app_event_cb);
     ABORT_APP_ON_FAILURE(err == ESP_OK, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
+
+    /* Matter thread watchdog, Wi-Fi settings and a status line every 60 s */
+    app_health_start();
 
     /* Restore the last relay state persisted in NVS */
     app_driver_relay_set_defaults(relay_endpoint_id);

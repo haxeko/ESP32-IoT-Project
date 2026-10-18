@@ -39,3 +39,4 @@ jobs:
             ESP32-C3/matter-wifi/matter-energy-bl0942/build/ota_data_initial.bin
             ESP32-C3/matter-wifi/matter-energy-bl0942/build/flash_args
             ESP32-C3/matter-wifi/matter-energy-bl0942/build/matter_plug_bl0942_merged.bin
+            ESP32-C3/matter-wifi/matter-energy-bl0942/build/matter_plug_bl0942_update.bin

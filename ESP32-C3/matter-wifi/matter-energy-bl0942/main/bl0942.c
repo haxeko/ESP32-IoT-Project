@@ -69,6 +69,9 @@ static int s_fail_count;
 static int s_baud = CONFIG_BL0942_UART_BAUD;
 static bool s_link_confirmed;
 static int s_last_rx_len;
+/* The self-test busy-waits about 100 ms, which stalls the lower-priority Matter thread: after the one at init, run it
+ * once per baud rate while retrying, not on every retry */
+static int s_self_tests_left = 2;
 static bl0942_reading_t s_last;
 
 typedef struct {
@@ -383,7 +386,10 @@ void bl0942_update(bl0942_reading_t *out)
                 uart_set_baudrate(s_uart, s_baud);
             }
             resync_and_setup();
-            self_test();
+            if (s_self_tests_left > 0) {
+                --s_self_tests_left;
+                self_test();
+            }
         }
         *out = s_last;
         if (s_fail_count >= 3) {
