@@ -1,0 +1,6 @@
+# Python caches of the tools and tests
+__pycache__/
+*.pyc
+# Captures and their decoded CSV: large, personal (people in rooms); commit a sample on purpose with git add -f
+*.rlog
+*_csv/
