@@ -187,7 +187,10 @@ function installGestureGuards(){
     if(!suppressHoldClick||e.detail===0)return;
     suppressHoldClick=false;e.preventDefault();e.stopImmediatePropagation();
   },{capture:true});
-  addEventListener('blur',()=>{cancelLayoutLongPress();cancelEntityLongPress();openingHoldPointer=null});
+  addEventListener('blur',()=>{cancelLayoutLongPress();cancelEntityLongPress();openingHoldPointer=null;pointerHeld=false});
+  addEventListener('pointerdown',e=>{if(e.isPrimary!==false)pointerHeld=true},{capture:true,passive:true});
+  // click runs before this timeout, so the tap always lands on the element that was pressed
+  for(const event of ['pointerup','pointercancel'])addEventListener(event,e=>{if(e.isPrimary===false)return;pointerHeld=false;if(liveRenderSkipped)setTimeout(()=>{if(liveRenderSkipped)liveRender()},0)},{capture:true,passive:true});
 }
 let toastTimer;
 let idleTimer;
@@ -196,27 +199,35 @@ let history = loadHistory();
 let musicSource = localStorage.getItem('ken-music-source') || 'ma';
 if(!config.usePhicomm)musicSource='ma';
 let directSpeakerStatus = 'offline';
-let directSpeakerState = {playing:false,title:'AI BOX',artist:'Phicomm R1',volume:null};
+let directSpeakerState = {playing:false,title:'AI BOX',artist:'Phicomm R1',volume:null,position:0,duration:0,results:[],playlists:[],libraryMode:'search'};
 let haBrowse={category:'artists',items:[],root:null,loading:false,loaded:false};
 let musicRenderTimer;
 function editingField(){return document.activeElement?.matches?.('input,select,textarea')}
-function suppressLiveRender(){return !!layoutHoldCancel||!!entityHoldCard||rangeDragging||layoutEditMode||editingField()||(currentNav==='settings'&&settingsEntityMode)}
+let pointerHeld=false,liveRenderSkipped=false;
+function suppressLiveRender(){return pointerHeld||!!layoutHoldCancel||!!entityHoldCard||rangeDragging||layoutEditMode||editingField()||(currentNav==='settings'&&settingsEntityMode)}
+function liveRender(){if(suppressLiveRender())liveRenderSkipped=true;else{liveRenderSkipped=false;render()}}
 function queueMusicRender(){if(currentNav!=='music'||musicSource!=='aibox'||editingField())return;clearTimeout(musicRenderTimer);musicRenderTimer=setTimeout(()=>renderMusic(),120)}
 const directSpeaker = new DirectSpeaker(next=>{directSpeakerState={...next};queueMusicRender()},status=>{directSpeakerStatus=status;queueMusicRender()});
 
-const client = new HAClient(next => {
-  states = next;
+let statesFlushTimer=null,entityListDirty=true;
+function flushStates(){
+  statesFlushTimer=null;
   rememberLightStates();
   syncDashboardLightCards();
   syncLightPopup();
   updateHistory();
-  if(!(currentNav==='settings'&&settingsEntityMode)&&!editingField())fillEntityList();
-  if(!suppressLiveRender())render();
+  entityListDirty=true;
+  if(!$('entity-list').options.length&&!(currentNav==='settings'&&settingsEntityMode)&&!editingField())fillEntityList();
+  liveRender();
+}
+const client = new HAClient(next => {
+  states = next;
+  if(!statesFlushTimer)statesFlushTimer=setTimeout(flushStates,120);
 }, status => {
   connected = status === 'ready';
   if(status === 'auth_invalid') toast('Token Home Assistant không hợp lệ');
   renderStatus(status);
-  if(!suppressLiveRender())render();
+  liveRender();
 });
 
 function loadConfig(){
@@ -237,13 +248,13 @@ function loadDisplaySettings(){try{return {...{brightness:100,timeout:-1},...JSO
 function loadHistory(){try{return {...{days:{},months:{},bills:{},lastTotal:null,lastDate:null,lastMonth:null},...JSON.parse(localStorage.getItem('ken-history-v3') || '{}')}}catch{return {days:{},months:{},bills:{},lastTotal:null,lastDate:null,lastMonth:null}}}
 function loadLayoutEdits(){try{return {...{positions:{},names:{},hidden:{},added:{},customDevices:{},icons:{},removedDevices:[],rooms:null,metricRows:{}},...JSON.parse(localStorage.getItem('ken-layout-v1')||'{}')}}catch{return {positions:{},names:{},hidden:{},added:{},customDevices:{},icons:{},removedDevices:[],rooms:null,metricRows:{}}}}
 function layoutKey(){return `${currentNav}:${rooms[currentRoom]?.id||currentRoom}`}
-let sharedVersion=0,sharedSaveTimer=null,sharedStarted=false,sharedSaving=false;
+let sharedVersion=0,sharedSaveTimer=null,sharedStarted=false,sharedSaving=false,sharedSavePending=false;
 function sharedPayload(){return {config:{url:config.url||'',speakerAddress:config.speakerAddress||'',usePhicomm:config.usePhicomm!==false,theme:config.theme||'default',rgbPresets:config.rgbPresets||{},lightColorTypes:config.lightColorTypes||{},lastLightColors:config.lastLightColors||{},lastLightBrightness:config.lastLightBrightness||{},entities:{...config.entities}},layoutEdits:{...layoutEdits,rooms}}}
 function restoreSharedData(data){if(!data)return;config={...config,...(data.config||{}),theme:data.config?.theme||'default',rgbPresets:data.config?.rgbPresets||{},lightColorTypes:data.config?.lightColorTypes||{},lastLightColors:data.config?.lastLightColors||{},lastLightBrightness:{...(data.config?.lastLightBrightness||{}),...(config.lastLightBrightness||{})},entities:{...DEFAULT_ENTITIES,...(data.config?.entities||{})}};layoutEdits={...loadLayoutEdits(),...(data.layoutEdits||{}),metricRows:data.layoutEdits?.metricRows||{}};rooms=layoutEdits.rooms||ROOMS.map((name,index)=>({id:String(index),name,source:index}));for(const key of Object.keys(DEVICE))if(!BASE_DEVICE_KEYS.has(key))delete DEVICE[key];Object.assign(DEVICE,layoutEdits.customDevices||{});for(const key of Object.keys(ENTITY_LABELS))delete ENTITY_LABELS[key];Object.assign(ENTITY_LABELS,BASE_ENTITY_LABELS);for(const [key,def] of Object.entries(layoutEdits.customDevices||{})){const name=layoutEdits.names[key]||def.name;ENTITY_LABELS[key]=`${name} · Trạng thái`;for(const [prop,label] of [['remainingEntity','Thời gian còn lại'],['finishEntity','Máy giặt xong'],['powerEntity','Công suất hiện tại'],['dailyEntity','Hôm nay'],['monthEntity','Tháng này'],['totalEntity','Tổng tiêu thụ']])if(def[prop])ENTITY_LABELS[def[prop]]=`${name} · ${label}`}for(const [key,icon] of Object.entries(layoutEdits.icons||{}))if(DEVICE[key])DEVICE[key].icon=icon;localStorage.setItem('ken-config-v3',JSON.stringify(config));localStorage.setItem('ken-layout-v1',JSON.stringify(layoutEdits));applyTheme()}
 async function loadSharedDashboard(){try{const response=await fetch('/api/config',{cache:'no-store'});if(!response.ok)throw Error(`HTTP ${response.status}`);const remote=await response.json();sharedVersion=Number(remote.version)||0;if(remote.data)restoreSharedData(remote.data);else await saveSharedDashboard(true);sharedStarted=true;return true}catch(error){console.warn('Shared dashboard unavailable:',error);sharedStarted=false;return false}}
-async function saveSharedDashboard(immediate=false){clearTimeout(sharedSaveTimer);if(!immediate){sharedSaveTimer=setTimeout(()=>saveSharedDashboard(true),250);return}if(sharedSaving)return;sharedSaving=true;try{const response=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:sharedVersion,data:sharedPayload()})});if(response.status===409){const remote=await response.json();sharedVersion=Number(remote.version)||sharedVersion;if(remote.data)restoreSharedData(remote.data);toast('Cấu hình đã thay đổi trên máy khác, Dashboard vừa đồng bộ lại');if(sharedStarted){buildNavigation();buildEntityForm();render()}return}if(!response.ok)throw Error(`HTTP ${response.status}`);const result=await response.json();sharedVersion=Number(result.version)||sharedVersion;sharedStarted=true}catch(error){console.warn('Cannot save shared dashboard:',error)}finally{sharedSaving=false}}
-function persistConfig(){localStorage.setItem('ken-config-v3',JSON.stringify(config));saveSharedDashboard()}
-function saveLayoutEdits(){layoutEdits.rooms=rooms;localStorage.setItem('ken-layout-v1',JSON.stringify(layoutEdits));saveSharedDashboard()}
+async function saveSharedDashboard(immediate=false){clearTimeout(sharedSaveTimer);if(!immediate){sharedSaveTimer=setTimeout(()=>saveSharedDashboard(true),250);return}if(sharedSaving){sharedSavePending=true;return}sharedSaving=true;sharedSavePending=false;try{const response=await fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:sharedVersion,data:sharedPayload()})});if(response.status===409){sharedSavePending=false;const remote=await response.json();sharedVersion=Number(remote.version)||sharedVersion;if(remote.data)restoreSharedData(remote.data);toast('Cấu hình đã thay đổi trên máy khác, Dashboard vừa đồng bộ lại');if(sharedStarted){buildNavigation();buildEntityForm();render()}return}if(!response.ok)throw Error(`HTTP ${response.status}`);const result=await response.json();sharedVersion=Number(result.version)||sharedVersion;sharedStarted=true}catch(error){console.warn('Cannot save shared dashboard:',error)}finally{sharedSaving=false;if(sharedSavePending){sharedSavePending=false;saveSharedDashboard()}}}
+function persistConfig(){localStorage.setItem('ken-config-v3',JSON.stringify(config));entityListDirty=true;saveSharedDashboard()}
+function saveLayoutEdits(){layoutEdits.rooms=rooms;localStorage.setItem('ken-layout-v1',JSON.stringify(layoutEdits));entityListDirty=true;saveSharedDashboard()}
 async function pollSharedDashboard(){if(metricEditorRoomId!==null||layoutHoldCancel||entityHoldCard||document.hidden||editingField()||layoutEditMode||sharedSaving)return;try{const response=await fetch('/api/config',{cache:'no-store'});if(!response.ok)return;const remote=await response.json(),version=Number(remote.version)||0;if(version>sharedVersion&&remote.data){sharedVersion=version;restoreSharedData(remote.data);buildNavigation();buildEntityForm();render();toast('Đã đồng bộ cấu hình Dashboard')}}catch{}}
 function removedDeviceKeys(){return new Set([...(layoutEdits.removedDevices||[]),...Object.values(layoutEdits.hidden||{}).flat()])}
 function baseRoomLayout(nav=currentNav,index=currentRoom){const source=rooms[index]?.source;return source==null?[]:(LAYOUTS[nav]?.[source]||[])}
@@ -297,7 +308,7 @@ function rememberLightStates(){
   }
   if(changed)localStorage.setItem('ken-config-v3',JSON.stringify(config));
 }
-function lightDisplayColor(key){return !isOn(key)?config.lastLightColors?.[key]||cobCurrentColor(state(key)):cobCurrentColor(state(key))}
+function lightDisplayColor(key){const saved=config.lastLightColors?.[key];return !isOn(key)&&/^#[0-9a-f]{6}$/i.test(saved||'')?saved:cobCurrentColor(state(key))}
 function lightSnapshot(key){
   const s=state(key),mode=s?.attributes?.color_mode;
   const kelvin=Number(s?.attributes?.color_temp_kelvin)||(Number(s?.attributes?.color_temp)?Math.round(1000000/Number(s.attributes.color_temp)):null);
@@ -341,6 +352,18 @@ function bindPopupBrightness(key,slider,label,colorData=()=>({})){
   slider.onpointerup=slider.onpointercancel=slider.onblur=()=>{popup.interacting=false;setTimeout(syncLightPopup,0)};
   return popup;
 }
+function urlOrigin(url){try{return new URL(url).origin}catch{return ''}}
+// The HA address is shared through /api/config, the token is not: never send a token to an address it was not entered for.
+function savedToken(url=config.url){
+  for(const store of [sessionStorage,localStorage]){
+    const token=store.getItem('ken-token');if(!token)continue;
+    let bound=store.getItem('ken-token-origin');
+    if(!bound&&(bound=urlOrigin(url)))store.setItem('ken-token-origin',bound);
+    return bound&&bound===urlOrigin(url)?token:'';
+  }
+  return '';
+}
+function hasStoredToken(){return !!(sessionStorage.getItem('ken-token')||localStorage.getItem('ken-token'))}
 function escapeHtml(value){return String(value??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 function toast(message){$('toast').textContent=message;$('toast').style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').style.display='none',3800)}
 
@@ -518,7 +541,7 @@ function renderDevices(){
   const view=document.createElement('div');view.className='device-view';
   const layout=currentDeviceLayout();
   if(!layout.length){const e=document.createElement('div');e.className='empty-message';e.textContent='Chưa có thiết bị';view.append(e)}
-  for(const pos of layout){const def={...DEVICE[pos.key],name:layoutEdits.names[pos.key]||DEVICE[pos.key].name};view.append(makeDeviceCard(def,pos))}
+  for(const pos of layout){if(!DEVICE[pos.key])continue;const def={...DEVICE[pos.key],name:layoutEdits.names[pos.key]||DEVICE[pos.key].name};view.append(makeDeviceCard(def,pos))}
   if(layoutEditMode){view.classList.add('layout-editing');const actions=document.createElement('div');actions.className='layout-actions';const add=document.createElement('button');add.type='button';add.className='layout-add';add.textContent='+ Thiết bị';add.onclick=showAddDevicePicker;const done=document.createElement('button');done.type='button';done.className='layout-done';done.textContent='Xong';done.onclick=()=>{layoutEditMode=false;renderDevices()};actions.append(add,done);view.append(actions)}else installLayoutLongPress(view);
   $('content').replaceChildren(view);
 }
@@ -530,10 +553,10 @@ function makeDeviceCard(def,pos){
   if(isOn(def.entity))card.classList.add('active');if(!usable(def.entity))card.classList.add('disabled');
   if(def.kind==='binary'&&isOn(def.entity))card.classList.add('alert');
   if(def.kind==='toggle'){
-    card.setAttribute('role','button');card.tabIndex=0;card.innerHTML=`<span class="device-icon">${iconSvg(def.icon)}</span><strong class="device-name">${def.name}</strong>`;
+    card.setAttribute('role','button');card.tabIndex=0;card.innerHTML=`<span class="device-icon">${iconSvg(def.icon)}</span><strong class="device-name">${escapeHtml(def.name)}</strong>`;
     card.onclick=()=>call(def.entity,'toggle');card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();card.click()}};
   } else if(def.kind==='binary'){
-    card.innerHTML=`<span class="device-icon">${iconSvg(def.icon)}</span><strong class="device-name">${def.name}</strong>`;
+    card.innerHTML=`<span class="device-icon">${iconSvg(def.icon)}</span><strong class="device-name">${escapeHtml(def.name)}</strong>`;
   } else if(def.kind==='ac') renderAcCard(card,def);
   else if(def.kind==='fan') renderFanCard(card,def);
   else if(def.kind==='cover') renderCoverCard(card,def);
@@ -581,7 +604,7 @@ function removeCustomDevice(key,def){
   persistConfig();
 }
 function validDrop(card,x,y){const width=card.offsetWidth,height=card.offsetHeight;if(x<0||y<0||x+width>856||y+height>376)return false;return ![...card.parentElement.querySelectorAll('.device-card')].some(other=>other!==card&&x<other.offsetLeft+other.offsetWidth&&x+width>other.offsetLeft&&y<other.offsetTop+other.offsetHeight&&y+height>other.offsetTop)}
-function cardSizeFor(def,size){return def.kind==='binary'||def.kind==='dryer'||def.kind==='induction'?'compact':def.kind==='washer'||def.kind==='water'?'medium':size}
+function cardSizeFor(def,size){const kind=def?.kind;return kind==='binary'||kind==='dryer'||kind==='induction'?'compact':kind==='washer'||kind==='water'?'medium':size}
 function deviceSize(key){for(const nav of Object.values(LAYOUTS))for(const room of nav){const found=room.find(pos=>pos.key===key);if(found)return cardSizeFor(DEVICE[key],found.size)}return cardSizeFor(DEVICE[key],'compact')}
 function sizePixels(size){return size==='large'?[184,184]:size==='wide'?[280,88]:size==='medium'?[184,88]:[88,88]}
 function findFreePosition(layout,size){const [width,height]=sizePixels(size);for(let y=0;y<=376-height;y+=96)for(let x=0;x<=856-width;x+=96){const free=layout.every(pos=>{const [w,h]=sizePixels(cardSizeFor(DEVICE[pos.key],pos.size));return !(x<pos.x+w&&x+width>pos.x&&y<pos.y+h&&y+height>pos.y)});if(free)return {x,y,size}}return null}
@@ -615,7 +638,7 @@ function renderFanCard(card,def){
   card.querySelector('.device-power-zone').onclick=()=>call(def.entity,'toggle');card.querySelectorAll('[data-pct]').forEach(b=>b.onclick=()=>call(def.entity,'set_percentage',{percentage:Number(b.dataset.pct)}));card.querySelector('[data-osc]').onclick=()=>call(def.entity,'oscillate',{oscillating:!Boolean(s?.attributes?.oscillating)});
 }
 function renderCoverCard(card,def){
-  const actual=Number(state(def.entity)?.attributes?.current_position),pending=optimisticControls[def.entity],pos=pending&&pending.until>Date.now()?pending.value:actual;card.innerHTML=`<button class="device-icon" type="button" aria-label="Mở hoặc đóng rèm">${iconSvg(def.icon)}</button><strong class="device-name">${def.name}</strong><span class="device-state">${Number.isFinite(pos)?Math.round(pos)+'%':'-'}</span><div class="control-strip cover-slider"><input type="range" min="0" max="100" value="${Number.isFinite(pos)?pos:0}" aria-label="Vị trí rèm"></div>`;
+  const actual=Number(state(def.entity)?.attributes?.current_position),pending=optimisticControls[def.entity],pos=pending&&pending.until>Date.now()?pending.value:actual;card.innerHTML=`<button class="device-icon" type="button" aria-label="Mở hoặc đóng rèm">${iconSvg(def.icon)}</button><strong class="device-name">${escapeHtml(def.name)}</strong><span class="device-state">${Number.isFinite(pos)?Math.round(pos)+'%':'-'}</span><div class="control-strip cover-slider"><input type="range" min="0" max="100" value="${Number.isFinite(pos)?pos:0}" aria-label="Vị trí rèm"></div>`;
   const input=card.querySelector('input'),label=card.querySelector('.device-state');card.querySelector('.device-icon').onclick=()=>{const value=Number.isFinite(pos)&&pos>0?0:100;optimisticControls[def.entity]={value,until:Date.now()+10000};call(def.entity,'set_cover_position',{position:value})};input.onpointerdown=e=>{rangeDragging=true;input.setPointerCapture?.(e.pointerId)};input.oninput=e=>{const value=Math.round(Number(e.target.value));optimisticControls[def.entity]={value,until:Date.now()+10000};label.textContent=value+'%'};input.onchange=e=>{const value=Math.round(Number(e.target.value));optimisticControls[def.entity]={value,until:Date.now()+10000};call(def.entity,'set_cover_position',{position:value})};input.onpointerup=input.onpointercancel=()=>setTimeout(()=>{rangeDragging=false},800);
 }
 function dashboardLightPercent(key){
@@ -640,7 +663,7 @@ function renderCobCard(card,def){
   card.dataset.lightKey=def.entity;
   const modes=s?.attributes?.supported_color_modes||[],rgbLight=config.lightColorTypes?.[def.entity]==='rgb'||modes.some(mode=>['rgb','rgbw','rgbww','hs','xy'].includes(mode));
   card.classList.toggle('rgb-light',rgbLight);card.style.setProperty('--device-light-color',rgbLight?lightDisplayColor(def.entity):'');
-  card.innerHTML=`<button class="device-icon" type="button" aria-label="Bật hoặc tắt đèn">${iconSvg(def.icon)}</button><strong class="device-name">${def.name}</strong><span class="device-state">${usable(def.entity)?pct+'%':'-'}</span><div class="control-strip cob-slider"><input type="range" min="0" max="100" value="${pct}" aria-label="Độ sáng"></div>`;
+  card.innerHTML=`<button class="device-icon" type="button" aria-label="Bật hoặc tắt đèn">${iconSvg(def.icon)}</button><strong class="device-name">${escapeHtml(def.name)}</strong><span class="device-state">${usable(def.entity)?pct+'%':'-'}</span><div class="control-strip cob-slider"><input type="range" min="0" max="100" value="${pct}" aria-label="Độ sáng"></div>`;
   let holdTimer;
   card.onpointerdown=e=>{if(e.target.closest('input,button'))return;e.preventDefault?.();e.stopPropagation?.();holdTimer=setTimeout(()=>{markHeldPopupGesture(e.pointerId);showCobDetail(def.entity,def.name)},600)};
   for(const event of ['pointerup','pointercancel','pointerleave'])card.addEventListener(event,()=>clearTimeout(holdTimer));
@@ -655,11 +678,11 @@ function rgbToHex(rgb){return '#'+rgb.slice(0,3).map(value=>Math.max(0,Math.min(
 function hsToRgb([h,s]){s/=100;const c=s,x=c*(1-Math.abs(h/60%2-1)),m=1-c,rgb=h<60?[c,x,0]:h<120?[x,c,0]:h<180?[0,c,x]:h<240?[0,x,c]:h<300?[x,0,c]:[c,0,x];return rgb.map(value=>(value+m)*255)}
 function cobCurrentColor(s){const mode=s?.attributes?.color_mode,rgb=s?.attributes?.rgb_color,hs=s?.attributes?.hs_color;if(mode!=='color_temp'&&Array.isArray(rgb)&&rgb.length>=3)return rgbToHex(rgb);if(mode!=='color_temp'&&Array.isArray(hs)&&hs.length>=2)return rgbToHex(hsToRgb(hs));const k=Number(s?.attributes?.color_temp_kelvin)||(Number(s?.attributes?.color_temp)?Math.round(1000000/Number(s.attributes.color_temp)):4000);return k<2850?'#ffd39a':k<3500?'#ffe0ad':k<5250?'#fff3d6':'#e8f2ff'}
 function renderWasherCard(card,def){
-  const statusKey=def.entity,remainingKey=def.remainingEntity||'washerRemaining',finishKey=def.finishEntity||'washerFinish',running=isOn(statusKey),finished=isOn(finishKey),remaining=formatRemaining(remainingKey),changed=state(finishKey)?.last_changed||state(finishKey)?.last_updated,finishTime=changed?new Date(changed).toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit',hour12:false}):new Date().toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit',hour12:false}),statusLine=finished?`<div class="data-line finish-notice"><span>Đã giặt xong lúc</span><b>${finishTime}</b></div>`:running?`<div class="data-line"><span>Thời gian còn lại</span><b class="washer-remaining-value" data-remaining-key="${escapeHtml(remainingKey)}">${escapeHtml(remaining)}</b></div>`:'';card.classList.toggle('alert',running&&!finished);card.classList.toggle('finished',finished);card.classList.toggle('running',running&&!finished);card.innerHTML=`<span class="device-icon">${applianceIconSvg('washer')}</span><strong class="device-name">${def.name}</strong><div class="washer-status-line">${statusLine}</div>`;card.onclick=()=>showDeviceDetail(def);
+  const statusKey=def.entity,remainingKey=def.remainingEntity||'washerRemaining',finishKey=def.finishEntity||'washerFinish',running=isOn(statusKey),finished=isOn(finishKey),remaining=formatRemaining(remainingKey),changed=state(finishKey)?.last_changed||state(finishKey)?.last_updated,finishTime=changed?new Date(changed).toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit',hour12:false}):new Date().toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit',hour12:false}),statusLine=finished?`<div class="data-line finish-notice"><span>Đã giặt xong lúc</span><b>${finishTime}</b></div>`:running?`<div class="data-line"><span>Thời gian còn lại</span><b class="washer-remaining-value" data-remaining-key="${escapeHtml(remainingKey)}">${escapeHtml(remaining)}</b></div>`:'';card.classList.toggle('alert',running&&!finished);card.classList.toggle('finished',finished);card.classList.toggle('running',running&&!finished);card.innerHTML=`<span class="device-icon">${applianceIconSvg('washer')}</span><strong class="device-name">${escapeHtml(def.name)}</strong><div class="washer-status-line">${statusLine}</div>`;card.onclick=()=>showDeviceDetail(def);
 }
-function renderDryerCard(card,def){const active=isOn(def.entity);card.classList.toggle('alert',active);card.classList.toggle('running',active);card.innerHTML=`<span class="device-icon">${applianceIconSvg('dryer')}</span><strong class="device-name">${def.name}</strong>`;card.onclick=()=>showDeviceDetail(def)}
-function renderWaterCard(card,def){const dailyKey=def.dailyEntity||'waterToday',flow=numeric(def.entity),running=flow!=null&&flow>0;card.classList.toggle('alert',running);card.classList.toggle('running',running);card.innerHTML=`<span class="device-icon">${applianceIconSvg('water')}</span><strong class="device-name">${def.name}</strong><div class="washer-status-line"><div class="data-line"><span>Hôm nay</span><b>${formatSensor(dailyKey,1)}</b></div></div>`;card.onclick=()=>showDeviceDetail(def)}
-function renderInductionCard(card,def){const on=String(state(def.entity)?.state||'').toLowerCase();const active=!['','off','idle','unknown','unavailable','0'].includes(on);card.classList.toggle('alert',active);card.classList.toggle('running',active);card.innerHTML=`<span class="device-icon">${applianceIconSvg('induction')}</span><strong class="device-name">${def.name}</strong>`;card.onclick=()=>showDeviceDetail(def)}
+function renderDryerCard(card,def){const active=isOn(def.entity);card.classList.toggle('alert',active);card.classList.toggle('running',active);card.innerHTML=`<span class="device-icon">${applianceIconSvg('dryer')}</span><strong class="device-name">${escapeHtml(def.name)}</strong>`;card.onclick=()=>showDeviceDetail(def)}
+function renderWaterCard(card,def){const dailyKey=def.dailyEntity||'waterToday',flow=numeric(def.entity),running=flow!=null&&flow>0;card.classList.toggle('alert',running);card.classList.toggle('running',running);card.innerHTML=`<span class="device-icon">${applianceIconSvg('water')}</span><strong class="device-name">${escapeHtml(def.name)}</strong><div class="washer-status-line"><div class="data-line"><span>Hôm nay</span><b>${escapeHtml(formatSensor(dailyKey,1))}</b></div></div>`;card.onclick=()=>showDeviceDetail(def)}
+function renderInductionCard(card,def){const on=String(state(def.entity)?.state||'').toLowerCase();const active=!['','off','idle','unknown','unavailable','0'].includes(on);card.classList.toggle('alert',active);card.classList.toggle('running',active);card.innerHTML=`<span class="device-icon">${applianceIconSvg('induction')}</span><strong class="device-name">${escapeHtml(def.name)}</strong>`;card.onclick=()=>showDeviceDetail(def)}
 
 function translateMode(mode){return ({off:'Tắt',cool:'Làm lạnh',heat:'Sưởi',auto:'Tự động',dry:'Hút ẩm',fan_only:'Chỉ quạt'})[mode]||mode}
 
@@ -692,7 +715,7 @@ function renderMusic(){
   if(!config.usePhicomm&&musicSource!=='ma'){musicSource='ma';localStorage.setItem('ken-music-source','ma')}
   const s=state('music'),ha=s?.attributes||{},direct=musicSource==='aibox',a=direct?{media_title:directSpeakerState.title,media_artist:directSpeakerState.artist,media_album_name:'Điều khiển trực tiếp',volume_level:directSpeakerState.volume,media_position:directSpeakerState.position,media_duration:directSpeakerState.duration}:ha,playing=direct?directSpeakerState.playing:s?.state==='playing',volume=Number(a.volume_level),duration=Number(a.media_duration)||0,position=currentMediaPosition(s,a,playing,duration),art=!direct&&a.entity_picture?`<img src="${escapeHtml(mediaArtworkUrl(a.entity_picture))}" alt="Ảnh album">`:iconSvg('music');
   const page=document.createElement('div');page.className='page-panel music-page';page.innerHTML=`
-    <section class="music-card music-head"><span class="blue">${iconSvg('music')}</span><strong>Phicomm R1</strong><span class="music-status">${direct?(directSpeakerStatus==='ready'?(playing?'Đang phát':'Đã kết nối'):'Chưa kết nối'):(usable('music')?translateMediaState(s.state):'-')}</span></section>
+    <section class="music-card music-head"><span class="blue">${iconSvg('music')}</span><strong>Phicomm R1</strong><span class="music-status">${direct?(directSpeakerStatus==='ready'?(playing?'Đang phát':'Đã kết nối'):'Chưa kết nối'):(usable('music')?escapeHtml(translateMediaState(s.state)):'-')}</span></section>
     <section class="music-card music-main"><div class="album-art">${art}</div><div class="track-info"><strong>${escapeHtml(a.media_title||'Chưa phát nhạc')}</strong><span>${escapeHtml(a.media_artist||'-')}</span><span>${escapeHtml(a.media_album_name||'-')}</span></div><div class="seek-control"><span id="seek-current">${formatPlaybackTime(position)}</span><input id="music-seek" type="range" min="0" max="${Math.max(1,duration)}" value="${Math.min(position,duration||position)}" ${duration>0?'':'disabled'} aria-label="Vị trí phát nhạc"><span>${formatPlaybackTime(duration)}</span></div><div class="transport"><button data-media="shuffle_set" aria-label="Phát ngẫu nhiên">${mediaIcon('shuffle')}</button><button data-media="media_previous_track" aria-label="Bài trước">${mediaIcon('previous')}</button><button class="play" data-media="media_play_pause" aria-label="${playing?'Tạm dừng':'Phát'}">${mediaIcon(playing?'pause':'play')}</button><button data-media="media_next_track" aria-label="Bài sau">${mediaIcon('next')}</button><button data-media="repeat_set" aria-label="Lặp lại">${mediaIcon('repeat')}</button></div></section>
     <aside class="music-card music-side"><div class="music-source"><button type="button" data-source-mode="ma" class="${direct?'':'selected'}">Music Assistant</button>${config.usePhicomm?`<button type="button" data-source-mode="aibox" class="${direct?'selected':''}">AI BOX</button>`:''}</div><p>${direct?'Kết nối '+escapeHtml(config.speakerAddress||'chưa cấu hình địa chỉ loa'):'Thư viện Music Assistant'}</p>${direct?`<div class="aibox-tabs"><button type="button" data-library="search" class="${directSpeakerState.libraryMode!=='playlists'?'selected':''}">Tìm bài</button><button type="button" data-library="playlists" class="${directSpeakerState.libraryMode==='playlists'?'selected':''}">Playlist</button></div><form class="aibox-search"><input type="search" placeholder="Tên bài hát..." aria-label="Tìm bài hát"><button type="submit">Tìm</button></form>`:`<div class="ma-tabs">${[['artists','Artists'],['albums','Albums'],['tracks','Tracks'],['playlists','Playlist']].map(([key,label])=>`<button type="button" data-ma-category="${key}" class="${haBrowse.category===key?'selected':''}">${label}</button>`).join('')}</div>`}<div class="playlist"></div></aside>
     <section class="music-card volume-card"><button data-mute="1" aria-label="${a.is_volume_muted||volume===0?'Bật âm thanh':'Tắt âm thanh'}">${mediaIcon(a.is_volume_muted||volume===0?'mute':'volume')}</button><button data-voldelta="-0.01">−</button><input type="range" min="0" max="100" value="${Number.isFinite(volume)?volume*100:0}" aria-label="Âm lượng"><button data-voldelta="0.01">+</button><b>${Number.isFinite(volume)?Math.round(volume*100)+'%':'-'}</b></section>`;
@@ -713,18 +736,20 @@ function renderMusic(){
 function formatPlaybackTime(value){const seconds=Math.max(0,Math.floor(Number(value)||0));return `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`}
 function currentMediaPosition(s,a,playing,duration){let position=Number(a.media_position)||0;if(playing&&a.media_position_updated_at){const elapsed=(Date.now()-new Date(a.media_position_updated_at).getTime())/1000;if(Number.isFinite(elapsed)&&elapsed>0)position+=elapsed}return Math.max(0,Math.min(duration||position,position))}
 function mediaArtworkUrl(path){try{return new URL(path,config.url||location.origin).href}catch{return path}}
-function selectMusicSource(source){if(!['ma','aibox'].includes(source)||source==='aibox'&&!config.usePhicomm)return;musicSource=source;localStorage.setItem('ken-music-source',source);if(source==='aibox'){try{directSpeaker.connect(config.speakerAddress)}catch(error){toast(error.message)}}else{const available=state('music')?.attributes?.source_list||[];const match=available.find(v=>/music assistant/i.test(v));if(match)call('music','select_source',{source:match})}renderMusic()}
+function selectMusicSource(source){if(!['ma','aibox'].includes(source)||source==='aibox'&&!config.usePhicomm)return;musicSource=source;localStorage.setItem('ken-music-source',source);if(source==='aibox'){try{directSpeaker.connect(config.speakerAddress)}catch(error){toast(error.message)}}else{directSpeaker.close();directSpeakerStatus='offline';const available=state('music')?.attributes?.source_list||[];const match=available.find(v=>/music assistant/i.test(v));if(match)call('music','select_source',{source:match})}renderMusic()}
 async function browseHAMedia(item){const payload={type:'media_player/browse_media',entity_id:config.entities.music};if(item?.media_content_id!=null)payload.media_content_id=item.media_content_id;if(item?.media_content_type)payload.media_content_type=item.media_content_type;return client.request(payload)}
 async function loadHABrowseCategory(category){haBrowse.category=category;haBrowse.loading=true;if(currentNav==='music'&&musicSource==='ma')renderMusic();try{if(!haBrowse.root)haBrowse.root=await browseHAMedia();const words={artists:/artist|nghệ sĩ/i,albums:/album/i,tracks:/track|bài hát|song/i,playlists:/playlist|danh sách/i},children=haBrowse.root?.children||[],node=children.find(item=>words[category].test(`${item.title||''} ${item.media_class||''} ${item.media_content_type||''}`));const result=node?.can_expand?await browseHAMedia(node):haBrowse.root;haBrowse.items=(result?.children||[]).filter(item=>{const text=`${item.media_class||''} ${item.media_content_type||''} ${item.title||''}`;return node||words[category].test(text)});haBrowse.loaded=true}catch(error){haBrowse.items=[];toast('Không tải được thư viện Music Assistant: '+error.message)}finally{haBrowse.loading=false;if(currentNav==='music'&&musicSource==='ma')renderMusic()}}
 async function openHABrowseItem(index){const item=haBrowse.items[index];if(!item)return;if(item.can_play&&!item.can_expand){call('music','play_media',{media_content_id:item.media_content_id,media_content_type:item.media_content_type});return}if(item.can_expand){haBrowse.loading=true;renderMusic();try{const result=await browseHAMedia(item);haBrowse.items=result?.children||[]}catch(error){toast(error.message)}finally{haBrowse.loading=false;renderMusic()}}else if(item.media_content_id)call('music','play_media',{media_content_id:item.media_content_id,media_content_type:item.media_content_type})}
 function translateMediaState(v){return ({playing:'Đang phát',paused:'Tạm dừng',idle:'Nghỉ',off:'Tắt',standby:'Chờ'})[v]||v}
 
+function localDateKey(date){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`}
 function updateHistory(){
   if(demo)return;
-  const now=new Date(),date=now.toISOString().slice(0,10),month=date.slice(0,7);let total=numeric('totalEnergy');
-  if(total!=null){const u=unit('totalEnergy');if(u==='Wh')total/=1000;else if(u==='MWh')total*=1000;if(history.lastTotal!=null&&total>=history.lastTotal){const delta=total-history.lastTotal;if(history.lastDate===date)history.days[date]=(history.days[date]||0)+delta;if(history.lastMonth===month)history.months[month]=(history.months[month]||0)+delta}history.lastTotal=total;history.lastDate=date;history.lastMonth=month}
-  const monthly=numeric('energy');if(monthly!=null)history.months[month]=monthly;const bill=numeric('cost');if(bill!=null)history.bills[month]=bill;
-  localStorage.setItem('ken-history-v3',JSON.stringify(history));
+  const date=localDateKey(new Date()),month=date.slice(0,7);let total=numeric('totalEnergy'),changed=false;
+  const set=(bucket,key,value)=>{if(history[bucket][key]!==value){history[bucket][key]=value;changed=true}};
+  if(total!=null){const u=unit('totalEnergy');if(u==='Wh')total/=1000;else if(u==='MWh')total*=1000;if(history.lastTotal!=null&&total>=history.lastTotal){const delta=total-history.lastTotal;if(history.lastDate===date)set('days',date,(history.days[date]||0)+delta);if(history.lastMonth===month)set('months',month,(history.months[month]||0)+delta)}if(history.lastTotal!==total||history.lastDate!==date||history.lastMonth!==month){history.lastTotal=total;history.lastDate=date;history.lastMonth=month;changed=true}}
+  const monthly=numeric('energy');if(monthly!=null)set('months',month,monthly);const bill=numeric('cost');if(bill!=null)set('bills',month,bill);
+  if(changed)localStorage.setItem('ken-history-v3',JSON.stringify(history));
 }
 function renderEnergy(){
   const now=new Date(),year=now.getFullYear(),month=now.getMonth(),daysInMonth=new Date(year,month+1,0).getDate();
@@ -742,7 +767,7 @@ function makeChart(title,unitText,period,values,sparse=false,extra=''){
 
 function settingsEntityEntries(){const omitted=new Set(['dryerDaily','inductionDaily']),props=['entity','remainingEntity','finishEntity','powerEntity','dailyEntity','monthEntity','totalEntity'];for(const deviceKey of removedDeviceKeys()){const def=DEVICE[deviceKey];if(def)for(const prop of props)if(def[prop])omitted.add(def[prop])}const entries=entityCatalog().filter(([key])=>!omitted.has(key)),group=['washerActive','washerRemaining','washerFinish'].filter(key=>!omitted.has(key)),grouped=group.map(key=>[key,ENTITY_LABELS[key]]),rest=entries.filter(([key])=>!group.includes(key)),insertAt=Math.max(0,rest.findIndex(([key])=>key==='rain'));rest.splice(insertAt,0,...grouped);return rest}
 function renderSettings(){
-  const token=sessionStorage.getItem('ken-token')||localStorage.getItem('ken-token')||'',entityFields=settingsEntityEntries().map(([key,label])=>{const deviceKey=Object.keys(DEVICE).find(item=>DEVICE[item].entity===key),displayName=layoutEdits.names[key]||layoutEdits.names[deviceKey]||label;return `<label>${escapeHtml(displayName)}<input data-settings-entity="${key}" list="entity-list" autocomplete="off" value="${escapeHtml(config.entities[key]||'')}"></label>`}).join('');
+  const token=savedToken(),entityFields=settingsEntityEntries().map(([key,label])=>{const deviceKey=Object.keys(DEVICE).find(item=>DEVICE[item].entity===key),displayName=layoutEdits.names[key]||layoutEdits.names[deviceKey]||label;return `<label>${escapeHtml(displayName)}<input data-settings-entity="${escapeHtml(key)}" list="entity-list" autocomplete="off" value="${escapeHtml(config.entities[key]||'')}"></label>`}).join('');
   if(settingsEntityMode){
     const page=document.createElement('div');page.className='page-panel entity-page';page.innerHTML=`<form id="settings-entity-form" class="settings-card entity-settings"><div class="entity-page-head"><div><strong>Cài đặt entity</strong></div><div class="entity-page-actions"><button id="settings-entity-refresh" type="button">Làm mới entity</button><button type="submit">Lưu entity</button><button id="settings-entity-back" type="button">Quay lại</button></div></div><div class="settings-entity-grid">${entityFields}</div></form>`;
     page.querySelector('#settings-entity-refresh').onclick=refreshEntityStates;
@@ -752,12 +777,12 @@ function renderSettings(){
   }
   const connectionPanel=`<form id="settings-ha-form" class="settings-card connection-settings">
       <div class="connection-head"><div><strong class="settings-title">Home Assistant</strong><span class="connection-state ${connected?'online':''}">${connected?'● Trực tuyến':demo?'● Bản mẫu':'● Ngoại tuyến'}</span></div></div>
-      <div class="connection-fields"><label>Địa chỉ HA<input id="settings-ha-url" type="url" placeholder="http://192.168.1.10:8123" value="${escapeHtml(config.url)}"></label><label>Long-lived access token<input id="settings-ha-token" type="password" autocomplete="off" placeholder="Dán token tại đây" value="${escapeHtml(token)}"></label><label>Địa chỉ loa Phicomm R1<input id="settings-speaker-address" type="url" inputmode="url" placeholder="http://192.168.1.236:8081/" value="${escapeHtml(config.speakerAddress)}"></label><label class="phicomm-option"><input id="settings-use-phicomm" type="checkbox" ${config.usePhicomm?'checked':''}><span>Dùng loa Phicomm và AI BOX</span></label></div>
+      <div class="connection-fields"><label>Địa chỉ HA<input id="settings-ha-url" type="url" placeholder="http://192.168.1.10:8123" value="${escapeHtml(config.url)}"></label><label>Long-lived access token<input id="settings-ha-token" type="password" autocomplete="off" placeholder="${hasStoredToken()&&!token?'Nhập lại token cho địa chỉ này':'Dán token tại đây'}" value="${escapeHtml(token)}"></label><label>Địa chỉ loa Phicomm R1<input id="settings-speaker-address" type="url" inputmode="url" placeholder="http://192.168.1.236:8081/" value="${escapeHtml(config.speakerAddress)}"></label><label class="phicomm-option"><input id="settings-use-phicomm" type="checkbox" ${config.usePhicomm?'checked':''}><span>Dùng loa Phicomm và AI BOX</span></label></div>
       <div class="connection-actions"><button id="settings-full-config" type="button">Cài đặt entity</button><button id="settings-forget" type="button">Hủy kết nối</button><button class="primary" type="submit">Lưu & kết nối</button></div>
     </form>`;
   const page=document.createElement('div');page.className='page-panel settings-page';page.innerHTML=`
     <section class="settings-card display-settings"><div><strong class="settings-title">Độ sáng</strong><span class="setting-value" id="brightness-label">${displaySettings.brightness}%</span><input id="brightness-setting" type="range" min="20" max="100" value="${displaySettings.brightness}"></div><div><strong class="settings-title">Làm tối sau</strong><div class="timeout-buttons">${[-1,1,2,5,10].map(v=>`<button type="button" data-timeout="${v}" class="${v===displaySettings.timeout?'selected':''}">${v<0?'Luôn bật':v+' phút'}</button>`).join('')}</div></div><div class="theme-setting"><strong class="settings-title">Giao diện</strong><div><select id="theme-choice" aria-label="Chọn giao diện"><option value="default" ${config.theme==='default'?'selected':''}>Mặc định</option><option value="spring" ${config.theme==='spring'?'selected':''}>Mùa xuân</option><option value="summer" ${config.theme==='summer'?'selected':''}>Mùa hạ</option><option value="autumn" ${config.theme==='autumn'?'selected':''}>Mùa thu</option><option value="winter" ${config.theme==='winter'?'selected':''}>Mùa đông</option><option value="dark" ${config.theme==='dark'?'selected':''}>Giao diện tối</option></select><button id="theme-save" type="button">Lưu giao diện</button></div></div></section>
-    <section class="settings-card system-settings" id="server-card"><div class="server-card-head"><span class="server-icon">${iconSvg('server')}</span><strong class="settings-title">Máy chủ Homeassistant</strong></div><div class="server-info"><span>${iconSvg('climate')}Nhiệt độ CPU</span><b data-server-value="piTemp">${formatSensor('piTemp',1,'°C')}</b><span>${iconSvg('disk')}Dung lượng trống</span><b data-server-value="piDisk">${formatSensor('piDisk',1)}</b><span>${iconSvg('memory')}RAM</span><b data-server-value="piRam">${formatSensor('piRam',1,'%')}</b></div></section>
+    <section class="settings-card system-settings" id="server-card"><div class="server-card-head"><span class="server-icon">${iconSvg('server')}</span><strong class="settings-title">Máy chủ Homeassistant</strong></div><div class="server-info"><span>${iconSvg('climate')}Nhiệt độ CPU</span><b data-server-value="piTemp">${escapeHtml(formatSensor('piTemp',1,'°C'))}</b><span>${iconSvg('disk')}Dung lượng trống</span><b data-server-value="piDisk">${escapeHtml(formatSensor('piDisk',1))}</b><span>${iconSvg('memory')}RAM</span><b data-server-value="piRam">${escapeHtml(formatSensor('piRam',1,'%'))}</b></div></section>
     ${connectionPanel}`;
   bindEntityHold(page.querySelector('#server-card'),()=> 'Máy chủ Homeassistant',showServerEntityEditor);
   page.querySelector('#brightness-setting').oninput=e=>{displaySettings.brightness=Number(e.target.value);page.querySelector('#brightness-label').textContent=displaySettings.brightness+'%';applyDisplaySettings()};
@@ -765,7 +790,7 @@ function renderSettings(){
   page.querySelector('#theme-save').onclick=()=>{config.theme=page.querySelector('#theme-choice').value;applyTheme();persistConfig();toast('Đã lưu giao diện '+page.querySelector('#theme-choice').selectedOptions[0].textContent)};
   page.querySelector('#settings-full-config').onclick=async()=>{settingsEntityMode=true;renderSettings();await refreshEntityStates()};
   page.querySelector('#settings-forget').onclick=showDisconnectConfirm;
-  const phicommToggle=page.querySelector('#settings-use-phicomm'),speakerInput=page.querySelector('#settings-speaker-address');speakerInput.disabled=!phicommToggle.checked;phicommToggle.onchange=()=>{config.usePhicomm=phicommToggle.checked;speakerInput.disabled=!phicommToggle.checked;persistConfig();if(!phicommToggle.checked){musicSource='ma';localStorage.setItem('ken-music-source','ma')}};
+  const phicommToggle=page.querySelector('#settings-use-phicomm'),speakerInput=page.querySelector('#settings-speaker-address');speakerInput.disabled=!phicommToggle.checked;phicommToggle.onchange=()=>{config.usePhicomm=phicommToggle.checked;speakerInput.disabled=!phicommToggle.checked;persistConfig();if(!phicommToggle.checked){musicSource='ma';localStorage.setItem('ken-music-source','ma');directSpeaker.close();directSpeakerStatus='offline'}};
   page.querySelector('#settings-ha-form').onsubmit=e=>{e.preventDefault();saveConnection(page.querySelector('#settings-ha-url').value,page.querySelector('#settings-ha-token').value,true,{},page.querySelector('#settings-speaker-address').value,page.querySelector('#settings-use-phicomm').checked)};
   $('content').replaceChildren(page);
 }
@@ -900,25 +925,25 @@ function showDeviceDetail(def){
 }
 
 function renderStatus(status){
-  const text=({connecting:'ĐANG KẾT NỐI HA',ready:'ĐÃ KẾT NỐI HA',offline:'MẤT KẾT NỐI HA',auth_invalid:'TOKEN HA KHÔNG HỢP LỆ'})[status]||(connected?'ĐÃ KẾT NỐI HA':'CHƯA KẾT NỐI HA');$('brand-status').textContent=text;
+  const text=({connecting:'ĐANG KẾT NỐI HA',ready:'ĐÃ KẾT NỐI HA',offline:'MẤT KẾT NỐI HA',auth_invalid:'TOKEN HA KHÔNG HỢP LỆ',demo:'BẢN MẪU'})[status]||(connected?'ĐÃ KẾT NỐI HA':'CHƯA KẾT NỐI HA');$('brand-status').textContent=text;
 }
 
 function openConfig(){
-  $('ha-url').value=config.url;$('ha-token').value=sessionStorage.getItem('ken-token')||localStorage.getItem('ken-token')||'';$('remember-token').checked=!!localStorage.getItem('ken-token');
+  $('ha-url').value=config.url;$('ha-token').value=savedToken();$('remember-token').checked=!!localStorage.getItem('ken-token');
   for(const [key] of Object.entries(DEFAULT_ENTITIES)){const input=$(`entity-${key}`);if(input)input.value=config.entities[key]||''}$('config-dialog').showModal();
 }
 function saveConnection(urlValue,tokenValue,remember,entityValues={},speakerAddress=config.speakerAddress,usePhicomm=config.usePhicomm){
   try{
     const url=urlValue.trim(),token=tokenValue.trim();if(url||token){if(!url||!token)throw Error('Cần nhập đủ địa chỉ HA và token');const parsed=new URL(url);if(!['http:','https:'].includes(parsed.protocol))throw Error('Địa chỉ HA phải bắt đầu bằng http:// hoặc https://')}
-    const entities={...config.entities};for(const key of Object.keys(DEFAULT_ENTITIES)){const dialogInput=$(`entity-${key}`);const value=entityValues[key]??dialogInput?.value;entities[key]=(value||entities[key]||DEFAULT_ENTITIES[key]).trim()}
-    config={url,speakerAddress:String(speakerAddress||'').trim(),usePhicomm:Boolean(usePhicomm),theme:config.theme||'default',rgbPresets:config.rgbPresets||{},lightColorTypes:config.lightColorTypes||{},lastLightColors:config.lastLightColors||{},lastLightBrightness:config.lastLightBrightness||{},entities};persistConfig();if(token){sessionStorage.setItem('ken-token',token);if(remember)localStorage.setItem('ken-token',token);else localStorage.removeItem('ken-token');demo=false;connected=false;states={};client.connect(url,token)}if(!config.usePhicomm){musicSource='ma';localStorage.setItem('ken-music-source','ma')}else if(musicSource==='aibox'&&config.speakerAddress)directSpeaker.connect(config.speakerAddress);if($('config-dialog').open)$('config-dialog').close();render();toast('Đã lưu cấu hình Home Assistant và loa');
+    const entities={...config.entities},fromDialog=$('config-dialog').open;for(const key of Object.keys(DEFAULT_ENTITIES)){const dialogInput=$(`entity-${key}`);const value=entityValues[key]??(fromDialog?dialogInput?.value:undefined);entities[key]=(value||entities[key]||DEFAULT_ENTITIES[key]).trim()}
+    config={url,speakerAddress:String(speakerAddress||'').trim(),usePhicomm:Boolean(usePhicomm),theme:config.theme||'default',rgbPresets:config.rgbPresets||{},lightColorTypes:config.lightColorTypes||{},lastLightColors:config.lastLightColors||{},lastLightBrightness:config.lastLightBrightness||{},entities};persistConfig();if(token){const origin=urlOrigin(url);sessionStorage.setItem('ken-token',token);sessionStorage.setItem('ken-token-origin',origin);if(remember){localStorage.setItem('ken-token',token);localStorage.setItem('ken-token-origin',origin)}else{localStorage.removeItem('ken-token');localStorage.removeItem('ken-token-origin')}demo=false;connected=false;states={};client.connect(url,token)}if(!config.usePhicomm){musicSource='ma';localStorage.setItem('ken-music-source','ma');directSpeaker.close();directSpeakerStatus='offline'}else if(musicSource==='aibox'&&config.speakerAddress)directSpeaker.connect(config.speakerAddress);if($('config-dialog').open)$('config-dialog').close();render();toast('Đã lưu cấu hình Home Assistant và loa');
   }catch(error){toast(error.message)}
 }
-function forgetToken(){client.stop();sessionStorage.removeItem('ken-token');localStorage.removeItem('ken-token');connected=false;demo=false;states={};renderStatus('offline');render();toast('Đã xóa token trên trình duyệt')}
+function forgetToken(){client.stop();for(const store of [sessionStorage,localStorage]){store.removeItem('ken-token');store.removeItem('ken-token-origin')}connected=false;demo=false;states={};renderStatus('disconnected');render();toast('Đã xóa token trên trình duyệt')}
 function buildEntityForm(){
   const root=$('entity-form');root.replaceChildren();for(const [key,label] of entityCatalog()){const wrap=document.createElement('label');wrap.textContent=label;const input=document.createElement('input');input.id=`entity-${key}`;input.setAttribute('list','entity-list');input.autocomplete='off';wrap.append(input);root.append(wrap)}
 }
-function fillEntityList(){const seen=new Set();$('entity-list').replaceChildren(...Object.values(states).filter(s=>{if(seen.has(s.entity_id))return false;seen.add(s.entity_id);return true}).map(s=>{const o=document.createElement('option'),entityKey=Object.keys(config.entities).find(key=>config.entities[key]===s.entity_id),deviceKey=entityKey&&Object.keys(DEVICE).find(key=>DEVICE[key].entity===entityKey);o.value=s.entity_id;o.label=layoutEdits.names[entityKey]||layoutEdits.names[deviceKey]||s.attributes?.friendly_name||s.entity_id;return o}))}
+function fillEntityList(){entityListDirty=false;const seen=new Set(),keyByEntity=new Map(),deviceByKey=new Map();for(const [key,entity] of Object.entries(config.entities))if(entity&&!keyByEntity.has(entity))keyByEntity.set(entity,key);for(const [key,def] of Object.entries(DEVICE))if(!deviceByKey.has(def.entity))deviceByKey.set(def.entity,key);$('entity-list').replaceChildren(...Object.values(states).filter(s=>{if(seen.has(s.entity_id))return false;seen.add(s.entity_id);return true}).map(s=>{const o=document.createElement('option'),entityKey=keyByEntity.get(s.entity_id),deviceKey=entityKey&&deviceByKey.get(entityKey);o.value=s.entity_id;o.label=layoutEdits.names[entityKey]||layoutEdits.names[deviceKey]||s.attributes?.friendly_name||s.entity_id;return o}))}
 async function refreshEntityStates(){try{if(client.ready){const fresh=await client.request({type:'get_states'});client.states=Object.fromEntries(fresh.map(s=>[s.entity_id,s]));states=client.states;rememberLightStates();syncLightPopup()}fillEntityList();toast(`Đã làm mới ${Object.keys(states).length} entity từ Home Assistant`)}catch(error){toast(error.message)}}
 
 function loadDemo(){
@@ -933,13 +958,15 @@ function resizeStage(){const scale=Math.min(innerWidth/1024,innerHeight/600);$('
 async function startDashboard(){
   await loadSharedDashboard();applyTheme();buildNavigation();buildEntityForm();installTopEntityEditors();installGestureGuards();tick();setInterval(tick,1000);setInterval(pollSharedDashboard,5000);resizeStage();addEventListener('resize',resizeStage);applyDisplaySettings(false);
   $('config-close').onclick=()=>$('config-dialog').close();$('detail-close').onclick=()=>$('detail-dialog').close();$('screen-shade').onclick=resetIdle;
+  $('brand-card').onclick=openConfig;$('brand-card').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openConfig()}};
   $('detail-dialog').addEventListener('close',()=>{metricEditorRoomId=null;resetLightPopup();$('detail-close').hidden=false});
   $('detail-dialog').addEventListener('cancel',event=>{if(activeLightPopup?.onCancel){event.preventDefault();activeLightPopup.onCancel()}});
   for(const name of ['pointerdown','keydown','touchstart'])addEventListener(name,resetIdle,{passive:true});
+  document.addEventListener('focusin',e=>{if(entityListDirty&&e.target.matches?.('input[list="entity-list"]'))fillEntityList()});
   for(const name of ['pointerup','pointercancel'])addEventListener(name,()=>setTimeout(()=>{rangeDragging=false},800),{passive:true});
   $('demo-button').onclick=loadDemo;$('forget-button').onclick=forgetToken;
   $('config-form').onsubmit=e=>{e.preventDefault();saveConnection($('ha-url').value,$('ha-token').value,$('remember-token').checked)};
-  const savedToken=sessionStorage.getItem('ken-token')||localStorage.getItem('ken-token');if(config.url&&savedToken){try{client.connect(config.url,savedToken)}catch(error){toast(error.message);loadDemo()}}else loadDemo();
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!demo&&config.url){const token=sessionStorage.getItem('ken-token')||localStorage.getItem('ken-token');if(token)client.connect(config.url,token)}pollSharedDashboard()});
+  const token=savedToken();if(config.url&&token){try{client.connect(config.url,token)}catch(error){toast(error.message);loadDemo()}}else{loadDemo();if(config.url&&hasStoredToken())toast('Địa chỉ Home Assistant đã đổi. Vào Cài đặt nhập lại token để kết nối.')}
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!demo&&config.url){const token=savedToken();if(token)try{client.connect(config.url,token)}catch(error){toast(error.message)}}pollSharedDashboard()});
 }
 startDashboard();
