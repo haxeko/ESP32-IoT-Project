@@ -20,8 +20,13 @@
 #include <esp_system.h>
 #include <esp_task_wdt.h>
 #include <esp_timer.h>
+#include <esp_wifi.h>
+#include <freertos/FreeRTOS.h>
 #include <nvs.h>
 #include <nvs_flash.h>
+#if CONFIG_BT_ENABLED
+#include <esp_bt.h>
+#endif
 
 #include <atomic>
 #include <iterator>
@@ -48,6 +53,12 @@ static constexpr float kPmMaxMeasuredValue = 1000.0f;
 // less than kFactoryResetWindowUs...
 static constexpr uint8_t kFactoryResetBootCount = 5;
 static constexpr uint64_t kFactoryResetWindowUs = 10 * 1000 * 1000;
+// A power-on only counts once the device has stayed on this long. On the
+// ESP32-C3 a reset by a supply dip is reported as a power-on
+// (RESET_REASON_CHIP_BROWN_OUT == RESET_REASON_CHIP_POWER_ON), so a weak
+// supply that resets the chip again and again during start-up (Wi-Fi peaks)
+// must not add up to a factory reset.
+static constexpr uint64_t kFactoryResetMinOnUs = 3 * 1000 * 1000;
 static constexpr char kNvsNamespace[] = "app";
 static constexpr char kNvsBootCountKey[] = "boot_count";
 
@@ -178,6 +189,31 @@ static void reset_button_cb(uint32_t held_ms, bool released, void *user_data)
 }
 #endif
 
+// Latest reading waiting for the Matter thread: a newer one replaces it, so
+// at most one update is queued at a time.
+static pm_sensor_data_t s_pending_reading;
+static bool s_reading_pending = false;
+static portMUX_TYPE s_reading_lock = portMUX_INITIALIZER_UNLOCKED;
+
+// Runs on the Matter thread.
+static void report_reading_work(intptr_t arg)
+{
+    taskENTER_CRITICAL(&s_reading_lock);
+    const pm_sensor_data_t d = s_pending_reading;
+    s_reading_pending = false;
+    taskEXIT_CRITICAL(&s_reading_lock);
+
+    const uint16_t endpoint_id = s_air_quality_endpoint_id;
+    // MeasuredValue must stay within [MinMeasuredValue, MaxMeasuredValue].
+    const float pm2_5 = d.valid ? fminf(fmaxf(d.pm2_5, 0.0f), kPmMaxMeasuredValue) : NAN;
+
+    update_measured_value(endpoint_id, Pm25ConcentrationMeasurement::Id,
+                          Pm25ConcentrationMeasurement::Attributes::MeasuredValue::Id, pm2_5);
+
+    esp_matter_attr_val_t val = esp_matter_enum8(chip::to_underlying(pm25_to_air_quality(pm2_5)));
+    attribute::update(endpoint_id, AirQuality::Id, AirQuality::Attributes::AirQuality::Id, &val);
+}
+
 static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data)
 {
     pm_sensor_data_t d = *data;
@@ -188,20 +224,23 @@ static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data
     if (!s_matter_started) {
         return;
     }
-    const uint16_t endpoint_id = s_air_quality_endpoint_id;
 
-    // schedule the attribute update so that we can report it from matter thread
-    CHIP_ERROR err = chip::DeviceLayer::SystemLayer().ScheduleLambda([endpoint_id, d]() {
-        // MeasuredValue must stay within [MinMeasuredValue, MaxMeasuredValue].
-        const float pm2_5 = d.valid ? fminf(fmaxf(d.pm2_5, 0.0f), kPmMaxMeasuredValue) : NAN;
+    taskENTER_CRITICAL(&s_reading_lock);
+    s_pending_reading = d;
+    const bool already_pending = s_reading_pending;
+    s_reading_pending = true;
+    taskEXIT_CRITICAL(&s_reading_lock);
+    if (already_pending) {
+        return;    // the update already queued sends this newer reading
+    }
 
-        update_measured_value(endpoint_id, Pm25ConcentrationMeasurement::Id,
-                              Pm25ConcentrationMeasurement::Attributes::MeasuredValue::Id, pm2_5);
-
-        esp_matter_attr_val_t val = esp_matter_enum8(chip::to_underlying(pm25_to_air_quality(pm2_5)));
-        attribute::update(endpoint_id, AirQuality::Id, AirQuality::Attributes::AirQuality::Id, &val);
-    });
+    // Report from the Matter thread. ScheduleWork() returns an error when the
+    // Matter event queue is full (newer SDKs abort in ScheduleLambda() instead).
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork(report_reading_work);
     if (err != CHIP_NO_ERROR) {
+        taskENTER_CRITICAL(&s_reading_lock);
+        s_reading_pending = false;
+        taskEXIT_CRITICAL(&s_reading_lock);
         // Matter event queue full: this value is lost, the next one is sent normally.
         ESP_LOGW(TAG, "Failed to schedule the Matter update, err:%" CHIP_ERROR_FORMAT, err.Format());
     }
@@ -263,10 +302,51 @@ static void save_boot_count(uint8_t count)
     }
 }
 
-// Counts quick power cycles. Returns true when a factory reset was requested.
+static uint8_t load_boot_count()
+{
+    uint8_t count = 0;
+    nvs_handle_t handle;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) == ESP_OK) {
+        nvs_get_u8(handle, kNvsBootCountKey, &count);
+        nvs_close(handle);
+    }
+    return count;
+}
+
+static esp_timer_handle_t s_boot_count_timer;
+static bool s_boot_counted = false;    // this boot is in the count, or must not be
+
+// Runs in the esp_timer task: kFactoryResetMinOnUs after a power-on, then at
+// kFactoryResetWindowUs.
+static void boot_count_timer_cb(void *arg)
+{
+    if (!s_boot_counted) {
+        s_boot_counted = true;
+        uint8_t count = load_boot_count();
+        if (count < kFactoryResetBootCount) {
+            count++;
+            save_boot_count(count);
+        }
+        ESP_LOGI(TAG, "Quick power cycle %u/%u", count, kFactoryResetBootCount);
+        if (count >= kFactoryResetBootCount) {
+            // The count stays until the reset is done: it ends with a software
+            // restart, which clears it, and a power cut before that retries it.
+            start_factory_reset("quick power cycles");
+            return;
+        }
+        esp_timer_start_once(s_boot_count_timer, kFactoryResetWindowUs - kFactoryResetMinOnUs);
+        return;
+    }
+    // Staying powered on long enough clears the counter.
+    save_boot_count(0);
+}
+
+// Counts quick power cycles: power-ons that last between kFactoryResetMinOnUs
+// and kFactoryResetWindowUs. Returns true when the previous run requested a
+// factory reset but lost power before it was done.
 // Only power-on resets count, so crashes, OTA updates or flashing never
-// trigger a factory reset, and they clear the count. A brown-out (a quick
-// unplug/replug can cause one) neither counts nor clears it.
+// trigger a factory reset, and they clear the count. A brown-out caught by the
+// detector (ESP_RST_BROWNOUT) does not count.
 static bool check_factory_reset_boot_count()
 {
     const esp_reset_reason_t reason = esp_reset_reason();
@@ -274,31 +354,18 @@ static bool check_factory_reset_boot_count()
         save_boot_count(0);
         return false;
     }
-    uint8_t count = 0;
-    nvs_handle_t handle;
-    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) == ESP_OK) {
-        nvs_get_u8(handle, kNvsBootCountKey, &count);
-        nvs_close(handle);
-    }
-    if (reason == ESP_RST_POWERON && count < kFactoryResetBootCount) {
-        count++;
-        ESP_LOGI(TAG, "Quick power cycle %u/%u", count, kFactoryResetBootCount);
-        save_boot_count(count);
-    }
-    if (count >= kFactoryResetBootCount) {
-        // The count stays until the reset is done: it ends with a software
-        // restart, which clears it, and a power cut before that retries it.
+    if (load_boot_count() >= kFactoryResetBootCount) {
         return true;
     }
 
-    // Staying powered on long enough clears the counter.
-    static esp_timer_handle_t timer;
+    // After a brown-out only the clearing applies.
+    s_boot_counted = reason != ESP_RST_POWERON;
     const esp_timer_create_args_t args = {
-        .callback = [](void *) { save_boot_count(0); },
+        .callback = boot_count_timer_cb,
         .name = "boot_count",
     };
-    if (esp_timer_create(&args, &timer) == ESP_OK) {
-        esp_timer_start_once(timer, kFactoryResetWindowUs);
+    if (esp_timer_create(&args, &s_boot_count_timer) == ESP_OK) {
+        esp_timer_start_once(s_boot_count_timer, s_boot_counted ? kFactoryResetWindowUs : kFactoryResetMinOnUs);
     }
     return false;
 }
@@ -338,20 +405,83 @@ static void update_matter_status()
 // staying off Matter while the local UI still looks alive.
 static esp_task_wdt_user_handle_t s_matter_wdt;
 
-// Subscriptions start and end without a device event, so also poll.
+// Runs on the Matter thread.
+static void matter_status_work(intptr_t arg)
+{
+    update_matter_status();
+    if (s_matter_wdt != NULL) {
+        esp_task_wdt_reset_user(s_matter_wdt);
+    }
+}
+
+// Subscriptions start and end without a device event, so also poll. Runs in
+// the esp_timer task: only queue the work, so a stuck Matter thread does not
+// feed its watchdog. ScheduleWork() returns an error when the Matter event
+// queue is full (newer SDKs abort in ScheduleLambda() instead).
 static void matter_status_timer_cb(void *arg)
 {
-    chip::DeviceLayer::SystemLayer().ScheduleLambda([]() {
-        update_matter_status();
-        if (s_matter_wdt != NULL) {
-            esp_task_wdt_reset_user(s_matter_wdt);
-        }
-    });
+    CHIP_ERROR err = chip::DeviceLayer::PlatformMgr().ScheduleWork(matter_status_work);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "Could not queue work for the Matter thread, err:%" CHIP_ERROR_FORMAT, err.Format());
+    }
+}
+
+// ESP-IDF lets the Wi-Fi radio sleep between beacons by default
+// (WIFI_PS_MIN_MODEM): multicast frames wait for the next DTIM beacon and can
+// get lost with some routers. Controllers find the device with multicast (mDNS,
+// IPv6 neighbor discovery), so a sleeping radio can leave it "No Response"
+// while its own reports still go out. The sensor is mains powered: keep the
+// radio on, once BLE (which shares it during commissioning) is off.
+// Runs on the Matter thread.
+static void set_wifi_power_save_off()
+{
+#if CONFIG_BT_ENABLED
+    if (esp_bt_controller_get_status() != ESP_BT_CONTROLLER_STATUS_IDLE) {
+        return;
+    }
+#endif
+    wifi_ps_type_t ps = WIFI_PS_MIN_MODEM;
+    if (esp_wifi_get_ps(&ps) == ESP_OK && ps == WIFI_PS_NONE) {
+        return;
+    }
+    esp_err_t err = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Wi-Fi power save off");
+    } else {
+        ESP_LOGW(TAG, "Failed to turn Wi-Fi power save off: %s", esp_err_to_name(err));
+    }
+}
+
+// Runs on the Matter thread. Wi-Fi may have connected before app_event_cb was
+// registered, so its event was not seen.
+static void apply_wifi_power_save(intptr_t arg)
+{
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        set_wifi_power_save_off();
+    }
+}
+
+static void handle_wifi_event(const ChipDeviceEvent *event)
+{
+    if (event->Platform.ESPSystemEvent.Id == WIFI_EVENT_STA_CONNECTED) {
+        set_wifi_power_save_off();
+    } else if (event->Platform.ESPSystemEvent.Id == WIFI_EVENT_STA_DISCONNECTED) {
+        // Reason codes: wifi_err_reason_t, e.g. 2 auth expired, 200 beacon timeout, 201 no AP found
+        const wifi_event_sta_disconnected_t &info = event->Platform.ESPSystemEvent.Data.WiFiStaDisconnected;
+        ESP_LOGW(TAG, "Wi-Fi disconnected: reason %u, RSSI %d dBm", info.reason, info.rssi);
+    }
 }
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
     switch (event->Type) {
+    case chip::DeviceLayer::DeviceEventType::kESPSystemEvent:
+        if (event->Platform.ESPSystemEvent.Base == WIFI_EVENT) {
+            handle_wifi_event(event);
+        }
+        break;
+
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete");
         break;
@@ -367,6 +497,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kBLEDeinitialized:
         ESP_LOGI(TAG, "BLE deinitialized and memory reclaimed");
+        set_wifi_power_save_off();
         break;
 
     default:
@@ -459,7 +590,52 @@ static esp_err_t start_matter()
             s_matter_wdt = NULL;
         }
     }
+    if (chip::DeviceLayer::PlatformMgr().ScheduleWork(apply_wifi_power_save) != CHIP_NO_ERROR) {
+        ESP_LOGW(TAG, "Could not queue the Wi-Fi power save setting");
+    }
     return ESP_OK;
+}
+
+// Why the chip started: power on (or a deep supply dip, which the ESP32-C3
+// reports the same way), or how the previous run ended.
+static void log_reset_reason()
+{
+    const esp_reset_reason_t reason = esp_reset_reason();
+    const char *name;
+    switch (reason) {
+    case ESP_RST_POWERON:
+        name = "power on or supply dip";
+        break;
+    case ESP_RST_EXT:
+        name = "reset pin";
+        break;
+    case ESP_RST_SW:
+        name = "software restart";
+        break;
+    case ESP_RST_PANIC:
+        name = "crash (panic)";
+        break;
+    case ESP_RST_INT_WDT:
+        name = "interrupt watchdog";
+        break;
+    case ESP_RST_TASK_WDT:
+        name = "task watchdog";
+        break;
+    case ESP_RST_WDT:
+        name = "other watchdog";
+        break;
+    case ESP_RST_BROWNOUT:
+        name = "brownout (supply voltage dropped)";
+        break;
+    default:
+        name = "other";
+        break;
+    }
+    if (reason == ESP_RST_POWERON || reason == ESP_RST_EXT || reason == ESP_RST_SW) {
+        ESP_LOGI(TAG, "Reset reason: %s (%d)", name, reason);
+    } else {
+        ESP_LOGW(TAG, "Reset reason: %s (%d)", name, reason);
+    }
 }
 
 // Initializes the default NVS partition. A partition without free pages, or
@@ -487,6 +663,7 @@ extern "C" void app_main()
 
     ESP_LOGI(TAG, "%s %s, firmware %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME,
              esp_app_get_description()->version);
+    log_reset_reason();
 
     const bool factory_reset_requested = check_factory_reset_boot_count();
 

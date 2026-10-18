@@ -65,7 +65,8 @@ Factory reset xóa Wi-Fi và thông tin ghép nối Matter, rồi thiết bị k
   3. Buông nút trước khi về 0 là hủy. Nút bị kẹt (giữ mãi không buông) cũng không reset.
 
   Đổi chân trong `menuconfig` → *Factory Reset Button*, đặt `-1` nếu không lắp nút. Firmware báo lỗi khi build nếu chọn trùng chân đang dùng, chân strapping (GPIO2/8/9), chân flash (GPIO11–17) hay chân USB (GPIO18/19). Chân còn trống: GPIO0, 1, 5, 6, 7.
-- **Cắm rồi rút nguồn 5 lần liên tiếp**, mỗi lần giữ điện dưới 10 giây. Ở lần cắm thứ 5, thiết bị factory reset. Cách này dùng được cả khi không lắp nút.
+- **Cắm rồi rút nguồn 5 lần liên tiếp**, mỗi lần giữ điện từ 3 đến 10 giây. Ở lần cắm thứ 5, sau 3 giây thiết bị factory reset. Cách này dùng được cả khi không lắp nút.
+  Lần cắm ngắn hơn 3 giây không được tính: trên ESP32-C3, reset do sụt áp nguồn cũng báo là "power on", nên nguồn yếu làm chip khởi động lại liên tục không được tự xóa ghép nối.
 - Nếu bạn xóa thiết bị khỏi tất cả ứng dụng (Apple Home, Home Assistant...), thiết bị tự mở lại chế độ ghép nối, không cần reset.
 - Cả hai cách vẫn chạy khi Matter không khởi động được: khi đó firmware xóa thẳng phân vùng NVS rồi khởi động lại.
 - Nếu phân vùng NVS không dùng được (hết trang trống, hoặc do bản ESP-IDF mới hơn ghi), firmware tự xóa nó khi khởi động. Kết quả giống factory reset: phải ghép nối lại.
@@ -78,6 +79,8 @@ Factory reset xóa Wi-Fi và thông tin ghép nối Matter, rồi thiết bị k
 ## Phần mềm
 
 Yêu cầu: **ESP-IDF v5.4.1** và **esp-matter `release/v1.4`**.
+
+> Không build dự án này bằng esp-matter 1.6.x (image CI của các dự án khác) khi chưa chuyển cấu hình cluster PM2.5: esp-matter 1.6.1 kiểm tra feature ngay khi tạo cluster (`VALIDATE_FEATURES_AT_LEAST_ONE`) và dừng bằng `assert` vì `feature_flags` đang là 0, nên thiết bị khởi động lại liên tục.
 
 ```bash
 # ESP-IDF
