@@ -17,9 +17,14 @@
 #include <app/InteractionModelEngine.h>
 #include <app/server/Server.h>
 
+#include <device_info.h>
+
 using chip::DeviceLayer::ChipDeviceEvent;
 using chip::DeviceLayer::DeviceEventType::kBLEDeinitialized;
+using chip::DeviceLayer::DeviceEventType::kCommissioningComplete;
 using chip::DeviceLayer::DeviceEventType::kESPSystemEvent;
+using chip::DeviceLayer::DeviceEventType::kFabricRemoved;
+using chip::DeviceLayer::DeviceEventType::kServerReady;
 
 static const char *TAG = "app_health";
 
@@ -119,9 +124,9 @@ static bool ble_off()
 }
 
 /* ESP-IDF lets the Wi-Fi radio sleep between beacons by default (WIFI_PS_MIN_MODEM): multicast frames wait for the
- * next DTIM beacon, and can get lost with some routers. Controllers find the light with multicast (mDNS, IPv6
- * neighbor discovery), so a sleeping radio can leave the light "No Response". It is mains powered: keep the radio
- * on. Only while BLE is off, since Wi-Fi and BLE share the radio during commissioning. */
+ * next DTIM beacon, and can get lost with some routers. Controllers find the device with multicast (mDNS, IPv6
+ * neighbor discovery), so a sleeping radio can leave it "No Response". It is mains powered: keep the radio on.
+ * Only while BLE is off, since Wi-Fi and BLE share the radio during commissioning. */
 static void set_wifi_power_save_off()
 {
 #if CONFIG_APP_WIFI_POWER_SAVE_OFF
@@ -184,6 +189,10 @@ static void apply_wifi_settings(intptr_t)
 
 void app_health_handle_event(const ChipDeviceEvent *event)
 {
+    /* The fabrics are loaded, added or removed: log what tells this unit and its pairings apart */
+    if (event->Type == kServerReady || event->Type == kCommissioningComplete || event->Type == kFabricRemoved) {
+        device_info_log_identity();
+    }
 #if CHIP_DEVICE_CONFIG_ENABLE_WIFI
     if (event->Type == kESPSystemEvent && event->Platform.ESPSystemEvent.Base == WIFI_EVENT) {
         handle_wifi_event(event);
@@ -191,6 +200,27 @@ void app_health_handle_event(const ChipDeviceEvent *event)
         set_wifi_power_save_off();
     }
 #endif
+}
+
+/* Matter thread. Subscriptions per fabric, e.g. "fabric 1: 2, fabric 2: 1": a controller that stays at 0 while the
+ * others are subscribed has stopped subscribing (its own network or hub), while the device keeps working. */
+static void format_subscriptions(char *buf, size_t size)
+{
+    size_t len = 0;
+    buf[0] = '\0';
+    for (const chip::FabricInfo &fabric : chip::Server::GetInstance().GetFabricTable()) {
+        uint32_t count = chip::app::InteractionModelEngine::GetInstance()->GetNumActiveReadHandlers(
+            chip::app::ReadHandler::InteractionType::Subscribe, fabric.GetFabricIndex());
+        int written = snprintf(buf + len, size - len, "%sfabric %u: %" PRIu32, len ? ", " : "",
+                               fabric.GetFabricIndex(), count);
+        if (written < 0 || (size_t)written >= size - len) {
+            break;
+        }
+        len += (size_t)written;
+    }
+    if (len == 0) {
+        snprintf(buf, size, "no fabric");
+    }
 }
 
 /* Matter thread */
@@ -208,15 +238,12 @@ static void log_status()
         snprintf(wifi, sizeof(wifi), "Wi-Fi not connected");
     }
 #endif
-    ESP_LOGI(TAG,
-             "up %" PRIu32 " s | heap %u free, %u min, %u largest | %s, %" PRIu32 " drops | %u fabrics, "
-             "%" PRIu32 " subscriptions",
+    char subscriptions[80];
+    format_subscriptions(subscriptions, sizeof(subscriptions));
+    ESP_LOGI(TAG, "up %" PRIu32 " s | heap %u free, %u min, %u largest | %s, %" PRIu32 " drops | subscriptions %s",
              (uint32_t)(esp_timer_get_time() / 1000000), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL), wifi, s_wifi_drops,
-             (unsigned)chip::Server::GetInstance().GetFabricTable().FabricCount(),
-             chip::app::InteractionModelEngine::GetInstance()->GetNumActiveReadHandlers(
-                 chip::app::ReadHandler::InteractionType::Subscribe));
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL), wifi, s_wifi_drops, subscriptions);
 }
 
 /* Matter thread, stack lock held */

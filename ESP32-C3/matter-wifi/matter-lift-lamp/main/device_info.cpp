@@ -5,15 +5,25 @@
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_matter_providers.h>
+#include <inttypes.h>
+#include <platform/CommissionableDataProvider.h>
 #include <platform/ESP32/ESP32Config.h>
 #include <platform/internal/GenericDeviceInstanceInfoProvider.h>
 #include <stdio.h>
 #include <string.h>
 
+#include <app/InteractionModelEngine.h>
+#include <app/server/Server.h>
+
 #include "device_info.h"
 
 using namespace chip;
 using namespace chip::DeviceLayer;
+
+static const char *TAG = "device_info";
+
+/* CHIP test setup code: every unit uses it until a factory partition gives each one its own */
+static constexpr uint32_t k_test_setup_passcode = 20202021;
 
 namespace {
 
@@ -75,7 +85,46 @@ void device_info_init(void)
 
     char serial[ConfigurationManager::kMaxSerialNumberLength + 1];
     device_info_get_serial(serial, sizeof(serial));
-    ESP_LOGI("device_info", "%s %s, serial number %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME, serial);
+    ESP_LOGI(TAG, "%s %s, serial number %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME, serial);
+}
+
+void device_info_log_identity(void)
+{
+    char serial[ConfigurationManager::kMaxSerialNumberLength + 1];
+    device_info_get_serial(serial, sizeof(serial));
+    char unique_id[ConfigurationManager::kMaxUniqueIDLength + 1];
+    if (ConfigurationMgr().GetUniqueId(unique_id, sizeof(unique_id)) != CHIP_NO_ERROR) {
+        strlcpy(unique_id, "unknown", sizeof(unique_id));
+    }
+    uint16_t vendor_id = 0;
+    uint16_t product_id = 0;
+    DeviceInstanceInfoProvider *info = GetDeviceInstanceInfoProvider();
+    if (info) {
+        (void)info->GetVendorId(vendor_id);
+        (void)info->GetProductId(product_id);
+    }
+    uint16_t discriminator = 0;
+    uint32_t passcode = 0;
+    bool test_passcode = false;
+    CommissionableDataProvider *commissionable = GetCommissionableDataProvider();
+    if (commissionable) {
+        (void)commissionable->GetSetupDiscriminator(discriminator);
+        test_passcode = commissionable->GetSetupPasscode(passcode) == CHIP_NO_ERROR && passcode == k_test_setup_passcode;
+    }
+    ESP_LOGI(TAG, "Identity: serial number %s, unique ID %s, vendor 0x%04X, product 0x%04X, discriminator %u%s", serial,
+             unique_id, vendor_id, product_id, discriminator, test_passcode ? ", test setup code" : "");
+
+    const FabricTable &fabrics = Server::GetInstance().GetFabricTable();
+    ESP_LOGI(TAG, "%u fabric(s)", (unsigned)fabrics.FabricCount());
+    for (const FabricInfo &fabric : fabrics) {
+        ESP_LOGI(TAG,
+                 "Fabric %u: node ID 0x%016" PRIX64 ", compressed fabric ID 0x%016" PRIX64 ", admin vendor 0x%04X, "
+                 "%" PRIu32 " subscription(s)",
+                 fabric.GetFabricIndex(), fabric.GetNodeId(), fabric.GetCompressedFabricId(),
+                 to_underlying(fabric.GetVendorId()),
+                 app::InteractionModelEngine::GetInstance()->GetNumActiveReadHandlers(
+                     app::ReadHandler::InteractionType::Subscribe, fabric.GetFabricIndex()));
+    }
 }
 
 void device_info_set_name(esp_matter::node::config_t *node_config)
