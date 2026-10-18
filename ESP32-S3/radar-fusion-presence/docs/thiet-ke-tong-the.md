@@ -45,7 +45,7 @@ Chi tiết byte, lệnh, sai sót tài liệu: `phase1/giao-thuc-ld2410.md`, `ph
 |---|---|---|
 | Bước sóng λ = c/f | 3·10⁸ / 24,125·10⁹ ≈ **12,4 mm** | Dịch chuyển lồng ngực khi thở 4–12 mm ⇒ pha thay đổi 4πd/λ ≈ 4–12 rad: radar **có thể** thấy nhịp thở trong tín hiệu thô. Nhưng LD2410 chỉ xuất năng lượng đã xử lý ở ~10 Hz: thông tin nhịp thở còn hay đã bị làm mượt là [GT] → E7 |
 | Độ phân giải khoảng cách c/(2B) | 3·10⁸ / (2 × 250·10⁶) = **0,6 m** | Hai vật cách nhau < 0,6 m theo khoảng cách không tách được. Gate 0,2 m của LD2410 là kích thước ô sau xử lý, **không** tăng khả năng tách [GT, suy ra từ vật lý] |
-| Doppler f_d = 2v/λ | đi bộ 1 m/s → 161 Hz; vi chuyển động 1 cm/s → 1,6 Hz | Radar phân biệt "moving/still" theo dải Doppler bên trong; ranh giới không được công bố [TL: không có] |
+| Doppler f_d = 2v/λ | đi bộ 1 m/s → 161 Hz; vi chuyển động 1 cm/s → 1,6 Hz | Cách radar tách "moving" và "still" (nhiều khả năng theo dải Doppler) không được công bố [GT]; ranh giới giữa hai loại năng lượng phải suy ra từ dữ liệu (E6, E7) |
 | Suy hao theo khoảng cách (phương trình radar, P ∝ σ/R⁴) | 1 m → 5 m: −28 dB | Người ngồi yên ở xa cho năng lượng thấp, gần mức nền; ngưỡng still mặc định ở gate 6–8 là 20 [TL] — thấp, nên nhạy với nhiễu |
 | RCS người | ~0,1–1 m², thay đổi theo tư thế, hướng | Năng lượng của cùng một người dao động mạnh khi đổi tư thế; không có "giá trị năng lượng của người" cố định |
 | Góc của mảng 2 phần tử (LD2450) | bề rộng búp ≈ λ/(N·d) ≈ 1 rad (~57°) với N = 2, d = λ/2 | Không tách được hai người cùng khoảng cách chỉ bằng góc; LD2450 tách mục tiêu chủ yếu nhờ khoảng cách/vận tốc [GT về thuật toán bên trong] → hai người ngồi sát nhau có thể thành một mục tiêu |
