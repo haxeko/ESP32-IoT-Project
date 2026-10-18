@@ -18,6 +18,11 @@ for ken_theme in default dark; do
 done
 apt-get update
 apt-get install -y nginx python3
+# The dashboard is served on port 6969 (it used to be 8080). Stop before touching anything if another
+# program already holds 6969.
+if ken_holder="$(ss -ltnpH 'sport = :6969' 2>/dev/null)" && [[ -n "$ken_holder" && "$ken_holder" != *nginx* ]]; then
+  printf 'Cổng 6969 đang được chương trình khác dùng:\n%s\n' "$ken_holder"; exit 1
+fi
 # Keep the running version so rollback.sh can restore it (newest 5 backups are kept).
 if [[ -f /var/www/ken-dashboard/index.html ]]; then
   ken_backup="/var/backups/ken-dashboard/$(date +%Y%m%d-%H%M%S)"
@@ -71,8 +76,8 @@ WantedBy=multi-user.target
 SERVICE
 cat > /etc/nginx/sites-available/ken-dashboard <<'NGINX'
 server {
-    listen 8080;
-    listen [::]:8080;
+    listen 6969;
+    listen [::]:6969;
     server_name _;
     root /var/www/ken-dashboard;
     index index.html;
@@ -97,7 +102,7 @@ systemctl enable ken-dashboard-config.service
 systemctl restart ken-dashboard-config.service
 systemctl enable nginx
 systemctl restart nginx
-printf '\nĐã cài. Trên iPad mở: http://IP_CUA_PI3:8080\n'
+printf '\nĐã cài. Trên iPad mở: http://IP_CUA_PI3:6969 (cổng cũ 8080 không còn dùng)\n'
 printf 'IP của Pi: '
 hostname -I
 printf 'Cấu hình dùng chung: /var/lib/ken-dashboard/config.json\n'

@@ -29,8 +29,13 @@ sudo bash install.sh
 Sau khi cài, mở:
 
 ```text
-http://IP-CUA-PI3:8080
+http://IP-CUA-PI3:6969
 ```
+
+Dashboard dùng cổng **6969** (bản trước dùng 8080; Nginx không còn mở cổng 8080). Khi cập nhật từ bản dùng cổng 8080:
+
+- Sửa địa chỉ ở mọi nơi đang mở dashboard: dấu trang trên iPad/điện thoại, lệnh kiosk trên Pi và dashboard Trang web trong Home Assistant.
+- Trình duyệt coi địa chỉ có cổng mới là một trang khác, nên trên mỗi máy cần nhập lại token Home Assistant một lần (chạm logo KEN hoặc vào Cài đặt). Bố cục, entity, giao diện và địa chỉ HA nằm trong cấu hình chung trên Pi nên được giữ nguyên. Độ sáng, Kính mờ, thời gian làm tối và lịch sử biểu đồ điện theo ngày lưu riêng trong trình duyệt nên bắt đầu lại trên mỗi máy.
 
 Nếu Safari còn giao diện cũ, đóng tab rồi mở lại hoặc vào Cài đặt Safari → Xóa dữ liệu trang web của địa chỉ Pi.
 
@@ -76,7 +81,7 @@ Kiểm tra dịch vụ:
 
 ```bash
 sudo systemctl status ken-dashboard-config --no-pager
-curl http://127.0.0.1:8080/api/config
+curl http://127.0.0.1:6969/api/config
 ```
 
 ## Chế độ bản mẫu
@@ -107,7 +112,7 @@ Khi chưa có token, giao diện mở bằng dữ liệu minh họa và logo hi�
 - Máy giặt, máy sấy, lọc nước và bếp từ: chạm thẻ để xem công suất/điện năng chi tiết.
 - An ninh → Tổng quan: cửa chính, cửa sổ, cửa ban công, cảm biến mưa/rò nước, máy giặt, máy sấy, lọc nước, bếp từ.
 - Nhạc: phát/dừng, bài trước/sau, âm lượng và nguồn phát của `media_player.phicomm_r1_fd73`.
-- Giữ 3 giây trên vùng trống giữa các thẻ để vào chế độ sắp xếp; giữ 1,8 giây trên tên phòng để sắp xếp phòng.
+- Giữ 3 giây trên bất kỳ chỗ trống nào của trang Nhà, An ninh, Đèn hoặc Khí hậu (giữa hay dưới các thẻ, hoặc phần lề quanh khung) để vào chế độ sắp xếp; giữ 1,8 giây trên tên phòng để sắp xếp phòng.
 
 Khi HA mất kết nối, logo chuyển chấm đỏ “Mất kết nối HA”, dashboard giữ giá trị cuối nhưng khóa lệnh điều khiển và tự kết nối lại. Trạng thái từ HA được gộp và vẽ lại tối đa khoảng 8 lần mỗi giây, và không vẽ lại khi đang chạm, nên lần chạm không bị mất khi HA gửi nhiều cập nhật.
 
@@ -127,7 +132,7 @@ Ngày và tháng của biểu đồ tính theo giờ địa phương của máy 
 
 ## Trang Cài đặt
 
-Trong **Giao diện**, chạm ô đang hiện tên giao diện để mở danh sách (mỗi dòng có chấm màu xem trước, dấu ✓ ở giao diện đang dùng; danh sách do Dashboard tự vẽ nên cùng tông với giao diện, đọc rõ cả ở Giao diện tối), rồi chọn Mặc định, Mùa xuân, Mùa hạ, Mùa thu, Mùa đông hoặc Giao diện tối: giao diện đổi ngay khi chọn và được lưu, đồng bộ chung qua Pi tới các máy khác (trong khoảng 5 giây). Nút **Lưu giao diện** vẫn lưu lại lựa chọn đang hiển thị. Khi đã kết nối HA, trang Cài đặt chỉ cập nhật các số liệu trực tiếp (trạng thái kết nối, CPU/ổ đĩa/RAM) chứ không vẽ lại cả trang, nên lựa chọn giao diện hay địa chỉ đang gõ dở không bị đặt lại.
+Trong **Giao diện**, chạm ô đang hiện tên giao diện để mở danh sách (mỗi dòng có chấm màu xem trước, dấu ✓ ở giao diện đang dùng; danh sách do Dashboard tự vẽ nên cùng tông với giao diện, đọc rõ cả ở Giao diện tối), rồi chọn Mặc định, Mùa xuân, Mùa hạ, Mùa thu, Mùa đông hoặc Giao diện tối: giao diện đổi ngay khi chọn và được lưu, đồng bộ chung qua Pi tới các máy khác (trong khoảng 5 giây). Khi đã kết nối HA, trang Cài đặt chỉ cập nhật các số liệu trực tiếp (trạng thái kết nối, CPU/ổ đĩa/RAM) chứ không vẽ lại cả trang, nên lựa chọn giao diện hay địa chỉ đang gõ dở không bị đặt lại.
 
 Mỗi chủ đề có nền và màu nhấn riêng, dễ phân biệt: Mặc định xanh dương – tím – hồng – cam đào, Mùa xuân xanh lá – hồng đào – vàng mai, Mùa hạ xanh biển – vàng nắng – san hô, Mùa thu cam – đỏ gạch – vàng nghệ, Mùa đông xanh băng – oải hương – trắng tuyết, Giao diện tối xanh đêm với quầng chàm/tím/ngọc. Bốn mùa giữ họa tiết SVG tĩnh trên nền (lá/hoa xuân, nắng/sóng hạ, lá vàng thu, bông tuyết đông) nằm dưới lớp kính; bóng đổ dưới kính cũng mang tông màu của chủ đề. Giao diện tối dùng kính tối, thẻ đang bật vẫn sáng như iOS. Họa tiết không chặn thao tác và không chạy hiệu ứng nền liên tục trên Pi 3. Màu trạng thái thiết bị giống nhau ở mọi chủ đề.
 
@@ -142,12 +147,18 @@ Chạm giữ không bôi chọn chữ hoặc mở menu chọn văn bản trên D
 - **Music Assistant** điều khiển entity media player qua Home Assistant.
 - **AI BOX** kết nối trực tiếp tới loa trong LAN qua WebSocket cổng 8082; âm lượng dùng cổng 8080. Pi/màn hình và loa phải ở cùng mạng và firmware loa phải cung cấp hai dịch vụ này. Chuyển lại Music Assistant sẽ đóng kết nối tới loa.
 
+## Hiển thị trong Home Assistant
+
+Trong Home Assistant: **Cài đặt → Bảng điều khiển → Thêm bảng điều khiển → Trang web**, nhập `http://IP-CUA-PI3:6969`. Dashboard tự co theo phần khung còn lại (thanh bên, thanh tiêu đề); khi khung quá hẹp, nó chuyển sang bố cục cuộn dọc như trên điện thoại. Chế độ sắp xếp mở bằng cách giữ 3 giây trên chỗ trống như khi mở trực tiếp, kể cả phần lề quanh khung.
+
+Nếu Home Assistant được mở bằng `https://` (ví dụ truy cập từ xa), trình duyệt chặn trang `http://` nhúng bên trong; khi đó hãy mở dashboard trực tiếp bằng địa chỉ của Pi.
+
 ## Mở tự động trên màn hình gắn trực tiếp vào Pi
 
 Nếu Pi 3 có Raspberry Pi OS Desktop và Chromium, có thể mở thử chế độ kiosk:
 
 ```bash
-chromium-browser --kiosk --noerrdialogs --disable-infobars http://127.0.0.1:8080
+chromium-browser --kiosk --noerrdialogs --disable-infobars http://127.0.0.1:6969
 ```
 
 Tên lệnh trên Raspberry Pi OS mới có thể là `chromium`. Cấu hình tự khởi động phụ thuộc bản Raspberry Pi OS và desktop đang dùng. Nếu thao tác trên Pi còn chậm, giữ **Kính mờ** ở trạng thái tắt.
@@ -158,7 +169,7 @@ Tên lệnh trên Raspberry Pi OS mới có thể là `chromium`. Cấu hình t�
 hostname -I
 sudo nginx -t
 sudo systemctl status nginx --no-pager
-sudo ss -ltnp | grep ':8080'
+sudo ss -ltnp | grep ':6969'
 ```
 
 Nếu iPad không mở được, kiểm tra iPad và Pi ở cùng LAN, Wi-Fi khách/AP isolation đã tắt và IP Pi chưa thay đổi. Nên đặt DHCP reservation cho Pi 3 và Home Assistant.

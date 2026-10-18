@@ -546,7 +546,7 @@ function renderDevices(){
   const layout=currentDeviceLayout();
   if(!layout.length){const e=document.createElement('div');e.className='empty-message';e.textContent='Chưa có thiết bị';view.append(e)}
   for(const pos of layout){if(!DEVICE[pos.key])continue;const def={...DEVICE[pos.key],name:layoutEdits.names[pos.key]||DEVICE[pos.key].name};view.append(makeDeviceCard(def,pos))}
-  if(layoutEditMode){view.classList.add('layout-editing');const actions=document.createElement('div');actions.className='layout-actions';const add=document.createElement('button');add.type='button';add.className='layout-add';add.textContent='+ Thiết bị';add.onclick=showAddDevicePicker;const done=document.createElement('button');done.type='button';done.className='layout-done';done.textContent='Xong';done.onclick=()=>{layoutEditMode=false;renderDevices()};actions.append(add,done);view.append(actions)}else installLayoutLongPress(view);
+  if(layoutEditMode){view.classList.add('layout-editing');const actions=document.createElement('div');actions.className='layout-actions';const add=document.createElement('button');add.type='button';add.className='layout-add';add.textContent='+ Thiết bị';add.onclick=showAddDevicePicker;const done=document.createElement('button');done.type='button';done.className='layout-done';done.textContent='Xong';done.onclick=()=>{layoutEditMode=false;renderDevices()};actions.append(add,done);view.append(actions)}
   $('content').replaceChildren(view);
 }
 
@@ -574,22 +574,28 @@ function makeDeviceCard(def,pos){
   return card;
 }
 
-function installLayoutLongPress(view){
-  let timer=null,startX=0,startY=0;
-  const cancel=()=>{clearTimeout(timer);timer=null;if(layoutHoldCancel===cancel)layoutHoldCancel=null};
-  view.onpointerdown=e=>{
-    if(e.target!==view||e.isPrimary===false||e.button>0||modalOpen()||entityHoldCard||openingHoldPointer!==null||layoutEditMode)return;
+// Holding 3 s on any empty part of a device page (between or below the tiles, or the margin around the stage)
+// opens layout editing: when Home Assistant shows the dashboard smaller (sidebar, header, Webpage card) or on a
+// phone, the tile grid alone leaves almost nothing to hold.
+const DEVICE_PAGES=['home','security','lights','climate'];
+function layoutHoldSpot(target){return DEVICE_PAGES.includes(currentNav)&&target instanceof Element&&!target.closest('.device-card,.panel,#side-nav,#room-tabs,#metric-row,.layout-actions,#screen-shade,dialog,button,input,select,textarea,a,label')}
+function installLayoutLongPress(){
+  let timer=null,pointer=null,startX=0,startY=0;
+  const cancel=()=>{clearTimeout(timer);timer=null;pointer=null;if(layoutHoldCancel===cancel)layoutHoldCancel=null};
+  addEventListener('pointerdown',e=>{
+    if(e.isPrimary===false||e.button>0||!layoutHoldSpot(e.target)||modalOpen()||entityHoldCard||openingHoldPointer!==null||layoutEditMode)return;
     e.preventDefault();cancelLayoutLongPress();clearTextSelection();
-    startX=e.clientX;startY=e.clientY;layoutHoldCancel=cancel;view.setPointerCapture?.(e.pointerId);
+    pointer=e.pointerId;startX=e.clientX;startY=e.clientY;layoutHoldCancel=cancel;
     timer=setTimeout(()=>{
-      const valid=view.isConnected&&timer!==null&&!modalOpen()&&!entityHoldCard&&openingHoldPointer===null;
+      const valid=timer!==null&&DEVICE_PAGES.includes(currentNav)&&!modalOpen()&&!entityHoldCard&&openingHoldPointer===null;
       cancel();if(!valid)return;
       layoutEditMode=true;renderDevices();toast(isFluidLayout()?'Chạm bút để sửa · kéo thả bố cục trên màn hình ngang':'Kéo thẻ đến ô trống · chạm bút để đổi tên');
     },3000);
-  };
-  view.onpointermove=e=>{if(timer&&Math.hypot(e.clientX-startX,e.clientY-startY)>10)cancel()};
-  for(const name of ['pointerup','pointercancel','pointerleave','lostpointercapture'])view.addEventListener(name,cancel);
-  view.oncontextmenu=e=>e.preventDefault();
+  });
+  addEventListener('pointermove',e=>{if(timer&&e.pointerId===pointer&&Math.hypot(e.clientX-startX,e.clientY-startY)>10)cancel()},{passive:true});
+  for(const name of ['pointerup','pointercancel'])addEventListener(name,e=>{if(e.pointerId===pointer)cancel()});
+  // no system long-press menu over empty space (Android browsers and web views open one and end the hold)
+  addEventListener('contextmenu',e=>{if(layoutHoldCancel===cancel||layoutHoldSpot(e.target))e.preventDefault()});
 }
 function enableCardEditing(card,pos,def){
   card.classList.add('layout-edit-card');card.onclick=null;card.onkeydown=null;const edit=document.createElement('button');edit.type='button';edit.className='card-edit-name';edit.setAttribute('aria-label','Sửa tên và entity');edit.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 16-1 4 4-1L19 8l-3-3zM14 7l3 3"/></svg>';edit.onpointerdown=e=>e.stopPropagation();edit.onclick=e=>{e.stopPropagation();showEditDeviceForm(pos.key,def)};const remove=document.createElement('button');remove.type='button';remove.className='card-remove';remove.setAttribute('aria-label','Xóa thiết bị khỏi Dashboard');remove.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';remove.onpointerdown=e=>e.stopPropagation();remove.onclick=e=>{e.stopPropagation();if(!confirm(`Xóa ${layoutEdits.names[pos.key]||def.name} khỏi Dashboard và Cài đặt entity?`))return;if(layoutEdits.customDevices[pos.key])removeCustomDevice(pos.key,def);else layoutEdits.removedDevices=[...new Set([...(layoutEdits.removedDevices||[]),pos.key])];saveLayoutEdits();renderDevices()};card.append(edit,remove);
@@ -788,7 +794,7 @@ function renderSettings(){
       <div class="connection-actions"><button id="settings-full-config" type="button">Cài đặt entity</button><button id="settings-forget" type="button">Hủy kết nối</button><button class="primary" type="submit">Lưu & kết nối</button></div>
     </form>`;
   const page=document.createElement('div');page.className='page-panel settings-page';page.innerHTML=`
-    <section class="settings-card display-settings"><div><strong class="settings-title">Độ sáng</strong><span class="setting-value" id="brightness-label">${displaySettings.brightness}%</span><input id="brightness-setting" type="range" min="20" max="100" value="${displaySettings.brightness}"><label class="glass-toggle"><span>Kính mờ</span><input id="glass-setting" type="checkbox" role="switch" ${glassEnabled()?'checked':''}></label></div><div><strong class="settings-title">Làm tối sau</strong><div class="timeout-buttons">${[-1,1,2,5,10].map(v=>`<button type="button" data-timeout="${v}" class="${v===displaySettings.timeout?'selected':''}">${v<0?'Luôn bật':v+' phút'}</button>`).join('')}</div></div><div class="theme-setting"><strong class="settings-title" id="theme-title">Giao diện</strong><div><div class="theme-picker"><button id="theme-choice" class="select-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="theme-menu" aria-labelledby="theme-title theme-choice"><span class="theme-swatch" data-swatch="${currentTheme()}"></span><span class="select-value">${themeLabel(currentTheme())}</span>${iconSvg('chevron-down')}</button><div id="theme-menu" class="select-menu" role="listbox" aria-labelledby="theme-title" hidden>${THEMES.map(([value,label])=>`<button type="button" role="option" tabindex="-1" data-theme-option="${value}" aria-selected="${value===currentTheme()}"><span class="theme-swatch" data-swatch="${value}"></span><span>${label}</span>${iconSvg('check')}</button>`).join('')}</div></div><button id="theme-save" type="button">Lưu giao diện</button></div></div></section>
+    <section class="settings-card display-settings"><div><strong class="settings-title">Độ sáng</strong><span class="setting-value" id="brightness-label">${displaySettings.brightness}%</span><input id="brightness-setting" type="range" min="20" max="100" value="${displaySettings.brightness}"><label class="glass-toggle"><span>Kính mờ</span><input id="glass-setting" type="checkbox" role="switch" ${glassEnabled()?'checked':''}></label></div><div><strong class="settings-title">Làm tối sau</strong><div class="timeout-buttons">${[-1,1,2,5,10].map(v=>`<button type="button" data-timeout="${v}" class="${v===displaySettings.timeout?'selected':''}">${v<0?'Luôn bật':v+' phút'}</button>`).join('')}</div></div><div class="theme-setting"><strong class="settings-title" id="theme-title">Giao diện</strong><div><div class="theme-picker"><button id="theme-choice" class="select-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="theme-menu" aria-labelledby="theme-title theme-choice"><span class="theme-swatch" data-swatch="${currentTheme()}"></span><span class="select-value">${themeLabel(currentTheme())}</span>${iconSvg('chevron-down')}</button><div id="theme-menu" class="select-menu" role="listbox" aria-labelledby="theme-title" hidden>${THEMES.map(([value,label])=>`<button type="button" role="option" tabindex="-1" data-theme-option="${value}" aria-selected="${value===currentTheme()}"><span class="theme-swatch" data-swatch="${value}"></span><span>${label}</span>${iconSvg('check')}</button>`).join('')}</div></div></div></div></section>
     <section class="settings-card system-settings" id="server-card"><div class="server-card-head"><span class="server-icon">${iconSvg('server')}</span><strong class="settings-title">Máy chủ Homeassistant</strong></div><div class="server-info"><span>${iconSvg('climate')}Nhiệt độ CPU</span><b data-server-value="piTemp">${escapeHtml(formatSensor('piTemp',1,'°C'))}</b><span>${iconSvg('disk')}Dung lượng trống</span><b data-server-value="piDisk">${escapeHtml(formatSensor('piDisk',1))}</b><span>${iconSvg('memory')}RAM</span><b data-server-value="piRam">${escapeHtml(formatSensor('piRam',1,'%'))}</b></div></section>
     ${connectionPanel}`;
   bindEntityHold(page.querySelector('#server-card'),()=> 'Máy chủ Homeassistant',showServerEntityEditor);
@@ -804,7 +810,6 @@ function renderSettings(){
   themeButton.onkeydown=e=>{if((e.key==='ArrowDown'||e.key==='ArrowUp')&&themeMenu.hidden){e.preventDefault();openThemeMenu()}else if(e.key==='Escape')closeThemeMenu(true)};
   themeOptions.forEach(b=>b.onclick=()=>{closeThemeMenu(true);saveTheme(b.dataset.themeOption)});
   themeMenu.onkeydown=e=>{const i=themeOptions.indexOf(document.activeElement);if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();themeOptions[(i+(e.key==='ArrowDown'?1:themeOptions.length-1))%themeOptions.length].focus()}else if(e.key==='Home'||e.key==='End'){e.preventDefault();themeOptions[e.key==='Home'?0:themeOptions.length-1].focus()}else if(e.key==='Escape'){e.preventDefault();closeThemeMenu(true)}else if(e.key==='Tab')closeThemeMenu(false)};
-  page.querySelector('#theme-save').onclick=()=>saveTheme(currentTheme());
   page.querySelector('#settings-full-config').onclick=async()=>{settingsEntityMode=true;renderSettings();await refreshEntityStates()};
   page.querySelector('#settings-forget').onclick=showDisconnectConfirm;
   const phicommToggle=page.querySelector('#settings-use-phicomm'),speakerInput=page.querySelector('#settings-speaker-address');speakerInput.disabled=!phicommToggle.checked;phicommToggle.onchange=()=>{config.usePhicomm=phicommToggle.checked;speakerInput.disabled=!phicommToggle.checked;persistConfig();if(!phicommToggle.checked){musicSource='ma';localStorage.setItem('ken-music-source','ma');directSpeaker.close();directSpeakerStatus='offline'}};
@@ -987,7 +992,7 @@ function resizeStage(){
 function sizeFluidGrid(){const width=$('content').clientWidth;if(!width)return;const cols=width<340?3:width<540?4:Math.max(6,Math.min(9,Math.floor((width+8)/96)));$('stage').style.setProperty('--fluid-cols',cols);$('stage').style.setProperty('--fluid-cell',`${Math.floor((width-8*(cols-1))/cols)}px`)}
 
 async function startDashboard(){
-  await loadSharedDashboard();applyTheme();buildNavigation();buildEntityForm();installTopEntityEditors();installGestureGuards();tick();setInterval(tick,1000);setInterval(pollSharedDashboard,5000);resizeStage();addEventListener('resize',resizeStage);if(window.ResizeObserver)new ResizeObserver(()=>{if(isFluidLayout())sizeFluidGrid()}).observe($('content'));applyDisplaySettings(false);
+  await loadSharedDashboard();applyTheme();buildNavigation();buildEntityForm();installTopEntityEditors();installGestureGuards();installLayoutLongPress();tick();setInterval(tick,1000);setInterval(pollSharedDashboard,5000);resizeStage();addEventListener('resize',resizeStage);if(window.ResizeObserver)new ResizeObserver(()=>{if(isFluidLayout())sizeFluidGrid()}).observe($('content'));applyDisplaySettings(false);
   $('config-close').onclick=()=>$('config-dialog').close();$('detail-close').onclick=()=>$('detail-dialog').close();$('screen-shade').onclick=resetIdle;
   $('brand-card').onclick=openConfig;$('brand-card').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();openConfig()}};
   $('detail-dialog').addEventListener('close',()=>{metricEditorRoomId=null;resetLightPopup();$('detail-close').hidden=false});
