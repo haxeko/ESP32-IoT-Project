@@ -263,6 +263,35 @@ menu "Identity Diagnostics and Setup Code"
 
 endmenu
 
+menu "Connection Watchdog"
+
+    config NET_WATCHDOG_RECONNECT_MIN
+        int "Reconnect Wi-Fi every (minutes without any controller subscription, 0 = never)"
+        range 0 1440
+        default 10
+        help
+            A commissioned device with no subscription from any controller
+            (Home Assistant, Apple Home...) cannot report anything: the
+            controllers lost it. The watchdog announces the device again on
+            DNS-SD every 5 minutes, so the controllers find it as soon as it
+            can be reached, and every this many minutes disconnects Wi-Fi; the
+            Matter stack then connects again at once (scan of all channels,
+            strongest access point first, new address lease, new
+            announcements).
+
+    config NET_WATCHDOG_RESTART_MIN
+        int "Restart after (minutes without any controller subscription, 0 = never)"
+        range 0 1440
+        default 30
+        help
+            Last resort when reconnecting Wi-Fi did not help. With 0 the device
+            is never restarted by the watchdog, also not when the Matter task
+            has stopped running for 3 minutes (otherwise a restart).
+            A device whose controllers are all off for longer than this
+            restarts every this many minutes until one subscribes again.
+
+endmenu
+
 menu "Wi-Fi RSSI and Uptime Reports"
 
     config DIAG_REPORT_RSSI_STEP_DB

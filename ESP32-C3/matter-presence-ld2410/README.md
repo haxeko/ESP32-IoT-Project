@@ -12,15 +12,16 @@ Trong Home Assistant có thêm 5 điều khiển (Apple Home không hiện): **H
 |---|---|---|
 | Mã nguồn | `main/`, bảng phân vùng, sdkconfig của thư mục ESP32-H2 (chung với bản Thread) | tự chứa, chỉ ESP32-C3 |
 | Chức năng, thuật toán, log | — | giống hệt, thêm báo cáo Wi-Fi RSSI và Uptime (dòng dưới) |
+| Mất kết nối với controller | chờ controller hoặc Matter SDK tự thử lại (5–10 phút, thưa dần) | watchdog kết nối: không có subscription 5 phút thì thông báo lại DNS-SD, 10 phút nối lại Wi-Fi, 30 phút khởi động lại; task Matter treo 3 phút thì khởi động lại (`menuconfig`; đặt 0 thì như cũ) |
 | Wi-Fi RSSI, Uptime trong Home Assistant | chỉ gửi lúc Home Assistant subscribe: RSSI đứng giá trị, Uptime lệch sau khi Home Assistant khởi động lại | gửi lại RSSI khi đổi từ 3 dB (kiểm tra mỗi phút), cả RSSI và uptime 10 phút một lần (`menuconfig`; đặt 0 thì như cũ) |
 | VID / PID, endpoint, cluster, tên entity, mã mode | `0xFFF1` / `0x8001`, endpoint 1–4 | giống hệt |
 | Bảng phân vùng, khoá NVS/KVS | — | giống hệt |
-| sdkconfig sinh ra | — | giống hệt (chỉ khác đường dẫn file, mục chọn loại LED đã bỏ và 2 tuỳ chọn mới `DIAG_REPORT_*`) |
+| sdkconfig sinh ra | — | giống hệt (chỉ khác đường dẫn file, mục chọn loại LED đã bỏ và 4 tuỳ chọn mới `DIAG_REPORT_*`, `NET_WATCHDOG_*`) |
 | LED | chọn được WS2812 / LED GPIO / không có | chỉ LED GPIO một màu (thư viện `espressif/led_strip` bỏ) |
 | Biến thể build | mặc định, `unique_setup`, `factory` | mặc định, `unique_setup` (`factory` bỏ: PAI test chỉ cấp DAC cho PID `0x8000`) |
 | Mã Thread/OpenThread (`thread_diag`, phần OpenThread của `id_diag`, OT CLI) | có, tắt khi build C3 | bỏ |
 | Tên file build | `matter_presence_c3_wifi*` | giống hệt |
-| Kích thước (`idf.py size`, cùng Docker image) | 1 478 KB, RAM tĩnh 147,0 KB | 1 478 KB, RAM tĩnh 147,0 KB (lớn hơn 160 byte flash vì có thêm `diag_report`, nhỏ hơn 54 byte RAM) |
+| Kích thước (`idf.py size`, cùng Docker image) | 1 478 KB, RAM tĩnh 147,0 KB | 1 480 KB, RAM tĩnh 147,0 KB (lớn hơn 1 968 byte flash vì có thêm `diag_report` và `net_watchdog`, nhỏ hơn 22 byte RAM) |
 
 Thay đổi cấu trúc mã (không đổi hành vi):
 - `radar_control.cpp` tách thành phần Matter (`radar_control.cpp`: 4 Mode Select) và phần logic (`radar_worker.cpp`: task `radar_cfg`, các yêu cầu, "lựa chọn cuối cùng thắng", Bluetooth của radar), để chạy được test trên máy tính.
@@ -304,7 +305,7 @@ File **`matter_presence_c3_wifi.ota`** (Artifacts của CI; build tại máy là
 
 ## Cấu hình (`idf.py menuconfig`)
 
-Tên các tuỳ chọn giữ như bản 1.0.132; menu *Wi-Fi RSSI and Uptime Reports* là mới.
+Tên các tuỳ chọn giữ như bản 1.0.132; menu *Connection Watchdog* và *Wi-Fi RSSI and Uptime Reports* là mới.
 
 | Menu | Tuỳ chọn | Mặc định | Khoảng |
 |---|---|---|---|
@@ -326,6 +327,8 @@ Tên các tuỳ chọn giữ như bản 1.0.132; menu *Wi-Fi RSSI and Uptime Rep
 | Identity Diagnostics and Setup Code | `IDENTITY_DIAG_PERIOD_SEC` | 300 | 0 (tắt) – 86400 |
 | | `IDENTITY_DIAG_SUBSCRIPTION_LOG` / `PRINT_ONBOARDING_CODES` | bật / bật | |
 | | `UNIQUE_SETUP_CODE`, `UNIQUE_SETUP_CODE_PARTITION` | bật khi build `unique_setup`, `fctry` | |
+| Connection Watchdog (mới) | `NET_WATCHDOG_RECONNECT_MIN` (nối lại Wi-Fi mỗi, khi không có subscription) | 10 phút | 0 (không) – 1440 |
+| | `NET_WATCHDOG_RESTART_MIN` (khởi động lại sau, khi không có subscription; 0 cũng tắt việc khởi động lại khi task Matter treo) | 30 phút | 0 (không) – 1440 |
 | Wi-Fi RSSI and Uptime Reports (mới) | `DIAG_REPORT_RSSI_STEP_DB` (gửi lại Wi-Fi RSSI khi đổi từng này dB) | 3 | 0 (chỉ theo chu kỳ) – 30 |
 | | `DIAG_REPORT_REFRESH_MIN` (gửi lại Wi-Fi RSSI và uptime mỗi) | 10 phút | 0 (không) – 1440 |
 | Memory Monitor | `MEM_MONITOR_PERIOD_SEC` | 600 | 0 (chỉ khi khởi động) – 86400 |
@@ -341,16 +344,45 @@ Console Matter (gõ lệnh trong monitor) tắt để có thêm khoảng 10 KB R
 - **BLE thu gọn** (NimBLE, chỉ để ghép nối): vai trò peripheral, 1 kết nối, không bảo mật BLE (Matter tự bảo mật bằng PASE), không có tính năng BLE 5, bộ đệm nhỏ (mục *BLE Optimizations* của hướng dẫn tối ưu RAM của esp-matter).
 - Mã Wi-Fi nằm trong flash thay vì IRAM (`ESP_WIFI_IRAM_OPT=n`, `ESP_WIFI_RX_IRAM_OPT=n`): trên ESP32-C3, IRAM và DRAM dùng chung SRAM, nên có thêm heap.
 
+### Watchdog kết nối (`net_watchdog.cpp`, mới)
+
+Khi thiết bị mất liên lạc với controller, cả hai phía đều chờ lâu mới thử lại (theo mã nguồn, chưa đo trên bo):
+- **Matter Server bản matter.js** của Home Assistant:
+  - báo *Unavailable* sau 3 phút mất kết nối;
+  - nếu không nối lại được ở địa chỉ cũ thì chờ thông báo DNS-SD (mDNS) của thiết bị, hoặc 10 phút thử lại một lần;
+  - thông báo multicast qua Wi-Fi hay bị mất.
+- **Matter SDK trên thiết bị:**
+  - chỉ tự nối lại subscription sau 5 phút, rồi thưa dần tới 6 giờ;
+  - bản matter.js lại từ chối subscription cũ đã bị thay thế.
+
+Vì vậy, sau khi Wi-Fi đã ổn định lại, mỗi lần mất kết nối vẫn có thể kéo dài 3 tới hơn 30 phút.
+
+Watchdog kiểm tra 30 s một lần. Khi thiết bị **đã ghép nối** mà **không còn subscription nào** từ bất kỳ controller nào (Home Assistant, Apple Home…):
+
+| Không có subscription trong | Việc làm | Log |
+|---|---|---|
+| 5 phút, rồi 5 phút một lần | Thông báo lại thiết bị trên DNS-SD, để controller tìm lại ngay khi liên lạc được | `W net_wd: No controller subscribed for 5 min: announcing the device again (DNS-SD)` |
+| 10 phút, rồi 10 phút một lần (`NET_WATCHDOG_RECONNECT_MIN`) | Ngắt Wi-Fi. Matter SDK nối lại ngay: quét mọi kênh, chọn điểm phát mạnh nhất (node Deco gần nhất), xin lại địa chỉ, thông báo lại DNS-SD | `W net_wd: ... reconnecting Wi-Fi` |
+| 30 phút (`NET_WATCHDOG_RESTART_MIN`) | Khởi động lại thiết bị | `E net_wd: ... restarting`, lần khởi động sau: `W net_wd: Restarted by the connection watchdog: no controller subscribed` |
+
+- Task Matter không chạy được 3 phút (bị treo hoặc bị task khác chiếm CPU): khởi động lại ngay, log `E net_wd: Matter task stuck ...`. Cấu hình ESP-IDF hiện tại không có cơ chế nào khác làm việc này: task watchdog chỉ cảnh báo, không khởi động lại.
+- Có subscription trở lại thì mọi bộ đếm về 0. Thiết bị chưa ghép nối thì watchdog không làm gì.
+- Còn **một** controller giữ subscription (ví dụ Apple Home khi Home Assistant mất kết nối) thì watchdog không làm gì. Lúc đó thiết bị vẫn liên lạc được, nên lỗi nằm ở phía controller kia; khởi động lại thiết bị chỉ làm controller còn lại mất kết nối theo.
+- Mỗi lần ngắt Wi-Fi, Home Assistant nhận một sự kiện `wiFiNetworkDiagnostics.disconnection` với `reasonCode: 8` (thiết bị tự rời mạng).
+- **Ảnh hưởng:** nếu tất cả controller đều tắt lâu hơn 30 phút (ví dụ Home Assistant bảo trì), thiết bị sẽ khởi động lại 30 phút một lần cho tới khi có controller subscribe trở lại. Việc này vô hại: radar chạy tiếp, Hold time và lựa chọn được giữ.
+- Không nên dùng watchdog với controller không bao giờ subscribe. **Tắt hoặc quay lại như 1.0.140:** đặt cả hai tuỳ chọn về 0 (không ngắt Wi-Fi, không khởi động lại; chỉ còn thông báo DNS-SD, vô hại).
+- Watchdog **không sửa được nguyên nhân gốc** của việc mất kết nối (sóng yếu, router). Nó chỉ rút ngắn thời gian mất kết nối.
+
 ## RAM và flash
 
 Đo bằng `idf.py size`, cấu hình mặc định, cả hai bản build trong cùng Docker image `release-v1.6.1_idf_v6.0.2` (image được build lại ngày 2026-10-15 với connectedhomeip `b1902b39`):
 
 | | 1.0.132 (`matter-wifi-presence`) | Bản này |
 |---|---|---|
-| Firmware (phân vùng app 1 920 KB) | 1 513 104 B (1 478 KB), trống 23 % | 1 513 264 B (1 478 KB), trống 23 % |
-| RAM tĩnh (DRAM 313,8 KB) | 150 565 B (147,0 KB, 46,86 %) | 150 511 B (147,0 KB, 46,84 %) |
-| Còn cho heap | 170 731 B (166,7 KB) | 170 785 B (166,8 KB) |
-| Biến thể `unique_setup` | | 1 515 408 B |
+| Firmware (phân vùng app 1 920 KB) | 1 513 104 B (1 478 KB), trống 23 % | 1 515 072 B (1 480 KB), trống 23 % |
+| RAM tĩnh (DRAM 313,8 KB) | 150 565 B (147,0 KB, 46,86 %) | 150 543 B (147,0 KB, 46,85 %) |
+| Còn cho heap | 170 731 B (166,7 KB) | 170 753 B (166,8 KB) |
+| Biến thể `unique_setup` | | 1 517 216 B |
 
 Task và stack (byte; số "còn trống" đo trên bo với bản 1.0.128–1.0.131, mã các task này không đổi):
 
@@ -384,6 +416,7 @@ I device_info: Serial number: 58CF79A1B2C4, device name: Presence-B2C4
 I radar_ctl: Endpoints: Learn empty room 1, Range 2, Radar resolution 3, Radar Bluetooth 4
 I app_main: Hold time 30 s (limits 1-300 s)
 I diag_report: Wi-Fi RSSI reported again on a 3 dB change, RSSI and uptime every 10 min
+I net_wd: Connection watchdog: without any controller subscription, DNS-SD again every 5 min, Wi-Fi reconnect every 10 min, restart after 30 min (0 = never)
 I radar_ctl: LD2410 settings: no-one duration 5 s, range moving 6 m (gate 8), still 6 m (gate 8), 75 cm per gate, Bluetooth off
 ```
 
@@ -423,6 +456,11 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 - **Home Assistant báo *Unavailable*:**
   - **Chỉ khoảng 1 s, cùng lúc ở mọi thiết bị Matter:** Home Assistant đang tải lại integration Matter, ví dụ 30 s sau khi bật/tắt một entity hay khi khởi động lại. Thiết bị không có lỗi. Log Matter Server lúc đó có `WebSocket connection closed` rồi `WebSocket connection established`.
   - **Mất kết nối thật:** Matter Server bản matter.js chỉ báo *Unavailable* khi thiết bị mất kết nối liên tục 3 phút (log `offline grace period expired, marking unavailable`). Các dòng `Peer is no longer responding to active session` nghĩa là thiết bị không trả lời. Trong log Matter Server, `@1:5a` là node 0x5a = 90.
+  - **Tìm nguyên nhân mà không cần cắm USB:** sau khi nối lại, thiết bị gửi các sự kiện đã lưu. Matter Server ghi chúng vào log dạng `Received event ... on ...@1:5a.ep0`:
+    - `wiFiNetworkDiagnostics.disconnection` với `reasonCode`: thiết bị mất Wi-Fi. `200` là mất beacon, tức sóng yếu hoặc router; `8` là thiết bị tự rời mạng, ví dụ watchdog nối lại. `wiFiNetworkDiagnostics.associationFailure` là nối lại thất bại.
+    - `basicInformation.startUp` và `generalDiagnostics.bootReason`: thiết bị đã khởi động lại. `BrownOutReset` là nguồn yếu hoặc sụt áp; `SoftwareReset` là lỗi firmware hoặc watchdog; `PowerOnReboot` là mất điện.
+    - Không có sự kiện nào mà vẫn mất kết nối: thiết bị vẫn nối Wi-Fi nhưng không nhận được gói. Thử `ping <IP>` lúc đang *Unavailable*, xem node Deco và mức sóng trong app của router.
+  - Entity **Wi-Fi RSSI** (bản 1.0.140 trở lên): dưới −75 dBm là sóng yếu, hay mất kết nối. Đặt thêm node mesh hoặc dời bo ra xa tường, gương, gạch men.
   - **Phân biệt lỗi mạng với khởi động lại:** nếu sau khi nối lại vẫn dùng cùng số phiên (`@1:5a•580e`), thiết bị **không** khởi động lại (khởi động lại thì mất mọi phiên), mà là mất Wi-Fi hoặc không nhận được gói. Kiểm tra *Wi-Fi RSSI*, *Reboot count*, và log USB (`EV wifi failed or left: reason ...`, `W mem: Heap low`).
 - Mỗi lần thử lại ghép nối: factory reset (giữ BOOT 5 s) hoặc `erase-flash`.
 
@@ -430,11 +468,11 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 
 **Đã kiểm chứng bằng build và test trên máy tính (bản này):**
 - Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định và biến thể `unique_setup`.
-- `sdkconfig` sinh ra giống hệt bản 1.0.132 build trong cùng image, trừ đường dẫn file, mục chọn loại LED đã bỏ và 2 tuỳ chọn mới `DIAG_REPORT_RSSI_STEP_DB`, `DIAG_REPORT_REFRESH_MIN` (so với bản 1.0.139 chỉ khác 2 tuỳ chọn này): Wi-Fi bật, OpenThread tắt, BLE chỉ để ghép nối, minimal mDNS, cửa sổ ghép nối 900 s, VID `0xFFF1` / PID `0x8001`, WPA3 SAE, coexistence, stack CHIP 8192, CPU 160 MHz, brownout bật, đúng 21 cluster.
-- Header file OTA (bản build 1.0.140): VID `0xFFF1`, PID `0x8001`, phiên bản 140 / `1.0.140` (lớn hơn 132).
+- `sdkconfig` sinh ra giống hệt bản 1.0.132 build trong cùng image, trừ đường dẫn file, mục chọn loại LED đã bỏ và 4 tuỳ chọn mới `DIAG_REPORT_RSSI_STEP_DB`, `DIAG_REPORT_REFRESH_MIN`, `NET_WATCHDOG_RECONNECT_MIN`, `NET_WATCHDOG_RESTART_MIN` (so với bản 1.0.139 chỉ khác 4 tuỳ chọn này): Wi-Fi bật, OpenThread tắt, BLE chỉ để ghép nối, minimal mDNS, cửa sổ ghép nối 900 s, VID `0xFFF1` / PID `0x8001`, WPA3 SAE, coexistence, stack CHIP 8192, CPU 160 MHz, brownout bật, đúng 21 cluster.
+- Header file OTA (bản build 1.0.142): VID `0xFFF1`, PID `0x8001`, phiên bản 142 / `1.0.142` (lớn hơn 132).
 - Thứ tự tạo endpoint giống 1.0.132; esp-matter (`esp_matter_data_model.cpp`) cấp số endpoint theo thứ tự tạo trước `esp_matter::start()`, nên số endpoint giữ nguyên.
-- Kích thước so với 1.0.132 (bảng **RAM và flash**): lớn hơn 160 byte flash, nhỏ hơn 54 byte RAM tĩnh. `diag_report` (báo cáo lại Wi-Fi RSSI và Uptime) chiếm 416 byte flash và 16 byte RAM tĩnh so với bản 1.0.139 chưa có nó.
-- Host test (`test/host/run.sh`, 12 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED, tên thiết bị, lúc nào gửi lại Wi-Fi RSSI và Uptime. Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ. Làm hỏng thêm 10 chỗ trong `diag_report.h`: test bắt được cả 10.
+- Kích thước so với 1.0.132 (bảng **RAM và flash**): lớn hơn 1 968 byte flash, nhỏ hơn 22 byte RAM tĩnh. `diag_report` (báo cáo lại Wi-Fi RSSI và Uptime) chiếm 416 byte flash và 16 byte RAM tĩnh (so với 1.0.139), `net_watchdog` chiếm 1 808 byte flash và 32 byte RAM tĩnh (so với 1.0.140).
+- Host test (`test/host/run.sh`, 13 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED, tên thiết bị, lúc nào gửi lại Wi-Fi RSSI và Uptime, việc watchdog kết nối làm theo thời gian không có subscription. Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ. Làm hỏng thêm 10 chỗ trong `diag_report.h` và 12 chỗ trong `net_watchdog.h`: test bắt được tất cả.
 - Phần gửi lại Wi-Fi RSSI và Uptime: chỉ phần quyết định được test trên máy tính. Lời gọi Matter (`MatterReportingAttributeChangeCallback`, timer của Matter) mới kiểm chứng bằng build và bằng đọc mã nguồn Matter SDK, esp-matter, Home Assistant (đánh dấu đã đổi → subscription gửi lại; Home Assistant cập nhật theo giá trị).
 
 **Đã thấy chạy trên bo, nhưng với firmware cũ** (log của người dùng; theo README cũ là các bản 1.0.128–1.0.131, cùng thuật toán và mã radar): ghép nối với Apple Home và Home Assistant (3 controller cùng lúc), đọc radar, radar tự đo phòng trống (lệnh 0x000B), *Factory thresholds* từ Home Assistant; bật Bluetooth của radar (0x00A4 + 0x00A3, đọc MAC bằng 0x00A5) trên radar V2.44.25070917.
@@ -455,6 +493,10 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
     - Wi-Fi RSSI đổi theo khi dời bo ra xa router (trong khoảng 1 phút khi lệch từ 3 dB);
     - Uptime đúng thời điểm khởi động, và đúng lại trong 10 phút sau khi khởi động lại Home Assistant;
     - Reboot count tăng 1 sau mỗi lần khởi động lại, giữ qua OTA.
+13. Watchdog kết nối:
+    - tắt router (hoặc chặn thiết bị trong app Deco) 12 phút: log `net_wd` thông báo DNS-SD ở phút 5 và nối lại Wi-Fi ở phút 10; bật router lại thì Home Assistant thấy thiết bị trong vài phút;
+    - để quá 30 phút thì thiết bị khởi động lại và log `Restarted by the connection watchdog`;
+    - bình thường (có subscription) không có dòng `net_wd` nào ngoài dòng lúc khởi động.
 
 Cũng chưa kiểm chứng: trả lời của lệnh 0x001B trên radar thật, nhận biết Bluetooth tắt qua địa chỉ giả, Apple Home không hiện Mode Select, biến thể `unique_setup` trên ESP32-C3.
 
@@ -487,6 +529,7 @@ matter-presence-ld2410/
 │   ├── setup_code.cpp              # in mã QR; mã ghép nối riêng từng bo (unique_setup)
 │   ├── identity_diag.cpp           # log id_diag: danh tính, Wi-Fi, IP, fabric, subscription
 │   ├── diag_report.cpp             # gửi lại Wi-Fi RSSI và Uptime (entity chẩn đoán của Home Assistant)
+│   ├── net_watchdog.cpp            # watchdog kết nối: DNS-SD, nối lại Wi-Fi, khởi động lại
 │   ├── mem_monitor.cpp             # log heap / stack
 │   ├── chip_project_config.h       # tên DNS-SD trước khi ghép nối
 │   ├── Kconfig.projbuild

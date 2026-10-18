@@ -50,6 +50,7 @@
 #include "diag_report.h"
 #include "identity_diag.h"
 #include "mem_monitor.h"
+#include "net_watchdog.h"
 #include "presence.h"
 #include "radar_control.h"
 #include "radar_worker.h"
@@ -335,6 +336,11 @@ static esp_err_t start_matter()
     // Identity / Wi-Fi / Matter state at boot, on events and every CONFIG_IDENTITY_DIAG_PERIOD_SEC
     if (identity_diag_start(CONFIG_IDENTITY_DIAG_PERIOD_SEC) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the identity diagnostics");
+    }
+
+    // Brings the device back when no controller subscribes any more (DNS-SD, Wi-Fi reconnect, restart)
+    if (net_watchdog_start() != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start the connection watchdog");
     }
 
 #if CONFIG_ENABLE_CHIP_SHELL
