@@ -1,75 +1,88 @@
 /* Theme palettes for the glass design. Tokens live on the root so dialogs outside #stage inherit them.
-   Wallpapers are static gradients (nothing to download, nothing animated); the four seasons keep
-   their SVG backdrop as a light decoration under the glass. Materials and states are in glass.css. */
+   Each theme is a vivid static wallpaper (gradients only: nothing to download, nothing animated) for the
+   glass to show through, an accent, the tint of the shadows under the glass and, for the four seasons,
+   the SVG backdrop. Materials and device states are in glass.css. */
 :root{
   --wallpaper:
-    radial-gradient(46% 60% at 6% 4%,#ffbe8c9e,transparent 72%),
-    radial-gradient(44% 58% at 96% 6%,#8cb9ff94,transparent 72%),
-    radial-gradient(48% 62% at 92% 98%,#bea5ff85,transparent 72%),
-    radial-gradient(44% 58% at 4% 96%,#8cdcc380,transparent 72%),
-    linear-gradient(160deg,#f2ebe2,#e9e5ef 52%,#e0eaf1);
-  --theme-color:#eee7df;
-  --accent:#0a72e8;--accent-text:#0058c4;--accent-soft:#0a72e824;
-  --decor:none;--decor-opacity:.4;
+    radial-gradient(42% 58% at 6% 8%,#6f9bffd9,transparent 72%),
+    radial-gradient(40% 56% at 94% 6%,#ff9cc8cc,transparent 72%),
+    radial-gradient(46% 62% at 52% 58%,#b49bffb3,transparent 74%),
+    radial-gradient(44% 60% at 94% 96%,#ffb98acc,transparent 72%),
+    radial-gradient(40% 56% at 6% 94%,#6fdcffbf,transparent 72%),
+    linear-gradient(135deg,#b9cbff,#d9ccff 45%,#ffd3e6 75%,#ffdcc4);
+  --theme-color:#a9bdfb;
+  --accent:#0a6be0;--accent-text:#0047a6;--accent-soft:rgba(10,107,224,.16);
+  --shadow-rgb:46,38,128;
+  --decor:none;--decor-opacity:.6;
 }
 :root[data-theme="spring"]{
   --wallpaper:
-    radial-gradient(46% 60% at 6% 4%,#9fdc9a80,transparent 72%),
-    radial-gradient(44% 58% at 96% 6%,#ffb3cc6b,transparent 72%),
-    radial-gradient(48% 62% at 92% 98%,#ffe08a73,transparent 72%),
-    radial-gradient(44% 58% at 4% 96%,#9ed2ff59,transparent 72%),
-    linear-gradient(160deg,#eef7e8,#e6f2df 52%,#e9f3ec);
-  --theme-color:#e9f3e3;
-  --accent:#2b7d4f;--accent-text:#23733f;--accent-soft:#2b7d4f24;
+    radial-gradient(42% 58% at 6% 8%,#7fd67ad9,transparent 72%),
+    radial-gradient(40% 56% at 94% 6%,#ff9fc0cc,transparent 72%),
+    radial-gradient(46% 62% at 52% 58%,#b8e986b3,transparent 74%),
+    radial-gradient(44% 60% at 94% 96%,#ffd84dcc,transparent 72%),
+    radial-gradient(40% 56% at 6% 94%,#5fd0b4bf,transparent 72%),
+    linear-gradient(135deg,#c8efb4,#dff5c4 45%,#ffe0ea 75%,#fff2b8);
+  --theme-color:#9edc94;
+  --accent:#23864a;--accent-text:#16683a;--accent-soft:rgba(35,134,74,.16);
+  --shadow-rgb:28,92,52;
   --decor:url("assets/seasons/spring-backdrop.svg");
 }
 :root[data-theme="summer"]{
   --wallpaper:
-    radial-gradient(46% 60% at 6% 4%,#ffc38a8c,transparent 72%),
-    radial-gradient(44% 58% at 96% 6%,#7fd6f573,transparent 72%),
-    radial-gradient(48% 62% at 92% 98%,#ffe07a73,transparent 72%),
-    radial-gradient(44% 58% at 4% 96%,#ffa58f66,transparent 72%),
-    linear-gradient(160deg,#fff3e2,#fbeedd 52%,#f6efe6);
-  --theme-color:#fcefdf;
-  --accent:#0a7f99;--accent-text:#006f87;--accent-soft:#0a7f9924;
+    radial-gradient(42% 58% at 6% 8%,#3fc3ffd9,transparent 72%),
+    radial-gradient(40% 56% at 94% 6%,#ffd25acc,transparent 72%),
+    radial-gradient(46% 62% at 52% 58%,#5ee0d6b3,transparent 74%),
+    radial-gradient(44% 60% at 94% 96%,#ff9a6bcc,transparent 72%),
+    radial-gradient(40% 56% at 6% 94%,#42a8ffbf,transparent 72%),
+    linear-gradient(135deg,#a8e6ff,#b8f0ea 45%,#fff0b8 75%,#ffd0b0);
+  --theme-color:#6fd0fb;
+  --accent:#0a7a94;--accent-text:#005a6e;--accent-soft:rgba(10,122,148,.16);
+  --shadow-rgb:0,74,112;
   --decor:url("assets/seasons/summer-backdrop.svg");
 }
 :root[data-theme="autumn"]{
   --wallpaper:
-    radial-gradient(46% 60% at 6% 4%,#eeb47a80,transparent 72%),
-    radial-gradient(44% 58% at 96% 6%,#d99a7c6b,transparent 72%),
-    radial-gradient(48% 62% at 92% 98%,#e7cfa673,transparent 72%),
-    radial-gradient(44% 58% at 4% 96%,#b9c7a466,transparent 72%),
-    linear-gradient(160deg,#f6eee6,#f1e7dc 52%,#ece6dd);
-  --theme-color:#f3e9de;
-  --accent:#a5581b;--accent-text:#8c4a12;--accent-soft:#a5581b24;
+    radial-gradient(42% 58% at 6% 8%,#ffa95ad9,transparent 72%),
+    radial-gradient(40% 56% at 94% 6%,#e9785acc,transparent 72%),
+    radial-gradient(46% 62% at 52% 58%,#f3c26bb3,transparent 74%),
+    radial-gradient(44% 60% at 94% 96%,#c9a35fcc,transparent 72%),
+    radial-gradient(40% 56% at 6% 94%,#b7c26abf,transparent 72%),
+    linear-gradient(135deg,#ffd9b0,#ffe2b8 45%,#f6cfae 75%,#e9d9a8);
+  --theme-color:#f7ae6c;
+  --accent:#b0541a;--accent-text:#8a3c0c;--accent-soft:rgba(176,84,26,.16);
+  --shadow-rgb:112,46,8;
   --decor:url("assets/seasons/autumn-backdrop.svg");
 }
 :root[data-theme="winter"]{
   --wallpaper:
-    radial-gradient(46% 60% at 6% 4%,#a9cdf580,transparent 72%),
-    radial-gradient(44% 58% at 96% 6%,#cfc7f573,transparent 72%),
-    radial-gradient(48% 62% at 92% 98%,#ffffff99,transparent 72%),
-    radial-gradient(44% 58% at 4% 96%,#a5e1e666,transparent 72%),
-    linear-gradient(160deg,#f2f7fb,#e9f1f8 52%,#e8eef8);
-  --theme-color:#eaf2f9;
-  --accent:#2a6fc0;--accent-text:#1d5fa8;--accent-soft:#2a6fc024;
-  --decor:url("assets/seasons/winter-backdrop.svg");--decor-opacity:.45;
+    radial-gradient(42% 58% at 6% 8%,#86b8ffd9,transparent 72%),
+    radial-gradient(40% 56% at 94% 6%,#c3b2ffcc,transparent 72%),
+    radial-gradient(46% 62% at 52% 58%,#a9dcffb3,transparent 74%),
+    radial-gradient(44% 60% at 94% 96%,#ffffffd9,transparent 72%),
+    radial-gradient(40% 56% at 6% 94%,#8fd8eebf,transparent 72%),
+    linear-gradient(135deg,#cfe2ff,#dfe9ff 45%,#e8e2ff 75%,#f2f7ff);
+  --theme-color:#a3c6fd;
+  --accent:#2563c4;--accent-text:#1a4fa3;--accent-soft:rgba(37,99,196,.16);
+  --shadow-rgb:36,64,132;
+  --decor:url("assets/seasons/winter-backdrop.svg");--decor-opacity:.7;
 }
 :root[data-theme="dark"]{
   color-scheme:dark;
   --wallpaper:
-    radial-gradient(46% 60% at 6% 4%,#3557a88c,transparent 72%),
-    radial-gradient(44% 58% at 96% 6%,#6a3fa873,transparent 72%),
-    radial-gradient(48% 62% at 92% 98%,#14707f6b,transparent 72%),
-    radial-gradient(44% 58% at 4% 96%,#3d347a6b,transparent 72%),
-    linear-gradient(160deg,#10162a,#0e1322 52%,#0b1220);
-  --theme-color:#0f1424;
-  --accent:#0a72e8;--accent-text:#6cb6ff;--accent-soft:#3d8bff33;
+    radial-gradient(42% 58% at 6% 8%,#3d63ff99,transparent 72%),
+    radial-gradient(40% 56% at 94% 6%,#a046ff80,transparent 72%),
+    radial-gradient(46% 62% at 52% 58%,#2a4bd666,transparent 74%),
+    radial-gradient(44% 60% at 94% 96%,#00b8a873,transparent 72%),
+    radial-gradient(40% 56% at 6% 94%,#ff4d9459,transparent 72%),
+    linear-gradient(160deg,#0a0f24,#10122e 50%,#081626);
+  --theme-color:#0d1230;
+  --accent:#0a72e8;--accent-text:#8cc6ff;--accent-soft:rgba(61,139,255,.22);
+  --shadow-rgb:0,0,0;
   --decor:radial-gradient(circle at 96% 22%,#cfe3ff8c 0 1px,transparent 2px),radial-gradient(circle at 88% 70%,#cfe3ff66 0 1px,transparent 2px),radial-gradient(circle at 12% 30%,#e2c18766 0 1px,transparent 2px),radial-gradient(circle at 40% 92%,#cfe3ff4d 0 1px,transparent 2px);
   --decor-opacity:.8;
 }
 
-/* Season backdrop: static SVG behind the glass, never in the way of a tap. */
+/* Season backdrop: static SVG between the wallpaper and the glass, never in the way of a tap. */
 #season-decor{position:absolute;inset:0;z-index:0;pointer-events:none;background-image:var(--decor);background-position:center;background-size:1024px 600px;background-repeat:no-repeat;opacity:var(--decor-opacity)}
 :root[data-theme="dark"] #season-decor{background-size:auto}

@@ -3,78 +3,109 @@
    materials, type and device states. html.fluid-layout (set by app.js on phones and portrait tablets)
    turns the stage into a scrolling page with a bottom tab bar. */
 
-/* 1. Material tokens. --glass-t/-s are the translucent/solid variants; the active one is picked below. */
+/* 1. Material tokens.
+      Glass = a fill that goes from light to clear (the light comes from the top left), an edge that catches
+      that light (bright top and left, faint right and bottom), a highlight just inside the top edge and a soft
+      tinted shadow that lifts the pane off the wallpaper. All of it is plain border/shadow/gradient painting,
+      cheap enough for the Raspberry Pi. Fills come in three strengths: -f frosted (over a backdrop blur),
+      -c clear (no blur, a little denser) and -s solid; section 2 picks one. */
 :root{
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Noto Sans","Helvetica Neue",Arial,sans-serif;
-  --r-tile:18px;--r-panel:20px;--r-control:12px;
-  --glass-t:rgba(255,255,255,.56);--glass-s:rgba(251,250,252,.95);
-  --glass-strong-t:rgba(255,255,255,.72);--glass-strong-s:rgba(253,253,254,.97);
-  --sheet-t:rgba(247,247,250,.86);--sheet-s:#f7f7fa;
+  --r-tile:20px;--r-panel:22px;--r-control:12px;
+  --glass-f:linear-gradient(150deg,rgba(255,255,255,.62),rgba(255,255,255,.36));
+  --glass-c:linear-gradient(150deg,rgba(255,255,255,.74),rgba(255,255,255,.52));
+  --glass-s:linear-gradient(150deg,#fdfdfe,#f2f2f6);
+  --glass-strong-f:linear-gradient(150deg,rgba(255,255,255,.76),rgba(255,255,255,.56));
+  --glass-strong-c:linear-gradient(150deg,rgba(255,255,255,.84),rgba(255,255,255,.68));
+  --glass-strong-s:linear-gradient(150deg,#fefefe,#f5f5f8);
+  --glass-flat:rgba(255,255,255,.66);
+  --sheet-f:rgba(248,248,252,.84);--sheet-s:#f7f7fa;
+  --bar-f:rgba(250,250,252,.8);--bar-s:#fafafc;
+  --edge:rgba(255,255,255,.95) rgba(255,255,255,.42) rgba(255,255,255,.34) rgba(255,255,255,.8);
   --glass-border:rgba(255,255,255,.62);
-  --glass-highlight:inset 0 1px 0 rgba(255,255,255,.65);
-  --glass-shadow:0 1px 1px rgba(15,23,42,.04),0 8px 24px rgba(15,23,42,.08);
-  --raised-shadow:0 1px 2px rgba(15,23,42,.06),0 10px 26px rgba(15,23,42,.14);
-  --label:#1d1d1f;--label-2:#45484f;--label-3:#5c5f67;
+  --glass-highlight:inset 0 1px 0 rgba(255,255,255,.85);
+  --glass-shadow:0 1px 2px rgba(var(--shadow-rgb),.14),0 12px 24px -10px rgba(var(--shadow-rgb),.5);
+  --raised-shadow:0 2px 4px rgba(var(--shadow-rgb),.16),0 16px 30px -12px rgba(var(--shadow-rgb),.6);
+  --small-shadow:0 1px 2px rgba(var(--shadow-rgb),.12),0 6px 12px -6px rgba(var(--shadow-rgb),.36);
+  --label:#1d1d1f;--label-2:#383b42;--label-3:#474a52;
   --fill:rgba(118,118,128,.16);--fill-2:rgba(118,118,128,.10);--fill-3:rgba(118,118,128,.26);
   --input:rgba(255,255,255,.72);--input-border:rgba(60,60,67,.18);--separator:rgba(60,60,67,.14);
   --seg-selected:#fff;--seg-shadow:0 1px 2px rgba(0,0,0,.08),0 3px 8px rgba(0,0,0,.08);
-  --tile-on:rgba(255,255,255,.94);--tile-on-label:#1d1d1f;--tile-on-label-2:#5c5f67;
-  --chip-off:rgba(118,118,128,.16);--chip-off-glyph:#45484f;
+  --tile-on:linear-gradient(150deg,#fff,rgba(255,255,255,.9));--tile-on-label:#1d1d1f;--tile-on-label-2:#4b4e56;
+  --edge-on:#fff rgba(255,255,255,.9) rgba(255,255,255,.8) #fff;
+  --chip-off:rgba(255,255,255,.58);--chip-off-ring:inset 0 0 0 1px rgba(255,255,255,.75);--chip-off-glyph:#383b42;
+  --control-fill:rgba(255,255,255,.55);--control-ring:inset 0 0 0 1px rgba(255,255,255,.7),0 1px 2px rgba(var(--shadow-rgb),.12);
   --c-light:#ffd60a;--c-light-glyph:#3d2e00;--c-climate:#0a72e8;--c-fan:#0e7fa3;--c-cover:#5e5ce6;--c-heat:#e5530b;--c-switch:#248a3d;
   --c-run:#0a72e8;--c-ok:#248a3d;--c-warn:#ff9500;--c-warn-glyph:#3b2300;
-  --warn-bg:linear-gradient(rgba(255,149,0,.2),rgba(255,149,0,.2)),rgba(255,255,255,.86);--warn-border:rgba(230,128,0,.55);--warn-text:#8a4300;
-  --ok-bg:linear-gradient(rgba(52,199,89,.18),rgba(52,199,89,.18)),rgba(255,255,255,.86);--ok-border:rgba(36,138,61,.45);--ok-text:#1d6b33;
+  --warn-bg:linear-gradient(150deg,rgba(255,232,196,.95),rgba(255,206,140,.86));--warn-text:#8a4300;--warn-edge:#fff4e0 rgba(230,128,0,.4) rgba(230,128,0,.5) #ffe2b8;
+  --ok-bg:linear-gradient(150deg,rgba(226,248,231,.95),rgba(184,234,198,.86));--ok-text:#1d6b33;--ok-edge:#f0fbf2 rgba(36,138,61,.35) rgba(36,138,61,.45) #d6f2dd;
   --danger-text:#c4281c;
-  --bar-t:rgba(250,250,252,.84);--bar-s:#fafafc;
-  --glass:var(--glass-t);--glass-strong:var(--glass-strong-t);--sheet:var(--sheet-t);--bar:var(--bar-t);
-  --blur:blur(22px) saturate(170%);--blur-strong:blur(30px) saturate(180%);
+  --glass:var(--glass-f);--glass-strong:var(--glass-strong-f);--sheet:var(--sheet-f);--bar:var(--bar-f);
+  --blur:blur(24px) saturate(180%);--blur-strong:blur(32px) saturate(190%);
   /* names used by style.css, mapped onto the glass palette */
-  --bg:var(--sheet-s);--panel:var(--glass);--selected:var(--accent-soft);--text:var(--label);--muted:var(--label-2);
-  --blue:var(--accent-text);--green:#2a9a52;--gold:#d08a10;--on:var(--tile-on);--on-text:var(--tile-on-label);--info:var(--tile-on);
+  --bg:var(--sheet-s);--panel:var(--glass-flat);--selected:var(--accent-soft);--text:var(--label);--muted:var(--label-2);
+  --blue:var(--accent-text);--green:#2a9a52;--gold:#d08a10;--on:#fff;--on-text:var(--tile-on-label);--info:#fff;
   --white:var(--fill-2);--danger:var(--danger-text);--border:var(--separator);
 }
 :root[data-theme="dark"]{
-  --glass-t:rgba(28,31,43,.56);--glass-s:rgba(31,35,48,.96);
-  --glass-strong-t:rgba(24,27,38,.74);--glass-strong-s:rgba(24,27,38,.98);
-  --sheet-t:rgba(30,32,42,.88);--sheet-s:#1e202a;--bar-t:rgba(22,24,33,.84);--bar-s:#16181f;
-  --glass-border:rgba(255,255,255,.1);
-  --glass-highlight:inset 0 1px 0 rgba(255,255,255,.07);
-  --glass-shadow:0 1px 1px rgba(0,0,0,.25),0 10px 28px rgba(0,0,0,.32);
-  --raised-shadow:0 2px 6px rgba(0,0,0,.35),0 12px 30px rgba(0,0,0,.4);
-  --label:#f5f5f7;--label-2:#c9cad2;--label-3:#a3a5b1;
+  --glass-f:linear-gradient(150deg,rgba(74,80,116,.52),rgba(20,24,44,.5));
+  --glass-c:linear-gradient(150deg,rgba(58,64,96,.86),rgba(24,28,50,.82));
+  --glass-s:linear-gradient(150deg,#2b3046,#1c2032);
+  --glass-strong-f:linear-gradient(150deg,rgba(52,56,84,.72),rgba(18,20,38,.68));
+  --glass-strong-c:linear-gradient(150deg,rgba(44,48,72,.93),rgba(20,22,40,.91));
+  --glass-strong-s:linear-gradient(150deg,#272b3f,#181b2b);
+  --glass-flat:rgba(36,40,60,.8);
+  --sheet-f:rgba(30,32,46,.86);--sheet-s:#1e2030;--bar-f:rgba(20,22,34,.8);--bar-s:#16181f;
+  --edge:rgba(255,255,255,.36) rgba(255,255,255,.11) rgba(255,255,255,.08) rgba(255,255,255,.26);
+  --edge-on:#fff rgba(255,255,255,.75) rgba(255,255,255,.6) #fff;
+  --glass-border:rgba(255,255,255,.16);
+  --glass-highlight:inset 0 1px 0 rgba(255,255,255,.18);
+  --glass-shadow:0 1px 2px rgba(0,0,0,.3),0 12px 24px -10px rgba(0,0,0,.65);
+  --raised-shadow:0 2px 4px rgba(0,0,0,.32),0 16px 30px -12px rgba(0,0,0,.72);
+  --small-shadow:0 1px 2px rgba(0,0,0,.3),0 6px 12px -6px rgba(0,0,0,.55);
+  --label:#f5f5f7;--label-2:#d3d5dd;--label-3:#b6b9c5;
   --fill:rgba(118,118,128,.32);--fill-2:rgba(118,118,128,.24);--fill-3:rgba(118,118,128,.44);
   --input:rgba(255,255,255,.08);--input-border:rgba(255,255,255,.16);--separator:rgba(255,255,255,.12);
   --seg-selected:rgba(255,255,255,.22);--seg-shadow:0 1px 3px rgba(0,0,0,.4);
-  --tile-on:rgba(255,255,255,.9);
-  --chip-off:rgba(255,255,255,.12);--chip-off-glyph:#d4d5dc;
-  --warn-bg:linear-gradient(rgba(255,159,10,.24),rgba(255,159,10,.24)),rgba(40,36,30,.78);--warn-border:rgba(255,159,10,.6);--warn-text:#ffb84d;
-  --ok-bg:linear-gradient(rgba(48,209,88,.2),rgba(48,209,88,.2)),rgba(28,40,32,.78);--ok-border:rgba(48,209,88,.5);--ok-text:#7ee39a;
-  --danger-text:#ff6b60;--green:#5fd38a;--gold:#f2b84b;
+  --tile-on:linear-gradient(150deg,rgba(255,255,255,.95),rgba(255,255,255,.86));
+  --chip-off:rgba(255,255,255,.14);--chip-off-ring:inset 0 0 0 1px rgba(255,255,255,.16);--chip-off-glyph:#d8dae2;
+  --control-fill:rgba(26,28,42,.72);--control-ring:inset 0 0 0 1px rgba(255,255,255,.14);
+  --warn-bg:linear-gradient(150deg,rgba(150,92,16,.78),rgba(92,56,10,.72));--warn-text:#ffc266;--warn-edge:rgba(255,206,140,.75) rgba(255,159,10,.35) rgba(255,159,10,.3) rgba(255,206,140,.6);
+  --ok-bg:linear-gradient(150deg,rgba(40,110,62,.78),rgba(22,64,38,.72));--ok-text:#8ef0a8;--ok-edge:rgba(160,240,180,.7) rgba(48,209,88,.3) rgba(48,209,88,.25) rgba(160,240,180,.55);
+  --danger-text:#ff7b72;--green:#5fd38a;--gold:#f2b84b;
 }
 
-/* 2. Same layout on solid surfaces when blur is unavailable, switched off (Cài đặt → Kính mờ),
-      or the system asks for less transparency. Text contrast is kept in every case. */
-:root[data-glass="off"]{--glass:var(--glass-s);--glass-strong:var(--glass-strong-s);--sheet:var(--sheet-s);--bar:var(--bar-s);--blur:none;--blur-strong:none}
+/* 2. Kính mờ on: frosted glass over a backdrop blur. Kính mờ off (the default on a Raspberry Pi, which has
+      no GPU headroom for blur) or a browser without backdrop-filter: the same glass, clear and a little denser.
+      Reduce transparency (system setting): solid panes. Text contrast is kept in every case. */
+:root[data-glass="off"]{--glass:var(--glass-c);--glass-strong:var(--glass-strong-c);--sheet:var(--sheet-s);--bar:var(--bar-s);--blur:none;--blur-strong:none}
 @supports not ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){
-  :root{--glass:var(--glass-s);--glass-strong:var(--glass-strong-s);--sheet:var(--sheet-s);--bar:var(--bar-s);--blur:none;--blur-strong:none}
+  :root,:root[data-glass]{--glass:var(--glass-c);--glass-strong:var(--glass-strong-c);--sheet:var(--sheet-s);--bar:var(--bar-s);--blur:none;--blur-strong:none}
 }
 @media (prefers-reduced-transparency:reduce){
-  :root{--glass:var(--glass-s);--glass-strong:var(--glass-strong-s);--sheet:var(--sheet-s);--bar:var(--bar-s);--blur:none;--blur-strong:none}
+  :root,:root[data-glass]{--glass:var(--glass-s);--glass-strong:var(--glass-strong-s);--sheet:var(--sheet-s);--bar:var(--bar-s);--blur:none;--blur-strong:none}
 }
 
 /* 3. Page, wallpaper and the brightness dimmer (a plain overlay: cheaper than filtering the whole stage). */
-html,body{font-family:var(--font);-webkit-font-smoothing:antialiased;background:var(--theme-color);color:var(--label)}
+html,body{font-family:var(--font);-webkit-font-smoothing:antialiased;color:var(--label)}
+/* the wallpaper sits between the page canvas and the body, so the body itself must stay transparent */
+html{background:var(--theme-color)}
+body{background:transparent}
 body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--wallpaper);pointer-events:none}
 html[data-dimmed] body::after{content:"";position:fixed;inset:0;z-index:60;background:#000;opacity:var(--dim,0);pointer-events:none}
 #viewport,#stage{background:transparent}
 :focus-visible{outline-color:var(--accent)}
 .sr-only{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* room for the shadows of the outer tiles: the tile area reaches into the stage margin instead of clipping them */
+html:not(.fluid-layout) #content{overflow:visible}
+html:not(.fluid-layout) .device-view{width:876px;height:392px}
 
-/* 4. Glass surfaces. */
+/* 4. Glass panes. */
 .panel,.device-card,.chart-panel,.settings-card,.music-card,#side-nav,#room-tabs{
   background:var(--glass);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
-  border:1px solid var(--glass-border);box-shadow:var(--glass-highlight),var(--glass-shadow);color:var(--label)
+  border:1px solid;border-color:var(--edge);box-shadow:var(--glass-highlight),var(--glass-shadow);color:var(--label)
 }
+.metric,#room-tabs{box-shadow:var(--glass-highlight),var(--small-shadow)}
 .panel,.chart-panel,.settings-card,.music-card,#side-nav{border-radius:var(--r-panel)}
 .nav-button,.room-button{background:transparent;border:0;box-shadow:none}
 
@@ -122,9 +153,10 @@ html[data-dimmed] body::after{content:"";position:fixed;inset:0;z-index:60;backg
 #metric-row .metric-empty{color:var(--label-2)}
 
 /* 9. Device tiles: icon in a round chip, state at the top right, name below.
-      Off = glass + grey chip; on = bright tile + coloured chip; warning = orange; unavailable = faded, dashed. */
+      Off = clear glass pane with a glass chip; on = lit pane, lifted higher, with a coloured glowing chip;
+      warning = amber glass; finished = green glass; unavailable = faded and flat (dashed edge, no shadow). */
 .device-card{border-radius:var(--r-tile)}
-.device-card .device-icon{left:10px;top:10px;width:36px;height:36px;padding:8px;border-radius:50%;background:var(--chip-off);color:var(--chip-off-glyph)}
+.device-card .device-icon{left:10px;top:10px;width:36px;height:36px;padding:8px;border-radius:50%;background:var(--chip-off);box-shadow:var(--chip-off-ring);color:var(--chip-off-glyph)}
 .device-card .device-icon .ui-icon{stroke-width:2}
 .device-card .device-name{left:54px;top:18px;right:12px;font-size:15px;font-weight:600;line-height:20px;letter-spacing:-.1px}
 .device-card .device-state,.device-card .tile-state{position:absolute;right:12px;top:10px;height:36px;display:flex;align-items:center;font-size:13px;font-weight:600;color:var(--label-3);font-variant-numeric:tabular-nums}
@@ -137,27 +169,26 @@ html[data-dimmed] body::after{content:"";position:fixed;inset:0;z-index:60;backg
 .device-card.cob-card .device-name,.device-card.cover-card .device-name{right:62px}
 .device-card .data-line span:first-child{color:var(--label-3)}
 .device-card .washer-status-line{top:56px;font-size:13px}
-.toggle-card,.cob-card{--chip-on:var(--c-light);--chip-on-glyph:var(--c-light-glyph)}
-.device-card[data-icon$="fan"]{--chip-on:var(--c-fan);--chip-on-glyph:#fff}
-.device-card[data-icon="water-heater"]{--chip-on:var(--c-heat);--chip-on-glyph:#fff}
-.device-card[data-icon="switch"]{--chip-on:var(--c-switch);--chip-on-glyph:#fff}
-.ac-card{--chip-on:var(--c-climate);--chip-on-glyph:#fff}
-.fan-card{--chip-on:var(--c-fan);--chip-on-glyph:#fff}
-.cover-card{--chip-on:var(--c-cover);--chip-on-glyph:#fff}
-.device-card.active{background:var(--tile-on);border-color:rgba(255,255,255,.9);box-shadow:var(--raised-shadow);color:var(--tile-on-label)}
-.device-card.active .device-icon{background:var(--chip-on,var(--c-switch));color:var(--chip-on-glyph,#fff)}
+.toggle-card,.cob-card{--chip-on:var(--c-light);--chip-on-glyph:var(--c-light-glyph);--chip-glow:rgba(255,190,0,.75)}
+.device-card[data-icon$="fan"]{--chip-on:var(--c-fan);--chip-on-glyph:#fff;--chip-glow:rgba(14,127,163,.6)}
+.device-card[data-icon="water-heater"]{--chip-on:var(--c-heat);--chip-on-glyph:#fff;--chip-glow:rgba(229,83,11,.6)}
+.device-card[data-icon="switch"]{--chip-on:var(--c-switch);--chip-on-glyph:#fff;--chip-glow:rgba(36,138,61,.55)}
+.ac-card{--chip-on:var(--c-climate);--chip-on-glyph:#fff;--chip-glow:rgba(10,114,232,.6)}
+.fan-card{--chip-on:var(--c-fan);--chip-on-glyph:#fff;--chip-glow:rgba(14,127,163,.6)}
+.cover-card{--chip-on:var(--c-cover);--chip-on-glyph:#fff;--chip-glow:rgba(94,92,230,.6)}
+.device-card.active,.device-card.running{background:var(--tile-on);border-color:var(--edge-on);box-shadow:var(--glass-highlight),var(--raised-shadow);color:var(--tile-on-label)}
+.device-card.active .device-icon{background:var(--chip-on,var(--c-switch));color:var(--chip-on-glyph,#fff);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 4px 12px -2px var(--chip-glow,rgba(36,138,61,.55))}
 .device-card.active .tile-state,.device-card.active .device-state,.device-card.active .data-line span:first-child{color:var(--tile-on-label-2)}
-.device-card.cob-card.rgb-light.active .device-icon{background:var(--device-light-color,var(--c-light));color:#1d1d1f;filter:none}
-.device-card.running{background:var(--tile-on);border-color:rgba(255,255,255,.9);box-shadow:var(--raised-shadow);color:var(--tile-on-label)}
-.device-card.running .device-icon{background:var(--c-run);color:#fff}
+.device-card.cob-card.rgb-light.active .device-icon{background:var(--device-light-color,var(--c-light));box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 4px 12px -3px var(--device-light-color,var(--c-light));color:#1d1d1f;filter:none}
+.device-card.running .device-icon{background:var(--c-run);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 4px 12px -2px rgba(10,114,232,.6)}
 .device-card.running .tile-state,.device-card.running .data-line span:first-child{color:var(--tile-on-label-2)}
-.device-card.alert:not(.running){background:var(--warn-bg);border-color:var(--warn-border);box-shadow:var(--raised-shadow);color:var(--label)}
-.device-card.alert:not(.running) .device-icon{background:var(--c-warn);color:var(--c-warn-glyph)}
+.device-card.alert:not(.running){background:var(--warn-bg);border-color:var(--warn-edge);box-shadow:var(--glass-highlight),var(--raised-shadow);color:var(--label)}
+.device-card.alert:not(.running) .device-icon{background:var(--c-warn);color:var(--c-warn-glyph);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 4px 12px -2px rgba(255,149,0,.65)}
 .device-card.alert:not(.running) .tile-state{color:var(--warn-text);font-weight:700}
-.device-card.finished{background:var(--ok-bg);border-color:var(--ok-border);color:var(--label)}
-.device-card.finished .device-icon{background:var(--c-ok);color:#fff}
+.device-card.finished{background:var(--ok-bg);border-color:var(--ok-edge);color:var(--label)}
+.device-card.finished .device-icon{background:var(--c-ok);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 4px 12px -2px rgba(36,138,61,.55)}
 .device-card.washer-card .finish-notice span,.device-card.washer-card .finish-notice b{color:var(--ok-text)}
-.device-card.disabled{opacity:.55;border-style:dashed;border-color:var(--label-3);box-shadow:none}
+.device-card.disabled{opacity:.55;border:1px dashed var(--label-3);box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
 .device-card.disabled .device-icon{background:transparent;box-shadow:inset 0 0 0 1.5px var(--label-3);color:var(--label-3)}
 .device-card[role="button"],.appliance-card{cursor:pointer}
 .empty-message{color:var(--label-2)}
@@ -167,8 +198,8 @@ html[data-dimmed] body::after{content:"";position:fixed;inset:0;z-index:60;backg
 .device-card input[type="range"]{height:28px;margin:0;accent-color:var(--accent)}
 .device-card.active,.device-card.running{color-scheme:light}
 .ac-temperature-value{font-size:28px;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
-.ac-temperature-controls button,.mini-buttons button,.large-main button,.control-strip button{background:var(--fill);color:var(--label);border-radius:var(--r-control)}
-.device-card.active .ac-temperature-controls button,.device-card.active .mini-buttons button{background:rgba(118,118,128,.14);color:var(--tile-on-label)}
+.ac-temperature-controls button,.mini-buttons button,.large-main button,.control-strip button{background:var(--control-fill);box-shadow:var(--control-ring);color:var(--label);border-radius:var(--r-control)}
+.device-card.active .ac-temperature-controls button,.device-card.active .mini-buttons button{background:rgba(118,118,128,.14);box-shadow:none;color:var(--tile-on-label)}
 .mini-buttons{bottom:10px;gap:6px}
 .mini-buttons button{height:38px;font-weight:600}
 .device-card .mini-buttons button[aria-pressed="true"]{background:var(--c-fan);color:#fff}
@@ -187,8 +218,8 @@ html[data-dimmed] body::after{content:"";position:fixed;inset:0;z-index:60;backg
 .album-art{border-radius:16px;background:var(--fill);color:var(--accent-text)}
 .track-info span{color:var(--label-2)}
 .seek-control{color:var(--label-3)}
-.transport button{width:50px;height:50px;border-radius:50%;background:var(--fill);color:var(--label)}
-.transport .play{width:56px;height:56px;background:var(--accent);color:#fff}
+.transport button{width:50px;height:50px;border-radius:50%;background:var(--control-fill);box-shadow:var(--control-ring);color:var(--label)}
+.transport .play{width:56px;height:56px;background:var(--accent);box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 6px 14px -4px var(--accent);color:#fff}
 .music-source button,.ma-tabs button,.aibox-tabs button{background:var(--fill-2);color:var(--label);border-radius:10px}
 .ma-tabs button,.aibox-tabs button{height:34px}
 .music-source button.selected,.ma-tabs button.selected,.aibox-tabs button.selected{background:var(--seg-selected);box-shadow:var(--seg-shadow);color:var(--label)}
@@ -196,7 +227,7 @@ html[data-dimmed] body::after{content:"";position:fixed;inset:0;z-index:60;backg
 .playlist button{background:var(--fill-2);color:var(--label);border-radius:var(--r-control)}
 .aibox-search input{background:var(--input);border:1px solid var(--input-border);border-radius:10px;color:var(--label)}
 .aibox-search button{background:var(--accent);border-radius:10px;color:#fff}
-.volume-card button{background:var(--fill);border-radius:var(--r-control);color:var(--label)}
+.volume-card button{background:var(--control-fill);box-shadow:var(--control-ring);border-radius:var(--r-control);color:var(--label)}
 .settings-title{font-size:15px;font-weight:650}
 .setting-value{color:var(--accent-text);font-weight:600}
 .display-settings input[type="range"]{margin-top:8px;height:28px}
@@ -225,6 +256,8 @@ html[data-dimmed] body::after{content:"";position:fixed;inset:0;z-index:60;backg
 .settings-page button,.entity-page-actions button,.dialog-actions button,.dialog-head button,#detail-close,.dialog-close,.cob-colors button,.new-device-form button,.confirm-dialog button,.room-manager-actions button,.color-dialog-actions button,.rgb-editor button,.layout-actions button{
   background:var(--fill)!important;color:var(--label)!important;border:0!important;border-radius:var(--r-control);font-weight:600
 }
+/* buttons that sit straight on a glass pane are glass too; on the opaque dialog sheets they stay grey */
+.settings-page .connection-actions button:not(.primary),.entity-page-actions button{background:var(--control-fill)!important;box-shadow:var(--control-ring)}
 .settings-page button.primary,.dialog-actions button.primary,.new-device-form button[type="submit"],#metric-done,#room-done,#rgb-editor-save,.layout-actions .layout-done{background:var(--accent)!important;color:#fff!important}
 #settings-forget,#forget-button,#disconnect-yes{color:var(--danger-text)!important}
 .new-device-form button,.confirm-dialog button,.room-manager-actions button,.color-dialog-actions button,.rgb-editor button{min-height:40px}
@@ -254,7 +287,7 @@ summary{color:var(--accent-text)}
 :root[data-theme="dark"] #toast{background:rgba(58,58,64,.9)}
 
 /* 13. Layout editing. */
-.layout-edit-card{box-shadow:0 0 0 2px var(--accent-soft),var(--glass-shadow)}
+.layout-edit-card{box-shadow:0 0 0 2px var(--accent-soft),var(--glass-highlight),var(--glass-shadow)}
 .layout-edit-card.dragging{box-shadow:0 0 0 2px var(--accent),var(--raised-shadow)}
 .layout-edit-card .card-edit-name,.layout-edit-card .card-remove{width:26px;height:26px;border:0;border-radius:50%;background:var(--sheet-s);color:var(--label);box-shadow:0 1px 4px rgba(0,0,0,.18)}
 .layout-edit-card .card-remove{color:var(--danger-text)}

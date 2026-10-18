@@ -206,7 +206,9 @@ let musicRenderTimer;
 function editingField(){return document.activeElement?.matches?.('input,select,textarea')}
 let pointerHeld=false,liveRenderSkipped=false;
 function suppressLiveRender(){return pointerHeld||!!layoutHoldCancel||!!entityHoldCard||rangeDragging||layoutEditMode||editingField()||(currentNav==='settings'&&settingsEntityMode)}
-function liveRender(){if(suppressLiveRender())liveRenderSkipped=true;else{liveRenderSkipped=false;render()}}
+function liveRender(){if(suppressLiveRender())liveRenderSkipped=true;else{liveRenderSkipped=false;if(currentNav==='settings'&&refreshSettingsLive())renderTop();else render()}}
+// Settings is a form: live HA updates refresh its values in place, so a theme picked or an address typed there survives until it is saved.
+function refreshSettingsLive(){const page=$('content').querySelector('.settings-page');if(!page)return false;const units={piTemp:'°C',piRam:'%'};page.querySelectorAll('[data-server-value]').forEach(node=>{const key=node.dataset.serverValue;node.textContent=formatSensor(key,1,units[key]||'')});const badge=page.querySelector('.connection-state');if(badge){badge.classList.toggle('online',connected);badge.textContent=connected?'● Trực tuyến':demo?'● Bản mẫu':'● Ngoại tuyến'}return true}
 function queueMusicRender(){if(currentNav!=='music'||musicSource!=='aibox'||editingField())return;clearTimeout(musicRenderTimer);musicRenderTimer=setTimeout(()=>renderMusic(),120)}
 const directSpeaker = new DirectSpeaker(next=>{directSpeakerState={...next};queueMusicRender()},status=>{directSpeakerStatus=status;queueMusicRender()});
 
@@ -792,7 +794,7 @@ function renderSettings(){
   page.querySelector('#brightness-setting').oninput=e=>{displaySettings.brightness=Number(e.target.value);page.querySelector('#brightness-label').textContent=displaySettings.brightness+'%';applyDisplaySettings()};
   page.querySelector('#glass-setting').onchange=e=>{displaySettings.glass=e.target.checked;applyDisplaySettings()};
   page.querySelectorAll('[data-timeout]').forEach(b=>b.onclick=()=>{displaySettings.timeout=Number(b.dataset.timeout);applyDisplaySettings();renderSettings()});
-  page.querySelector('#theme-save').onclick=()=>{config.theme=page.querySelector('#theme-choice').value;applyTheme();persistConfig();toast('Đã lưu giao diện '+page.querySelector('#theme-choice').selectedOptions[0].textContent)};
+  const themeChoice=page.querySelector('#theme-choice'),saveTheme=()=>{config.theme=themeChoice.value;applyTheme();persistConfig();toast('Đã lưu giao diện '+themeChoice.selectedOptions[0].textContent)};themeChoice.onchange=saveTheme;page.querySelector('#theme-save').onclick=saveTheme;
   page.querySelector('#settings-full-config').onclick=async()=>{settingsEntityMode=true;renderSettings();await refreshEntityStates()};
   page.querySelector('#settings-forget').onclick=showDisconnectConfirm;
   const phicommToggle=page.querySelector('#settings-use-phicomm'),speakerInput=page.querySelector('#settings-speaker-address');speakerInput.disabled=!phicommToggle.checked;phicommToggle.onchange=()=>{config.usePhicomm=phicommToggle.checked;speakerInput.disabled=!phicommToggle.checked;persistConfig();if(!phicommToggle.checked){musicSource='ma';localStorage.setItem('ken-music-source','ma');directSpeaker.close();directSpeakerStatus='offline'}};

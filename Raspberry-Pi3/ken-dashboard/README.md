@@ -85,14 +85,14 @@ Khi chưa có token, giao diện mở bằng dữ liệu minh họa và logo hi�
 
 ## Giao diện kính và bố cục theo màn hình
 
-- Nền là ảnh gradient tĩnh theo chủ đề; thẻ, thanh bên, ô phòng và popup là lớp kính mờ có viền sáng mảnh và bóng nhẹ. Không có hiệu ứng chạy liên tục (chỉ biểu tượng máy giặt/máy sấy/bếp/lọc nước chuyển động khi thiết bị đang chạy, tắt khi hệ thống yêu cầu giảm chuyển động).
+- Mỗi chủ đề có một nền gradient nhiều màu (tĩnh, không tải ảnh). Thẻ, thanh bên, ô phòng và chip cảm biến là các tấm kính trong mờ: màu nền ánh qua tấm kính, cạnh trên/trái bắt sáng như cạnh kính (cạnh phải/dưới mờ hơn), một vạch sáng ngay dưới mép trên, và bóng đổ cùng tông màu nền làm tấm kính nổi lên khỏi nền. Thẻ đang bật sáng hẳn lên, nổi cao hơn và vòng biểu tượng phát sáng theo màu thiết bị. Không có hiệu ứng chạy liên tục (chỉ biểu tượng máy giặt/máy sấy/bếp/lọc nước chuyển động khi thiết bị đang chạy, tắt khi hệ thống yêu cầu giảm chuyển động).
 - Trạng thái thiết bị luôn có cả màu và chữ:
-  - **Tắt**: thẻ kính, biểu tượng xám, chữ “Tắt”/“Đóng”/“Khô”.
-  - **Bật**: thẻ sáng nổi lên, vòng biểu tượng có màu (đèn vàng, máy lạnh xanh dương, quạt xanh ngọc, rèm tím, nước nóng cam, công tắc xanh lá), chữ “Bật”, chế độ máy lạnh (Lạnh/Khô/…) hoặc % độ sáng/vị trí.
-  - **Cảnh báo**: cửa mở, phát hiện nước → thẻ cam, chữ “Mở”/“Ướt”.
+  - **Tắt**: thẻ kính trong, biểu tượng trong bong bóng kính, chữ “Tắt”/“Đóng”/“Khô”.
+  - **Bật**: thẻ sáng nổi cao lên, vòng biểu tượng có màu và phát sáng (đèn vàng, máy lạnh xanh dương, quạt xanh ngọc, rèm tím, nước nóng cam, công tắc xanh lá), chữ “Bật”, chế độ máy lạnh (Lạnh/Khô/…) hoặc % độ sáng/vị trí.
+  - **Cảnh báo**: cửa mở, phát hiện nước → thẻ kính màu cam, chữ “Mở”/“Ướt”.
   - **Đang chạy**: máy giặt, máy sấy, lọc nước, bếp từ → vòng biểu tượng xanh dương; máy giặt xong → thẻ xanh lá.
-  - **Không khả dụng**: thẻ mờ, viền nét đứt, biểu tượng ⊘ (entity không có hoặc báo `unavailable`/`unknown`).
-- **Cài đặt → Kính mờ** bật/tắt hiệu ứng làm mờ trên từng máy. Khi tắt, khi trình duyệt không hỗ trợ `backdrop-filter`, hoặc khi hệ thống bật “Giảm độ trong suốt”, các lớp kính chuyển sang nền đặc cùng màu, bố cục và độ tương phản giữ nguyên. Mặc định tắt trên Chromium của Raspberry Pi (GPU yếu), bật trên iPad/điện thoại/máy tính.
+  - **Không khả dụng**: thẻ mờ, phẳng (không bóng), viền nét đứt, biểu tượng ⊘ (entity không có hoặc báo `unavailable`/`unknown`).
+- **Cài đặt → Kính mờ** bật/tắt lớp làm mờ phía sau kính (`backdrop-filter`) trên từng máy. Khi tắt, hoặc khi trình duyệt không hỗ trợ làm mờ, giao diện vẫn là kính: tấm kính trong (không làm mờ, đặc hơn một chút để chữ luôn rõ), vẫn có cạnh sáng và bóng nổi. Chỉ khi hệ thống bật “Giảm độ trong suốt”, các tấm kính mới chuyển sang nền đặc. Mặc định tắt làm mờ trên Chromium của Raspberry Pi (GPU yếu), bật trên iPad/điện thoại/máy tính. Cạnh kính và bóng được vẽ bằng viền/bóng CSS thường (không dùng mask), nên Pi 3 không phải vẽ thêm lớp ảnh phụ.
 - Màn hình ngang đủ rộng (tỷ lệ thu nhỏ ≥ 72 %) dùng khung 1024 × 600. Màn hình 800 × 480 vẫn dùng khung này ở tỷ lệ 78 %.
 - Điện thoại (dọc/ngang) và tablet dựng dọc dùng bố cục cuộn: thẻ đầu trang 3 cột (6 cột trên tablet), hàng phòng dính ở đầu khi cuộn, chip cảm biến cuộn ngang, lưới thẻ 3–9 cột theo thứ tự đọc của bố cục ngang, thanh tab ở đáy có chừa vùng an toàn của iPhone. Ở bố cục này vẫn sửa tên/entity, xóa và thêm thiết bị được; kéo thả vị trí thẻ chỉ làm trên màn hình ngang để không làm lệch bố cục 1024 × 600.
 
@@ -127,9 +127,9 @@ Ngày và tháng của biểu đồ tính theo giờ địa phương của máy 
 
 ## Trang Cài đặt
 
-Trong **Giao diện**, chọn Mặc định, Mùa xuân, Mùa hạ, Mùa thu, Mùa đông hoặc Giao diện tối, rồi bấm **Lưu giao diện** để áp dụng. Lựa chọn được lưu và đồng bộ chung qua Pi; đổi lựa chọn mà chưa lưu không làm thay đổi giao diện đang dùng.
+Trong **Giao diện**, chọn Mặc định, Mùa xuân, Mùa hạ, Mùa thu, Mùa đông hoặc Giao diện tối: giao diện đổi ngay khi chọn và được lưu, đồng bộ chung qua Pi tới các máy khác (trong khoảng 5 giây). Nút **Lưu giao diện** vẫn lưu lại lựa chọn đang hiển thị. Khi đã kết nối HA, trang Cài đặt chỉ cập nhật các số liệu trực tiếp (trạng thái kết nối, CPU/ổ đĩa/RAM) chứ không vẽ lại cả trang, nên lựa chọn giao diện hay địa chỉ đang gõ dở không bị đặt lại.
 
-Mỗi chủ đề có nền gradient và màu nhấn riêng; bốn mùa giữ họa tiết SVG tĩnh trên nền (lá/hoa xuân, nắng/sóng hạ, lá vàng thu, bông tuyết đông) nằm dưới lớp kính. Giao diện tối dùng kính tối, thẻ đang bật vẫn sáng như iOS. Họa tiết không chặn thao tác và không chạy hiệu ứng nền liên tục trên Pi 3. Màu trạng thái thiết bị giống nhau ở mọi chủ đề.
+Mỗi chủ đề có nền và màu nhấn riêng, dễ phân biệt: Mặc định xanh dương – tím – hồng – cam đào, Mùa xuân xanh lá – hồng đào – vàng mai, Mùa hạ xanh biển – vàng nắng – san hô, Mùa thu cam – đỏ gạch – vàng nghệ, Mùa đông xanh băng – oải hương – trắng tuyết, Giao diện tối xanh đêm với quầng chàm/tím/ngọc. Bốn mùa giữ họa tiết SVG tĩnh trên nền (lá/hoa xuân, nắng/sóng hạ, lá vàng thu, bông tuyết đông) nằm dưới lớp kính; bóng đổ dưới kính cũng mang tông màu của chủ đề. Giao diện tối dùng kính tối, thẻ đang bật vẫn sáng như iOS. Họa tiết không chặn thao tác và không chạy hiệu ứng nền liên tục trên Pi 3. Màu trạng thái thiết bị giống nhau ở mọi chủ đề.
 
 Giữ **3 giây** trên thẻ **Thời tiết, Điện, Tháng này, Tiền điện** để đổi entity của từng thẻ. Trong Cài đặt, thẻ **Máy chủ Homeassistant** hiển thị **Nhiệt độ CPU, Dung lượng trống, RAM**; giữ 3 giây trên thẻ này để sửa cả ba entity trong một popup. Bấm **Lưu entity** để lưu và đồng bộ, hoặc **Hủy** để giữ cấu hình trước đó. Popup không tự focus ô nhập liệu. Di chuyển ngón tay hoặc thả trước 3 giây sẽ hủy thao tác giữ; bàn phím có thể dùng Enter/Space.
 
