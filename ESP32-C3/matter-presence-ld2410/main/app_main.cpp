@@ -15,7 +15,8 @@
 //
 // Endpoints (their numbers follow the creation order and must not change: controllers that paired with an earlier
 // firmware keep them across OTA updates):
-//   0 Root Node: Basic Information (+ ProductLabel, SerialNumber), OTA Requestor, Wi-Fi network clusters
+//   0 Root Node: Basic Information (+ ProductLabel, SerialNumber), OTA Requestor, Wi-Fi network clusters (Wi-Fi RSSI
+//     and UpTime reported again by diag_report.cpp)
 //   1 Occupancy Sensor: Occupancy Sensing (Radar, HoldTime), Identify, Mode Select "Learn empty room"
 //   2, 3, 4 Mode Select: "Range", "Radar resolution", "Radar Bluetooth" (radar_control.cpp)
 
@@ -46,6 +47,7 @@
 
 #include "board.h"
 #include "device_info.h"
+#include "diag_report.h"
 #include "identity_diag.h"
 #include "mem_monitor.h"
 #include "presence.h"
@@ -208,6 +210,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kServerReady:
         apply_hold_time_config();
+        diag_report_start();
         if (!is_commissioned()) {
             setup_code_print(false); // the SDK opened the boot commissioning window (BLE and network)
         }

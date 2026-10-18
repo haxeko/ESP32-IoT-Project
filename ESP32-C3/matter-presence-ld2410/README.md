@@ -4,22 +4,23 @@ Cảm biến hiện diện chuẩn Matter (device type **Occupancy Sensor 0x0107
 
 Đây là bản **viết lại từ đầu** của firmware ESP32-C3 1.0.132 (`ESP32-C3/matter-wifi-presence`, dùng chung mã với thư mục ESP32-H2). Project này **tự chứa**: không dùng file nào của thư mục ESP32-H2, mã chỉ cho ESP32-C3. Chức năng, thuật toán, ngưỡng, thời gian, endpoint và khoá lưu trữ giữ nguyên như 1.0.132, nên **cập nhật OTA từ 1.0.132 lên bản này giữ nguyên ghép nối và các entity Home Assistant** (xem **Mức độ kiểm tra**: điều này mới kiểm chứng bằng so sánh cấu hình và build, chưa thử trên bo).
 
-Trong Home Assistant có thêm 5 điều khiển (Apple Home không hiện): **Hold time**, **Learn empty room** (học phòng trống, hoặc bấm nút BOOT 3 lần; *Factory thresholds* hoặc bấm 4 lần để ghi lại ngưỡng mặc định), **Radar Bluetooth**, **Radar resolution**, **Range**. Tên thiết bị là **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C4**.
+Trong Home Assistant có thêm 5 điều khiển (Apple Home không hiện): **Hold time**, **Learn empty room** (học phòng trống, hoặc bấm nút BOOT 3 lần; *Factory thresholds* hoặc bấm 4 lần để ghi lại ngưỡng mặc định), **Radar Bluetooth**, **Radar resolution**, **Range**. Tên thiết bị là **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C4**. Các entity chẩn đoán **Reboot count**, **Uptime**, **Wi-Fi RSSI** bị Home Assistant tắt sẵn: bật chúng trong Home Assistant (xem **Entity chẩn đoán**); firmware gửi lại Uptime và Wi-Fi RSSI để giá trị không bị đứng.
 
 ## Khác biệt so với bản cũ (`ESP32-C3/matter-wifi-presence`, 1.0.132)
 
 | | 1.0.132 (`matter-wifi-presence`) | Bản này (`matter-presence-ld2410`) |
 |---|---|---|
 | Mã nguồn | `main/`, bảng phân vùng, sdkconfig của thư mục ESP32-H2 (chung với bản Thread) | tự chứa, chỉ ESP32-C3 |
-| Chức năng, thuật toán, log | — | giống hệt |
+| Chức năng, thuật toán, log | — | giống hệt, thêm báo cáo Wi-Fi RSSI và Uptime (dòng dưới) |
+| Wi-Fi RSSI, Uptime trong Home Assistant | chỉ gửi lúc Home Assistant subscribe: RSSI đứng giá trị, Uptime lệch sau khi Home Assistant khởi động lại | gửi lại RSSI khi đổi từ 3 dB (kiểm tra mỗi phút), cả RSSI và uptime 10 phút một lần (`menuconfig`; đặt 0 thì như cũ) |
 | VID / PID, endpoint, cluster, tên entity, mã mode | `0xFFF1` / `0x8001`, endpoint 1–4 | giống hệt |
 | Bảng phân vùng, khoá NVS/KVS | — | giống hệt |
-| sdkconfig sinh ra | — | giống hệt (chỉ khác đường dẫn file và mục chọn loại LED đã bỏ) |
+| sdkconfig sinh ra | — | giống hệt (chỉ khác đường dẫn file, mục chọn loại LED đã bỏ và 2 tuỳ chọn mới `DIAG_REPORT_*`) |
 | LED | chọn được WS2812 / LED GPIO / không có | chỉ LED GPIO một màu (thư viện `espressif/led_strip` bỏ) |
 | Biến thể build | mặc định, `unique_setup`, `factory` | mặc định, `unique_setup` (`factory` bỏ: PAI test chỉ cấp DAC cho PID `0x8000`) |
 | Mã Thread/OpenThread (`thread_diag`, phần OpenThread của `id_diag`, OT CLI) | có, tắt khi build C3 | bỏ |
 | Tên file build | `matter_presence_c3_wifi*` | giống hệt |
-| Kích thước (`idf.py size`, cùng Docker image) | 1 478 KB, RAM tĩnh 147,0 KB | 1 477 KB, RAM tĩnh 147,0 KB (nhỏ hơn 256 byte flash, 70 byte RAM) |
+| Kích thước (`idf.py size`, cùng Docker image) | 1 478 KB, RAM tĩnh 147,0 KB | 1 478 KB, RAM tĩnh 147,0 KB (lớn hơn 160 byte flash vì có thêm `diag_report`, nhỏ hơn 54 byte RAM) |
 
 Thay đổi cấu trúc mã (không đổi hành vi):
 - `radar_control.cpp` tách thành phần Matter (`radar_control.cpp`: 4 Mode Select) và phần logic (`radar_worker.cpp`: task `radar_cfg`, các yêu cầu, "lựa chọn cuối cùng thắng", Bluetooth của radar), để chạy được test trên máy tính.
@@ -118,6 +119,33 @@ chip-tool modeselect change-to-mode 1 0x7283 3    # Radar resolution 0.2 m
 chip-tool modeselect change-to-mode 0 0x7283 4    # Radar Bluetooth Off
 chip-tool modeselect change-to-mode 1 0x7283 1    # Learn empty room: Learning
 ```
+
+## Entity chẩn đoán: Reboot count, Uptime, Wi-Fi RSSI
+
+Home Assistant tự tạo ba entity này (mục *Diagnostic* trên trang thiết bị) cho **mọi** thiết bị Matter có các cluster chẩn đoán chuẩn, nhưng **tắt sẵn**: integration Matter của Home Assistant khai báo chúng với `entity_registry_enabled_default=False`. Thiết bị không bật thay được, phải bật trong Home Assistant:
+
+- **Một thiết bị:** trang thiết bị → mục *Diagnostic* → *+N entities not shown* → bấm vào entity → bánh răng (*Settings*) → bật **Enabled** → **Update**. Khoảng 30 s sau Home Assistant tải lại integration Matter, lúc đó entity mới có giá trị.
+- **Nhiều thiết bị:** *Settings* → *Devices & services* → tab *Entities* → lọc để hiện cả entity bị tắt (*disabled*) → tìm `RSSI`, `Uptime`, `Reboot count` → chọn nhiều → **Enable selected**.
+
+| Entity | Thuộc tính Matter (endpoint 0) | Ý nghĩa, cập nhật |
+|---|---|---|
+| **Reboot count** | General Diagnostics `RebootCount` | Số lần khởi động. Matter SDK tăng ở mỗi lần khởi động (OTA, lỗi, mất điện), lưu trong NVS (namespace `chip-counters`): giữ qua OTA, đếm lại từ 1 sau factory reset, `erase-flash` hoặc nạp file merged. Chỉ đổi lúc khởi động, khi đó Home Assistant subscribe lại và nhận số mới |
+| **Uptime** | General Diagnostics `UpTime` | Home Assistant hiện **thời điểm khởi động** (lúc nhận − uptime). Firmware gửi lại uptime 10 phút một lần |
+| **Wi-Fi RSSI** | Wi-Fi Network Diagnostics `RSSI` | Cường độ sóng Wi-Fi nhận từ router (dBm; từ −70 trở lên là tốt, dưới −80 là yếu). Firmware đọc mỗi phút, gửi khi đổi từ 3 dB so với lần gửi trước, và 10 phút một lần |
+
+**Vì sao firmware phải gửi lại:** trong đặc tả Matter, `RSSI` và `UpTime` có thuộc tính *changes omitted*. Matter SDK chỉ gửi chúng khi controller bắt đầu subscription, sau đó không báo khi giá trị đổi. Matter Server của Home Assistant (python-matter-server, theo mã nguồn) cũng không tự đọc lại thuộc tính chuẩn, chỉ hỏi lại thuộc tính riêng của một số hãng. Với bản 1.0.132 (và mọi firmware chỉ dùng mặc định của SDK):
+- Wi-Fi RSSI đứng nguyên ở giá trị lúc Home Assistant subscribe.
+- Uptime được tính từ uptime cũ: sau khi Home Assistant khởi động lại, thời điểm khởi động bị dời muộn đi đúng bằng khoảng thời gian từ lúc subscribe. Subscription thường bắt đầu ngay sau khi bo khởi động, nên trông như bo vừa khởi động lại.
+
+Bản này đánh dấu hai thuộc tính là đã đổi (`MatterReportingAttributeChangeCallback`, `main/diag_report.cpp`), nên các subscription gửi giá trị hiện tại trong lần báo cáo kế tiếp. Khi không có controller nào subscribe thì không gửi gì.
+
+- Home Assistant bản mới bỏ qua lệch Uptime dưới 60 s, nên gửi lại 10 phút một lần không làm entity Uptime đổi trạng thái liên tục.
+- Đổi trong `menuconfig` → *Wi-Fi RSSI and Uptime Reports*:
+  - `DIAG_REPORT_RSSI_STEP_DB`: mặc định 3 dB; 0 = chỉ gửi theo chu kỳ.
+  - `DIAG_REPORT_REFRESH_MIN`: mặc định 10 phút; 0 = không gửi theo chu kỳ.
+  - Cả hai bằng 0 thì như bản 1.0.132.
+- Không thêm hay đổi endpoint, cluster, thuộc tính nào: ba entity đã có từ 1.0.132 (cùng cluster của Matter SDK), bản này chỉ gửi thêm báo cáo.
+- *Data version* của cluster không tăng khi gửi lại, vì cluster của Matter SDK không cho ứng dụng tăng. Theo mã nguồn, python-matter-server so sánh theo giá trị nên vẫn cập nhật (chưa thử trên bo).
 
 ## Học phòng trống
 
@@ -276,7 +304,7 @@ File **`matter_presence_c3_wifi.ota`** (Artifacts của CI; build tại máy là
 
 ## Cấu hình (`idf.py menuconfig`)
 
-Tên các tuỳ chọn giữ như bản 1.0.132.
+Tên các tuỳ chọn giữ như bản 1.0.132; menu *Wi-Fi RSSI and Uptime Reports* là mới.
 
 | Menu | Tuỳ chọn | Mặc định | Khoảng |
 |---|---|---|---|
@@ -298,6 +326,8 @@ Tên các tuỳ chọn giữ như bản 1.0.132.
 | Identity Diagnostics and Setup Code | `IDENTITY_DIAG_PERIOD_SEC` | 300 | 0 (tắt) – 86400 |
 | | `IDENTITY_DIAG_SUBSCRIPTION_LOG` / `PRINT_ONBOARDING_CODES` | bật / bật | |
 | | `UNIQUE_SETUP_CODE`, `UNIQUE_SETUP_CODE_PARTITION` | bật khi build `unique_setup`, `fctry` | |
+| Wi-Fi RSSI and Uptime Reports (mới) | `DIAG_REPORT_RSSI_STEP_DB` (gửi lại Wi-Fi RSSI khi đổi từng này dB) | 3 | 0 (chỉ theo chu kỳ) – 30 |
+| | `DIAG_REPORT_REFRESH_MIN` (gửi lại Wi-Fi RSSI và uptime mỗi) | 10 phút | 0 (không) – 1440 |
 | Memory Monitor | `MEM_MONITOR_PERIOD_SEC` | 600 | 0 (chỉ khi khởi động) – 86400 |
 
 Console Matter (gõ lệnh trong monitor) tắt để có thêm khoảng 10 KB RAM: bật lại bằng *Component config* → *CHIP Core* → *General Options* → *Use the CHIP shell library* (`CONFIG_ENABLE_CHIP_SHELL`). Khi đó có lệnh của esp-matter (diagnostics, factoryreset, attribute) và `matter wifi ...` của Matter SDK; mật khẩu gõ vào lệnh `matter wifi connect` hiện trên màn hình và nằm trong lịch sử lệnh.
@@ -317,10 +347,10 @@ Console Matter (gõ lệnh trong monitor) tắt để có thêm khoảng 10 KB R
 
 | | 1.0.132 (`matter-wifi-presence`) | Bản này |
 |---|---|---|
-| Firmware (phân vùng app 1 920 KB) | 1 513 104 B (1 478 KB), trống 23 % | 1 512 848 B (1 477 KB), trống 23 % |
-| RAM tĩnh (DRAM 313,8 KB) | 150 565 B (147,0 KB, 46,86 %) | 150 495 B (147,0 KB, 46,84 %) |
-| Còn cho heap | 170 731 B (166,7 KB) | 170 801 B (166,8 KB) |
-| Biến thể `unique_setup` | | 1 515 008 B |
+| Firmware (phân vùng app 1 920 KB) | 1 513 104 B (1 478 KB), trống 23 % | 1 513 264 B (1 478 KB), trống 23 % |
+| RAM tĩnh (DRAM 313,8 KB) | 150 565 B (147,0 KB, 46,86 %) | 150 511 B (147,0 KB, 46,84 %) |
+| Còn cho heap | 170 731 B (166,7 KB) | 170 785 B (166,8 KB) |
+| Biến thể `unique_setup` | | 1 515 408 B |
 
 Task và stack (byte; số "còn trống" đo trên bo với bản 1.0.128–1.0.131, mã các task này không đổi):
 
@@ -353,6 +383,7 @@ I ld2410: LD2410 on UART1, RX=GPIO3 TX=GPIO4
 I device_info: Serial number: 58CF79A1B2C4, device name: Presence-B2C4
 I radar_ctl: Endpoints: Learn empty room 1, Range 2, Radar resolution 3, Radar Bluetooth 4
 I app_main: Hold time 30 s (limits 1-300 s)
+I diag_report: Wi-Fi RSSI reported again on a 3 dB change, RSSI and uptime every 10 min
 I radar_ctl: LD2410 settings: no-one duration 5 s, range moving 6 m (gate 8), still 6 m (gate 8), 75 cm per gate, Bluetooth off
 ```
 
@@ -395,11 +426,12 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 
 **Đã kiểm chứng bằng build và test trên máy tính (bản này):**
 - Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định và biến thể `unique_setup`.
-- `sdkconfig` sinh ra giống hệt bản 1.0.132 build trong cùng image, trừ đường dẫn file và mục chọn loại LED đã bỏ: Wi-Fi bật, OpenThread tắt, BLE chỉ để ghép nối, minimal mDNS, cửa sổ ghép nối 900 s, VID `0xFFF1` / PID `0x8001`, WPA3 SAE, coexistence, stack CHIP 8192, CPU 160 MHz, brownout bật, đúng 21 cluster.
-- Header file OTA (bản build 1.0.135): VID `0xFFF1`, PID `0x8001`, phiên bản 135 / `1.0.135` (lớn hơn 132).
+- `sdkconfig` sinh ra giống hệt bản 1.0.132 build trong cùng image, trừ đường dẫn file, mục chọn loại LED đã bỏ và 2 tuỳ chọn mới `DIAG_REPORT_RSSI_STEP_DB`, `DIAG_REPORT_REFRESH_MIN` (so với bản 1.0.139 chỉ khác 2 tuỳ chọn này): Wi-Fi bật, OpenThread tắt, BLE chỉ để ghép nối, minimal mDNS, cửa sổ ghép nối 900 s, VID `0xFFF1` / PID `0x8001`, WPA3 SAE, coexistence, stack CHIP 8192, CPU 160 MHz, brownout bật, đúng 21 cluster.
+- Header file OTA (bản build 1.0.140): VID `0xFFF1`, PID `0x8001`, phiên bản 140 / `1.0.140` (lớn hơn 132).
 - Thứ tự tạo endpoint giống 1.0.132; esp-matter (`esp_matter_data_model.cpp`) cấp số endpoint theo thứ tự tạo trước `esp_matter::start()`, nên số endpoint giữ nguyên.
-- Kích thước so với 1.0.132 (bảng **RAM và flash**): nhỏ hơn 256 byte flash, 70 byte RAM tĩnh.
-- Host test (`test/host/run.sh`, 11 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED, tên thiết bị. Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ.
+- Kích thước so với 1.0.132 (bảng **RAM và flash**): lớn hơn 160 byte flash, nhỏ hơn 54 byte RAM tĩnh. `diag_report` (báo cáo lại Wi-Fi RSSI và Uptime) chiếm 416 byte flash và 16 byte RAM tĩnh so với bản 1.0.139 chưa có nó.
+- Host test (`test/host/run.sh`, 12 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED, tên thiết bị, lúc nào gửi lại Wi-Fi RSSI và Uptime. Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ. Làm hỏng thêm 10 chỗ trong `diag_report.h`: test bắt được cả 10.
+- Phần gửi lại Wi-Fi RSSI và Uptime: chỉ phần quyết định được test trên máy tính. Lời gọi Matter (`MatterReportingAttributeChangeCallback`, timer của Matter) mới kiểm chứng bằng build và bằng đọc mã nguồn Matter SDK, esp-matter, Home Assistant (đánh dấu đã đổi → subscription gửi lại; Home Assistant cập nhật theo giá trị).
 
 **Đã thấy chạy trên bo, nhưng với firmware cũ** (log của người dùng; theo README cũ là các bản 1.0.128–1.0.131, cùng thuật toán và mã radar): ghép nối với Apple Home và Home Assistant (3 controller cùng lúc), đọc radar, radar tự đo phòng trống (lệnh 0x000B), *Factory thresholds* từ Home Assistant; bật Bluetooth của radar (0x00A4 + 0x00A3, đọc MAC bằng 0x00A5) trên radar V2.44.25070917.
 
@@ -415,6 +447,10 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 9. **OTA từ 1.0.132 lên bản này**: giữ ghép nối, endpoint và entity; sau đó OTA tiếp lên một bản mới hơn.
 10. Log `mem` lúc ghép nối: không có `Heap low`; mục tiêu là heap thấp nhất không thấp hơn 1.0.131 (40,0 KB).
 11. Chạy 24 h: không khởi động lại bất thường (không `reset=BROWNOUT`, `PANIC`, `WATCHDOG`), subscription ổn định (không `SUB terminated` lặp lại).
+12. Bật **Reboot count**, **Uptime**, **Wi-Fi RSSI** trong Home Assistant:
+    - Wi-Fi RSSI đổi theo khi dời bo ra xa router (trong khoảng 1 phút khi lệch từ 3 dB);
+    - Uptime đúng thời điểm khởi động, và đúng lại trong 10 phút sau khi khởi động lại Home Assistant;
+    - Reboot count tăng 1 sau mỗi lần khởi động lại, giữ qua OTA.
 
 Cũng chưa kiểm chứng: trả lời của lệnh 0x001B trên radar thật, nhận biết Bluetooth tắt qua địa chỉ giả, Apple Home không hiện Mode Select, biến thể `unique_setup` trên ESP32-C3.
 
@@ -446,6 +482,7 @@ matter-presence-ld2410/
 │   ├── device_info.cpp, device_name.cpp  # Basic Information, serial, tên thiết bị, NodeLabel, tên BLE
 │   ├── setup_code.cpp              # in mã QR; mã ghép nối riêng từng bo (unique_setup)
 │   ├── identity_diag.cpp           # log id_diag: danh tính, Wi-Fi, IP, fabric, subscription
+│   ├── diag_report.cpp             # gửi lại Wi-Fi RSSI và Uptime (entity chẩn đoán của Home Assistant)
 │   ├── mem_monitor.cpp             # log heap / stack
 │   ├── chip_project_config.h       # tên DNS-SD trước khi ghép nối
 │   ├── Kconfig.projbuild
