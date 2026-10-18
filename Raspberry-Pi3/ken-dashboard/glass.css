@@ -19,7 +19,7 @@
   --glass-strong-c:linear-gradient(150deg,rgba(255,255,255,.84),rgba(255,255,255,.68));
   --glass-strong-s:linear-gradient(150deg,#fefefe,#f5f5f8);
   --glass-flat:rgba(255,255,255,.66);
-  --sheet-f:rgba(248,248,252,.84);--sheet-s:#f7f7fa;
+  --sheet-f:rgba(248,248,252,.84);--sheet-s:#f7f7fa;--menu:#fafafd;
   --bar-f:rgba(250,250,252,.8);--bar-s:#fafafc;
   --edge:rgba(255,255,255,.95) rgba(255,255,255,.42) rgba(255,255,255,.34) rgba(255,255,255,.8);
   --glass-border:rgba(255,255,255,.62);
@@ -55,7 +55,7 @@
   --glass-strong-c:linear-gradient(150deg,rgba(44,48,72,.93),rgba(20,22,40,.91));
   --glass-strong-s:linear-gradient(150deg,#272b3f,#181b2b);
   --glass-flat:rgba(36,40,60,.8);
-  --sheet-f:rgba(30,32,46,.86);--sheet-s:#1e2030;--bar-f:rgba(20,22,34,.8);--bar-s:#16181f;
+  --sheet-f:rgba(30,32,46,.86);--sheet-s:#1e2030;--bar-f:rgba(20,22,34,.8);--bar-s:#16181f;--menu:#25283b;
   --edge:rgba(255,255,255,.36) rgba(255,255,255,.11) rgba(255,255,255,.08) rgba(255,255,255,.26);
   --edge-on:#fff rgba(255,255,255,.75) rgba(255,255,255,.6) #fff;
   --glass-border:rgba(255,255,255,.16);
@@ -99,6 +99,8 @@ html[data-dimmed] body::after{content:"";position:fixed;inset:0;z-index:60;backg
 /* room for the shadows of the outer tiles: the tile area reaches into the stage margin instead of clipping them */
 html:not(.fluid-layout) #content{overflow:visible}
 html:not(.fluid-layout) .device-view{width:876px;height:392px}
+html:not(.fluid-layout) .settings-page{grid-template-columns:2.15fr .85fr;grid-template-rows:132px 332px}
+html:not(.fluid-layout) .display-settings{grid-template-columns:124px minmax(0,1fr) 166px;gap:14px}
 
 /* 4. Glass panes. */
 .panel,.device-card,.chart-panel,.settings-card,.music-card,#side-nav,#room-tabs{
@@ -231,22 +233,47 @@ html:not(.fluid-layout) .device-view{width:876px;height:392px}
 .settings-title{font-size:15px;font-weight:650}
 .setting-value{color:var(--accent-text);font-weight:600}
 .display-settings input[type="range"]{margin-top:8px;height:28px}
-.glass-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;font-size:13px;font-weight:600;color:var(--label)}
+.glass-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;font-size:14px;font-weight:600;color:var(--label)}
 .glass-toggle input{appearance:none;-webkit-appearance:none;position:relative;flex:0 0 44px;width:44px;height:26px;margin:0;border-radius:13px;background:var(--fill-3);cursor:pointer;transition:background-color .2s}
 .glass-toggle input::before{content:"";position:absolute;left:2px;top:2px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .2s}
 .glass-toggle input:checked{background:#34c759}
 .glass-toggle input:checked::before{transform:translateX(18px)}
-.settings-page .timeout-buttons{gap:0;padding:0;margin-top:12px;border-radius:12px;background:var(--fill-2)}
-.settings-page .timeout-buttons button{position:relative;isolation:isolate;height:40px;padding:0 2px;border:0!important;border-radius:12px;background:transparent!important;font-size:12px;line-height:14px}
+.settings-page .timeout-buttons{grid-template-columns:repeat(5,auto);gap:0;padding:0;margin-top:12px;border-radius:12px;background:var(--fill-2)}
+.settings-page .timeout-buttons button{position:relative;isolation:isolate;height:40px;padding:0 2px;border:0!important;border-radius:12px;background:transparent!important;font-size:13px;line-height:16px;white-space:nowrap}
 .settings-page .timeout-buttons button.selected{font-weight:650}
-.theme-setting select{background:var(--input);border:1px solid var(--input-border);border-radius:10px;color:var(--label)}
-.settings-page #theme-save{background:var(--accent-soft)!important;color:var(--accent-text)!important;border:0}
+/* Theme picker: a glass list in place of the browser's own drop-down, which ignored the theme (white list,
+   12 px text, and white text on white in the dark theme). */
+.theme-picker{position:relative}
+.settings-page .theme-setting .select-button{display:flex;align-items:center;gap:8px;width:100%;height:36px;padding:0 10px;border:1px solid var(--input-border)!important;border-radius:10px;background:var(--input)!important;color:var(--label)!important;font-size:14px;font-weight:600;text-align:left}
+.select-button .select-value{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.select-button .ui-icon{flex:0 0 16px;width:16px;height:16px;color:var(--label-2);stroke-width:2.2;transition:transform .2s}
+.select-button[aria-expanded="true"] .ui-icon{transform:rotate(180deg)}
+.theme-swatch{flex:0 0 18px;width:18px;height:18px;border-radius:50%;box-shadow:0 0 0 1.5px rgba(255,255,255,.85),0 1px 3px rgba(0,0,0,.3)}
+.theme-swatch[data-swatch="default"]{background:linear-gradient(135deg,#5e8bff,#b49bff 50%,#ff9cc8)}
+.theme-swatch[data-swatch="spring"]{background:linear-gradient(135deg,#5cc85a,#b8e986 50%,#ff9fc0)}
+.theme-swatch[data-swatch="summer"]{background:linear-gradient(135deg,#2fb4ff,#5ee0d6 50%,#ffd25a)}
+.theme-swatch[data-swatch="autumn"]{background:linear-gradient(135deg,#ff9a4a,#e0603f 50%,#c9a35f)}
+.theme-swatch[data-swatch="winter"]{background:linear-gradient(135deg,#6fa8ff,#c3b2ff 55%,#fff)}
+.theme-swatch[data-swatch="dark"]{background:linear-gradient(135deg,#0a0f24,#3d63ff 60%,#a046ff)}
+.settings-card.menu-open{z-index:20}
+.select-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:20;display:grid;gap:2px;width:max(100%,200px);padding:6px;border:1px solid;border-color:var(--edge);border-radius:16px;background:var(--menu);box-shadow:0 18px 40px -12px rgba(var(--shadow-rgb),.55),0 2px 8px rgba(0,0,0,.14)}
+.select-menu[hidden]{display:none}
+.select-menu.up{top:auto;bottom:calc(100% + 6px)}
+.settings-page .select-menu [role="option"]{display:flex;align-items:center;gap:10px;width:100%;height:44px;padding:0 10px;border:0!important;border-radius:11px;background:transparent!important;box-shadow:none;color:var(--label)!important;font-size:16px;font-weight:500;text-align:left;white-space:nowrap}
+.settings-page .select-menu [role="option"]:hover,.settings-page .select-menu [role="option"]:focus-visible{background:var(--fill)!important;outline:0}
+.settings-page .select-menu [role="option"][aria-selected="true"]{font-weight:650}
+.select-menu [role="option"] .ui-icon{flex:0 0 18px;width:18px;height:18px;margin-left:auto;color:var(--accent-text);stroke-width:2.4;visibility:hidden}
+.select-menu [role="option"][aria-selected="true"] .ui-icon{visibility:visible}
+.settings-page #theme-save{height:36px;background:var(--accent-soft)!important;color:var(--accent-text)!important;border:0;font-size:14px}
 .server-icon{color:var(--accent-text)}
+.server-info,.server-info b{font-size:13px;line-height:18px}
 .server-info span{color:var(--label-2)}
-.connection-state{color:var(--label-3)}
+.connection-state{font-size:13px;color:var(--label-3)}
 .connection-state.online{color:var(--c-ok)}
 :root[data-theme="dark"] .connection-state.online{color:var(--ok-text)}
 .connection-settings label,.settings-entity-grid label{color:var(--label-2)}
+.connection-settings label{font-size:13px}
+.connection-settings input:not([type="checkbox"]),.phicomm-option span,.connection-actions button{font-size:14px}
 .connection-settings input:not([type="checkbox"]),.settings-entity-grid input{background:var(--input);border:1px solid var(--input-border);border-radius:10px;color:var(--label)}
 .connection-fields input:disabled{background:var(--fill-2)!important;color:var(--label-3)}
 .entity-page-head{border-bottom:1px solid var(--separator)}
@@ -374,7 +401,7 @@ html.fluid-layout .settings-page{grid-template-columns:minmax(0,1fr);grid-templa
 html.fluid-layout .display-settings{grid-column:1;grid-template-columns:minmax(0,1fr);gap:18px}
 html.fluid-layout .system-settings{grid-column:1}
 html.fluid-layout .settings-page .timeout-buttons button{height:44px;white-space:nowrap}
-html.fluid-layout .theme-setting select,html.fluid-layout .theme-setting button{height:42px}
+html.fluid-layout .settings-page .theme-setting .select-button,html.fluid-layout .settings-page #theme-save{height:44px;font-size:15px}
 html.fluid-layout .connection-fields{grid-template-columns:minmax(0,1fr)}
 html.fluid-layout .connection-settings input:not([type="checkbox"]),html.fluid-layout .settings-entity-grid input{height:44px}
 html.fluid-layout .connection-actions{position:static;flex-wrap:wrap;justify-content:stretch;margin-top:14px}
@@ -392,7 +419,7 @@ html.fluid-layout #toast{bottom:calc(env(safe-area-inset-bottom) + 84px)}
   html.fluid-layout .energy-page{grid-template-columns:repeat(2,minmax(0,1fr))}
   html.fluid-layout .settings-page{grid-template-columns:repeat(2,minmax(0,1fr))}
   html.fluid-layout .display-settings,html.fluid-layout .connection-settings{grid-column:1/-1}
-  html.fluid-layout .display-settings{grid-template-columns:repeat(3,minmax(0,1fr))}
+  html.fluid-layout .display-settings{grid-template-columns:minmax(0,1fr) minmax(0,1.45fr) minmax(0,1fr)}
   html.fluid-layout .system-settings{grid-column:auto}
   html.fluid-layout .connection-fields,html.fluid-layout .settings-entity-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
