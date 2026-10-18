@@ -1,0 +1,28 @@
+# E8 interference A/B: LD2450 powered off / on in 5 min blocks for 60 min.
+# Needs CONFIG_PROBE_CH2_POWER_GPIO (load switch in the LD2450 5 V line).
+# Run: capture.py -p PORT --schedule schedules/e8_ld2450_ab.txt --duration 3610
+# then: report.py <file>.rlog --compare ld2450_off ld2450_on
+0 mark seg ld2450_on
+300 pwr 2 off
+300 mark seg ld2450_off
+600 pwr 2 on
+605 mark seg ld2450_on
+900 pwr 2 off
+900 mark seg ld2450_off
+1200 pwr 2 on
+1205 mark seg ld2450_on
+1500 pwr 2 off
+1500 mark seg ld2450_off
+1800 pwr 2 on
+1805 mark seg ld2450_on
+2100 pwr 2 off
+2100 mark seg ld2450_off
+2400 pwr 2 on
+2405 mark seg ld2450_on
+2700 pwr 2 off
+2700 mark seg ld2450_off
+3000 pwr 2 on
+3005 mark seg ld2450_on
+3300 pwr 2 off
+3300 mark seg ld2450_off
+3600 mark seg end

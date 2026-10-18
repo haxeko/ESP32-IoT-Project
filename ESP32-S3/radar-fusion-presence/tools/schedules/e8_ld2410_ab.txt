@@ -1,0 +1,28 @@
+# E8, other direction: LD2410 powered off / on in 5 min blocks for 60 min, to see
+# whether the LD2410 adds ghost targets to the LD2450. Needs CONFIG_PROBE_CH1_POWER_GPIO.
+# The probe sets the LD2410 engineering mode again after each power on.
+# Run: capture.py -p PORT --schedule schedules/e8_ld2410_ab.txt --duration 3610
+0 mark seg ld2410_on
+300 pwr 1 off
+300 mark seg ld2410_off
+600 pwr 1 on
+605 mark seg ld2410_on
+900 pwr 1 off
+900 mark seg ld2410_off
+1200 pwr 1 on
+1205 mark seg ld2410_on
+1500 pwr 1 off
+1500 mark seg ld2410_off
+1800 pwr 1 on
+1805 mark seg ld2410_on
+2100 pwr 1 off
+2100 mark seg ld2410_off
+2400 pwr 1 on
+2405 mark seg ld2410_on
+2700 pwr 1 off
+2700 mark seg ld2410_off
+3000 pwr 1 on
+3005 mark seg ld2410_on
+3300 pwr 1 off
+3300 mark seg ld2410_off
+3600 mark seg end

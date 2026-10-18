@@ -1,0 +1,55 @@
+name: Build radar-fusion-presence (ESP32-S3)
+
+on:
+  push:
+    paths:
+      - 'ESP32-S3/radar-fusion-presence/**'
+      - '.github/workflows/radar-fusion-s3.yml'
+  pull_request:
+    paths:
+      - 'ESP32-S3/radar-fusion-presence/**'
+      - '.github/workflows/radar-fusion-s3.yml'
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ESP32-S3/radar-fusion-presence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Host tests (protocol decoders, probe against simulated radars, PC tools)
+        run: |
+          pip install numpy
+          test/host/run.sh
+
+  build-probe:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.2
+    defaults:
+      run:
+        working-directory: ESP32-S3/radar-fusion-presence/radar_probe
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build radar probe (esp32s3)
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          . $IDF_PATH/export.sh
+          idf.py set-target esp32s3
+          idf.py build
+          idf.py merge-bin -o radar_probe_merged.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: radar_probe-esp32s3
+          if-no-files-found: error
+          path: |
+            ESP32-S3/radar-fusion-presence/radar_probe/build/radar_probe.bin
+            ESP32-S3/radar-fusion-presence/radar_probe/build/bootloader/bootloader.bin
+            ESP32-S3/radar-fusion-presence/radar_probe/build/partition_table/partition-table.bin
+            ESP32-S3/radar-fusion-presence/radar_probe/build/flash_args
+            ESP32-S3/radar-fusion-presence/radar_probe/build/radar_probe_merged.bin

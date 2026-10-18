@@ -1,0 +1,59 @@
+# Byte streams and the events the decoders must produce from them. Shared by the
+# C++ host tests (test/host) and the Python tests (tools/tests), so both decoders
+# give the same answers. Each test feeds a stream whole, byte by byte and in
+# 7-byte chunks; every way must give the same events and counters.
+#
+# name | stream (hex, spaces ignored) | events, separated by " ; " (empty: none) | parser counters (optional)
+#
+# Events:
+#   R2410 t=type st=state mcm= me= scm= se= dcm= [nm= ns= m=gate energies s=gate energies] x=extra bytes [light= out=]
+#   E2410 err=<decode error>
+#   R2450 n=targets t1=x,y,speed,resolution|- t2=... t3=...   (a trailing * marks an implausible target)
+#   ACK c=command st=status v=value hex   EACK err=<decode error>
+#   CMD c=command v=value hex             (a command frame: our TX looped back)
+# Counters: frames garbage bad_length bad_footer
+#
+# Examples printed in the Hi-Link documents (doc_*):
+doc_ld2410_basic | F4F3F2F1 0D00 02AA02 5100 00 0000 3B 0000 5500 F8F7F6F5 | R2410 t=2 st=2 mcm=81 me=0 scm=0 se=59 dcm=0 x=0 | frames=1 garbage=0 bad_length=0 bad_footer=0
+doc_ld2410c_v100_engineering | F4F3F2F1 2300 01AA03 1E00 3C 0000 39 0000 0808 3C2205030304030605 000039101306060804 0305 5500 F8F7F6F5 | R2410 t=1 st=3 mcm=30 me=60 scm=0 se=57 dcm=0 nm=9 ns=9 m=60,34,5,3,3,4,3,6,5 s=0,0,57,16,19,6,6,8,4 x=2 light=3 out=5
+doc_ld2410b_v107_engineering | F4F3F2F1 2300 01AA03 1E00 3C 0000 39 0000 0808 3C2205030304030605 000039101306060804 6001 5500 F8F7F6F5 | R2410 t=1 st=3 mcm=30 me=60 scm=0 se=57 dcm=0 nm=9 ns=9 m=60,34,5,3,3,4,3,6,5 s=0,0,57,16,19,6,6,8,4 x=2 light=96 out=1
+doc_ack_enable_config | FDFCFBFA 0800 FF01 0000 0100 4000 04030201 | ACK c=00FF st=0 v=01004000
+doc_ack_end_config | FDFCFBFA 0400 FE01 0000 04030201 | ACK c=00FE st=0 v=
+doc_ld2410_ack_version | FDFCFBFA 0C00 A001 0000 0001 0701 16150922 04030201 | ACK c=00A0 st=0 v=0001070116150922
+doc_ld2410_ack_params | FDFCFBFA 1C00 6101 0000 AA080808 141414141414141414 191919191919191919 0500 04030201 | ACK c=0061 st=0 v=AA080808 141414141414141414 191919191919191919 0500
+doc_ld2410_ack_resolution | FDFCFBFA 0600 AB01 0000 0100 04030201 | ACK c=00AB st=0 v=0100
+doc_ld2410b_ack_aux_control | FDFCFBFA 0800 AE01 0000 01600100 04030201 | ACK c=00AE st=0 v=01600100
+doc_ld2410b_ack_noise_status | FDFCFBFA 0600 1B01 0000 0100 04030201 | ACK c=001B st=0 v=0100
+doc_ack_mac | FDFCFBFA 0A00 A501 0000 8F272EB80F65 04030201 | ACK c=00A5 st=0 v=8F272EB80F65
+doc_ld2450_report | AAFF0300 0E03B18610004001 0000000000000000 0000000000000000 55CC | R2450 n=1 t1=-782,1713,-16,320 t2=- t3=- | frames=1 garbage=0 bad_length=0 bad_footer=0
+doc_ld2450_ack_tracking_multi | FDFCFBFA 0600 9101 0000 0200 04030201 | ACK c=0091 st=0 v=0200
+doc_ld2450_ack_version | FDFCFBFA 0C00 A001 0000 0000 0201 16240622 04030201 | ACK c=00A0 st=0 v=0000020116240622
+doc_ld2450_ack_zones | FDFCFBFA 1E00 C101 0000 0100 E803E80318FC8813 0000000000000000 0000000000000000 04030201 | ACK c=00C1 st=0 v=0100 E803E80318FC8813 0000000000000000 0000000000000000
+#
+# Stream handling (synthetic):
+garbage_only | 00 11 F4 F3 AA FD FC | | frames=0 garbage=5 bad_length=0 bad_footer=0
+garbage_before_ld2450 | 1234 AAFF0300 0E03B18610004001 0000000000000000 0000000000000000 55CC | R2450 n=1 t1=-782,1713,-16,320 t2=- t3=- | frames=1 garbage=2 bad_length=0 bad_footer=0
+two_ld2450_reports | AAFF0300 0E03B18610004001 0000000000000000 0000000000000000 55CC AAFF0300 E883D0870A806801 0000000000000000 0000000000000000 55CC | R2450 n=1 t1=-782,1713,-16,320 t2=- t3=- ; R2450 n=1 t1=1000,2000,10,360 t2=- t3=-
+three_targets | AAFF0300 F4013C8F00006801 F481A08F05006801 D007188814806801 55CC | R2450 n=3 t1=-500,3900,0,360 t2=500,4000,-5,360 t3=-2000,2072,20,360
+# The command footer inside an ACK value: framing goes by LEN, not by searching the footer
+footer_bytes_inside_zone_ack | FDFCFBFA 1E00 C101 0000 0200 04030201E803E803 0000000000000000 0000000000000000 04030201 | ACK c=00C1 st=0 v=0200 04030201E803E803 0000000000000000 0000000000000000 | frames=1 garbage=0 bad_length=0 bad_footer=0
+bad_footer_then_report | F4F3F2F1 0D00 02AA02 5100 00 0000 3B 0000 5500 F8F7F6F0 F4F3F2F1 0D00 02AA01 7800 32 0000 00 0000 5500 F8F7F6F5 | R2410 t=2 st=1 mcm=120 me=50 scm=0 se=0 dcm=0 x=0 | frames=1 garbage=23 bad_length=0 bad_footer=1
+oversize_length_then_report | F4F3F2F1 FF00 F4F3F2F1 0D00 02AA01 7800 32 0000 00 0000 5500 F8F7F6F5 | R2410 t=2 st=1 mcm=120 me=50 scm=0 se=0 dcm=0 x=0 | frames=1 garbage=6 bad_length=1 bad_footer=0
+# A report cut short by a glitch: the frames after it start inside the bytes the
+# parser took for the cut one, and are still found
+truncated_then_reports | F4F3F2F1 2300 01AA03 1E00 3C 0000 39 0000 0808 3C22 F4F3F2F1 0D00 02AA02 5100 00 0000 3B 0000 5500 F8F7F6F5 F4F3F2F1 0D00 02AA00 0000 00 0000 00 0000 5500 F8F7F6F5 | R2410 t=2 st=2 mcm=81 me=0 scm=0 se=59 dcm=0 x=0 ; R2410 t=2 st=0 mcm=0 me=0 scm=0 se=0 dcm=0 x=0 | frames=2 garbage=21 bad_length=0 bad_footer=1
+truncated_ld2450_then_acks | AAFF0300 0E03B186 FDFCFBFA 0400 FE01 0000 04030201 FDFCFBFA 0400 A301 0000 04030201 | ACK c=00FE st=0 v= ; ACK c=00A3 st=0 v= | frames=2 garbage=8 bad_length=0 bad_footer=1
+ld2410_and_ack_interleaved | F4F3F2F1 0D00 02AA00 0000 00 0000 00 0000 5500 F8F7F6F5 FDFCFBFA 0400 6201 0000 04030201 F4F3F2F1 0D00 02AA02 0000 00 9600 28 9600 5500 F8F7F6F5 | R2410 t=2 st=0 mcm=0 me=0 scm=0 se=0 dcm=0 x=0 ; ACK c=0062 st=0 v= ; R2410 t=2 st=2 mcm=0 me=0 scm=150 se=40 dcm=150 x=0
+# Framing is fine but the payload is not a valid report
+ld2410_bad_head_marker | F4F3F2F1 0D00 02BB02 5100 00 0000 3B 0000 5500 F8F7F6F5 | E2410 err=marker
+ld2410_unknown_type | F4F3F2F1 0D00 03AA02 5100 00 0000 3B 0000 5500 F8F7F6F5 | E2410 err=type
+ld2410_too_many_gates | F4F3F2F1 0F00 01AA03 1E00 3C 0000 39 0000 0C08 5500 F8F7F6F5 | E2410 err=gates
+ld2410_engineering_fewer_gates | F4F3F2F1 1B00 01AA02 0000 00 9600 28 9600 0404 0102030405 0A0B0C0D0E 0102 5500 F8F7F6F5 | R2410 t=1 st=2 mcm=0 me=0 scm=150 se=40 dcm=150 nm=5 ns=5 m=1,2,3,4,5 s=10,11,12,13,14 x=2 light=1 out=2
+ld2410_engineering_no_extra | F4F3F2F1 2100 01AA00 0000 00 0000 00 0000 0808 000000000000000000 010101010101010101 5500 F8F7F6F5 | R2410 t=1 st=0 mcm=0 me=0 scm=0 se=0 dcm=0 nm=9 ns=9 m=0,0,0,0,0,0,0,0,0 s=1,1,1,1,1,1,1,1,1 x=0
+ld2410_noise_detection_state | F4F3F2F1 0D00 02AA04 0000 00 0000 00 0000 5500 F8F7F6F5 | R2410 t=2 st=4 mcm=0 me=0 scm=0 se=0 dcm=0 x=0
+# A target behind the radar (negative Y) or too fast is decoded but marked implausible
+ld2450_negative_y | AAFF0300 0E03B10610004001 0000000000000000 0000000000000000 55CC | R2450 n=1 t1=-782,-1713,-16,320* t2=- t3=-
+ld2450_too_fast | AAFF0300 E8030088E8836801 0000000000000000 0000000000000000 55CC | R2450 n=1 t1=-1000,2048,1000,360* t2=- t3=-
+# Our own command echoed back (TX wired to RX, or a loopback without radar)
+command_echo | FDFCFBFA 0400 FF00 0100 04030201 | CMD c=00FF v=0100
+short_ack | FDFCFBFA 0200 A001 04030201 | EACK err=short

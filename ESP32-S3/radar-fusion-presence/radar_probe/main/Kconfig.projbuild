@@ -1,0 +1,97 @@
+menu "Radar probe (Phase 1)"
+
+    comment "UART1 (channel 1): the HLK-LD2410 by default"
+
+    config PROBE_CH1_RX_GPIO
+        int "UART1 RX pin (radar TX)"
+        range 0 48
+        default 17
+
+    config PROBE_CH1_TX_GPIO
+        int "UART1 TX pin (radar RX)"
+        range 0 48
+        default 18
+
+    config PROBE_CH1_POWER_GPIO
+        int "Power switch of the UART1 radar (-1: none)"
+        range -1 48
+        default -1
+        help
+            GPIO driving a load switch / P-MOSFET in the 5 V line of the radar.
+            Lets the console (pwr command) and the interference experiment turn
+            the radar off and on.
+
+    comment "UART2 (channel 2): the HLK-LD2450 by default"
+
+    config PROBE_CH2_RX_GPIO
+        int "UART2 RX pin (radar TX)"
+        range 0 48
+        default 4
+
+    config PROBE_CH2_TX_GPIO
+        int "UART2 TX pin (radar RX)"
+        range 0 48
+        default 5
+
+    config PROBE_CH2_POWER_GPIO
+        int "Power switch of the UART2 radar (-1: none)"
+        range -1 48
+        default -1
+
+    config PROBE_POWER_ACTIVE_HIGH
+        bool "Power switch on when its GPIO is high"
+        default y
+
+    config PROBE_BAUD
+        int "Radar baud rate at boot"
+        default 256000
+        help
+            Factory rate of both radars. The radars also offer 9600, 19200,
+            38400, 57600, 115200, 230400 and 460800.
+
+    config PROBE_BAUD_SCAN
+        bool "Try the other baud rates when a radar sends nothing"
+        default y
+        help
+            Some radar firmware updates change the baud rate. The probe then
+            finds the rate the radar uses (it does not change it: see the
+            setbaud command).
+
+    config PROBE_INFO_AT_BOOT
+        bool "Query firmware version and settings at boot"
+        default y
+
+    config PROBE_ENGINEERING_AT_BOOT
+        bool "Turn on LD2410 engineering mode at boot"
+        default y
+        help
+            Engineering mode adds the energy of every distance gate to the
+            LD2410 reports. The radar forgets it at each power off or restart;
+            the probe turns it on again after the restarts it causes.
+
+    config PROBE_SUMMARY
+        bool "1 s summary records (@H)"
+        default y
+
+    config PROBE_STATS_PERIOD_SEC
+        int "Counter records (@S) every (s, 0: only on request)"
+        range 0 3600
+        default 10
+
+    config PROBE_BUTTON_GPIO
+        int "Marker button (-1: none)"
+        range -1 48
+        default 0
+        help
+            Each press writes an event record, to mark moments of an experiment
+            (sitting down, leaving...). GPIO0 is the BOOT button of most boards.
+
+    config PROBE_LD2410_OUT_GPIO
+        int "LD2410 OUT pin input (-1: not wired)"
+        range -1 48
+        default -1
+        help
+            Records the changes of the radar's own presence output, to compare
+            with its reports.
+
+endmenu

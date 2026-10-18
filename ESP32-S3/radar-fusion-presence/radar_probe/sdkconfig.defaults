@@ -1,0 +1,17 @@
+CONFIG_IDF_TARGET="esp32s3"
+
+# Records and commands on the native USB port (USB-Serial-JTAG). Boards wired
+# only through a USB-UART bridge: menuconfig -> Component config -> ESP System
+# Settings -> Channel for console output -> Default: UART0.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# The serial stream is for the probe's records: ESP-IDF log only for warnings
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+
+# 1 ms ticks for the ACK timeouts
+CONFIG_FREERTOS_HZ=1000
+
+# The probe needs neither PSRAM nor more than 2 MB of flash, so the defaults run
+# on every ESP32-S3 module (N8R8, N16R8, ...). Its pin check keeps clear of the
+# octal PSRAM pins.
