@@ -1,0 +1,376 @@
+/* KEN Dashboard – iOS-style glass layer, loaded after style.css and themes.css.
+   On screens that fit it, the 1024 × 600 stage keeps every position from style.css; this file changes
+   materials, type and device states. html.fluid-layout (set by app.js on phones and portrait tablets)
+   turns the stage into a scrolling page with a bottom tab bar. */
+
+/* 1. Material tokens. --glass-t/-s are the translucent/solid variants; the active one is picked below. */
+:root{
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Noto Sans","Helvetica Neue",Arial,sans-serif;
+  --r-tile:18px;--r-panel:20px;--r-control:12px;
+  --glass-t:rgba(255,255,255,.56);--glass-s:rgba(251,250,252,.95);
+  --glass-strong-t:rgba(255,255,255,.72);--glass-strong-s:rgba(253,253,254,.97);
+  --sheet-t:rgba(247,247,250,.86);--sheet-s:#f7f7fa;
+  --glass-border:rgba(255,255,255,.62);
+  --glass-highlight:inset 0 1px 0 rgba(255,255,255,.65);
+  --glass-shadow:0 1px 1px rgba(15,23,42,.04),0 8px 24px rgba(15,23,42,.08);
+  --raised-shadow:0 1px 2px rgba(15,23,42,.06),0 10px 26px rgba(15,23,42,.14);
+  --label:#1d1d1f;--label-2:#45484f;--label-3:#5c5f67;
+  --fill:rgba(118,118,128,.16);--fill-2:rgba(118,118,128,.10);--fill-3:rgba(118,118,128,.26);
+  --input:rgba(255,255,255,.72);--input-border:rgba(60,60,67,.18);--separator:rgba(60,60,67,.14);
+  --seg-selected:#fff;--seg-shadow:0 1px 2px rgba(0,0,0,.08),0 3px 8px rgba(0,0,0,.08);
+  --tile-on:rgba(255,255,255,.94);--tile-on-label:#1d1d1f;--tile-on-label-2:#5c5f67;
+  --chip-off:rgba(118,118,128,.16);--chip-off-glyph:#45484f;
+  --c-light:#ffd60a;--c-light-glyph:#3d2e00;--c-climate:#0a72e8;--c-fan:#0e7fa3;--c-cover:#5e5ce6;--c-heat:#e5530b;--c-switch:#248a3d;
+  --c-run:#0a72e8;--c-ok:#248a3d;--c-warn:#ff9500;--c-warn-glyph:#3b2300;
+  --warn-bg:linear-gradient(rgba(255,149,0,.2),rgba(255,149,0,.2)),rgba(255,255,255,.86);--warn-border:rgba(230,128,0,.55);--warn-text:#8a4300;
+  --ok-bg:linear-gradient(rgba(52,199,89,.18),rgba(52,199,89,.18)),rgba(255,255,255,.86);--ok-border:rgba(36,138,61,.45);--ok-text:#1d6b33;
+  --danger-text:#c4281c;
+  --bar-t:rgba(250,250,252,.84);--bar-s:#fafafc;
+  --glass:var(--glass-t);--glass-strong:var(--glass-strong-t);--sheet:var(--sheet-t);--bar:var(--bar-t);
+  --blur:blur(22px) saturate(170%);--blur-strong:blur(30px) saturate(180%);
+  /* names used by style.css, mapped onto the glass palette */
+  --bg:var(--sheet-s);--panel:var(--glass);--selected:var(--accent-soft);--text:var(--label);--muted:var(--label-2);
+  --blue:var(--accent-text);--green:#2a9a52;--gold:#d08a10;--on:var(--tile-on);--on-text:var(--tile-on-label);--info:var(--tile-on);
+  --white:var(--fill-2);--danger:var(--danger-text);--border:var(--separator);
+}
+:root[data-theme="dark"]{
+  --glass-t:rgba(28,31,43,.56);--glass-s:rgba(31,35,48,.96);
+  --glass-strong-t:rgba(24,27,38,.74);--glass-strong-s:rgba(24,27,38,.98);
+  --sheet-t:rgba(30,32,42,.88);--sheet-s:#1e202a;--bar-t:rgba(22,24,33,.84);--bar-s:#16181f;
+  --glass-border:rgba(255,255,255,.1);
+  --glass-highlight:inset 0 1px 0 rgba(255,255,255,.07);
+  --glass-shadow:0 1px 1px rgba(0,0,0,.25),0 10px 28px rgba(0,0,0,.32);
+  --raised-shadow:0 2px 6px rgba(0,0,0,.35),0 12px 30px rgba(0,0,0,.4);
+  --label:#f5f5f7;--label-2:#c9cad2;--label-3:#a3a5b1;
+  --fill:rgba(118,118,128,.32);--fill-2:rgba(118,118,128,.24);--fill-3:rgba(118,118,128,.44);
+  --input:rgba(255,255,255,.08);--input-border:rgba(255,255,255,.16);--separator:rgba(255,255,255,.12);
+  --seg-selected:rgba(255,255,255,.22);--seg-shadow:0 1px 3px rgba(0,0,0,.4);
+  --tile-on:rgba(255,255,255,.9);
+  --chip-off:rgba(255,255,255,.12);--chip-off-glyph:#d4d5dc;
+  --warn-bg:linear-gradient(rgba(255,159,10,.24),rgba(255,159,10,.24)),rgba(40,36,30,.78);--warn-border:rgba(255,159,10,.6);--warn-text:#ffb84d;
+  --ok-bg:linear-gradient(rgba(48,209,88,.2),rgba(48,209,88,.2)),rgba(28,40,32,.78);--ok-border:rgba(48,209,88,.5);--ok-text:#7ee39a;
+  --danger-text:#ff6b60;--green:#5fd38a;--gold:#f2b84b;
+}
+
+/* 2. Same layout on solid surfaces when blur is unavailable, switched off (Cài đặt → Kính mờ),
+      or the system asks for less transparency. Text contrast is kept in every case. */
+:root[data-glass="off"]{--glass:var(--glass-s);--glass-strong:var(--glass-strong-s);--sheet:var(--sheet-s);--bar:var(--bar-s);--blur:none;--blur-strong:none}
+@supports not ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){
+  :root{--glass:var(--glass-s);--glass-strong:var(--glass-strong-s);--sheet:var(--sheet-s);--bar:var(--bar-s);--blur:none;--blur-strong:none}
+}
+@media (prefers-reduced-transparency:reduce){
+  :root{--glass:var(--glass-s);--glass-strong:var(--glass-strong-s);--sheet:var(--sheet-s);--bar:var(--bar-s);--blur:none;--blur-strong:none}
+}
+
+/* 3. Page, wallpaper and the brightness dimmer (a plain overlay: cheaper than filtering the whole stage). */
+html,body{font-family:var(--font);-webkit-font-smoothing:antialiased;background:var(--theme-color);color:var(--label)}
+body::before{content:"";position:fixed;inset:0;z-index:-1;background:var(--wallpaper);pointer-events:none}
+html[data-dimmed] body::after{content:"";position:fixed;inset:0;z-index:60;background:#000;opacity:var(--dim,0);pointer-events:none}
+#viewport,#stage{background:transparent}
+:focus-visible{outline-color:var(--accent)}
+.sr-only{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* 4. Glass surfaces. */
+.panel,.device-card,.chart-panel,.settings-card,.music-card,#side-nav,#room-tabs{
+  background:var(--glass);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
+  border:1px solid var(--glass-border);box-shadow:var(--glass-highlight),var(--glass-shadow);color:var(--label)
+}
+.panel,.chart-panel,.settings-card,.music-card,#side-nav{border-radius:var(--r-panel)}
+.nav-button,.room-button{background:transparent;border:0;box-shadow:none}
+
+/* 5. Top bar. */
+.brand-card{cursor:pointer;gap:3px;padding:5px 6px}
+.brand-mark{width:46px;height:46px;filter:none}
+.brand-status{display:flex;align-items:center;justify-content:center;gap:5px;max-width:104px;font-size:10.5px;font-weight:600;letter-spacing:0;line-height:12px;white-space:normal;text-align:center;color:var(--label-2)}
+.brand-status::before{content:"";flex:0 0 7px;height:7px;border-radius:50%;background:var(--status-dot,#8e8e93)}
+.brand-card[data-status="ready"]{--status-dot:#34c759}
+.brand-card[data-status="connecting"]{--status-dot:#ff9f0a}
+.brand-card[data-status="offline"],.brand-card[data-status="auth_invalid"]{--status-dot:#ff3b30}
+.brand-card[data-status="demo"]{--status-dot:var(--accent)}
+.clock-card .clock-icon{left:14px;top:16px;width:22px;height:22px}
+.clock-card strong{left:44px;top:8px;font-size:30px;line-height:40px;letter-spacing:-.5px}
+.clock-card #date{left:14px;top:55px;font-size:14px;color:var(--label-2)}
+.weather-icon{left:12px;top:12px;width:34px!important;height:34px;color:var(--gold)}
+.weather-card strong{left:54px;top:8px;font-size:30px;line-height:40px;letter-spacing:-.5px}
+.weather-card #weather-text{left:14px;top:57px;font-size:14px;color:var(--label-2)}
+.top-metric div{left:12px;top:12px;gap:6px;font-size:13px;font-weight:500;color:var(--label-2)}
+.top-metric-icon{width:18px;height:18px;flex-basis:18px}
+.top-metric strong{left:8px;right:8px;top:42px;font-size:20px;letter-spacing:-.3px;font-variant-numeric:tabular-nums}
+.power-card div{left:10px}
+.power-card strong{font-size:17px}
+#topbar article[role="button"]:active{transform:scale(.98)}
+
+/* 6. Rooms: one segmented control. */
+#room-tabs{padding:0;gap:0;border-radius:13px;background:var(--glass-strong)}
+.room-button{position:relative;isolation:isolate;height:auto;border-radius:13px;font-size:16px;font-weight:500;color:var(--label)}
+.room-button.selected{background:transparent;color:var(--label);font-weight:650}
+.room-button.selected::before,.settings-page .timeout-buttons button.selected::before{content:"";position:absolute;inset:3px;z-index:-1;border-radius:10px;background:var(--seg-selected);box-shadow:var(--seg-shadow)}
+
+/* 7. Sidebar: one glass column, the current section tinted. */
+#side-nav{padding:6px;gap:4px;grid-template-rows:repeat(7,minmax(0,1fr));background:var(--glass-strong)}
+.nav-button{width:auto;height:auto;border-radius:14px;padding:4px 0;gap:4px}
+.nav-icon{flex:0 0 24px;width:24px;height:24px;color:var(--label-2)}
+.nav-label{font-size:15px;font-weight:500;line-height:18px;color:var(--label)}
+.nav-button.selected{background:var(--accent-soft)}
+.nav-button.selected .nav-icon,.nav-button.selected .nav-label{color:var(--accent-text);font-weight:650}
+
+/* 8. Environment chips. */
+.metric{border-radius:13px;padding:0 10px;gap:4px}
+.metric-icon{width:22px;height:22px}
+.metric-label{font-size:14px;color:var(--label-2)}
+.metric strong{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+#metric-row .metric-empty{color:var(--label-2)}
+
+/* 9. Device tiles: icon in a round chip, state at the top right, name below.
+      Off = glass + grey chip; on = bright tile + coloured chip; warning = orange; unavailable = faded, dashed. */
+.device-card{border-radius:var(--r-tile)}
+.device-card .device-icon{left:10px;top:10px;width:36px;height:36px;padding:8px;border-radius:50%;background:var(--chip-off);color:var(--chip-off-glyph)}
+.device-card .device-icon .ui-icon{stroke-width:2}
+.device-card .device-name{left:54px;top:18px;right:12px;font-size:15px;font-weight:600;line-height:20px;letter-spacing:-.1px}
+.device-card .device-state,.device-card .tile-state{position:absolute;right:12px;top:10px;height:36px;display:flex;align-items:center;font-size:13px;font-weight:600;color:var(--label-3);font-variant-numeric:tabular-nums}
+.device-card .tile-state.na .ui-icon{width:16px;height:16px;stroke-width:2}
+.device-card.compact .device-icon{left:9px;top:9px}
+.device-card.compact .tile-state{right:9px;top:9px;font-size:12px}
+.device-card.compact .device-name{left:10px;right:8px;top:auto;bottom:9px;font-size:13px;font-weight:600;line-height:15px;text-align:left;white-space:normal;overflow-wrap:break-word;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.device-card.large .device-name{top:8px;right:12px}
+.device-card.large .tile-state{left:54px;right:12px;top:28px;height:18px;font-size:12.5px}
+.device-card.cob-card .device-name,.device-card.cover-card .device-name{right:62px}
+.device-card .data-line span:first-child{color:var(--label-3)}
+.device-card .washer-status-line{top:56px;font-size:13px}
+.toggle-card,.cob-card{--chip-on:var(--c-light);--chip-on-glyph:var(--c-light-glyph)}
+.device-card[data-icon$="fan"]{--chip-on:var(--c-fan);--chip-on-glyph:#fff}
+.device-card[data-icon="water-heater"]{--chip-on:var(--c-heat);--chip-on-glyph:#fff}
+.device-card[data-icon="switch"]{--chip-on:var(--c-switch);--chip-on-glyph:#fff}
+.ac-card{--chip-on:var(--c-climate);--chip-on-glyph:#fff}
+.fan-card{--chip-on:var(--c-fan);--chip-on-glyph:#fff}
+.cover-card{--chip-on:var(--c-cover);--chip-on-glyph:#fff}
+.device-card.active{background:var(--tile-on);border-color:rgba(255,255,255,.9);box-shadow:var(--raised-shadow);color:var(--tile-on-label)}
+.device-card.active .device-icon{background:var(--chip-on,var(--c-switch));color:var(--chip-on-glyph,#fff)}
+.device-card.active .tile-state,.device-card.active .device-state,.device-card.active .data-line span:first-child{color:var(--tile-on-label-2)}
+.device-card.cob-card.rgb-light.active .device-icon{background:var(--device-light-color,var(--c-light));color:#1d1d1f;filter:none}
+.device-card.running{background:var(--tile-on);border-color:rgba(255,255,255,.9);box-shadow:var(--raised-shadow);color:var(--tile-on-label)}
+.device-card.running .device-icon{background:var(--c-run);color:#fff}
+.device-card.running .tile-state,.device-card.running .data-line span:first-child{color:var(--tile-on-label-2)}
+.device-card.alert:not(.running){background:var(--warn-bg);border-color:var(--warn-border);box-shadow:var(--raised-shadow);color:var(--label)}
+.device-card.alert:not(.running) .device-icon{background:var(--c-warn);color:var(--c-warn-glyph)}
+.device-card.alert:not(.running) .tile-state{color:var(--warn-text);font-weight:700}
+.device-card.finished{background:var(--ok-bg);border-color:var(--ok-border);color:var(--label)}
+.device-card.finished .device-icon{background:var(--c-ok);color:#fff}
+.device-card.washer-card .finish-notice span,.device-card.washer-card .finish-notice b{color:var(--ok-text)}
+.device-card.disabled{opacity:.55;border-style:dashed;border-color:var(--label-3);box-shadow:none}
+.device-card.disabled .device-icon{background:transparent;box-shadow:inset 0 0 0 1.5px var(--label-3);color:var(--label-3)}
+.device-card[role="button"],.appliance-card{cursor:pointer}
+.empty-message{color:var(--label-2)}
+
+/* 10. Controls inside tiles. */
+.control-strip{bottom:8px}
+.device-card input[type="range"]{height:28px;margin:0;accent-color:var(--accent)}
+.device-card.active,.device-card.running{color-scheme:light}
+.ac-temperature-value{font-size:28px;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+.ac-temperature-controls button,.mini-buttons button,.large-main button,.control-strip button{background:var(--fill);color:var(--label);border-radius:var(--r-control)}
+.device-card.active .ac-temperature-controls button,.device-card.active .mini-buttons button{background:rgba(118,118,128,.14);color:var(--tile-on-label)}
+.mini-buttons{bottom:10px;gap:6px}
+.mini-buttons button{height:38px;font-weight:600}
+.device-card .mini-buttons button[aria-pressed="true"]{background:var(--c-fan);color:#fff}
+.large-main strong{font-size:28px;letter-spacing:-.5px;font-variant-numeric:tabular-nums}
+.device-power-zone{border-radius:var(--r-tile) var(--r-tile) 0 0}
+.device-power-zone:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}
+
+/* 11. Pages: energy, music, settings. */
+.chart-title{font-size:15px;font-weight:650}
+.chart-unit,.chart-period,.bar-label,.chart-empty{color:var(--label-3)}
+.bar-chart{border-bottom:1px solid var(--separator);background:repeating-linear-gradient(to top,transparent 0,transparent 34px,var(--separator) 35px)}
+.bar{background:var(--accent);border-radius:3px 3px 1px 1px}
+.music-head .blue{color:var(--accent-text)!important}
+.music-main{border-radius:var(--r-panel) var(--r-panel) 0 0;border-bottom:0}
+.volume-card{border-radius:0 0 var(--r-panel) var(--r-panel);border-top:1px solid var(--separator)}
+.album-art{border-radius:16px;background:var(--fill);color:var(--accent-text)}
+.track-info span{color:var(--label-2)}
+.seek-control{color:var(--label-3)}
+.transport button{width:50px;height:50px;border-radius:50%;background:var(--fill);color:var(--label)}
+.transport .play{width:56px;height:56px;background:var(--accent);color:#fff}
+.music-source button,.ma-tabs button,.aibox-tabs button{background:var(--fill-2);color:var(--label);border-radius:10px}
+.ma-tabs button,.aibox-tabs button{height:34px}
+.music-source button.selected,.ma-tabs button.selected,.aibox-tabs button.selected{background:var(--seg-selected);box-shadow:var(--seg-shadow);color:var(--label)}
+.music-side p{color:var(--label-2)}
+.playlist button{background:var(--fill-2);color:var(--label);border-radius:var(--r-control)}
+.aibox-search input{background:var(--input);border:1px solid var(--input-border);border-radius:10px;color:var(--label)}
+.aibox-search button{background:var(--accent);border-radius:10px;color:#fff}
+.volume-card button{background:var(--fill);border-radius:var(--r-control);color:var(--label)}
+.settings-title{font-size:15px;font-weight:650}
+.setting-value{color:var(--accent-text);font-weight:600}
+.display-settings input[type="range"]{margin-top:8px;height:28px}
+.glass-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;font-size:13px;font-weight:600;color:var(--label)}
+.glass-toggle input{appearance:none;-webkit-appearance:none;position:relative;flex:0 0 44px;width:44px;height:26px;margin:0;border-radius:13px;background:var(--fill-3);cursor:pointer;transition:background-color .2s}
+.glass-toggle input::before{content:"";position:absolute;left:2px;top:2px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .2s}
+.glass-toggle input:checked{background:#34c759}
+.glass-toggle input:checked::before{transform:translateX(18px)}
+.settings-page .timeout-buttons{gap:0;padding:0;margin-top:12px;border-radius:12px;background:var(--fill-2)}
+.settings-page .timeout-buttons button{position:relative;isolation:isolate;height:40px;padding:0 2px;border:0!important;border-radius:12px;background:transparent!important;font-size:12px;line-height:14px}
+.settings-page .timeout-buttons button.selected{font-weight:650}
+.theme-setting select{background:var(--input);border:1px solid var(--input-border);border-radius:10px;color:var(--label)}
+.settings-page #theme-save{background:var(--accent-soft)!important;color:var(--accent-text)!important;border:0}
+.server-icon{color:var(--accent-text)}
+.server-info span{color:var(--label-2)}
+.connection-state{color:var(--label-3)}
+.connection-state.online{color:var(--c-ok)}
+:root[data-theme="dark"] .connection-state.online{color:var(--ok-text)}
+.connection-settings label,.settings-entity-grid label{color:var(--label-2)}
+.connection-settings input:not([type="checkbox"]),.settings-entity-grid input{background:var(--input);border:1px solid var(--input-border);border-radius:10px;color:var(--label)}
+.connection-fields input:disabled{background:var(--fill-2)!important;color:var(--label-3)}
+.entity-page-head{border-bottom:1px solid var(--separator)}
+.phicomm-option input{accent-color:var(--accent)}
+
+/* 12. Buttons, forms, dialogs and the toast. */
+.settings-page button,.entity-page-actions button,.dialog-actions button,.dialog-head button,#detail-close,.dialog-close,.cob-colors button,.new-device-form button,.confirm-dialog button,.room-manager-actions button,.color-dialog-actions button,.rgb-editor button,.layout-actions button{
+  background:var(--fill)!important;color:var(--label)!important;border:0!important;border-radius:var(--r-control);font-weight:600
+}
+.settings-page button.primary,.dialog-actions button.primary,.new-device-form button[type="submit"],#metric-done,#room-done,#rgb-editor-save,.layout-actions .layout-done{background:var(--accent)!important;color:#fff!important}
+#settings-forget,#forget-button,#disconnect-yes{color:var(--danger-text)!important}
+.new-device-form button,.confirm-dialog button,.room-manager-actions button,.color-dialog-actions button,.rgb-editor button{min-height:40px}
+.dialog-actions button{min-height:46px}
+dialog{background:var(--sheet);-webkit-backdrop-filter:var(--blur-strong);backdrop-filter:var(--blur-strong);border:1px solid var(--glass-border);border-radius:24px;box-shadow:0 24px 80px rgba(0,0,0,.28);color:var(--label)}
+dialog::backdrop{background:rgba(10,14,24,.32)}
+:root[data-theme="dark"] dialog::backdrop{background:rgba(0,0,0,.55)}
+.dialog-head p,.help,.metric-manager-room,.metric-manager-name small,.confirm-dialog p,.new-device-form label,#config-dialog label,.sensor-icon-picker legend,.rgb-editor-brightness label,.top-entity-title span{color:var(--label-2)}
+summary{color:var(--accent-text)}
+#config-dialog input:not([type="checkbox"]),.new-device-form input{background:var(--input);border:1px solid var(--input-border);border-radius:var(--r-control);color:var(--label)}
+#config-dialog input::placeholder,.new-device-form input::placeholder,.connection-settings input::placeholder,.settings-entity-grid input::placeholder,.aibox-search input::placeholder{color:var(--label-3);opacity:1}
+.entity-group-title{border-bottom:1px solid var(--separator);color:var(--label)}
+.room-manager>div{background:var(--fill-2);border-radius:var(--r-control)}
+.room-manager button{background:var(--fill)!important;border:0;border-radius:10px;color:var(--label)}
+.metric-manager>div.selected{background:var(--accent-soft)}
+[data-room-remove],[data-metric-remove]{color:var(--danger-text)!important}
+.device-type-list button,.sensor-icon-picker button{background:var(--fill-2)!important;border:1px solid transparent;border-radius:14px;color:var(--label)}
+.device-type-list button span{color:var(--label-2)}
+.sensor-icon-picker button.selected{background:var(--accent-soft)!important;border-color:var(--accent)}
+.cob-colors,.cob-colors.rgb-presets,.cob-colors.temperature-presets{grid-template-columns:repeat(4,minmax(0,88px))}
+.cob-colors button{width:100%;height:auto;aspect-ratio:1;background:var(--fill-2)!important;border-radius:16px}
+.cob-colors button>span{border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.2)}
+.rgb-color-palette{border:1px solid var(--separator);border-radius:16px}
+.rgb-editor-brightness>span,.cob-popup-current{border-color:#fff}
+#detail-content .detail-grid span{color:var(--label-2)}
+#toast{background:rgba(28,28,30,.86);color:#fff;-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);border-radius:16px;padding:12px 18px;font-size:14px;font-weight:500;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+:root[data-theme="dark"] #toast{background:rgba(58,58,64,.9)}
+
+/* 13. Layout editing. */
+.layout-edit-card{box-shadow:0 0 0 2px var(--accent-soft),var(--glass-shadow)}
+.layout-edit-card.dragging{box-shadow:0 0 0 2px var(--accent),var(--raised-shadow)}
+.layout-edit-card .card-edit-name,.layout-edit-card .card-remove{width:26px;height:26px;border:0;border-radius:50%;background:var(--sheet-s);color:var(--label);box-shadow:0 1px 4px rgba(0,0,0,.18)}
+.layout-edit-card .card-remove{color:var(--danger-text)}
+.layout-actions button{min-height:38px}
+.layout-actions .layout-add{background:var(--sheet-s)!important}
+.layout-actions .layout-add,.layout-actions .layout-done{box-shadow:var(--raised-shadow)}
+.entity-holding{box-shadow:0 0 0 2px var(--accent)!important}
+
+/* 14. Press feedback, only where nothing is dragged. */
+@media (prefers-reduced-motion:no-preference){
+  .toggle-card:active:not(.layout-edit-card),.appliance-card:active:not(.layout-edit-card){transform:scale(.97)}
+  .glass-toggle input,.glass-toggle input::before{transition-duration:.2s}
+}
+@media (prefers-reduced-motion:reduce){
+  .glass-toggle input,.glass-toggle input::before{transition:none}
+}
+
+/* 15. Phones and portrait tablets: a scrolling page instead of a shrunken 1024 × 600 stage.
+       Tiles keep their reading order (row by row) from the landscape layout; dragging stays a landscape task. */
+html.fluid-layout{height:auto;min-height:100%;overflow:auto}
+html.fluid-layout body{height:auto;min-height:100%;overflow:visible}
+html.fluid-layout #viewport{position:relative;inset:auto;display:block;place-items:normal;min-height:100vh;overflow:visible}
+html.fluid-layout #stage{position:relative;left:auto;top:auto;width:auto;max-width:1000px;height:auto;margin:0 auto;overflow:visible;transform:none!important;display:flex;flex-direction:column;gap:12px;padding:calc(env(safe-area-inset-top) + 12px) calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + 96px) calc(env(safe-area-inset-left) + 16px)}
+html.fluid-layout #season-decor{position:fixed}
+html.fluid-layout #screen-shade{position:fixed;z-index:70}
+html.fluid-layout #topbar{position:static;inset:auto;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;pointer-events:auto}
+html.fluid-layout #topbar>*{position:relative;left:auto;top:auto;width:auto;height:auto;min-height:74px;grid-column:span 2}
+html.fluid-layout .brand-card{padding:8px 6px}
+html.fluid-layout .brand-mark{width:34px;height:34px}
+html.fluid-layout .clock-card,html.fluid-layout .weather-card{display:grid;grid-template-columns:auto minmax(0,1fr);align-content:center;align-items:center;gap:2px 6px;padding:10px}
+html.fluid-layout .clock-card>*,html.fluid-layout .weather-card>*{position:static;width:auto}
+html.fluid-layout .clock-card .clock-icon{width:18px;height:18px}
+html.fluid-layout #clock,html.fluid-layout .weather-card strong{font-size:24px;line-height:30px;white-space:nowrap}
+html.fluid-layout .clock-card #date,html.fluid-layout .weather-card #weather-text{position:static;width:auto;grid-column:1/-1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+html.fluid-layout .weather-icon{width:24px!important;height:24px}
+html.fluid-layout .top-metric{display:flex;flex-direction:column;justify-content:center;gap:6px;padding:10px}
+html.fluid-layout .top-metric div,html.fluid-layout .top-metric strong{position:static;text-align:left}
+html.fluid-layout .top-metric div{font-size:12.5px}
+html.fluid-layout .top-metric strong{font-size:17px}
+html.fluid-layout #room-tabs{position:sticky;top:calc(env(safe-area-inset-top) + 6px);z-index:30;left:auto;width:auto;height:auto;grid-template-columns:none!important;grid-auto-flow:column;grid-auto-columns:max-content;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;padding:0;border-radius:14px}
+html.fluid-layout #room-tabs::-webkit-scrollbar{display:none}
+html.fluid-layout .room-button{height:44px;padding:0 18px;border-radius:14px;font-size:15px;white-space:nowrap}
+html.fluid-layout #side-nav{position:fixed;left:0;right:0;top:auto;bottom:0;z-index:40;width:auto;height:auto;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:none;gap:0;padding:6px calc(env(safe-area-inset-right) + 4px) calc(env(safe-area-inset-bottom) + 6px) calc(env(safe-area-inset-left) + 4px);border-radius:0;border-width:1px 0 0;background:var(--bar);-webkit-backdrop-filter:var(--blur-strong);backdrop-filter:var(--blur-strong);box-shadow:0 -1px 0 var(--separator)}
+html.fluid-layout .nav-button{height:52px;border-radius:12px;padding:4px 0;gap:3px}
+html.fluid-layout .nav-button.selected{background:transparent}
+html.fluid-layout .nav-label{font-size:10.5px;line-height:13px;font-weight:600;white-space:nowrap}
+html.fluid-layout #metric-row{position:static;width:auto;height:auto;gap:8px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+html.fluid-layout #metric-row .metric{height:46px;grid-template-columns:24px minmax(0,1fr) auto;grid-template-rows:none;gap:6px;padding:0 12px}
+html.fluid-layout #metric-row .metric-icon{grid-row:auto}
+html.fluid-layout #metric-row .metric-label{font-size:14px;line-height:18px}
+html.fluid-layout #metric-row .metric strong{grid-column:auto;justify-self:end;text-align:right;line-height:18px}
+html.fluid-layout #content{position:static;left:auto;top:auto!important;width:auto;height:auto!important;overflow:visible}
+html.fluid-layout .device-view{position:relative;width:auto;height:auto;overflow:visible;display:grid;grid-template-columns:repeat(var(--fluid-cols,4),minmax(0,1fr));grid-auto-rows:var(--fluid-cell,84px);grid-auto-flow:row dense;gap:8px}
+html.fluid-layout .device-card{position:relative;left:auto!important;top:auto!important;width:auto;height:auto}
+html.fluid-layout .device-card.compact{grid-column:span 1}
+html.fluid-layout .device-card.medium{grid-column:span 2}
+html.fluid-layout .device-card.wide{grid-column:span 3}
+html.fluid-layout .device-card.large{grid-column:span 2;grid-row:span 2}
+html.fluid-layout .ac-temperature-controls{top:62px;bottom:12px;grid-template-rows:minmax(0,1fr) 44px;gap:8px}
+html.fluid-layout .large-main{top:66px}
+html.fluid-layout .empty-message{position:static;grid-column:1/-1;width:auto;padding:32px 0}
+html.fluid-layout .layout-editing{overflow:visible}
+html.fluid-layout .layout-edit-card{touch-action:pan-y;cursor:default}
+html.fluid-layout .layout-actions{position:fixed;right:calc(env(safe-area-inset-right) + 16px);bottom:calc(env(safe-area-inset-bottom) + 84px);z-index:45}
+html.fluid-layout input[type="range"]{touch-action:pan-y}
+html.fluid-layout .page-panel{width:auto;height:auto}
+html.fluid-layout .energy-page{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-auto-rows:210px}
+html.fluid-layout .music-page{display:flex;flex-direction:column;gap:10px;height:auto}
+html.fluid-layout .music-card{position:relative;left:auto;top:auto;width:auto;height:auto}
+html.fluid-layout .music-head{order:0;height:52px}
+html.fluid-layout .music-main{order:1;display:grid;grid-template-columns:112px minmax(0,1fr);grid-template-areas:"art info" "seek seek" "transport transport";gap:14px;padding:16px;border-radius:var(--r-panel);border-bottom:1px solid var(--glass-border)}
+html.fluid-layout .album-art{position:static;grid-area:art;width:112px;height:112px}
+html.fluid-layout .track-info{position:static;grid-area:info;align-self:center}
+html.fluid-layout .seek-control{position:static;grid-area:seek}
+html.fluid-layout .transport{position:static;grid-area:transport;justify-content:space-around;align-items:center}
+html.fluid-layout .volume-card{order:2;height:58px;border-radius:var(--r-panel);border-top:1px solid var(--glass-border)}
+html.fluid-layout .music-side{order:3;height:auto}
+html.fluid-layout .music-side .playlist{max-height:none}
+html.fluid-layout .music-source button,html.fluid-layout .playlist button,html.fluid-layout .volume-card button{min-height:42px}
+html.fluid-layout .ma-tabs button,html.fluid-layout .aibox-tabs button{height:36px}
+html.fluid-layout .aibox-search input,html.fluid-layout .aibox-search button{height:40px}
+html.fluid-layout .settings-page{grid-template-columns:minmax(0,1fr);grid-template-rows:none;height:auto}
+html.fluid-layout .display-settings{grid-column:1;grid-template-columns:minmax(0,1fr);gap:18px}
+html.fluid-layout .system-settings{grid-column:1}
+html.fluid-layout .settings-page .timeout-buttons button{height:44px;white-space:nowrap}
+html.fluid-layout .theme-setting select,html.fluid-layout .theme-setting button{height:42px}
+html.fluid-layout .connection-fields{grid-template-columns:minmax(0,1fr)}
+html.fluid-layout .connection-settings input:not([type="checkbox"]),html.fluid-layout .settings-entity-grid input{height:44px}
+html.fluid-layout .connection-actions{position:static;flex-wrap:wrap;justify-content:stretch;margin-top:14px}
+html.fluid-layout .connection-actions button{flex:1 1 140px;height:44px}
+html.fluid-layout .entity-page{height:auto}
+html.fluid-layout .entity-settings{height:auto;overflow:visible}
+html.fluid-layout .entity-page-head{height:auto;flex-wrap:wrap;gap:10px}
+html.fluid-layout .entity-page-actions{flex-wrap:wrap}
+html.fluid-layout .entity-page-actions button{height:42px}
+html.fluid-layout .settings-entity-grid{grid-template-columns:minmax(0,1fr);height:auto;overflow:visible}
+html.fluid-layout #toast{bottom:calc(env(safe-area-inset-bottom) + 84px)}
+@media (min-width:720px){
+  html.fluid-layout #topbar>*{grid-column:span 1}
+  html.fluid-layout #side-nav{justify-content:center;grid-template-columns:repeat(7,minmax(0,104px))}
+  html.fluid-layout .energy-page{grid-template-columns:repeat(2,minmax(0,1fr))}
+  html.fluid-layout .settings-page{grid-template-columns:repeat(2,minmax(0,1fr))}
+  html.fluid-layout .display-settings,html.fluid-layout .connection-settings{grid-column:1/-1}
+  html.fluid-layout .display-settings{grid-template-columns:repeat(3,minmax(0,1fr))}
+  html.fluid-layout .system-settings{grid-column:auto}
+  html.fluid-layout .connection-fields,html.fluid-layout .settings-entity-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:599px){
+  html.fluid-layout #metric-row{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(134px,1fr);overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none}
+  html.fluid-layout #metric-row::-webkit-scrollbar{display:none}
+  html.fluid-layout #metric-row .metric{height:54px;grid-template-columns:24px minmax(0,1fr);grid-template-rows:auto auto;align-content:center;gap:1px 8px;padding:0 10px}
+  html.fluid-layout #metric-row .metric-icon{grid-row:1/3}
+  html.fluid-layout #metric-row .metric-label{font-size:12.5px;line-height:16px}
+  html.fluid-layout #metric-row .metric strong{grid-column:2;justify-self:start;text-align:left;font-size:15px;line-height:20px}
+  html.fluid-layout .clock-card .clock-icon{display:none}
+  .device-type-list{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .sensor-icon-picker{grid-template-columns:repeat(4,minmax(0,1fr))}
+  #entity-form{grid-template-columns:minmax(0,1fr)}
+}

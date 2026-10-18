@@ -1,55 +1,75 @@
-/* Theme tokens live on the root so dialogs outside #stage inherit them too. */
-:root{--border:#d7d1c7;--decor:none;--card-decor:none;--decor-opacity:.52;--card-decor-opacity:.13}
-:root[data-theme="spring"]{--bg:#eef6e6;--panel:#d9e8cf;--selected:#cce3d2;--text:#34483c;--muted:#697d6f;--blue:#4f8475;--green:#5f956b;--gold:#ad9848;--on:#cfe5a8;--on-text:#435b31;--info:#cfe4dc;--white:#f9fdf4;--danger:#a36461;--border:#bccfb5;--decor:url("assets/seasons/spring-backdrop.svg");--card-decor:url("assets/seasons/spring-card.svg")}
-:root[data-theme="summer"]{--bg:#fbf3e8;--panel:#f1e3d2;--selected:#f3ddc8;--text:#574a42;--muted:#8d7a6c;--blue:#8b8f87;--green:#7f9a78;--gold:#c39555;--on:#f3d6a5;--on-text:#745936;--info:#eadbc6;--white:#fffaf2;--danger:#ae6f62;--border:#dac6ad;--decor:url("assets/seasons/summer-backdrop.svg");--card-decor:url("assets/seasons/summer-card.svg");--card-decor-opacity:.12}
-:root[data-theme="autumn"]{--bg:#f4efe9;--panel:#e7ddd3;--selected:#dfd5cf;--text:#514844;--muted:#81756f;--blue:#777f82;--green:#7f8c78;--gold:#a9825c;--on:#dfc7a7;--on-text:#685341;--info:#ddd7d2;--white:#fbf7f2;--danger:#9d6963;--border:#cfbdae;--decor:url("assets/seasons/autumn-backdrop.svg");--card-decor:url("assets/seasons/autumn-card.svg");--decor-opacity:.48}
-:root[data-theme="winter"]{--bg:#edf4f8;--panel:#d8e5ed;--selected:#b5d1e0;--text:#2d4454;--muted:#586f7e;--blue:#3c708d;--green:#477b7d;--gold:#8a784f;--on:#8fb8cd;--on-text:#173e55;--info:#b4d1e2;--white:#f8fcff;--danger:#915f6c;--border:#b0c8d7;--decor:url("assets/seasons/winter-backdrop.svg");--card-decor:url("assets/seasons/winter-card.svg");--decor-opacity:.6;--card-decor-opacity:.19}
-:root[data-theme="dark"]{color-scheme:dark;--bg:#151b22;--panel:#242e38;--selected:#344756;--text:#f3eedf;--muted:#b7bec3;--blue:#aaceda;--green:#a0c4b6;--gold:#e2c187;--on:#4d605c;--on-text:#fff2d8;--info:#334957;--white:#303c48;--danger:#e6a99d;--border:#465461}
+/* Theme palettes for the glass design. Tokens live on the root so dialogs outside #stage inherit them.
+   Wallpapers are static gradients (nothing to download, nothing animated); the four seasons keep
+   their SVG backdrop as a light decoration under the glass. Materials and states are in glass.css. */
+:root{
+  --wallpaper:
+    radial-gradient(46% 60% at 6% 4%,#ffbe8c9e,transparent 72%),
+    radial-gradient(44% 58% at 96% 6%,#8cb9ff94,transparent 72%),
+    radial-gradient(48% 62% at 92% 98%,#bea5ff85,transparent 72%),
+    radial-gradient(44% 58% at 4% 96%,#8cdcc380,transparent 72%),
+    linear-gradient(160deg,#f2ebe2,#e9e5ef 52%,#e0eaf1);
+  --theme-color:#eee7df;
+  --accent:#0a72e8;--accent-text:#0058c4;--accent-soft:#0a72e824;
+  --decor:none;--decor-opacity:.4;
+}
+:root[data-theme="spring"]{
+  --wallpaper:
+    radial-gradient(46% 60% at 6% 4%,#9fdc9a80,transparent 72%),
+    radial-gradient(44% 58% at 96% 6%,#ffb3cc6b,transparent 72%),
+    radial-gradient(48% 62% at 92% 98%,#ffe08a73,transparent 72%),
+    radial-gradient(44% 58% at 4% 96%,#9ed2ff59,transparent 72%),
+    linear-gradient(160deg,#eef7e8,#e6f2df 52%,#e9f3ec);
+  --theme-color:#e9f3e3;
+  --accent:#2b7d4f;--accent-text:#23733f;--accent-soft:#2b7d4f24;
+  --decor:url("assets/seasons/spring-backdrop.svg");
+}
+:root[data-theme="summer"]{
+  --wallpaper:
+    radial-gradient(46% 60% at 6% 4%,#ffc38a8c,transparent 72%),
+    radial-gradient(44% 58% at 96% 6%,#7fd6f573,transparent 72%),
+    radial-gradient(48% 62% at 92% 98%,#ffe07a73,transparent 72%),
+    radial-gradient(44% 58% at 4% 96%,#ffa58f66,transparent 72%),
+    linear-gradient(160deg,#fff3e2,#fbeedd 52%,#f6efe6);
+  --theme-color:#fcefdf;
+  --accent:#0a7f99;--accent-text:#006f87;--accent-soft:#0a7f9924;
+  --decor:url("assets/seasons/summer-backdrop.svg");
+}
+:root[data-theme="autumn"]{
+  --wallpaper:
+    radial-gradient(46% 60% at 6% 4%,#eeb47a80,transparent 72%),
+    radial-gradient(44% 58% at 96% 6%,#d99a7c6b,transparent 72%),
+    radial-gradient(48% 62% at 92% 98%,#e7cfa673,transparent 72%),
+    radial-gradient(44% 58% at 4% 96%,#b9c7a466,transparent 72%),
+    linear-gradient(160deg,#f6eee6,#f1e7dc 52%,#ece6dd);
+  --theme-color:#f3e9de;
+  --accent:#a5581b;--accent-text:#8c4a12;--accent-soft:#a5581b24;
+  --decor:url("assets/seasons/autumn-backdrop.svg");
+}
+:root[data-theme="winter"]{
+  --wallpaper:
+    radial-gradient(46% 60% at 6% 4%,#a9cdf580,transparent 72%),
+    radial-gradient(44% 58% at 96% 6%,#cfc7f573,transparent 72%),
+    radial-gradient(48% 62% at 92% 98%,#ffffff99,transparent 72%),
+    radial-gradient(44% 58% at 4% 96%,#a5e1e666,transparent 72%),
+    linear-gradient(160deg,#f2f7fb,#e9f1f8 52%,#e8eef8);
+  --theme-color:#eaf2f9;
+  --accent:#2a6fc0;--accent-text:#1d5fa8;--accent-soft:#2a6fc024;
+  --decor:url("assets/seasons/winter-backdrop.svg");--decor-opacity:.45;
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --wallpaper:
+    radial-gradient(46% 60% at 6% 4%,#3557a88c,transparent 72%),
+    radial-gradient(44% 58% at 96% 6%,#6a3fa873,transparent 72%),
+    radial-gradient(48% 62% at 92% 98%,#14707f6b,transparent 72%),
+    radial-gradient(44% 58% at 4% 96%,#3d347a6b,transparent 72%),
+    linear-gradient(160deg,#10162a,#0e1322 52%,#0b1220);
+  --theme-color:#0f1424;
+  --accent:#0a72e8;--accent-text:#6cb6ff;--accent-soft:#3d8bff33;
+  --decor:radial-gradient(circle at 96% 22%,#cfe3ff8c 0 1px,transparent 2px),radial-gradient(circle at 88% 70%,#cfe3ff66 0 1px,transparent 2px),radial-gradient(circle at 12% 30%,#e2c18766 0 1px,transparent 2px),radial-gradient(circle at 40% 92%,#cfe3ff4d 0 1px,transparent 2px);
+  --decor-opacity:.8;
+}
 
-/* Static, local vector decorations: no font glyphs, downloads or animation. */
-:root{--panel-decor:url("assets/seasons/default-panel.svg")}
-:root[data-theme="spring"]{--panel-decor:url("assets/seasons/spring-panel.svg")}
-:root[data-theme="summer"]{--panel-decor:url("assets/seasons/summer-panel.svg")}
-:root[data-theme="autumn"]{--panel-decor:url("assets/seasons/autumn-panel.svg")}
-:root[data-theme="winter"]{--panel-decor:url("assets/seasons/winter-panel.svg")}
-:root[data-theme="dark"]{--panel-decor:url("assets/seasons/dark-panel.svg")}
-.panel,.nav-button,.room-button,.device-card,.chart-panel,.settings-card,.music-card{background-image:var(--panel-decor)!important;background-size:200px 134px;background-position:right bottom;background-repeat:no-repeat}
-.nav-button,.room-button{background-size:82px 55px}
-.brand-card,.top-metric.power-card{background-size:112px 75px}
-.metric{background-size:96px 64px}
-.device-card.compact{background-size:100px 67px}
-.settings-card,.chart-panel,.music-card{background-size:240px 160px}
-:root[data-theme="summer"],:root[data-theme="autumn"]{--card-decor-opacity:.16}
+/* Season backdrop: static SVG behind the glass, never in the way of a tap. */
 #season-decor{position:absolute;inset:0;z-index:0;pointer-events:none;background-image:var(--decor);background-position:center;background-size:1024px 600px;background-repeat:no-repeat;opacity:var(--decor-opacity)}
-.device-card{isolation:isolate}
-.device-card::after{content:"";position:absolute;inset:0;z-index:0;border-radius:inherit;background-image:var(--card-decor);background-position:right bottom;background-size:120px 88px;background-repeat:no-repeat;opacity:var(--card-decor-opacity);pointer-events:none}
-.device-card.compact::after{background-size:88px 65px;background-position:right top}
-.device-card.large::after{background-size:156px 114px;background-position:right center}
-.device-card>*{z-index:1}
-.device-card.layout-edit-card .card-edit-name,.device-card.layout-edit-card .card-remove{z-index:30}
-:root[data-theme="winter"] .device-card.active{box-shadow:inset 0 0 0 1px #699ab4}
-:root[data-theme="winter"] .device-card.active .device-state,
-:root[data-theme="winter"] .device-card.active .data-line span{color:var(--on-text)}
-
-/* A continuous dark surface including letterboxing, forms and system controls. */
-:root[data-theme="dark"] body,:root[data-theme="dark"] #viewport{background:#10151b}
-:root[data-theme="dark"] #stage{background:radial-gradient(ellipse at top right,#21313c66,transparent 58%),var(--bg)}
-:root[data-theme="dark"] #season-decor{background-image:radial-gradient(circle at 98% 24%,#aaceda66 0 1px,transparent 2px),radial-gradient(circle at 98% 76%,#e2c18755 0 1px,transparent 2px);opacity:.6}
-:root[data-theme="dark"] .panel,:root[data-theme="dark"] .device-card{box-shadow:inset 0 0 0 1px #ffffff08}
-:root[data-theme="dark"] .device-card.active{box-shadow:inset 0 0 0 1px #a0c4b638}
-:root[data-theme="dark"] .device-card.active .device-state,
-:root[data-theme="dark"] .device-card.active .data-line span{color:#eee5cf}
-:root[data-theme="dark"] .device-card.finished{background:#365447;color:#e1f0dd}
-:root[data-theme="dark"] .device-card.finished .device-icon,
-:root[data-theme="dark"] .washer-card.finished .finish-notice span{color:#c3e0be}
-:root[data-theme="dark"] .device-card.alert .device-icon{color:var(--blue)}
-:root[data-theme="dark"] .weather-icon{color:var(--gold)}
-:root[data-theme="dark"] :is(input:not([type="range"]),select,button,.entity-group-title,.entity-page-head,.volume-card){border-color:var(--border)!important}
-:root[data-theme="dark"] .connection-fields input:disabled{background:var(--panel)!important}
-:root[data-theme="dark"] input::placeholder{color:var(--muted);opacity:.85}
-:root[data-theme="dark"] .bar-chart{border-color:var(--border);background:repeating-linear-gradient(to top,transparent 0,transparent 34px,#46546166 35px)}
-:root[data-theme="dark"] .layout-edit-card{box-shadow:inset 0 0 0 1px #aaceda55,0 2px 8px #0002}
-:root[data-theme="dark"] .layout-edit-card .card-remove{color:var(--danger)}
-:root[data-theme="dark"] .sensor-icon-picker button.selected{border-color:var(--blue)!important}
-:root[data-theme="dark"] dialog::backdrop{background:#070c12bd}
-:root[data-theme="dark"] #toast{background:var(--white);color:var(--text);border:1px solid var(--border)}
+:root[data-theme="dark"] #season-decor{background-size:auto}

@@ -5,19 +5,20 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta id="theme-color" name="theme-color" content="#f7f3eb">
+  <meta id="theme-color" name="theme-color" content="#f1ece6">
   <title>KEN Home</title>
-  <link rel="stylesheet" href="style.css?v=20261008-metric-row">
-  <link rel="stylesheet" href="themes.css?v=20261008-metric-row">
+  <link rel="stylesheet" href="style.css?v=20261018-glass">
+  <link rel="stylesheet" href="themes.css?v=20261018-glass">
+  <link rel="stylesheet" href="glass.css?v=20261018-glass">
 </head>
 <body>
   <div id="viewport">
     <main id="stage" aria-label="Bảng điều khiển nhà KEN">
       <div id="season-decor" aria-hidden="true"></div>
       <section id="topbar" aria-label="Thông tin tổng quan">
-        <div id="brand-card" class="panel brand-card" aria-label="Trạng thái kết nối Home Assistant">
-          <img class="brand-mark" src="assets/xeko.png" alt="Xeko">
-          <span id="brand-status" class="brand-status">BẢN MẪU</span>
+        <div id="brand-card" class="panel brand-card" role="button" tabindex="0" aria-label="Kết nối Home Assistant" aria-describedby="brand-status">
+          <img class="brand-mark" src="assets/xeko.png" alt="">
+          <span id="brand-status" class="brand-status">Bản mẫu</span>
         </div>
         <article class="panel clock-card">
           <span class="top-icon clock-icon blue"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Zm0 4v5l3 2"/></svg></span>
@@ -80,8 +81,8 @@
   </dialog>
 
   <div id="toast" role="status" aria-live="polite"></div>
-  <script src="ha.js"></script>
-  <script src="direct-speaker.js"></script>
-  <script src="app.js?v=20261008-metric-row"></script>
+  <script src="ha.js?v=20261018-glass"></script>
+  <script src="direct-speaker.js?v=20261018-glass"></script>
+  <script src="app.js?v=20261018-glass"></script>
 </body>
 </html>

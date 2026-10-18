@@ -4,7 +4,7 @@ if [[ "$EUID" -ne 0 ]]; then
   echo 'Chạy: sudo bash install.sh'; exit 1
 fi
 ken_source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-for ken_file in index.html style.css themes.css ha.js direct-speaker.js app.js config_server.py rollback.sh; do
+for ken_file in index.html style.css themes.css glass.css ha.js direct-speaker.js app.js config_server.py rollback.sh; do
   test -f "$ken_source_dir/$ken_file" || { echo "Thiếu file: $ken_file"; exit 1; }
 done
 test -f "$ken_source_dir/assets/xeko.png" || { echo 'Thiếu file: assets/xeko.png'; exit 1; }
@@ -30,7 +30,7 @@ if [[ -f /var/www/ken-dashboard/index.html ]]; then
   for ken_old in "${ken_old_backups[@]}"; do rm -rf -- "$ken_old"; done
 fi
 install -d -m 755 /var/www/ken-dashboard
-for ken_file in index.html style.css themes.css ha.js direct-speaker.js app.js; do
+for ken_file in index.html style.css themes.css glass.css ha.js direct-speaker.js app.js; do
   install -m 644 "$ken_source_dir/$ken_file" "/var/www/ken-dashboard/$ken_file"
 done
 install -d -m 755 /var/www/ken-dashboard/assets
