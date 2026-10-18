@@ -124,7 +124,7 @@ chip-tool modeselect change-to-mode 1 0x7283 1    # Learn empty room: Learning
 
 Home Assistant tự tạo ba entity này (mục *Diagnostic* trên trang thiết bị) cho **mọi** thiết bị Matter có các cluster chẩn đoán chuẩn, nhưng **tắt sẵn**: integration Matter của Home Assistant khai báo chúng với `entity_registry_enabled_default=False`. Thiết bị không bật thay được, phải bật trong Home Assistant:
 
-- **Một thiết bị:** trang thiết bị → mục *Diagnostic* → *+N entities not shown* → bấm vào entity → bánh răng (*Settings*) → bật **Enabled** → **Update**. Khoảng 30 s sau Home Assistant tải lại integration Matter, lúc đó entity mới có giá trị.
+- **Một thiết bị:** trang thiết bị → mục *Diagnostic* → *+N entities not shown* → bấm vào entity → bánh răng (*Settings*) → bật **Enabled** → **Update**. Khoảng 30 s sau Home Assistant tải lại integration Matter, lúc đó entity mới có giá trị. Mỗi lần tải lại, **mọi** entity Matter (của mọi thiết bị) hiện *Unavailable* khoảng 1 s trong lịch sử rồi trở lại trạng thái cũ: không phải lỗi thiết bị.
 - **Nhiều thiết bị:** *Settings* → *Devices & services* → tab *Entities* → lọc để hiện cả entity bị tắt (*disabled*) → tìm `RSSI`, `Uptime`, `Reboot count` → chọn nhiều → **Enable selected**.
 
 | Entity | Thuộc tính Matter (endpoint 0) | Ý nghĩa, cập nhật |
@@ -133,7 +133,7 @@ Home Assistant tự tạo ba entity này (mục *Diagnostic* trên trang thiết
 | **Uptime** | General Diagnostics `UpTime` | Home Assistant hiện **thời điểm khởi động** (lúc nhận − uptime). Firmware gửi lại uptime 10 phút một lần |
 | **Wi-Fi RSSI** | Wi-Fi Network Diagnostics `RSSI` | Cường độ sóng Wi-Fi nhận từ router (dBm; từ −70 trở lên là tốt, dưới −80 là yếu). Firmware đọc mỗi phút, gửi khi đổi từ 3 dB so với lần gửi trước, và 10 phút một lần |
 
-**Vì sao firmware phải gửi lại:** trong đặc tả Matter, `RSSI` và `UpTime` có thuộc tính *changes omitted*. Matter SDK chỉ gửi chúng khi controller bắt đầu subscription, sau đó không báo khi giá trị đổi. Matter Server của Home Assistant (python-matter-server, theo mã nguồn) cũng không tự đọc lại thuộc tính chuẩn, chỉ hỏi lại thuộc tính riêng của một số hãng. Với bản 1.0.132 (và mọi firmware chỉ dùng mặc định của SDK):
+**Vì sao firmware phải gửi lại:** trong đặc tả Matter, `RSSI` và `UpTime` có thuộc tính *changes omitted*. Matter SDK chỉ gửi chúng khi controller bắt đầu subscription, sau đó không báo khi giá trị đổi. Theo mã nguồn, Matter Server của Home Assistant cũng không tự đọc lại hai thuộc tính này. Điều đó đúng cho cả python-matter-server lẫn bản mới viết bằng matter.js (gói `matter-server` 1.4.0); hai bản này chỉ hỏi lại thuộc tính riêng của một số hãng, và bản matter.js thêm thông tin Thread. Với bản 1.0.132 (và mọi firmware chỉ dùng mặc định của SDK):
 - Wi-Fi RSSI đứng nguyên ở giá trị lúc Home Assistant subscribe.
 - Uptime được tính từ uptime cũ: sau khi Home Assistant khởi động lại, thời điểm khởi động bị dời muộn đi đúng bằng khoảng thời gian từ lúc subscribe. Subscription thường bắt đầu ngay sau khi bo khởi động, nên trông như bo vừa khởi động lại.
 
@@ -145,7 +145,7 @@ Bản này đánh dấu hai thuộc tính là đã đổi (`MatterReportingAttri
   - `DIAG_REPORT_REFRESH_MIN`: mặc định 10 phút; 0 = không gửi theo chu kỳ.
   - Cả hai bằng 0 thì như bản 1.0.132.
 - Không thêm hay đổi endpoint, cluster, thuộc tính nào: ba entity đã có từ 1.0.132 (cùng cluster của Matter SDK), bản này chỉ gửi thêm báo cáo.
-- *Data version* của cluster không tăng khi gửi lại, vì cluster của Matter SDK không cho ứng dụng tăng. Theo mã nguồn, python-matter-server so sánh theo giá trị nên vẫn cập nhật (chưa thử trên bo).
+- *Data version* của cluster không tăng khi gửi lại, vì cluster của Matter SDK không cho ứng dụng tăng. Theo mã nguồn, cả hai bản Matter Server vẫn nhận giá trị mới: python-matter-server so sánh theo giá trị, bản matter.js ghi mọi giá trị nhận được bất kể *data version* (chưa thử trên bo).
 
 ## Học phòng trống
 
@@ -420,6 +420,10 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 - **TP-Link Deco X10 (mesh):** tắt **Beamforming** trong app Deco (người dùng đã sửa được lỗi trên bằng cách này); cập nhật firmware Deco có thể bật lại. Vẫn lỗi thì bật **IoT Network** (mạng 2,4 GHz riêng), tạm tắt *Fast Roaming*, đặt WPA2. Router khác: WPA2-PSK (AES) hoặc WPA2/WPA3, chế độ b/g/n (không chỉ ax), tắt lọc MAC, thử tên mạng 2,4 GHz riêng nếu đang gộp band.
 - **Ghép nối xong phần Wi-Fi nhưng ứng dụng không tìm thấy thiết bị:** điện thoại và thiết bị cùng LAN, router không chặn mDNS/multicast, có IPv6 (dòng `ip` của `id_diag`).
 - **Radar không đọc được** (`Could not read the LD2410 settings (check the wire from GPIO4 to the radar RX pin), next try in 15 s`): kiểm tra dây GPIO4 → RX của radar. Cảm biến vẫn báo hiện diện nếu dây GPIO3 ← TX còn tốt, nhưng các điều khiển radar bị từ chối.
+- **Home Assistant báo *Unavailable*:**
+  - **Chỉ khoảng 1 s, cùng lúc ở mọi thiết bị Matter:** Home Assistant đang tải lại integration Matter, ví dụ 30 s sau khi bật/tắt một entity hay khi khởi động lại. Thiết bị không có lỗi. Log Matter Server lúc đó có `WebSocket connection closed` rồi `WebSocket connection established`.
+  - **Mất kết nối thật:** Matter Server bản matter.js chỉ báo *Unavailable* khi thiết bị mất kết nối liên tục 3 phút (log `offline grace period expired, marking unavailable`). Các dòng `Peer is no longer responding to active session` nghĩa là thiết bị không trả lời. Trong log Matter Server, `@1:5a` là node 0x5a = 90.
+  - **Phân biệt lỗi mạng với khởi động lại:** nếu sau khi nối lại vẫn dùng cùng số phiên (`@1:5a•580e`), thiết bị **không** khởi động lại (khởi động lại thì mất mọi phiên), mà là mất Wi-Fi hoặc không nhận được gói. Kiểm tra *Wi-Fi RSSI*, *Reboot count*, và log USB (`EV wifi failed or left: reason ...`, `W mem: Heap low`).
 - Mỗi lần thử lại ghép nối: factory reset (giữ BOOT 5 s) hoặc `erase-flash`.
 
 ## Mức độ kiểm tra
