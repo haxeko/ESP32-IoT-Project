@@ -2,6 +2,8 @@
 #include <thread_diag.h>
 
 #if CONFIG_THREAD_DIAG_LOG
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <esp_log.h>
@@ -22,6 +24,43 @@ static volatile bool s_running = false;
 /* Set once commissioned; stop() can arrive (kServerReady) before start() */
 static volatile bool s_done = false;
 static TaskHandle_t s_task = NULL;
+
+/* Lines are collected under the OpenThread lock and printed after releasing it: printing ~1 KB on the console takes
+ * ~100 ms, the OpenThread task must not wait that long. Only the diagnostics task uses the buffer. */
+static char s_lines[1536];
+static size_t s_lines_len = 0;
+
+static void __attribute__((format(printf, 1, 2))) add_line(const char *fmt, ...)
+{
+    if (s_lines_len >= sizeof(s_lines) - 1) {
+        return;
+    }
+    va_list args;
+    va_start(args, fmt);
+    const int n = vsnprintf(s_lines + s_lines_len, sizeof(s_lines) - s_lines_len, fmt, args);
+    va_end(args);
+    if (n < 0) {
+        s_lines[s_lines_len] = '\0';
+        return;
+    }
+    s_lines_len += (size_t)n;
+    if (s_lines_len >= sizeof(s_lines) - 1) {
+        s_lines_len = sizeof(s_lines) - 1; /* truncated */
+        return;
+    }
+    s_lines[s_lines_len++] = '\n';
+    s_lines[s_lines_len] = '\0';
+}
+
+static void print_lines()
+{
+    char *saveptr = NULL;
+    for (char *line = strtok_r(s_lines, "\n", &saveptr); line; line = strtok_r(NULL, "\n", &saveptr)) {
+        ESP_LOGI(TAG, "%s", line);
+    }
+    s_lines_len = 0;
+    s_lines[0] = '\0';
+}
 
 static bool is_link_local(const otIp6Address &addr)
 {
@@ -45,15 +84,15 @@ static void thread_diag_dump()
 
     otDeviceRole role = otThreadGetDeviceRole(instance);
     if (role == OT_DEVICE_ROLE_DISABLED || role == OT_DEVICE_ROLE_DETACHED) {
+        esp_openthread_lock_release();
         ESP_LOGI(TAG, "Thread %s: waiting for network credentials (BLE commissioning)",
                  otThreadDeviceRoleToString(role));
-        esp_openthread_lock_release();
         return;
     }
 
     char buf[OT_IP6_ADDRESS_STRING_SIZE];
-    ESP_LOGI(TAG, "===== Thread diagnostics =====");
-    ESP_LOGI(TAG, "Role: %s, RLOC16: 0x%04x", otThreadDeviceRoleToString(role), otThreadGetRloc16(instance));
+    add_line("===== Thread diagnostics =====");
+    add_line("Role: %s, RLOC16: 0x%04x", otThreadDeviceRoleToString(role), otThreadGetRloc16(instance));
 
     bool has_omr = false;
     for (const otNetifAddress *a = otIp6GetUnicastAddresses(instance); a; a = a->mNext) {
@@ -67,7 +106,7 @@ static void thread_diag_dump()
             has_omr = true;
         }
         otIp6AddressToString(&a->mAddress, buf, sizeof(buf));
-        ESP_LOGI(TAG, "Address: %s  [%s]", buf, kind);
+        add_line("Address: %s  [%s]", buf, kind);
     }
 
     otNetworkDataIterator it = OT_NETWORK_DATA_ITERATOR_INIT;
@@ -76,7 +115,7 @@ static void thread_diag_dump()
     char prefix_buf[OT_IP6_PREFIX_STRING_SIZE];
     while (otNetDataGetNextOnMeshPrefix(instance, &it, &prefix) == OT_ERROR_NONE) {
         otIp6PrefixToString(&prefix.mPrefix, prefix_buf, sizeof(prefix_buf));
-        ESP_LOGI(TAG, "On-mesh prefix: %s (border router RLOC16 0x%04x%s%s)", prefix_buf, prefix.mRloc16,
+        add_line("On-mesh prefix: %s (border router RLOC16 0x%04x%s%s)", prefix_buf, prefix.mRloc16,
                  prefix.mSlaac ? ", SLAAC" : "", prefix.mDefaultRoute ? ", default route" : "");
         prefix_count++;
     }
@@ -86,27 +125,29 @@ static void thread_diag_dump()
     if (otSrpClientIsRunning(instance)) {
         const otSockAddr *server = otSrpClientGetServerAddress(instance);
         otIp6AddressToString(&server->mAddress, buf, sizeof(buf));
-        ESP_LOGI(TAG, "SRP server: [%s]:%u", buf, server->mPort);
+        add_line("SRP server: [%s]:%u", buf, server->mPort);
 
         const otSrpClientHostInfo *host = otSrpClientGetHostInfo(instance);
         host_state = otSrpClientItemStateToString(host->mState);
-        ESP_LOGI(TAG, "SRP host: %s, state: %s", host->mName ? host->mName : "(none)", host_state);
+        add_line("SRP host: %s, state: %s", host->mName ? host->mName : "(none)", host_state);
 
         for (const otSrpClientService *s = otSrpClientGetServices(instance); s; s = s->mNext) {
             service_state = otSrpClientItemStateToString(s->mState);
-            ESP_LOGI(TAG, "SRP service: %s.%s, state: %s", s->mInstanceName, s->mName, service_state);
+            add_line("SRP service: %s.%s, state: %s", s->mInstanceName, s->mName, service_state);
         }
     }
 
-    ESP_LOGI(TAG, "Summary: OMR address %s, on-mesh prefixes %d, SRP host %s, SRP service %s",
-             has_omr ? "YES" : "NO", prefix_count, host_state, service_state);
+    add_line("Summary: OMR address %s, on-mesh prefixes %d, SRP host %s, SRP service %s", has_omr ? "YES" : "NO",
+             prefix_count, host_state, service_state);
+
+    esp_openthread_lock_release();
+
+    print_lines();
     if (!has_omr) {
         ESP_LOGW(TAG, "No OMR address: the Border Router does not route Wi-Fi/LAN <-> Thread, "
                       "phones cannot reach this device");
     }
     ESP_LOGI(TAG, "==============================");
-
-    esp_openthread_lock_release();
 }
 
 static void thread_diag_task(void *arg)

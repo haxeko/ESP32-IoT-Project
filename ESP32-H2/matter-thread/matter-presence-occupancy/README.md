@@ -114,16 +114,26 @@ Hoặc cài local:
 idf.py set-target esp32h2
 idf.py menuconfig          # (tuỳ chọn)
 idf.py build
-idf.py -p /dev/ttyUSB0 erase-flash flash monitor
+idf.py -p /dev/ttyUSB0 erase-flash flash monitor   # cảm biến mới
 ```
 
-Mỗi lần push, GitHub Actions (`.github/workflows/matter-presence-h2-thread.yml`) build firmware và đính kèm file `matter_presence_h2_merged.bin`, nạp một lần ở địa chỉ `0x0`:
+Cập nhật cảm biến đang dùng thì bỏ `erase-flash`: `idf.py -p /dev/ttyUSB0 flash monitor` giữ nguyên ghép nối và mạng Thread.
+
+Mỗi lần push, GitHub Actions (`.github/workflows/matter-presence-h2-thread.yml`) build firmware và đính kèm các file sau. Vào tab **Actions** → lần chạy mới nhất → **Artifacts**:
+
+| File | Dùng khi | Nạp tại | Ghép nối, mạng Thread |
+|---|---|---|---|
+| `matter_presence_h2_update.bin` | Cập nhật cảm biến đang dùng qua USB | `0x1D000` | Giữ nguyên |
+| `matter_presence_h2_merged.bin` | Cảm biến mới, hoặc muốn xóa sạch | `0x0` | **Bị xóa**: file phủ cả vùng NVS |
 
 ```bash
+# Cảm biến mới
 esptool.py --chip esp32h2 -p /dev/ttyUSB0 write_flash 0x0 matter_presence_h2_merged.bin
+# Cập nhật, giữ ghép nối
+esptool.py --chip esp32h2 -p /dev/ttyUSB0 write_flash 0x1d000 matter_presence_h2_update.bin
 ```
 
-Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
+Đừng nạp file merged lên cảm biến đang dùng: cảm biến khởi động như mới (mất ghép nối và mạng Thread, Unique ID mới) trong khi các app vẫn giữ phụ kiện cũ ở trạng thái "Không phản hồi", thêm lại sẽ thành hai phụ kiện.
 
 > Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại.
 

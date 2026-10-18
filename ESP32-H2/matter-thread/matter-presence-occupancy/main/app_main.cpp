@@ -33,6 +33,7 @@
 
 #include <atomic>
 
+#include <app_health.h>
 #include <device_info.h>
 #include <drivers/ld2410.h>
 #include <drivers/reset_button.h>
@@ -58,6 +59,8 @@ static constexpr uint16_t kHoldTimeMax = 300;
 static const char kHoldTimeInitKey[] = "app/hold-init";
 
 static std::atomic<bool> s_matter_started{false};
+// An occupancy update is queued for the Matter thread and has not run yet
+static std::atomic<bool> s_report_pending{false};
 static uint16_t s_occupancy_endpoint_id;
 
 // ---------------------------------------------------------------------------
@@ -65,11 +68,12 @@ static uint16_t s_occupancy_endpoint_id;
 
 // Runs on the Matter thread. The cluster applies HoldTime itself: occupied is
 // reported at once, unoccupied only after HoldTime seconds without presence.
-static void report_occupancy(bool present)
+static void report_occupancy(intptr_t present)
 {
+    s_report_pending = false;
     OccupancySensingCluster *cluster = OccupancySensing::FindClusterOnEndpoint(s_occupancy_endpoint_id);
     if (cluster) {
-        cluster->SetOccupancy(present);
+        cluster->SetOccupancy(present != 0);
     }
 }
 
@@ -114,10 +118,16 @@ static void radar_poll_cb(void *arg)
     }
 
     // Only transitions go to the cluster: each "unoccupied" restarts its hold timer.
-    if (s_matter_started && (!s_reported || present != s_reported_present)) {
-        s_reported = true;
-        s_reported_present = present;
-        chip::DeviceLayer::SystemLayer().ScheduleLambda([present]() { report_occupancy(present); });
+    // At most one update waits in the Matter event queue; a change in the meantime is sent by a later poll.
+    // ScheduleWork() fails cleanly on a full queue and the next poll retries (ScheduleLambda() aborts instead).
+    if (s_matter_started && !s_report_pending && (!s_reported || present != s_reported_present)) {
+        s_report_pending = true;
+        if (chip::DeviceLayer::PlatformMgr().ScheduleWork(report_occupancy, present) == CHIP_NO_ERROR) {
+            s_reported = true;
+            s_reported_present = present;
+        } else {
+            s_report_pending = false;
+        }
     }
 }
 
@@ -192,6 +202,9 @@ static void open_commissioning_window_if_necessary()
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
+    // Identity and fabric logs, Thread attach/detach logs
+    app_health_handle_event(event);
+
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kServerReady:
         apply_hold_time_config();
@@ -288,6 +301,9 @@ static esp_err_t start_matter()
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
 
+    /* Matter thread watchdog and a status line every 60 s */
+    app_health_start();
+
     /* Log Thread addresses / SRP state until commissioned (see README, troubleshooting) */
     thread_diag_start();
 
@@ -318,10 +334,14 @@ extern "C" void app_main()
 {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        // Truncated partition or newer format: this firmware cannot read it, the pairing is lost either way
+        ESP_LOGE(TAG, "NVS partition cannot be used (%s), erasing it: the device must be paired again",
+                 esp_err_to_name(err));
         ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+    app_health_log_reset_reason();
 
     ESP_LOGI(TAG, "%s %s, firmware %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME,
              esp_app_get_description()->version);

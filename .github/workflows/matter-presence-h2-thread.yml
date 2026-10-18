@@ -41,3 +41,4 @@ jobs:
             ESP32-H2/matter-thread/matter-presence-occupancy/build/ota_data_initial.bin
             ESP32-H2/matter-thread/matter-presence-occupancy/build/flash_args
             ESP32-H2/matter-thread/matter-presence-occupancy/build/matter_presence_h2_merged.bin
+            ESP32-H2/matter-thread/matter-presence-occupancy/build/matter_presence_h2_update.bin

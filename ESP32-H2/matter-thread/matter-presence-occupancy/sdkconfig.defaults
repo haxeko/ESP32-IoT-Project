@@ -154,3 +154,9 @@ CONFIG_SUPPORT_GROUPCAST_CLUSTER=n
 CONFIG_SUPPORT_ELECTRICAL_ENERGY_MEASUREMENT_CLUSTER=n
 CONFIG_SUPPORT_ELECTRICAL_POWER_MEASUREMENT_CLUSTER=n
 CONFIG_SUPPORT_POWER_TOPOLOGY_CLUSTER=n
+
+# Restart when the Matter thread stops processing work for 30 s (main/app_health.cpp feeds the watchdog every 5 s)
+# instead of staying "No Response" until unplugged. The reset reason is logged at the next boot.
+# Rollback: CONFIG_ESP_TASK_WDT_PANIC=n only prints a warning.
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
