@@ -25,7 +25,8 @@
 #error "Matter over Wi-Fi: CONFIG_ENABLE_WIFI_STATION must stay on"
 #endif
 
-#define BOARD_NAME "ESP32-C3 SuperMini"
+// Shown in the boot log (menuconfig CONFIG_BOARD_NAME; sdkconfig.defaults.wroom_n4 names the WROOM board)
+#define BOARD_NAME CONFIG_BOARD_NAME
 
 // GPIO11-GPIO17 connect the flash (GPIO11 = VDD_SPI). GPIO18/GPIO19 are the USB D-/D+ of the USB-C port, the only
 // link to the computer on this board: logs and flashing (USB-Serial-JTAG).

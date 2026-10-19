@@ -79,7 +79,9 @@ static constexpr uint16_t kHoldTimeMax = 300;
 // been applied.
 static const char kHoldTimeInitKey[] = "app/hold-init";
 
-#if CONFIG_STATUS_LED_ACTIVE_HIGH
+#if CONFIG_STATUS_LED_TYPE_WS2812
+static const char kLedText[] = "WS2812";
+#elif CONFIG_STATUS_LED_ACTIVE_HIGH
 static const char kLedText[] = "single colour, on when high";
 #else
 static const char kLedText[] = "single colour, on when low";

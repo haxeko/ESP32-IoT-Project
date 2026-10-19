@@ -17,9 +17,9 @@ Trong Home Assistant có thêm 5 điều khiển (Apple Home không hiện): **H
 | Wi-Fi RSSI, Uptime trong Home Assistant | chỉ gửi lúc Home Assistant subscribe: RSSI đứng giá trị, Uptime lệch sau khi Home Assistant khởi động lại | gửi lại RSSI khi đổi từ 3 dB (kiểm tra mỗi phút), cả RSSI và uptime 10 phút một lần (`menuconfig`; đặt 0 thì như cũ) |
 | VID / PID, endpoint, cluster, tên entity, mã mode | `0xFFF1` / `0x8001`, endpoint 1–4 | giống hệt; endpoint 5 (Temperature Sensor: nhiệt độ chip, cluster Temperature Measurement) chỉ có khi bật `PRESENCE_CHIP_TEMPERATURE` (mặc định tắt từ 1.0.147; bật ở 1.0.143–1.0.146) |
 | Bảng phân vùng, khoá NVS/KVS | — | giống hệt |
-| sdkconfig sinh ra | — | giống hệt, trừ: đường dẫn file, mục chọn loại LED đã bỏ, 5 tuỳ chọn mới (`DIAG_REPORT_*`, `NET_WATCHDOG_*`, `PRESENCE_CHIP_TEMPERATURE` tắt), `PRESENCE_WIFI_STAY_AWAKE` tắt |
-| LED | chọn được WS2812 / LED GPIO / không có | chỉ LED GPIO một màu (thư viện `espressif/led_strip` bỏ) |
-| Biến thể build | mặc định, `unique_setup`, `factory` | mặc định, `unique_setup` (`factory` bỏ: PAI test chỉ cấp DAC cho PID `0x8000`) |
+| sdkconfig sinh ra | — | giống hệt, trừ: đường dẫn file, mục chọn loại LED không còn "không có", 6 tuỳ chọn mới (`BOARD_NAME`, `DIAG_REPORT_*`, `NET_WATCHDOG_*`, `PRESENCE_CHIP_TEMPERATURE` tắt), `PRESENCE_WIFI_STAY_AWAKE` tắt |
+| LED | chọn được WS2812 / LED GPIO / không có | LED GPIO một màu (mặc định) hoặc WS2812 (từ 1.0.149, màu như 1.0.132); bỏ lựa chọn "không có" |
+| Biến thể build | mặc định, `unique_setup`, `factory` | mặc định, `unique_setup`, `wroom_n4` (bo ESP32-C3-WROOM-02-N4, LED WS2812 GPIO8, tính năng như 1.0.144; từ 1.0.149). `factory` bỏ: PAI test chỉ cấp DAC cho PID `0x8000` |
 | Mã Thread/OpenThread (`thread_diag`, phần OpenThread của `id_diag`, OT CLI) | có, tắt khi build C3 | bỏ |
 | Tên file build | `matter_presence_c3_wifi*` | giống hệt |
 | Kích thước (`idf.py size`, cùng Docker image) | 1 478 KB, RAM tĩnh 147,0 KB | 1 479 KB, RAM tĩnh 147,0 KB (lớn hơn 1 280 byte flash vì có thêm `diag_report` và `net_watchdog`, RAM tĩnh ít hơn 22 byte; mã tắt modem sleep và nhiệt độ chip không được build) |
@@ -63,9 +63,9 @@ LD2410C cần nguồn **5V** (chân 5V của SuperMini khi cắm USB); mức log
 
 ### Đèn LED
 
-LED của SuperMini chỉ có một màu, mọi "màu" của bản ESP32-H2 đều là "sáng". Thứ tự ưu tiên: Identify, rồi học phòng trống / ngưỡng mặc định, rồi chế độ ghép nối.
+LED của SuperMini chỉ có một màu, mọi màu ở cột cuối đều là "sáng". Với LED WS2812 (`STATUS_LED_TYPE_WS2812`, ví dụ biến thể `wroom_n4`), LED hiện đúng màu ở cột cuối, như bản ESP32-H2 và 1.0.132. Thứ tự ưu tiên: Identify, rồi học phòng trống / ngưỡng mặc định, rồi chế độ ghép nối.
 
-| LED | Trạng thái | Bản H2 |
+| LED | Trạng thái | Màu (WS2812) |
 |---|---|---|
 | Nháy rất nhanh (5 lần mỗi giây) | Ứng dụng yêu cầu *Identify* | trắng |
 | Sáng liên tục 20 s | Vừa bắt đầu học phòng trống: rời khỏi phòng | cyan |
@@ -88,6 +88,26 @@ Huỷ việc học thì LED trở lại bình thường ngay. Đặt lại cùng
 | **Giữ 5 giây** | **Factory reset**: xoá thông tin Wi-Fi và ghép nối Matter, khởi động lại; sau đó LED nháy chờ ghép nối. Giữ được 1 s thì log nhắc |
 
 Một lần bấm dài tối đa 0,5 s; các lần bấm cách nhau tối đa 0,4 s, nên bấm đúp có tác dụng khoảng 0,4 s sau khi nhả nút (để phân biệt với bấm 3 lần). Một lần giữ quá 0,5 s huỷ các lần bấm trước nó. Nút được đọc 20 ms một lần, chống dội 40 ms.
+
+## Bo ESP32-C3-WROOM-02-N4 (biến thể `wroom_n4`, LED WS2812 GPIO8)
+
+Từ 1.0.149 có biến thể build cho bo dùng module **ESP32-C3-WROOM-02-N4** (flash 4 MB) với LED RGB **WS2812** nối GPIO8, như ESP32-C3-DevKitC-02 (file `sdkconfig.defaults.wroom_n4`).
+- **Tính năng như bản 1.0.144:** có entity nhiệt độ chip (endpoint 5, cả *Identify (5)*), Wi-Fi ở modem sleep.
+- **Khác bản mặc định chỉ ở cấu hình**, mã nguồn chung:
+  - `BOARD_NAME` = `ESP32-C3-WROOM-02-N4` (log khởi động);
+  - LED `STATUS_LED_TYPE_WS2812` trên GPIO8, độ sáng 20/255 (`STATUS_LED_BRIGHTNESS`);
+  - `PRESENCE_CHIP_TEMPERATURE` bật, giới hạn endpoint động 6.
+- **Các chân khác giữ như SuperMini:** radar TX → GPIO3, radar RX → GPIO4, nút GPIO9 (BOOT). Kiểm tra bo có đưa các chân này ra không.
+- **Log** ra cổng USB-Serial-JTAG (GPIO18/GPIO19) như SuperMini. Nếu cổng USB của bo đi qua chip USB-UART (CP2102, CH340...), vẫn nạp được nhưng không thấy log; khi đó cần build với console UART0.
+- **OTA:** file `.ota` của biến thể này cùng VID/PID và cùng dãy số phiên bản với bản mặc định, Matter Server không phân biệt được. Chỉ cập nhật bo WROOM bằng file của biến thể `wroom_n4`. Nạp nhầm thì bo vẫn chạy, nhưng LED sai và entity nhiệt độ xuất hiện hoặc mất.
+- Chưa thử trên bo.
+
+```bash
+idf.py -B build-wroom -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.wroom \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.wroom_n4" build
+```
+
+WS2812 trên SuperMini: chọn *Status LED* → *Addressable WS2812 RGB LED* trong `menuconfig`. Dây tín hiệu WS2812 nằm ở mức thấp khi rảnh, nên nếu dùng GPIO8 thì LED xanh có sẵn của SuperMini (sáng khi GPIO8 ở mức thấp) sẽ sáng mãi; dùng chân khác cho WS2812 thì tốt hơn.
 
 ## Hold time, Radar Bluetooth, Radar resolution và Range
 
@@ -357,7 +377,9 @@ Tên các tuỳ chọn giữ như bản 1.0.132; menu *Connection Watchdog* và 
 | | `PRESENCE_MAX_DISTANCE_CM` (chỉ tính mục tiêu gần hơn) | 0 (tắt) | 0–800 |
 | | `PRESENCE_HOLD_TIME_SEC` (Hold time lúc đầu, áp dụng một lần) | 30 | 1–300 |
 | | `RADAR_TIMEOUT_SEC` (radar im lặng thì coi là không có người) | 10 | 1–300 |
-| | `STATUS_LED_GPIO` / `STATUS_LED_ACTIVE_HIGH` | 8 / tắt | 0–21 |
+| | `BOARD_NAME` (chỉ để in trong log, mới) | `ESP32-C3 SuperMini` | |
+| | `STATUS_LED_TYPE` (LED GPIO một màu / WS2812) | LED GPIO | |
+| | `STATUS_LED_GPIO` / `STATUS_LED_ACTIVE_HIGH` (chỉ LED GPIO) / `STATUS_LED_BRIGHTNESS` (chỉ WS2812) | 8 / tắt / 20 | 0–21 / – / 1–255 |
 | | `RESET_BUTTON_GPIO` | 9 | −1 (không có nút) – 21 |
 | | `PRESENCE_CHIP_TEMPERATURE` (endpoint 5: nhiệt độ chip, mới; bật thì cần `ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=6`) | tắt (bật ở 1.0.143–1.0.146) | |
 | | `PRESENCE_WIFI_STAY_AWAKE` (tắt modem sleep sau khi BLE tắt; 1.0.132 bật) | tắt | |
@@ -527,7 +549,7 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
   - nhiệt độ chip (cluster Temperature Measurement, driver cảm biến, endpoint 5): 7 136 byte flash, 440 byte RAM tĩnh (so với 1.0.142);
   - Wi-Fi modem sleep (`PRESENCE_WIFI_STAY_AWAKE` tắt, mã tắt modem sleep không được build): bớt 672 byte flash, RAM tĩnh không đổi (so với 1.0.143);
   - nhiệt độ chip thành tuỳ chọn tắt sẵn (1.0.147): bớt 7 152 byte flash và 440 byte RAM tĩnh (so với 1.0.144). Bật lại thì kích thước đúng bằng 1.0.144.
-- Host test (`test/host/run.sh`, 14 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED, tên thiết bị, lúc nào gửi lại Wi-Fi RSSI và Uptime, việc watchdog kết nối làm theo thời gian không có subscription, đổi và gửi nhiệt độ chip. Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ. Làm hỏng thêm 10 chỗ trong `diag_report.h`, 12 chỗ trong `net_watchdog.h` và 7 chỗ trong `c3_temperature.h`: test bắt được tất cả.
+- Host test (`test/host/run.sh`, 15 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED (một màu và màu WS2812), tên thiết bị, lúc nào gửi lại Wi-Fi RSSI và Uptime, việc watchdog kết nối làm theo thời gian không có subscription, đổi và gửi nhiệt độ chip. Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ. Làm hỏng thêm 10 chỗ trong `diag_report.h`, 12 chỗ trong `net_watchdog.h`, 7 chỗ trong `c3_temperature.h` và 6 chỗ ở phần WS2812 của `status_led.cpp` (màu, độ sáng, chân, chỉ gửi khi đổi màu): test bắt được tất cả.
 - Phần gửi lại Wi-Fi RSSI và Uptime: chỉ phần quyết định được test trên máy tính. Lời gọi Matter (`MatterReportingAttributeChangeCallback`, timer của Matter) mới kiểm chứng bằng build và bằng đọc mã nguồn Matter SDK, esp-matter, Home Assistant (đánh dấu đã đổi → subscription gửi lại; Home Assistant cập nhật theo giá trị).
 
 **Đã thấy chạy trên bo, nhưng với firmware cũ** (log của người dùng; theo README cũ là các bản 1.0.128–1.0.131, cùng thuật toán và mã radar): ghép nối với Apple Home và Home Assistant (3 controller cùng lúc), đọc radar, radar tự đo phòng trống (lệnh 0x000B), *Factory thresholds* từ Home Assistant; bật Bluetooth của radar (0x00A4 + 0x00A3, đọc MAC bằng 0x00A5) trên radar V2.44.25070917.
@@ -569,6 +591,10 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
     - Home Assistant không còn entity nhiệt độ và *Identify (5)*, hoặc chúng hiện không khả dụng và xoá được;
     - Occupancy, Hold time, các select, *Identify* của endpoint 1 vẫn chạy;
     - log `mem`: heap còn trống nhiều hơn 1.0.144 một chút.
+17. Biến thể `wroom_n4` trên bo ESP32-C3-WROOM-02-N4 (nạp USB lần đầu):
+    - log `Target esp32c3, board ESP32-C3-WROOM-02-N4` và `LED GPIO8 (WS2812)`;
+    - LED WS2812: xanh dương nháy chậm khi chờ ghép nối, trắng nháy nhanh khi *Identify*, cyan / xanh lá / đỏ / tím khi học phòng trống và ghi ngưỡng mặc định;
+    - radar trên GPIO3/GPIO4 và nút GPIO9 chạy như trên SuperMini; entity nhiệt độ chip có trong Home Assistant.
 
 Cũng chưa kiểm chứng: trả lời của lệnh 0x001B trên radar thật, nhận biết Bluetooth tắt qua địa chỉ giả, Apple Home không hiện Mode Select, biến thể `unique_setup` trên ESP32-C3.
 
@@ -587,11 +613,13 @@ matter-presence-ld2410/
 ├── CMakeLists.txt                  # phiên bản theo số commit, component esp-matter, chỉ esp32c3
 ├── sdkconfig.defaults              # Wi-Fi, BLE thu gọn, log USB, PID 0x8001, chân SuperMini, 21 cluster
 ├── sdkconfig.defaults.unique_setup # mã ghép nối riêng từng bo (tuỳ chọn)
+├── sdkconfig.defaults.wroom_n4     # bo ESP32-C3-WROOM-02-N4: LED WS2812 GPIO8, nhiệt độ chip (tuỳ chọn)
 ├── partitions.csv                  # 4 MB, 2 phân vùng OTA (giống hệt 1.0.132)
 ├── README.md
 ├── main/
 │   ├── app_main.cpp                # Matter node, endpoint Occupancy Sensor, sự kiện, nút bấm, khởi động
-│   ├── board.h                     # ESP32-C3 SuperMini: kiểm tra chân lúc build
+│   ├── board.h                     # kiểm tra chân lúc build, tên bo trong log
+│   ├── idf_component.yml           # espressif/led_strip (LED WS2812)
 │   ├── presence.cpp                # task presence: radar -> Occupancy Sensing
 │   ├── radar_control.cpp           # 4 Mode Select (Learn empty room, Range, Radar resolution, Radar Bluetooth)
 │   ├── c3_temperature.cpp          # endpoint 5: nhiệt độ chip ESP32-C3 (tuỳ chọn, mặc định tắt)
@@ -608,7 +636,7 @@ matter-presence-ld2410/
 │   ├── Kconfig.projbuild
 │   └── drivers/
 │       ├── ld2410.cpp              # radar LD2410 (UART1, 256000 baud): báo cáo, lệnh cấu hình
-│       ├── status_led.cpp          # LED GPIO một màu
+│       ├── status_led.cpp          # LED GPIO một màu hoặc WS2812
 │       └── user_button.cpp         # nút BOOT: bấm 2/3/4 lần, giữ lâu
 └── test/host/                      # host test (run.sh), giả lập thời gian và radar, stub ESP-IDF
 ```

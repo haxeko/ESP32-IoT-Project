@@ -5,3 +5,5 @@ managed_components/
 dependencies.lock
 build-unique/
 sdkconfig.unique
+build-wroom/
+sdkconfig.wroom

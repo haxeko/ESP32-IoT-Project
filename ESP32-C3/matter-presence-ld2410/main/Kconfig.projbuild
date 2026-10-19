@@ -88,24 +88,55 @@ menu "Presence Sensor Configuration"
         range 1 300
         default 10
 
+    config BOARD_NAME
+        string "Board name in the boot log"
+        default "ESP32-C3 SuperMini"
+        help
+            Only shown in the log ("Target esp32c3, board ..."). The pins are
+            the options below.
+
+    choice STATUS_LED_TYPE
+        prompt "Status LED"
+        default STATUS_LED_TYPE_GPIO
+        help
+            Blinks slowly (blue) while the device waits to be commissioned
+            (pairing mode) and stays off otherwise. Blinks fast (white) when
+            an app asks the device to identify itself. Empty room learning:
+            on (cyan) while there is time to leave the room, slow blink (cyan)
+            while recording, then on for 10 s: green once the new thresholds
+            are saved, red when it failed. Blinks (purple) for 10 s once the
+            factory thresholds are written. A single-colour LED shows every
+            colour as on.
+
+        config STATUS_LED_TYPE_GPIO
+            bool "Single-colour LED on a GPIO (ESP32-C3 SuperMini: GPIO8)"
+
+        config STATUS_LED_TYPE_WS2812
+            bool "Addressable WS2812 RGB LED (data in on the pin)"
+            help
+                One WS2812 (or compatible) LED, driven by the RMT peripheral.
+                Its data line idles low: on GPIO8 of the SuperMini the blue
+                on-board LED (on when GPIO8 is low) then stays lit, so another
+                pin is better for the WS2812.
+    endchoice
+
     config STATUS_LED_GPIO
         int "Status LED pin"
         range 0 21
         default 8
-        help
-            Single-colour LED, the blue LED of the ESP32-C3 SuperMini on GPIO8.
-            Blinks slowly while the device waits to be commissioned (pairing
-            mode) and stays off otherwise. Blinks fast when an app asks the
-            device to identify itself. Empty room learning: on while there is
-            time to leave the room, slow blink while recording, then on for
-            10 s (done or failed). Blinks for 10 s once the factory thresholds
-            are written.
 
     config STATUS_LED_ACTIVE_HIGH
         bool "Status LED is on when the pin is high"
+        depends on STATUS_LED_TYPE_GPIO
         default n
         help
             The blue LED of the ESP32-C3 SuperMini is on when GPIO8 is low.
+
+    config STATUS_LED_BRIGHTNESS
+        int "WS2812 brightness (1-255)"
+        depends on STATUS_LED_TYPE_WS2812
+        range 1 255
+        default 20
 
     config RESET_BUTTON_GPIO
         int "Button pin (-1 = none)"
