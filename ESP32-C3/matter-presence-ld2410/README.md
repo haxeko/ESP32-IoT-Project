@@ -2,9 +2,9 @@
 
 Cảm biến hiện diện chuẩn Matter (device type **Occupancy Sensor 0x0107**) với radar 24 GHz **HLK-LD2410C**, chạy **Matter over Wi-Fi** trên **ESP32-C3 SuperMini**. Thêm trực tiếp vào Apple Home, Google Home, Home Assistant, SmartThings, Alexa... qua Wi-Fi nhà, không cần Thread Border Router. Radar LD2410 phát hiện được cả người ngồi yên (thở, cử động nhẹ), khác cảm biến PIR chỉ thấy chuyển động.
 
-Đây là bản **viết lại từ đầu** của firmware ESP32-C3 1.0.132 (`ESP32-C3/matter-wifi-presence`, dùng chung mã với thư mục ESP32-H2). Project này **tự chứa**: không dùng file nào của thư mục ESP32-H2, mã chỉ cho ESP32-C3. Chức năng, thuật toán, ngưỡng, thời gian, endpoint 1–4 và khoá lưu trữ giữ nguyên như 1.0.132 (bản này thêm endpoint 5 báo nhiệt độ chip, và từ 1.0.144 để Wi-Fi ở modem sleep cho chip bớt nóng), nên **cập nhật OTA từ 1.0.132 lên bản này giữ nguyên ghép nối và các entity Home Assistant** (xem **Mức độ kiểm tra**: điều này mới kiểm chứng bằng so sánh cấu hình và build, chưa thử trên bo).
+Đây là bản **viết lại từ đầu** của firmware ESP32-C3 1.0.132 (`ESP32-C3/matter-wifi-presence`, dùng chung mã với thư mục ESP32-H2). Project này **tự chứa**: không dùng file nào của thư mục ESP32-H2, mã chỉ cho ESP32-C3. Chức năng, thuật toán, ngưỡng, thời gian, endpoint 1–4 và khoá lưu trữ giữ nguyên như 1.0.132 (từ 1.0.144 bản này để Wi-Fi ở modem sleep cho chip bớt nóng; endpoint 5 báo nhiệt độ chip là tuỳ chọn, mặc định tắt từ 1.0.147), nên **cập nhật OTA từ 1.0.132 lên bản này giữ nguyên ghép nối và các entity Home Assistant** (xem **Mức độ kiểm tra**: điều này mới kiểm chứng bằng so sánh cấu hình và build, chưa thử trên bo).
 
-Trong Home Assistant có thêm 5 điều khiển (Apple Home không hiện): **Hold time**, **Learn empty room** (học phòng trống, hoặc bấm nút BOOT 3 lần; *Factory thresholds* hoặc bấm 4 lần để ghi lại ngưỡng mặc định), **Radar Bluetooth**, **Radar resolution**, **Range**. Tên thiết bị là **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C4**. Các entity chẩn đoán **Reboot count**, **Uptime**, **Wi-Fi RSSI** bị Home Assistant tắt sẵn: bật chúng trong Home Assistant (xem **Entity chẩn đoán**); firmware gửi lại Uptime và Wi-Fi RSSI để giá trị không bị đứng. Entity **nhiệt độ chip ESP32-C3** (endpoint 5) cho biết bo có bị nóng không.
+Trong Home Assistant có thêm 5 điều khiển (Apple Home không hiện): **Hold time**, **Learn empty room** (học phòng trống, hoặc bấm nút BOOT 3 lần; *Factory thresholds* hoặc bấm 4 lần để ghi lại ngưỡng mặc định), **Radar Bluetooth**, **Radar resolution**, **Range**. Tên thiết bị là **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C4**. Các entity chẩn đoán **Reboot count**, **Uptime**, **Wi-Fi RSSI** bị Home Assistant tắt sẵn: bật chúng trong Home Assistant (xem **Entity chẩn đoán**); firmware gửi lại Uptime và Wi-Fi RSSI để giá trị không bị đứng. Entity **nhiệt độ chip ESP32-C3** (endpoint 5) chỉ có khi build với `PRESENCE_CHIP_TEMPERATURE` (mặc định tắt từ 1.0.147, xem **Nhiệt độ chip**).
 
 ## Khác biệt so với bản cũ (`ESP32-C3/matter-wifi-presence`, 1.0.132)
 
@@ -15,9 +15,9 @@ Trong Home Assistant có thêm 5 điều khiển (Apple Home không hiện): **H
 | Wi-Fi sau khi ghép nối (BLE đã tắt) | tắt modem sleep (`WIFI_PS_NONE`): radio luôn nghe, chip nóng tới 80–96 °C (đo trên bo bằng 1.0.143) | giữ modem sleep `min_modem`, mặc định của ESP-IDF, esp-matter và ESPHome trên ESP32: bo nóng ít hơn; gói từ controller tới bo trễ tối đa một chu kỳ DTIM (thường 100–300 ms). Bật `PRESENCE_WIFI_STAY_AWAKE` thì như cũ |
 | Mất kết nối với controller | chờ controller hoặc Matter SDK tự thử lại (5–10 phút, thưa dần) | watchdog kết nối: không có subscription 5 phút thì thông báo lại DNS-SD, 10 phút nối lại Wi-Fi, 30 phút khởi động lại; task Matter treo 3 phút thì khởi động lại (`menuconfig`; đặt 0 thì như cũ) |
 | Wi-Fi RSSI, Uptime trong Home Assistant | chỉ gửi lúc Home Assistant subscribe: RSSI đứng giá trị, Uptime lệch sau khi Home Assistant khởi động lại | gửi lại RSSI khi đổi từ 3 dB (kiểm tra mỗi phút), cả RSSI và uptime 10 phút một lần (`menuconfig`; đặt 0 thì như cũ) |
-| VID / PID, endpoint, cluster, tên entity, mã mode | `0xFFF1` / `0x8001`, endpoint 1–4 | giống hệt cho endpoint 1–4; thêm endpoint 5 (Temperature Sensor: nhiệt độ chip) với cluster Temperature Measurement |
+| VID / PID, endpoint, cluster, tên entity, mã mode | `0xFFF1` / `0x8001`, endpoint 1–4 | giống hệt; endpoint 5 (Temperature Sensor: nhiệt độ chip, cluster Temperature Measurement) chỉ có khi bật `PRESENCE_CHIP_TEMPERATURE` (mặc định tắt từ 1.0.147; bật ở 1.0.143–1.0.146) |
 | Bảng phân vùng, khoá NVS/KVS | — | giống hệt |
-| sdkconfig sinh ra | — | giống hệt, trừ: đường dẫn file, mục chọn loại LED đã bỏ, 5 tuỳ chọn mới (`DIAG_REPORT_*`, `NET_WATCHDOG_*`, `PRESENCE_CHIP_TEMPERATURE`), cluster Temperature Measurement bật, giới hạn endpoint động 6, `PRESENCE_WIFI_STAY_AWAKE` tắt |
+| sdkconfig sinh ra | — | giống hệt, trừ: đường dẫn file, mục chọn loại LED đã bỏ, 5 tuỳ chọn mới (`DIAG_REPORT_*`, `NET_WATCHDOG_*`, `PRESENCE_CHIP_TEMPERATURE` tắt), `PRESENCE_WIFI_STAY_AWAKE` tắt |
 | LED | chọn được WS2812 / LED GPIO / không có | chỉ LED GPIO một màu (thư viện `espressif/led_strip` bỏ) |
 | Biến thể build | mặc định, `unique_setup`, `factory` | mặc định, `unique_setup` (`factory` bỏ: PAI test chỉ cấp DAC cho PID `0x8000`) |
 | Mã Thread/OpenThread (`thread_diag`, phần OpenThread của `id_diag`, OT CLI) | có, tắt khi build C3 | bỏ |
@@ -149,14 +149,16 @@ Bản này đánh dấu hai thuộc tính là đã đổi (`MatterReportingAttri
 - Không thêm hay đổi endpoint, cluster, thuộc tính nào: ba entity đã có từ 1.0.132 (cùng cluster của Matter SDK), bản này chỉ gửi thêm báo cáo.
 - *Data version* của cluster không tăng khi gửi lại, vì cluster của Matter SDK không cho ứng dụng tăng. Theo mã nguồn, cả hai bản Matter Server vẫn nhận giá trị mới: python-matter-server so sánh theo giá trị, bản matter.js ghi mọi giá trị nhận được bất kể *data version* (chưa thử trên bo).
 
-## Nhiệt độ chip ESP32-C3 (endpoint 5)
+## Nhiệt độ chip ESP32-C3 (endpoint 5, tuỳ chọn)
 
-Firmware đọc cảm biến nhiệt bên trong chip ESP32-C3 mỗi phút và báo lên **endpoint 5** (device type *Temperature Sensor*, cluster *Temperature Measurement*). Giá trị chỉ được gửi khi lệch từ 0,5 °C so với lần gửi trước.
+**Mặc định tắt từ 1.0.147** (bật ở 1.0.143–1.0.146 để tìm nguyên nhân bo nóng; người dùng bỏ đi khi đã đo xong). Khi bật, firmware đọc cảm biến nhiệt bên trong chip ESP32-C3 mỗi phút và báo lên **endpoint 5** (device type *Temperature Sensor*, cluster *Temperature Measurement*). Giá trị chỉ được gửi khi lệch từ 0,5 °C so với lần gửi trước.
 - Home Assistant hiện thành một entity nhiệt độ của thiết bị, tên mặc định *Temperature*. Nên đổi tên thành "Nhiệt độ chip" để không nhầm với nhiệt độ phòng. Apple Home hiện thành một cảm biến nhiệt độ.
 - Đây là **nhiệt độ lõi chip**, luôn cao hơn nhiệt độ phòng: chip, mạch hạ áp 5 V → 3,3 V của SuperMini và radar đều toả nhiệt. Số đo dùng để xem bo có nóng dần lên hay quá nóng không (ví dụ khi đặt trong hộp kín), không dùng làm cảm biến nhiệt độ phòng.
 - Driver ESP-IDF tự đổi dải đo khi nhiệt độ ra khỏi dải đang dùng. Theo bảng của ESP-IDF, sai số dưới 1 °C ở dải −10…80 °C, dưới 2 °C ở 20…100 °C, dưới 3 °C ở 50…125 °C. Bảng này áp dụng cho chip có hiệu chuẩn trong eFuse. Nếu log có `W temperature_sensor: No calibration param in eFuse` thì chip không có hiệu chuẩn, số đo có thể lệch nhiều hơn. Giá trị báo được giới hạn trong −40…125 °C.
 - LD2410 không có lệnh nào đọc nhiệt độ của nó, nên firmware không báo được nhiệt độ radar.
-- Tắt bằng `menuconfig` → *Presence Sensor Configuration* → *Chip temperature in Home Assistant*. Khi tắt, endpoint 5 không được tạo.
+- Bật bằng `menuconfig` → *Presence Sensor Configuration* → *Chip temperature in Home Assistant*, kèm `CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=6` (thiếu thì build báo lỗi). Tuỳ chọn này tự bật lại cluster Temperature Measurement; `sdkconfig` sinh ra khi đó giống hệt 1.0.144.
+- Khi tắt, endpoint 5 không được tạo: không có entity nhiệt độ và không có nút *Identify (5)* (Identify bắt buộc theo device type Temperature Sensor). Bản mặc định nhỏ hơn và dùng ít RAM hơn chút (bảng **RAM và flash**), nhưng gần như không đổi nhiệt độ: cảm biến chỉ được đọc mỗi phút, và RAM dùng nhiều hay ít không làm chip nóng thêm.
+- Cập nhật OTA từ 1.0.143–1.0.146 lên bản mặc định: endpoint 5 biến mất. Nếu Home Assistant còn giữ entity nhiệt độ và *Identify (5)* ở trạng thái không khả dụng, xoá chúng trên trang thiết bị (mở entity → *Settings* → *Delete*). Chưa thử trên bo.
 - Endpoint 5 được tạo sau các endpoint 1–4, nên số của chúng không đổi. Nếu không tạo được các điều khiển radar (endpoint 2–4) thì endpoint 5 cũng không được tạo, để nó không bị đổi số.
 
 ### Chip quá nóng: 80 °C ngoài hộp, 96 °C trong hộp (1.0.143)
@@ -176,6 +178,8 @@ Người dùng đo bằng entity này trên bo chạy 1.0.143: **80 °C** khi đ
 1. So sánh entity nhiệt độ trước và sau khi cập nhật, cùng chỗ đặt, cả ngoài hộp và trong hộp.
 2. So sánh lịch sử nhiệt độ với các lần *Unavailable* trong vài ngày.
 3. So sánh với bo còn lại. Nếu một bo nóng hơn hẳn bo kia dù cùng firmware và cùng điều kiện, bo đó có thể bị lỗi (mạch hạ áp, mối hàn).
+
+Từ 1.0.147 entity nhiệt độ mặc định tắt. Muốn đo tiếp (ví dụ trong hộp, hay vào mùa nóng), build với `PRESENCE_CHIP_TEMPERATURE`.
 
 **Phần cứng (giảm nhiệt thêm):**
 - Khoan lỗ thông gió ở đáy và đỉnh hộp cho không khí lưu thông. Trong nhà tắm, tránh mặt hướng về chỗ có nước.
@@ -335,12 +339,12 @@ File **`matter_presence_c3_wifi.ota`** (Artifacts của CI; build tại máy là
 3. Thiết bị tải qua Wi-Fi, tự khởi động lại vào bản mới và giữ ghép nối.
 
 - Phiên bản trong file phải **lớn hơn** bản đang chạy. Bản này là 1.0.134 trở lên vì nhánh của nó chứa đủ lịch sử của 1.0.132. Khi merge vào `main`, dùng **merge commit**, không squash: squash làm số commit trên `main` (hiện 129) nhỏ hơn 132 và bo cũ sẽ từ chối bản OTA đó.
-- **Từ 1.0.132 lên bản này:** cùng VID/PID, endpoint 1–4, bảng phân vùng và khoá lưu trữ, nên ghép nối, Hold time, lựa chọn Radar Bluetooth và các entity được giữ. Endpoint 5 (nhiệt độ chip) là mới: controller thấy nó khi đọc lại cấu trúc thiết bị sau khi cập nhật. Chưa thử trên bo; nếu entity hiện sai sau khi cập nhật, dùng **Re-interview** trên trang thiết bị trong Home Assistant.
+- **Từ 1.0.132 lên bản này:** cùng VID/PID, endpoint 1–4, bảng phân vùng và khoá lưu trữ, nên ghép nối, Hold time, lựa chọn Radar Bluetooth và các entity được giữ. Bản mặc định không có endpoint 5 (nhiệt độ chip); từ 1.0.143–1.0.146 lên bản mặc định thì endpoint 5 biến mất (xem **Nhiệt độ chip**). Chưa thử trên bo; nếu entity hiện sai sau khi cập nhật, dùng **Re-interview** trên trang thiết bị trong Home Assistant.
 - Sau khi đã cập nhật OTA, thiết bị chạy từ phân vùng `ota_1`: nạp USB thì dùng file merged hoặc `idf.py flash` (ghi cả `otadata`), không ghi riêng `0x20000`.
 
 ## Cấu hình (`idf.py menuconfig`)
 
-Tên các tuỳ chọn giữ như bản 1.0.132; menu *Connection Watchdog* và *Wi-Fi RSSI and Uptime Reports* là mới; `PRESENCE_WIFI_STAY_AWAKE` đổi mặc định thành tắt.
+Tên các tuỳ chọn giữ như bản 1.0.132; menu *Connection Watchdog* và *Wi-Fi RSSI and Uptime Reports* là mới; `PRESENCE_CHIP_TEMPERATURE` mới, mặc định tắt; `PRESENCE_WIFI_STAY_AWAKE` đổi mặc định thành tắt.
 
 | Menu | Tuỳ chọn | Mặc định | Khoảng |
 |---|---|---|---|
@@ -355,7 +359,7 @@ Tên các tuỳ chọn giữ như bản 1.0.132; menu *Connection Watchdog* và 
 | | `RADAR_TIMEOUT_SEC` (radar im lặng thì coi là không có người) | 10 | 1–300 |
 | | `STATUS_LED_GPIO` / `STATUS_LED_ACTIVE_HIGH` | 8 / tắt | 0–21 |
 | | `RESET_BUTTON_GPIO` | 9 | −1 (không có nút) – 21 |
-| | `PRESENCE_CHIP_TEMPERATURE` (endpoint 5: nhiệt độ chip, mới) | bật | |
+| | `PRESENCE_CHIP_TEMPERATURE` (endpoint 5: nhiệt độ chip, mới; bật thì cần `ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=6`) | tắt (bật ở 1.0.143–1.0.146) | |
 | | `PRESENCE_WIFI_STAY_AWAKE` (tắt modem sleep sau khi BLE tắt; 1.0.132 bật) | tắt | |
 | Empty Room Learning | `LD2410_LEARN_DELAY_SEC` / `LD2410_LEARN_DURATION_SEC` | 20 / 60 s | 0–120 / 10–300 |
 | | `LD2410_LEARN_RADAR_AUTO` | bật | |
@@ -381,7 +385,7 @@ Console Matter (gõ lệnh trong monitor) tắt để có thêm khoảng 10 KB R
 - **Tuỳ chọn `PRESENCE_WIFI_STAY_AWAKE`** (mặc định tắt từ 1.0.144; bản 1.0.132–1.0.143 bật):
   - Khi bật: lúc có sự kiện `kBLEDeinitialized`, và ở mỗi lần Wi-Fi kết nối sau đó, firmware gọi `esp_wifi_set_ps(WIFI_PS_NONE)` (log `BLE released: Wi-Fi power save off`, `id_diag` ghi `power_save=none`).
   - Lý do ban đầu: log 1.0.128 có `Msg Retransmission`; hiệu quả chưa từng được kiểm chứng. Cái giá thì đã đo được: chip 80 °C khi để ngoài hộp, 96 °C trong hộp (xem **Nhiệt độ chip**).
-  - Chỉ bật lại nếu modem sleep gây lỗi (ví dụ điều khiển từ Home Assistant chậm hay thất bại), và khi đó theo dõi nhiệt độ chip.
+  - Chỉ bật lại nếu modem sleep gây lỗi (ví dụ điều khiển từ Home Assistant chậm hay thất bại), và khi đó build kèm `PRESENCE_CHIP_TEMPERATURE` để theo dõi nhiệt độ chip.
 - **Không giới hạn công suất phát Wi-Fi.** Bản 1.0.125–1.0.127 đã thử 8,5 dBm, không giúp được; nguyên nhân lỗi kết nối là Beamforming của router TP-Link Deco X10 (tắt đi thì ghép nối được).
 - **BLE thu gọn** (NimBLE, chỉ để ghép nối): vai trò peripheral, 1 kết nối, không bảo mật BLE (Matter tự bảo mật bằng PASE), không có tính năng BLE 5, bộ đệm nhỏ (mục *BLE Optimizations* của hướng dẫn tối ưu RAM của esp-matter).
 - Mã Wi-Fi nằm trong flash thay vì IRAM (`ESP_WIFI_IRAM_OPT=n`, `ESP_WIFI_RX_IRAM_OPT=n`): trên ESP32-C3, IRAM và DRAM dùng chung SRAM, nên có thêm heap.
@@ -456,13 +460,13 @@ I app_main: Pins: LD2410 RX GPIO3 (radar TX), TX GPIO4 (radar RX), button GPIO9,
 I ld2410: LD2410 on UART1, RX=GPIO3 TX=GPIO4
 I device_info: Serial number: 58CF79A1B2C4, device name: Presence-B2C4
 I radar_ctl: Endpoints: Learn empty room 1, Range 2, Radar resolution 3, Radar Bluetooth 4
-I c3_temp: Chip temperature on endpoint 5
 I app_main: Hold time 30 s (limits 1-300 s)
 I diag_report: Wi-Fi RSSI reported again on a 3 dB change, RSSI and uptime every 10 min
-I c3_temp: Chip temperature 41.3 C
 I net_wd: Connection watchdog: without any controller subscription, DNS-SD again every 5 min, Wi-Fi reconnect every 10 min, restart after 30 min (0 = never)
 I radar_ctl: LD2410 settings: no-one duration 5 s, range moving 6 m (gate 8), still 6 m (gate 8), 75 cm per gate, Bluetooth off
 ```
+
+Với `PRESENCE_CHIP_TEMPERATURE` có thêm `I c3_temp: Chip temperature on endpoint 5` và, khi đã chạy, `I c3_temp: Chip temperature 41.3 C`.
 
 Số serial là MAC gốc trong eFuse (6 byte, 12 ký tự hex in hoa), cũng là MAC Wi-Fi router hiển thị. Hiện diện: `presence: Radar: presence (moving yes 120 cm, still no 0 cm)`, `presence: Radar: no one (...)`. Radar không gửi gì 10 s: `E presence: No data from the LD2410 for 10 s, check the wiring (radar TX -> GPIO3, RX -> GPIO4)` và báo không có người; có dữ liệu lại thì `Radar data received`. Sự kiện Matter: `Commissioning complete`, `Commissioning failed, fail safe timer expired`, `Commissioning window opened / closed`, `Fabric removed successfully`, `Wi-Fi connectivity changed`, `Interface IP Address changed`.
 
@@ -505,7 +509,7 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
     - `basicInformation.startUp` và `generalDiagnostics.bootReason`: thiết bị đã khởi động lại. `BrownOutReset` là nguồn yếu hoặc sụt áp; `SoftwareReset` là lỗi firmware hoặc watchdog; `PowerOnReboot` là mất điện.
     - Không có sự kiện nào mà vẫn mất kết nối: thiết bị vẫn nối Wi-Fi nhưng không nhận được gói. Thử `ping <IP>` lúc đang *Unavailable*, xem node Deco và mức sóng trong app của router.
   - Entity **Wi-Fi RSSI** (bản 1.0.140 trở lên): dưới −75 dBm là sóng yếu, hay mất kết nối. Đặt thêm node mesh hoặc dời bo ra xa tường, gương, gạch men.
-  - Entity **nhiệt độ chip** (bản 1.0.143 trở lên): nếu mất kết nối lúc chip nóng nhất, xem **Chip quá nóng**.
+  - Entity **nhiệt độ chip** (bản 1.0.143–1.0.146, hoặc build với `PRESENCE_CHIP_TEMPERATURE`): nếu mất kết nối lúc chip nóng nhất, xem **Chip quá nóng**.
   - **Phân biệt lỗi mạng với khởi động lại:** nếu sau khi nối lại vẫn dùng cùng số phiên (`@1:5a•580e`), thiết bị **không** khởi động lại (khởi động lại thì mất mọi phiên), mà là mất Wi-Fi hoặc không nhận được gói. Kiểm tra *Wi-Fi RSSI*, *Reboot count*, và log USB (`EV wifi failed or left: reason ...`, `W mem: Heap low`).
 - Mỗi lần thử lại ghép nối: factory reset (giữ BOOT 5 s) hoặc `erase-flash`.
 
@@ -513,9 +517,9 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 
 **Đã kiểm chứng bằng build và test trên máy tính (bản này):**
 - Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định và biến thể `unique_setup`.
-- `sdkconfig` sinh ra giống hệt bản 1.0.132 build trong cùng image, trừ đường dẫn file, mục chọn loại LED đã bỏ, 5 tuỳ chọn mới (`DIAG_REPORT_RSSI_STEP_DB`, `DIAG_REPORT_REFRESH_MIN`, `NET_WATCHDOG_RECONNECT_MIN`, `NET_WATCHDOG_RESTART_MIN`, `PRESENCE_CHIP_TEMPERATURE`), cluster Temperature Measurement bật, giới hạn endpoint động 6 và `PRESENCE_WIFI_STAY_AWAKE` tắt (so với 1.0.143 chỉ khác điểm cuối): Wi-Fi bật, OpenThread tắt, BLE chỉ để ghép nối, minimal mDNS, cửa sổ ghép nối 900 s, VID `0xFFF1` / PID `0x8001`, WPA3 SAE, coexistence, stack CHIP 8192, CPU 160 MHz, brownout bật, đúng 22 cluster (21 cluster của 1.0.132 và Temperature Measurement của endpoint 5; giới hạn endpoint động 6 thay vì 5).
+- `sdkconfig` sinh ra giống hệt bản 1.0.132 build trong cùng image, trừ đường dẫn file, mục chọn loại LED đã bỏ, 5 tuỳ chọn mới (`DIAG_REPORT_RSSI_STEP_DB`, `DIAG_REPORT_REFRESH_MIN`, `NET_WATCHDOG_RECONNECT_MIN`, `NET_WATCHDOG_RESTART_MIN`, `PRESENCE_CHIP_TEMPERATURE` tắt) và `PRESENCE_WIFI_STAY_AWAKE` tắt: Wi-Fi bật, OpenThread tắt, BLE chỉ để ghép nối, minimal mDNS, cửa sổ ghép nối 900 s, VID `0xFFF1` / PID `0x8001`, WPA3 SAE, coexistence, stack CHIP 8192, CPU 160 MHz, brownout bật, đúng 21 cluster và giới hạn endpoint động 5 như 1.0.132. So với 1.0.144 chỉ khác 3 điểm: `PRESENCE_CHIP_TEMPERATURE` tắt, cluster Temperature Measurement tắt, giới hạn endpoint động 5. Build với `PRESENCE_CHIP_TEMPERATURE` và giới hạn 6 thì `sdkconfig` giống hệt 1.0.144 (22 cluster: tuỳ chọn tự bật lại cluster Temperature Measurement).
 - Header file OTA (bản build 1.0.144): VID `0xFFF1`, PID `0x8001`, phiên bản 144 / `1.0.144` (lớn hơn 132).
-- Thứ tự tạo endpoint 0–4 giống 1.0.132; esp-matter (`esp_matter_data_model.cpp`) cấp số endpoint theo thứ tự tạo trước `esp_matter::start()`, nên số endpoint giữ nguyên. Endpoint 5 (nhiệt độ chip) được tạo sau cùng.
+- Thứ tự tạo endpoint 0–4 giống 1.0.132; esp-matter (`esp_matter_data_model.cpp`) cấp số endpoint theo thứ tự tạo trước `esp_matter::start()`, nên số endpoint giữ nguyên. Endpoint 5 (nhiệt độ chip, chỉ khi bật `PRESENCE_CHIP_TEMPERATURE`) được tạo sau cùng.
 - Kích thước so với 1.0.132 (bảng **RAM và flash**): lớn hơn 8 432 byte flash và 418 byte RAM tĩnh. Phần thêm vào và bớt đi:
   - `diag_report` (báo cáo lại Wi-Fi RSSI và Uptime): 416 byte flash, 16 byte RAM tĩnh (so với 1.0.139);
   - `net_watchdog`: 1 808 byte flash, 32 byte RAM tĩnh (so với 1.0.140);
@@ -546,7 +550,7 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
     - tắt router (hoặc chặn thiết bị trong app Deco) 12 phút: log `net_wd` thông báo DNS-SD ở phút 5 và nối lại Wi-Fi ở phút 10; bật router lại thì Home Assistant thấy thiết bị trong vài phút;
     - để quá 30 phút thì thiết bị khởi động lại và log `Restarted by the connection watchdog`;
     - bình thường (có subscription) không có dòng `net_wd` nào ngoài dòng lúc khởi động.
-14. Nhiệt độ chip (endpoint 5):
+14. Nhiệt độ chip (endpoint 5, build với `PRESENCE_CHIP_TEMPERATURE`):
     - sau khi OTA, Home Assistant có thêm entity nhiệt độ; giá trị hợp lý (cao hơn nhiệt độ phòng) và đổi theo khi bo nóng lên hoặc nguội đi;
     - log `c3_temp: Chip temperature ... C`;
     - Hold time, các select và Occupancy vẫn ở endpoint 1–4;
@@ -559,6 +563,10 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
     - nhiệt độ của bo còn lại, cùng firmware.
 
     Người dùng báo với 1.0.144: 63 °C khi để ngoài hộp. Trong hộp và số lần *Unavailable* chưa có kết quả.
+16. Bản mặc định không có nhiệt độ chip (1.0.147), OTA từ 1.0.144:
+    - Home Assistant không còn entity nhiệt độ và *Identify (5)*, hoặc chúng hiện không khả dụng và xoá được;
+    - Occupancy, Hold time, các select, *Identify* của endpoint 1 vẫn chạy;
+    - log `mem`: heap còn trống nhiều hơn 1.0.144 một chút.
 
 Cũng chưa kiểm chứng: trả lời của lệnh 0x001B trên radar thật, nhận biết Bluetooth tắt qua địa chỉ giả, Apple Home không hiện Mode Select, biến thể `unique_setup` trên ESP32-C3.
 
@@ -575,7 +583,7 @@ API ESP-IDF/FreeRTOS được thay bằng stub (`test/host/stubs/`); thời gian
 ```
 matter-presence-ld2410/
 ├── CMakeLists.txt                  # phiên bản theo số commit, component esp-matter, chỉ esp32c3
-├── sdkconfig.defaults              # Wi-Fi, BLE thu gọn, log USB, PID 0x8001, chân SuperMini, 22 cluster
+├── sdkconfig.defaults              # Wi-Fi, BLE thu gọn, log USB, PID 0x8001, chân SuperMini, 21 cluster
 ├── sdkconfig.defaults.unique_setup # mã ghép nối riêng từng bo (tuỳ chọn)
 ├── partitions.csv                  # 4 MB, 2 phân vùng OTA (giống hệt 1.0.132)
 ├── README.md
@@ -584,7 +592,7 @@ matter-presence-ld2410/
 │   ├── board.h                     # ESP32-C3 SuperMini: kiểm tra chân lúc build
 │   ├── presence.cpp                # task presence: radar -> Occupancy Sensing
 │   ├── radar_control.cpp           # 4 Mode Select (Learn empty room, Range, Radar resolution, Radar Bluetooth)
-│   ├── c3_temperature.cpp          # endpoint 5: nhiệt độ chip ESP32-C3
+│   ├── c3_temperature.cpp          # endpoint 5: nhiệt độ chip ESP32-C3 (tuỳ chọn, mặc định tắt)
 │   ├── radar_worker.cpp            # task radar_cfg: yêu cầu, lựa chọn cuối cùng thắng, Bluetooth của radar (NVS)
 │   ├── radar_settings.cpp          # một phiên thông số với radar, định dạng nhãn
 │   ├── quiet_learn.cpp             # học phòng trống (radar tự đo / ESP32), ngưỡng mặc định

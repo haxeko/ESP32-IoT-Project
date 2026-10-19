@@ -63,8 +63,9 @@ CONFIG_ENABLE_CHIP_SHELL=n
 # Matter. Own product ID 0x8001, never the 0x8000 of the ESP32-H2 firmware, so controllers and OTA images never mix
 # them up (the SDK test DAC, PAI and Certification Declaration cover 0xFFF1/0x8001).
 CONFIG_DEVICE_PRODUCT_ID=0x8001
-# Root, occupancy sensor, Range, Radar resolution and Radar Bluetooth (Mode Select), chip temperature endpoints
-CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=6
+# Root, occupancy sensor, Range, Radar resolution and Radar Bluetooth (Mode Select) endpoints. The chip temperature
+# endpoint (CONFIG_PRESENCE_CHIP_TEMPERATURE, off by default) needs 6.
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=5
 # Manufacturer / Model / Serial number come from main/device_info.cpp
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 # Bluetooth (GAP) name while waiting for commissioning when CONFIG_DEVICE_NAME_PREFIX is empty:
@@ -91,12 +92,12 @@ CONFIG_LD2410_UART_TX_PIN=4
 CONFIG_STATUS_LED_GPIO=8
 CONFIG_STATUS_LED_ACTIVE_HIGH=n
 
-# Matter clusters no endpoint of this device has: less flash. The device keeps 22 clusters: those of its endpoints
+# Matter clusters no endpoint of this device has: less flash. The device keeps 21 clusters: those of its endpoints
 # (Access Control, Administrator Commissioning, Basic Information, Descriptor, General Commissioning, General
 # Diagnostics, Group Key Management, Identify, Mode Select, Network Commissioning, Occupancy Sensing, Operational
-# Credentials, OTA Software Update Provider/Requestor, Temperature Measurement, Wi-Fi Network Diagnostics), plus Scenes (the Mode Select
+# Credentials, OTA Software Update Provider/Requestor, Wi-Fi Network Diagnostics), plus Scenes (the Mode Select
 # server of the SDK registers a scene handler), Binding, Groups, On/Off, Level Control and Color Control (code the
-# SDK builds anyway).
+# SDK builds anyway). CONFIG_PRESENCE_CHIP_TEMPERATURE turns Temperature Measurement back on.
 CONFIG_SUPPORT_ACCOUNT_LOGIN_CLUSTER=n
 CONFIG_SUPPORT_ACTIONS_CLUSTER=n
 CONFIG_SUPPORT_ACTIVATED_CARBON_FILTER_MONITORING_CLUSTER=n
@@ -193,6 +194,7 @@ CONFIG_SUPPORT_SOIL_MEASUREMENT_CLUSTER=n
 CONFIG_SUPPORT_SWITCH_CLUSTER=n
 CONFIG_SUPPORT_TARGET_NAVIGATOR_CLUSTER=n
 CONFIG_SUPPORT_TEMPERATURE_CONTROL_CLUSTER=n
+CONFIG_SUPPORT_TEMPERATURE_MEASUREMENT_CLUSTER=n
 CONFIG_SUPPORT_THERMOSTAT_CLUSTER=n
 CONFIG_SUPPORT_THERMOSTAT_USER_INTERFACE_CONFIGURATION_CLUSTER=n
 CONFIG_SUPPORT_THREAD_BORDER_ROUTER_MANAGEMENT_CLUSTER=n

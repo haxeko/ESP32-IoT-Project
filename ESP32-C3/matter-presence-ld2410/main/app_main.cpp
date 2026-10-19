@@ -19,7 +19,8 @@
 //     and UpTime reported again by diag_report.cpp)
 //   1 Occupancy Sensor: Occupancy Sensing (Radar, HoldTime), Identify, Mode Select "Learn empty room"
 //   2, 3, 4 Mode Select: "Range", "Radar resolution", "Radar Bluetooth" (radar_control.cpp)
-//   5 Temperature Sensor: temperature of the ESP32-C3 chip (c3_temperature.cpp, CONFIG_PRESENCE_CHIP_TEMPERATURE)
+//   5 Temperature Sensor: temperature of the ESP32-C3 chip (c3_temperature.cpp), only with
+//     CONFIG_PRESENCE_CHIP_TEMPERATURE (off by default)
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>

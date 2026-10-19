@@ -6,6 +6,11 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
+#include <sdkconfig.h>
+
+// Built only with CONFIG_PRESENCE_CHIP_TEMPERATURE, which also turns the Temperature Measurement cluster on
+#if CONFIG_PRESENCE_CHIP_TEMPERATURE
+
 #include <data_model_provider/clusters/temperature_measurement/integration.h>
 #include <driver/temperature_sensor.h>
 #include <esp_log.h>
@@ -13,6 +18,11 @@
 #include <platform/CHIPDeviceLayer.h>
 
 #include "c3_temperature.h"
+
+// Root, occupancy sensor, Range, Radar resolution, Radar Bluetooth and chip temperature
+static_assert(CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT >= 6,
+              "CONFIG_PRESENCE_CHIP_TEMPERATURE needs CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=6 (see "
+              "sdkconfig.defaults)");
 
 static const char *TAG = "c3_temp";
 
@@ -100,3 +110,5 @@ void c3_temperature_start()
     }
     read_temperature(nullptr, nullptr);
 }
+
+#endif // CONFIG_PRESENCE_CHIP_TEMPERATURE

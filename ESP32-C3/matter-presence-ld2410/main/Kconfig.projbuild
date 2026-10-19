@@ -124,15 +124,19 @@ menu "Presence Sensor Configuration"
 
     config PRESENCE_CHIP_TEMPERATURE
         bool "Chip temperature in Home Assistant (Temperature Sensor endpoint 5)"
-        default y
+        default n
+        select SUPPORT_TEMPERATURE_MEASUREMENT_CLUSTER
         help
             Internal temperature sensor of the ESP32-C3, read every minute and
             reported when it changed by 0.5 °C (endpoint 5, device type
-            Temperature Sensor). Home Assistant shows it as a temperature
-            entity of the device, Apple Home as a temperature sensor. It is
-            the temperature of the chip, above the room temperature: it shows
-            whether the board gets hot. The LD2410 cannot report its own
-            temperature.
+            Temperature Sensor, with its own Identify). Home Assistant shows
+            it as a temperature entity of the device, Apple Home as a
+            temperature sensor. It is the temperature of the chip, above the
+            room temperature: it shows whether the board gets hot. The LD2410
+            cannot report its own temperature.
+            Off by default (on in 1.0.143 to 1.0.146, to find why the board
+            ran hot). Turning it on also needs
+            CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=6.
 
     config PRESENCE_WIFI_STAY_AWAKE
         bool "Keep Wi-Fi awake once BLE is released"
