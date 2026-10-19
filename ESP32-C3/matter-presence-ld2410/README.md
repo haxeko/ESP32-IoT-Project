@@ -172,7 +172,7 @@ Người dùng đo bằng entity này trên bo chạy 1.0.143: **80 °C** khi đ
 - bản Thread (ESP32-H2, không có Wi-Fi, tốn ít điện) chạy ổn định nhiều ngày;
 - ESPHome và Tasmota ở cùng chỗ không mất kết nối (chưa rõ chạy trên bo nào), mà ESPHome mặc định dùng modem sleep trên ESP32.
 
-**Bản 1.0.144 để Wi-Fi ở modem sleep** (`PRESENCE_WIFI_STAY_AWAKE` mặc định tắt). Cách kiểm chứng:
+**Bản 1.0.144 để Wi-Fi ở modem sleep** (`PRESENCE_WIFI_STAY_AWAKE` mặc định tắt). Người dùng đo với 1.0.144: **63 °C khi để bo ngoài hộp** (1.0.143: 80 °C), tức giảm 17 °C; trong hộp chưa đo. Ước tính từ hai lần đo này và các số dòng điện ở trên (chưa kiểm chứng): kể cả khi chip không tự toả nhiệt, chỗ đặt chip vẫn khoảng 50–55 °C. Nghĩa là phần nóng còn lại chủ yếu đến từ xung quanh, có thể là radar đặt sát, chứ không phải từ chip. Cách kiểm chứng:
 1. So sánh entity nhiệt độ trước và sau khi cập nhật, cùng chỗ đặt, cả ngoài hộp và trong hộp.
 2. So sánh lịch sử nhiệt độ với các lần *Unavailable* trong vài ngày.
 3. So sánh với bo còn lại. Nếu một bo nóng hơn hẳn bo kia dù cùng firmware và cùng điều kiện, bo đó có thể bị lỗi (mạch hạ áp, mối hàn).
@@ -557,6 +557,8 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
     - nhiệt độ chip ngoài hộp và trong hộp, so với 80 °C / 96 °C của 1.0.143;
     - số lần *Unavailable* và sự kiện `disconnection` trong vài ngày, so với 1.0.143;
     - nhiệt độ của bo còn lại, cùng firmware.
+
+    Người dùng báo với 1.0.144: 63 °C khi để ngoài hộp. Trong hộp và số lần *Unavailable* chưa có kết quả.
 
 Cũng chưa kiểm chứng: trả lời của lệnh 0x001B trên radar thật, nhận biết Bluetooth tắt qua địa chỉ giả, Apple Home không hiện Mode Select, biến thể `unique_setup` trên ESP32-C3.
 
