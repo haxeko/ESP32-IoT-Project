@@ -30,10 +30,15 @@ $CXX $FLAGS -o "$OUT/identity" test_identity.cpp $MAIN/device_name.cpp sim.cpp
 $CXX $FLAGS -o "$OUT/diag_report" test_diag_report.cpp sim.cpp
 $CXX $FLAGS -o "$OUT/net_watchdog" test_net_watchdog.cpp sim.cpp
 $CXX $FLAGS -o "$OUT/c3_temperature" test_c3_temperature.cpp sim.cpp
+FILTER="-DCONFIG_PRESENCE_ENERGY_FILTER=1 -DCONFIG_PRESENCE_ENERGY_FILTER_STRONG=15 -DCONFIG_PRESENCE_ENERGY_FILTER_FRAMES=3"
+$CXX $FLAGS $FILTER -o "$OUT/energy_filter" test_energy_filter.cpp radar_sim.cpp sim.cpp
+$CXX $FLAGS $FILTER -o "$OUT/worker_filter" test_worker_filter.cpp $MAIN/presence.cpp $MAIN/quiet_learn.cpp \
+    $MAIN/radar_settings.cpp $RADAR
 
 status=0
 for t in ld2410 settings learn_esp32 learn_radar worker presence presence_distance button led led_active_high led_ws2812 \
-    identity diag_report net_watchdog c3_temperature; do
+    identity diag_report net_watchdog c3_temperature energy_filter \
+    worker_filter; do
     "$OUT/$t" || status=1
 done
 [ $status -eq 0 ] && echo "All host tests passed" || echo "Host tests FAILED"

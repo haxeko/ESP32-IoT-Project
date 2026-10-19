@@ -14,6 +14,10 @@
 
 #include "presence.h"
 
+#if CONFIG_PRESENCE_ENERGY_FILTER
+#include "energy_filter.h"
+#endif
+
 static const char *TAG = "presence";
 
 static constexpr uint32_t kPollMs = 100;
@@ -31,6 +35,37 @@ bool presence_from_target(const ld2410_target_t *t, uint16_t max_cm)
     }
     return (t->moving && t->moving_cm <= max_cm) || (t->still && t->still_cm <= max_cm);
 }
+
+#if CONFIG_PRESENCE_ENERGY_FILTER
+// Logs what the energy filter did since the last poll (one event per poll at most).
+static void log_filter_event()
+{
+    energy_filter_state_t ev;
+    if (!energy_filter_take_event(&ev)) {
+        return;
+    }
+    const energy_filter_peak_t &p = ev.peak;
+    const char *kind = p.moving ? "moving" : "still";
+    switch (ev.event) {
+    case ENERGY_FILTER_STRONG:
+        ESP_LOGI(TAG, "Energy filter: %s gate %u energy %u, threshold %u (+%d): occupied at once", kind, p.gate,
+                 p.energy, p.threshold, p.excess);
+        break;
+    case ENERGY_FILTER_CONFIRMED:
+        ESP_LOGI(TAG, "Energy filter: %u reports in a row above a threshold (highest %s gate %u energy %u, "
+                      "threshold %u, +%d): occupied",
+                 ev.event_frames, kind, p.gate, p.energy, p.threshold, p.excess);
+        break;
+    case ENERGY_FILTER_IGNORED:
+        ESP_LOGI(TAG, "Energy filter: ignored %u report%s above a threshold (highest %s gate %u energy %u, "
+                      "threshold %u, +%d)",
+                 ev.event_frames, ev.event_frames == 1 ? "" : "s", kind, p.gate, p.energy, p.threshold, p.excess);
+        break;
+    case ENERGY_FILTER_NO_EVENT:
+        break;
+    }
+}
+#endif
 
 // Runs in its own task rather than an esp_timer callback: it logs and may wait for the Matter stack lock (in the
 // report callback), which must not stall the esp_timer task.
@@ -60,7 +95,15 @@ static void presence_task(void *arg)
         }
 
         // A silent radar counts as "no one", so the room does not stay occupied forever.
-        const bool now_present = fresh && presence_from_target(&t, CONFIG_PRESENCE_MAX_DISTANCE_CM);
+#if CONFIG_PRESENCE_ENERGY_FILTER
+        log_filter_event();
+        bool filtered = false;
+        const bool target = energy_filter_presence(&filtered) ? filtered
+                                                               : presence_from_target(&t, CONFIG_PRESENCE_MAX_DISTANCE_CM);
+#else
+        const bool target = presence_from_target(&t, CONFIG_PRESENCE_MAX_DISTANCE_CM);
+#endif
+        const bool now_present = fresh && target;
         if (now_present != present) {
             present = now_present;
             if (fresh) {
@@ -83,6 +126,9 @@ static void presence_task(void *arg)
 esp_err_t presence_start(presence_report_cb_t report)
 {
     s_report = report;
+#if CONFIG_PRESENCE_ENERGY_FILTER
+    energy_filter_start();
+#endif
     if (xTaskCreate(presence_task, "presence", kTaskStack, nullptr, kTaskPriority, nullptr) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }

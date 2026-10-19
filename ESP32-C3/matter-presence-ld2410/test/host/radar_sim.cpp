@@ -67,6 +67,11 @@ void RadarSim::ack(uint16_t command, uint16_t status, const std::vector<uint8_t>
     send(f, answer_late.count(command) ? kLateMs : delay_ms);
 }
 
+void RadarSim::power_cut()
+{
+    restart();
+}
+
 void RadarSim::restart()
 {
     restarts++;

@@ -23,6 +23,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <atomic>
+
 #include "ld2410.h"
 
 static const char *TAG = "ld2410";
@@ -89,6 +91,7 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static ld2410_target_t s_target;
 static bool s_has_target;
 static ld2410_capture_t *s_capture; // engineering reports are counted here while set
+static std::atomic<ld2410_report_hook_t> s_report_hook{nullptr};
 
 static QueueHandle_t s_ack_queue;
 static SemaphoreHandle_t s_cmd_mutex;
@@ -147,6 +150,20 @@ static void handle_target_payload(const uint8_t *p, size_t len)
         s_capture->frames++;
     }
     taskEXIT_CRITICAL(&s_lock);
+
+    const ld2410_report_hook_t hook = s_report_hook.load();
+    if (hook) {
+        ld2410_report_t report = {};
+        report.target = t;
+        report.engineering = moving_energy != nullptr;
+        if (moving_energy) {
+            report.moving_gates = (uint8_t)moving_gates;
+            report.still_gates = (uint8_t)still_gates;
+            memcpy(report.moving_energy, moving_energy, moving_gates);
+            memcpy(report.still_energy, still_energy, still_gates);
+        }
+        hook(&report);
+    }
 }
 
 static void handle_ack_payload(const uint8_t *p, size_t len)
@@ -238,6 +255,11 @@ bool ld2410_get_target(ld2410_target_t *out)
     *out = s_target;
     taskEXIT_CRITICAL(&s_lock);
     return has_target;
+}
+
+void ld2410_set_report_hook(ld2410_report_hook_t hook)
+{
+    s_report_hook = hook;
 }
 
 // Sends one command and waits for its ACK. ack_out (optional) receives the return value. Caller holds

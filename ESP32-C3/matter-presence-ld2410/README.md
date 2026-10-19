@@ -1,5 +1,7 @@
 # Matter Presence Sensor + học phòng trống (ESP32-C3 SuperMini + HLK-LD2410C, Wi-Fi)
 
+> **Nhánh thử nghiệm `claude/c3-wroom-esp-filter`.** Nhánh này thêm **bộ lọc năng lượng trên ESP32** (mục **Bộ lọc năng lượng trên ESP32**). Firmware build từ nhánh này mang phiên bản `1.0.<số commit>-espfilter`, và biến thể WROOM của nó có Model là `Presence LD2410 ESP filter`, để không lẫn với bản ổn định `1.0.x` của nhánh `claude/c3-matter-presence-rewrite`.
+
 Cảm biến hiện diện chuẩn Matter (device type **Occupancy Sensor 0x0107**) với radar 24 GHz **HLK-LD2410C**, chạy **Matter over Wi-Fi** trên **ESP32-C3 SuperMini**. Thêm trực tiếp vào Apple Home, Google Home, Home Assistant, SmartThings, Alexa... qua Wi-Fi nhà, không cần Thread Border Router. Radar LD2410 phát hiện được cả người ngồi yên (thở, cử động nhẹ), khác cảm biến PIR chỉ thấy chuyển động.
 
 Đây là bản **viết lại từ đầu** của firmware ESP32-C3 1.0.132 (`ESP32-C3/matter-wifi-presence`, dùng chung mã với thư mục ESP32-H2). Project này **tự chứa**: không dùng file nào của thư mục ESP32-H2, mã chỉ cho ESP32-C3. Chức năng, thuật toán, ngưỡng, thời gian, endpoint 1–4 và khoá lưu trữ giữ nguyên như 1.0.132 (từ 1.0.144 bản này để Wi-Fi ở modem sleep cho chip bớt nóng; endpoint 5 báo nhiệt độ chip là tuỳ chọn, mặc định tắt từ 1.0.147), nên **cập nhật OTA từ 1.0.132 lên bản này giữ nguyên ghép nối và các entity Home Assistant** (xem **Mức độ kiểm tra**: điều này mới kiểm chứng bằng so sánh cấu hình và build, chưa thử trên bo).
@@ -108,6 +110,57 @@ idf.py -B build-wroom -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.wroom \
 ```
 
 WS2812 trên SuperMini: chọn *Status LED* → *Addressable WS2812 RGB LED* trong `menuconfig`. Dây tín hiệu WS2812 nằm ở mức thấp khi rảnh, nên nếu dùng GPIO8 thì LED xanh có sẵn của SuperMini (sáng khi GPIO8 ở mức thấp) sẽ sáng mãi; dùng chân khác cho WS2812 thì tốt hơn.
+
+## Bộ lọc năng lượng trên ESP32 (thử nghiệm, `PRESENCE_ENERGY_FILTER`)
+
+**Vấn đề:** radar thỉnh thoảng báo có người khi phòng trống, do một xung nhỏ vượt ngưỡng. LD2410 báo có người ngay khi **một** báo cáo (khoảng 100 ms) có năng lượng vượt ngưỡng ở một gate. Sau đó radar tự giữ trạng thái đó thêm **no-one duration** (5 s). Cộng Hold time, một xung nhiễu làm phòng "có người" khoảng 35 s.
+
+**Cách bộ lọc làm:**
+- ESP giữ radar ở **engineering mode**: mỗi báo cáo có năng lượng di chuyển và đứng yên của 9 gate.
+- ESP so năng lượng với **ngưỡng đang lưu trong radar** (đọc bằng lệnh 0x0061, đọc lại sau mỗi lần học phòng trống hoặc ghi ngưỡng mặc định) và với **Range**.
+- Gate đứng yên chỉ tính từ gate 2, như radar (ngưỡng đứng yên của gate 0 và 1 không đặt được).
+- **Khi phòng đang trống**, một báo cáo được tính là "vượt" khi radar báo có người **và** có gate vượt ngưỡng:
+  - vượt ngưỡng **từ 15 trở lên**: báo có người **ngay**, nhanh như không có bộ lọc;
+  - vượt ít hơn: phải có **3 báo cáo vượt liên tiếp** (khoảng 0,3 s). Một báo cáo không vượt thì đếm lại từ đầu.
+- Bộ lọc đếm theo **năng lượng của từng báo cáo**, không theo cờ "có người" của radar, vì radar còn giữ cờ đó 5 s sau một xung nhiễu.
+- **Khi đã có người:** radar tự quyết định như khi không có bộ lọc (giữ có người khi radar còn thấy, cộng no-one duration và Hold time).
+- **Bộ lọc chỉ bỏ bớt, không bao giờ báo có người khi radar không báo.** Không ghi gì vào radar.
+- **Không có dữ liệu năng lượng** (engineering mode vừa mất do radar khởi động lại, hoặc ngay sau khi học phòng trống trên ESP32): radar tự quyết định. Task `radar_cfg` kiểm tra mỗi 2 s và bật lại engineering mode, tối đa 10 s một lần.
+
+**Log** (tag `presence`, cần cắm USB):
+```
+I presence: Energy filter: ignored 1 report above a threshold (highest moving gate 3 energy 35, threshold 30, +5)
+I presence: Energy filter: moving gate 3 energy 70, threshold 30 (+40): occupied at once
+I presence: Energy filter: 3 reports in a row above a threshold (highest still gate 4 energy 36, threshold 30, +6): occupied
+I radar_ctl: Engineering mode on: the energy of every gate for the energy filter
+```
+
+**Tuỳ chọn** (`menuconfig` → *ESP32 Energy Filter (experimental)*, không thêm entity nào):
+
+| Tuỳ chọn | Mặc định | Ý nghĩa |
+|---|---|---|
+| `PRESENCE_ENERGY_FILTER` | tắt (bật trong biến thể `espfilter`) | Bật bộ lọc |
+| `PRESENCE_ENERGY_FILTER_STRONG` | 15 | Vượt ngưỡng từng này trở lên thì báo có người ngay |
+| `PRESENCE_ENERGY_FILTER_FRAMES` | 3 | Số báo cáo vượt liên tiếp cần cho xung yếu |
+
+**Biến thể `espfilter`** cho bo ESP32-C3-WROOM-02-N4: gồm mọi thứ của `wroom_n4` (LED WS2812 GPIO8, nhiệt độ chip), cộng bộ lọc và Model `Presence LD2410 ESP filter`.
+
+```bash
+idf.py -B build-espfilter -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.espfilter \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.wroom_n4;sdkconfig.defaults.espfilter" build
+```
+
+**Phiên bản và tên:**
+- Phiên bản hiện trong Home Assistant là `1.0.<số commit>-espfilter`. Số dùng cho OTA vẫn là số commit.
+- OTA từ bản ổn định lên bản này được, vì số commit lớn hơn.
+- Muốn quay về bản ổn định bằng OTA thì bản ổn định phải có số commit lớn hơn bản này. Nếu không, nạp USB.
+- Hai dòng firmware cùng VID/PID nên Matter Server không phân biệt được; chỉ cập nhật bo WROOM bằng file `-espfilter`.
+
+**Quay lại cách cũ:** OTA bản không có bộ lọc. Radar không bị ghi gì nên chạy như cũ ngay.
+
+**Mức độ kiểm chứng:**
+- Thuật toán, việc dùng bộ lọc trong task presence, và việc bật lại engineering mode, đọc lại ngưỡng trong task `radar_cfg` đều có host test (radar giả lập).
+- Ngưỡng 15 và 3 báo cáo là giá trị ban đầu, **cần chỉnh theo log trên bo thật**.
 
 ## Hold time, Radar Bluetooth, Radar resolution và Range
 
@@ -383,6 +436,7 @@ Tên các tuỳ chọn giữ như bản 1.0.132; menu *Connection Watchdog* và 
 | | `RESET_BUTTON_GPIO` | 9 | −1 (không có nút) – 21 |
 | | `PRESENCE_CHIP_TEMPERATURE` (endpoint 5: nhiệt độ chip, mới; bật thì cần `ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=6`) | tắt (bật ở 1.0.143–1.0.146) | |
 | | `PRESENCE_WIFI_STAY_AWAKE` (tắt modem sleep sau khi BLE tắt; 1.0.132 bật) | tắt | |
+| ESP32 Energy Filter (thử nghiệm) | `PRESENCE_ENERGY_FILTER` / `_STRONG` / `_FRAMES` | tắt / 15 / 3 | – / 1–100 / 2–20 |
 | Empty Room Learning | `LD2410_LEARN_DELAY_SEC` / `LD2410_LEARN_DURATION_SEC` | 20 / 60 s | 0–120 / 10–300 |
 | | `LD2410_LEARN_RADAR_AUTO` | bật | |
 | | `LD2410_LEARN_PERCENTILE` / `_MARGIN` / `_MAX_RAISE` | 95 / 10 / 30 | 50–100 / 0–50 / 0–100 |
@@ -551,7 +605,7 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
   - Wi-Fi modem sleep (`PRESENCE_WIFI_STAY_AWAKE` tắt, mã tắt modem sleep không được build): bớt 672 byte flash, RAM tĩnh không đổi (so với 1.0.143);
   - nhiệt độ chip thành tuỳ chọn tắt sẵn (1.0.147): bớt 7 152 byte flash và 440 byte RAM tĩnh (so với 1.0.144). Bật lại thì kích thước đúng bằng 1.0.144;
   - WS2812 và tên bo (1.0.149): bản mặc định thêm 160 byte flash, RAM tĩnh không đổi (driver RMT không được build). Biến thể `wroom_n4` (WS2812 và nhiệt độ chip) lớn hơn 1.0.144 18 288 byte flash và 2 444 byte RAM tĩnh: driver RMT và thư viện `led_strip`.
-- Host test (`test/host/run.sh`, 15 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED (một màu và màu WS2812), tên thiết bị, lúc nào gửi lại Wi-Fi RSSI và Uptime, việc watchdog kết nối làm theo thời gian không có subscription, đổi và gửi nhiệt độ chip. Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ. Làm hỏng thêm 10 chỗ trong `diag_report.h`, 12 chỗ trong `net_watchdog.h`, 7 chỗ trong `c3_temperature.h` và 6 chỗ ở phần WS2812 của `status_led.cpp` (màu, độ sáng, chân, chỉ gửi khi đổi màu): test bắt được tất cả.
+- Host test (`test/host/run.sh`, 17 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED (một màu và màu WS2812), tên thiết bị, lúc nào gửi lại Wi-Fi RSSI và Uptime, việc watchdog kết nối làm theo thời gian không có subscription, đổi và gửi nhiệt độ chip, bộ lọc năng lượng trên ESP32 (thuật toán, task presence, task `radar_cfg` bật lại engineering mode và đọc lại ngưỡng). Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ. Làm hỏng thêm 10 chỗ trong `diag_report.h`, 12 chỗ trong `net_watchdog.h`, 7 chỗ trong `c3_temperature.h` 6 chỗ ở phần WS2812 của `status_led.cpp` (màu, độ sáng, chân, chỉ gửi khi đổi màu) và 25 chỗ của bộ lọc năng lượng (`energy_filter`, `presence.cpp`, `radar_worker.cpp`, driver): test bắt được tất cả.
 - Phần gửi lại Wi-Fi RSSI và Uptime: chỉ phần quyết định được test trên máy tính. Lời gọi Matter (`MatterReportingAttributeChangeCallback`, timer của Matter) mới kiểm chứng bằng build và bằng đọc mã nguồn Matter SDK, esp-matter, Home Assistant (đánh dấu đã đổi → subscription gửi lại; Home Assistant cập nhật theo giá trị).
 
 **Đã thấy chạy trên bo, nhưng với firmware cũ** (log của người dùng; theo README cũ là các bản 1.0.128–1.0.131, cùng thuật toán và mã radar): ghép nối với Apple Home và Home Assistant (3 controller cùng lúc), đọc radar, radar tự đo phòng trống (lệnh 0x000B), *Factory thresholds* từ Home Assistant; bật Bluetooth của radar (0x00A4 + 0x00A3, đọc MAC bằng 0x00A5) trên radar V2.44.25070917.
@@ -597,6 +651,14 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
     - log `Target esp32c3, board ESP32-C3-WROOM-02-N4` và `LED GPIO8 (WS2812)`;
     - LED WS2812: xanh dương nháy chậm khi chờ ghép nối, trắng nháy nhanh khi *Identify*, cyan / xanh lá / đỏ / tím khi học phòng trống và ghi ngưỡng mặc định;
     - radar trên GPIO3/GPIO4 và nút GPIO9 chạy như trên SuperMini; entity nhiệt độ chip có trong Home Assistant.
+18. Bộ lọc năng lượng (biến thể `espfilter`), cắm USB xem log:
+    - lúc khởi động: `Engineering mode on: the energy of every gate for the energy filter`;
+    - Home Assistant hiện Model `Presence LD2410 ESP filter` và firmware `1.0.<n>-espfilter`;
+    - phòng trống vài giờ: các xung nhỏ hiện `Energy filter: ignored ...`, phòng không bị báo có người;
+    - người đi vào: `occupied at once` và đèn bật nhanh như trước; người vào chậm hoặc ở xa: `3 reports in a row ...`;
+    - ngồi im 10 phút: vẫn có người; rời phòng: hết người sau no-one duration + Hold time như trước;
+    - đổi Radar resolution hoặc rút điện radar: `Engineering mode on` lại trong vài giây;
+    - học phòng trống: ngưỡng mới được dùng (log `ignored ... threshold` theo ngưỡng mới).
 
 Cũng chưa kiểm chứng: trả lời của lệnh 0x001B trên radar thật, nhận biết Bluetooth tắt qua địa chỉ giả, Apple Home không hiện Mode Select, biến thể `unique_setup` trên ESP32-C3.
 
@@ -616,6 +678,7 @@ matter-presence-ld2410/
 ├── sdkconfig.defaults              # Wi-Fi, BLE thu gọn, log USB, PID 0x8001, chân SuperMini, 21 cluster
 ├── sdkconfig.defaults.unique_setup # mã ghép nối riêng từng bo (tuỳ chọn)
 ├── sdkconfig.defaults.wroom_n4     # bo ESP32-C3-WROOM-02-N4: LED WS2812 GPIO8, nhiệt độ chip (tuỳ chọn)
+├── sdkconfig.defaults.espfilter    # bộ lọc năng lượng trên ESP32, Model riêng (dùng cùng wroom_n4)
 ├── partitions.csv                  # 4 MB, 2 phân vùng OTA (giống hệt 1.0.132)
 ├── README.md
 ├── main/
@@ -625,6 +688,7 @@ matter-presence-ld2410/
 │   ├── presence.cpp                # task presence: radar -> Occupancy Sensing
 │   ├── radar_control.cpp           # 4 Mode Select (Learn empty room, Range, Radar resolution, Radar Bluetooth)
 │   ├── c3_temperature.cpp          # endpoint 5: nhiệt độ chip ESP32-C3 (tuỳ chọn, mặc định tắt)
+│   ├── energy_filter.cpp/.h        # bộ lọc năng lượng trên ESP32 (thử nghiệm, mặc định tắt)
 │   ├── radar_worker.cpp            # task radar_cfg: yêu cầu, lựa chọn cuối cùng thắng, Bluetooth của radar (NVS)
 │   ├── radar_settings.cpp          # một phiên thông số với radar, định dạng nhãn
 │   ├── quiet_learn.cpp             # học phòng trống (radar tự đo / ESP32), ngưỡng mặc định

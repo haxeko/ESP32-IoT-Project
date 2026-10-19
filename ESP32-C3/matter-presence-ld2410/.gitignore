@@ -7,3 +7,5 @@ build-unique/
 sdkconfig.unique
 build-wroom/
 sdkconfig.wroom
+build-espfilter/
+sdkconfig.espfilter

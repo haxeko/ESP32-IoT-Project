@@ -188,6 +188,44 @@ menu "Presence Sensor Configuration"
 
 endmenu
 
+menu "ESP32 Energy Filter (experimental)"
+
+    config PRESENCE_ENERGY_FILTER
+        bool "Confirm weak radar detections on the ESP32"
+        default n
+        help
+            Keeps the radar in engineering mode (the energy of every gate in
+            each report, about 10 reports per second) and compares the
+            energies with the radar's own thresholds and Range. While the room
+            is empty, an energy far enough above its threshold makes it
+            occupied at once; weaker ones need several reports above a
+            threshold in a row, so a single report slightly above a threshold
+            (noise) no longer makes the room occupied. Once occupied, the
+            radar decides alone, as without this option. The filter never
+            reports someone the radar does not, and nothing is written to the
+            radar. The log tells each decision (tag "presence").
+
+    config PRESENCE_ENERGY_FILTER_STRONG
+        int "Energy above the threshold that confirms at once"
+        depends on PRESENCE_ENERGY_FILTER
+        range 1 100
+        default 15
+        help
+            A report with a gate energy at least this much above the gate's
+            threshold makes the empty room occupied at once (energies and
+            thresholds 0-100).
+
+    config PRESENCE_ENERGY_FILTER_FRAMES
+        int "Reports in a row that confirm a weaker detection"
+        depends on PRESENCE_ENERGY_FILTER
+        range 2 20
+        default 3
+        help
+            A weaker detection makes the empty room occupied once this many
+            reports in a row (about 100 ms each) are above a threshold.
+
+endmenu
+
 menu "Empty Room Learning"
 
     config LD2410_LEARN_DELAY_SEC

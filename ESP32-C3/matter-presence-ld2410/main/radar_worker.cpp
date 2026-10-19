@@ -7,6 +7,7 @@
 */
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <inttypes.h>
@@ -21,6 +22,10 @@
 
 #include "quiet_learn.h"
 #include "radar_worker.h"
+
+#if CONFIG_PRESENCE_ENERGY_FILTER
+#include "energy_filter.h"
+#endif
 
 static const char *TAG = "radar_ctl";
 
@@ -121,6 +126,37 @@ static void set_bt_choice(bool on)
 static radar_settings_t s_settings; // last settings read from the radar (s_synced)
 static esp_err_t s_session_err;     // result of the last session
 
+#if CONFIG_PRESENCE_ENERGY_FILTER
+// The energy filter needs the engineering mode, which the radar leaves at each restart (Radar resolution, Radar
+// Bluetooth, power) and the learning on the ESP32 turns off: checked every 2 s, turned on again at most every 10 s.
+static constexpr uint32_t kEngineeringCheckMs = 2000;
+static constexpr int64_t kEngineeringRetryMs = 10 * 1000;
+static int64_t s_engineering_tried_ms = -kEngineeringRetryMs;
+static bool s_thresholds_changed; // a learning or the factory thresholds ran: read the thresholds again
+
+static void keep_engineering_mode()
+{
+    const int64_t now_ms = esp_timer_get_time() / 1000;
+    if (!energy_filter_needs_engineering(now_ms) || now_ms - s_engineering_tried_ms < kEngineeringRetryMs) {
+        return;
+    }
+    s_engineering_tried_ms = now_ms;
+    esp_err_t err = ld2410_config_begin();
+    if (err == ESP_OK) {
+        err = ld2410_set_engineering_mode(true);
+        const esp_err_t end_err = ld2410_config_end();
+        if (err == ESP_OK) {
+            err = end_err;
+        }
+    }
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Engineering mode on: the energy of every gate for the energy filter");
+    } else {
+        ESP_LOGW(TAG, "Could not turn the engineering mode on (err:%d), the radar decides alone meanwhile", err);
+    }
+}
+#endif
+
 static void log_settings(const char *what, const radar_settings_t &settings)
 {
     const ld2410_config_t &cfg = settings.config;
@@ -178,6 +214,9 @@ static bool settings_session(const radar_settings_request_t &want)
     }
     s_settings = now;
     s_synced = true;
+#if CONFIG_PRESENCE_ENERGY_FILTER
+    energy_filter_configure(&now);
+#endif
     show_settings(now);
     return true;
 }
@@ -230,6 +269,9 @@ static void run_requested_learning()
     show_learn_mode(RADAR_LEARN_ON);
     // gate_cm is 0 (unknown) before the radar settings were read
     const quiet_learn_result_t result = quiet_learn_run(learning_cancelled, show_learning_phase, s_settings.gate_cm);
+#if CONFIG_PRESENCE_ENERGY_FILTER
+    s_thresholds_changed = true;
+#endif
     // On or blinking for 10 s; back to normal at once when cancelled
     status_led_set_learning(result == QUIET_LEARN_SAVED    ? STATUS_LED_LEARNING_DONE
                             : result == QUIET_LEARN_FAILED ? STATUS_LED_LEARNING_FAILED
@@ -258,6 +300,9 @@ static void run_requested_factory_thresholds()
     // Shown already when chosen in Home Assistant; covers the button.
     show_learn_mode(RADAR_LEARN_FACTORY);
     const bool restored = quiet_learn_restore_factory();
+#if CONFIG_PRESENCE_ENERGY_FILTER
+    s_thresholds_changed = true;
+#endif
     status_led_set_learning(restored ? STATUS_LED_LEARNING_FACTORY : STATUS_LED_LEARNING_FAILED);
     // Nothing chosen meanwhile (no learning, no new factory thresholds)
     taskENTER_CRITICAL(&s_requests_lock);
@@ -295,6 +340,15 @@ static void radar_task(void *arg)
         }
         run_requested_factory_thresholds();
         run_requested_learning();
+#if CONFIG_PRESENCE_ENERGY_FILTER
+        if (!stale && s_thresholds_changed) {
+            s_thresholds_changed = false;
+            stale = !settings_session(radar_settings_request_t{});
+        }
+        if (!stale) {
+            keep_engineering_mode();
+        }
+#endif
 
         TickType_t wait = portMAX_DELAY;
         if (stale) {
@@ -309,6 +363,9 @@ static void radar_task(void *arg)
             retry_ms = std::min(retry_ms * 2, kSyncRetryMaxMs);
         } else {
             retry_ms = kSyncRetryFirstMs;
+#if CONFIG_PRESENCE_ENERGY_FILTER
+            wait = pdMS_TO_TICKS(kEngineeringCheckMs);
+#endif
         }
         ulTaskNotifyTake(pdTRUE, wait);
     }

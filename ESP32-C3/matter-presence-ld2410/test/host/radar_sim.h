@@ -68,6 +68,8 @@ struct RadarSim {
     ~RadarSim();
     // Registers the radar with the simulation (call after sim_reset()).
     void attach();
+    // Power cut: the radar restarts as after 0x00A3 (stored settings kept, engineering mode off).
+    void power_cut();
     // Names of the commands received, e.g. "00FF 0061 00FE"
     std::string command_list() const;
     int count(uint16_t command) const;
