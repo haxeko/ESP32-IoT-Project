@@ -156,10 +156,15 @@ idf.py -B build-espfilter -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.espfilter
 - Muốn quay về bản ổn định bằng OTA thì bản ổn định phải có số commit lớn hơn bản này. Nếu không, nạp USB.
 - Hai dòng firmware cùng VID/PID nên Matter Server không phân biệt được; chỉ cập nhật bo WROOM bằng file `-espfilter`.
 
-**Quay lại cách cũ:** OTA bản không có bộ lọc. Radar không bị ghi gì nên chạy như cũ ngay.
+**Quay lại bản ổn định:** radar không bị ghi gì (engineering mode mất khi radar khởi động lại), nên chỉ cần nạp lại firmware ổn định `wroom_n4`:
+- OTA bản ổn định có số commit lớn hơn bản `-espfilter` đang chạy: giữ ghép nối;
+- hoặc nạp USB bằng `idf.py flash` từ bản build ổn định (ghi cả `otadata`): giữ ghép nối;
+- file merged ghi đè vùng NVS: phải ghép nối lại.
 
 **Mức độ kiểm chứng:**
 - Thuật toán, việc dùng bộ lọc trong task presence, và việc bật lại engineering mode, đọc lại ngưỡng trong task `radar_cfg` đều có host test (radar giả lập).
+- Build biến thể `espfilter` 1.0.151: **0 lỗi, 0 cảnh báo**. `sdkconfig` chỉ khác `wroom_n4` của bản ổn định (1.0.150) ở Model và 3 tuỳ chọn của bộ lọc: cùng VID/PID, cluster, endpoint, Wi-Fi. Header file OTA: VID `0xFFF1`, PID `0x8001`, phiên bản 151 / `1.0.151-espfilter`.
+- **Chưa thử trên bo:** việc đọc năng lượng từ radar thật, các log, và việc bộ lọc có thật sự chặn được xung nhiễu (mục **Mức độ kiểm tra**, bước 18).
 - Ngưỡng 15 và 3 báo cáo là giá trị ban đầu, **cần chỉnh theo log trên bo thật**.
 
 ## Hold time, Radar Bluetooth, Radar resolution và Range
@@ -507,6 +512,7 @@ Watchdog kiểm tra 30 s một lần. Khi thiết bị **đã ghép nối** mà 
 | Biến thể `unique_setup` (1.0.147) | | 1 516 528 B |
 | Bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6; 1.0.147) | | 1 521 536 B, RAM tĩnh 150 983 B (như 1.0.144) |
 | Biến thể `wroom_n4` (WS2812 và nhiệt độ chip) | | 1 539 824 B (trống 22 %), RAM tĩnh 153 427 B, heap 167 869 B |
+| Biến thể `espfilter` (`wroom_n4` và bộ lọc năng lượng; nhánh `claude/c3-wroom-esp-filter`, 1.0.151) | | 1 542 016 B (trống 22 %), RAM tĩnh 153 531 B, heap 167 765 B |
 
 Task và stack (byte; số "còn trống" đo trên bo với bản 1.0.128–1.0.131, mã các task này không đổi):
 
@@ -594,9 +600,9 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 ## Mức độ kiểm tra
 
 **Đã kiểm chứng bằng build và test trên máy tính (bản này):**
-- Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định, biến thể `unique_setup` và bản bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6) ở 1.0.147; bản mặc định và biến thể `wroom_n4` ở 1.0.149.
+- Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định, biến thể `unique_setup` và bản bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6) ở 1.0.147; bản mặc định và biến thể `wroom_n4` ở 1.0.149; biến thể `espfilter` ở 1.0.151 (nhánh `claude/c3-wroom-esp-filter`).
 - `sdkconfig` sinh ra giống hệt bản 1.0.132 build trong cùng image, trừ đường dẫn file, mục chọn loại LED đã bỏ, 5 tuỳ chọn mới (`DIAG_REPORT_RSSI_STEP_DB`, `DIAG_REPORT_REFRESH_MIN`, `NET_WATCHDOG_RECONNECT_MIN`, `NET_WATCHDOG_RESTART_MIN`, `PRESENCE_CHIP_TEMPERATURE` tắt) và `PRESENCE_WIFI_STAY_AWAKE` tắt: Wi-Fi bật, OpenThread tắt, BLE chỉ để ghép nối, minimal mDNS, cửa sổ ghép nối 900 s, VID `0xFFF1` / PID `0x8001`, WPA3 SAE, coexistence, stack CHIP 8192, CPU 160 MHz, brownout bật, đúng 21 cluster và giới hạn endpoint động 5 như 1.0.132. So với 1.0.144 chỉ khác 3 điểm: `PRESENCE_CHIP_TEMPERATURE` tắt, cluster Temperature Measurement tắt, giới hạn endpoint động 5. Build với `PRESENCE_CHIP_TEMPERATURE` và giới hạn 6 thì `sdkconfig` giống hệt 1.0.144 (22 cluster: tuỳ chọn tự bật lại cluster Temperature Measurement).
-- Header file OTA (bản build 1.0.149, biến thể `wroom_n4`): VID `0xFFF1`, PID `0x8001`, phiên bản 149 / `1.0.149` (lớn hơn 132).
+- Header file OTA (bản build 1.0.149, biến thể `wroom_n4`): VID `0xFFF1`, PID `0x8001`, phiên bản 149 / `1.0.149` (lớn hơn 132). Biến thể `espfilter` (1.0.151): cùng VID/PID, phiên bản 151 / `1.0.151-espfilter`.
 - Thứ tự tạo endpoint 0–4 giống 1.0.132; esp-matter (`esp_matter_data_model.cpp`) cấp số endpoint theo thứ tự tạo trước `esp_matter::start()`, nên số endpoint giữ nguyên. Endpoint 5 (nhiệt độ chip, chỉ khi bật `PRESENCE_CHIP_TEMPERATURE`) được tạo sau cùng.
 - Kích thước so với 1.0.132 (bảng **RAM và flash**): lớn hơn 1 440 byte flash, RAM tĩnh ít hơn 22 byte. Phần thêm vào và bớt đi:
   - `diag_report` (báo cáo lại Wi-Fi RSSI và Uptime): 416 byte flash, 16 byte RAM tĩnh (so với 1.0.139);
@@ -605,6 +611,7 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
   - Wi-Fi modem sleep (`PRESENCE_WIFI_STAY_AWAKE` tắt, mã tắt modem sleep không được build): bớt 672 byte flash, RAM tĩnh không đổi (so với 1.0.143);
   - nhiệt độ chip thành tuỳ chọn tắt sẵn (1.0.147): bớt 7 152 byte flash và 440 byte RAM tĩnh (so với 1.0.144). Bật lại thì kích thước đúng bằng 1.0.144;
   - WS2812 và tên bo (1.0.149): bản mặc định thêm 160 byte flash, RAM tĩnh không đổi (driver RMT không được build). Biến thể `wroom_n4` (WS2812 và nhiệt độ chip) lớn hơn 1.0.144 18 288 byte flash và 2 444 byte RAM tĩnh: driver RMT và thư viện `led_strip`.
+  - bộ lọc năng lượng (biến thể `espfilter`, 1.0.151): lớn hơn `wroom_n4` 1.0.149 2 192 byte flash và 104 byte RAM tĩnh.
 - Host test (`test/host/run.sh`, 17 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED (một màu và màu WS2812), tên thiết bị, lúc nào gửi lại Wi-Fi RSSI và Uptime, việc watchdog kết nối làm theo thời gian không có subscription, đổi và gửi nhiệt độ chip, bộ lọc năng lượng trên ESP32 (thuật toán, task presence, task `radar_cfg` bật lại engineering mode và đọc lại ngưỡng). Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ. Làm hỏng thêm 10 chỗ trong `diag_report.h`, 12 chỗ trong `net_watchdog.h`, 7 chỗ trong `c3_temperature.h` 6 chỗ ở phần WS2812 của `status_led.cpp` (màu, độ sáng, chân, chỉ gửi khi đổi màu) và 25 chỗ của bộ lọc năng lượng (`energy_filter`, `presence.cpp`, `radar_worker.cpp`, driver): test bắt được tất cả.
 - Phần gửi lại Wi-Fi RSSI và Uptime: chỉ phần quyết định được test trên máy tính. Lời gọi Matter (`MatterReportingAttributeChangeCallback`, timer của Matter) mới kiểm chứng bằng build và bằng đọc mã nguồn Matter SDK, esp-matter, Home Assistant (đánh dấu đã đổi → subscription gửi lại; Home Assistant cập nhật theo giá trị).
 
