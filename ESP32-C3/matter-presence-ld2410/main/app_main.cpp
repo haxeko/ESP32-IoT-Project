@@ -19,6 +19,7 @@
 //     and UpTime reported again by diag_report.cpp)
 //   1 Occupancy Sensor: Occupancy Sensing (Radar, HoldTime), Identify, Mode Select "Learn empty room"
 //   2, 3, 4 Mode Select: "Range", "Radar resolution", "Radar Bluetooth" (radar_control.cpp)
+//   5 Temperature Sensor: temperature of the ESP32-C3 chip (c3_temperature.cpp, CONFIG_PRESENCE_CHIP_TEMPERATURE)
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
@@ -46,6 +47,7 @@
 #include <drivers/user_button.h>
 
 #include "board.h"
+#include "c3_temperature.h"
 #include "device_info.h"
 #include "diag_report.h"
 #include "identity_diag.h"
@@ -212,6 +214,9 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     case chip::DeviceLayer::DeviceEventType::kServerReady:
         apply_hold_time_config();
         diag_report_start();
+#if CONFIG_PRESENCE_CHIP_TEMPERATURE
+        c3_temperature_start();
+#endif
         if (!is_commissioned()) {
             setup_code_print(false); // the SDK opened the boot commissioning window (BLE and network)
         }
@@ -316,6 +321,13 @@ static esp_err_t start_matter()
     if (!radar_control) {
         ESP_LOGE(TAG, "Failed to create the LD2410 controls");
     }
+
+#if CONFIG_PRESENCE_CHIP_TEMPERATURE
+    // Endpoint 5. Only after the radar controls, which would otherwise leave it a lower number.
+    if (radar_control && c3_temperature_create() != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create the chip temperature sensor");
+    }
+#endif
 
     // Per-board setup code (sdkconfig.defaults.unique_setup); nothing to do in the default build
     setup_code_init();

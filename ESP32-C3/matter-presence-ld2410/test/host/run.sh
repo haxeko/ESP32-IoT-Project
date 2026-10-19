@@ -27,10 +27,11 @@ $CXX $FLAGS -DCONFIG_STATUS_LED_ACTIVE_HIGH=1 -o "$OUT/led_active_high" test_led
 $CXX $FLAGS -o "$OUT/identity" test_identity.cpp $MAIN/device_name.cpp sim.cpp
 $CXX $FLAGS -o "$OUT/diag_report" test_diag_report.cpp sim.cpp
 $CXX $FLAGS -o "$OUT/net_watchdog" test_net_watchdog.cpp sim.cpp
+$CXX $FLAGS -o "$OUT/c3_temperature" test_c3_temperature.cpp sim.cpp
 
 status=0
 for t in ld2410 settings learn_esp32 learn_radar worker presence presence_distance button led led_active_high identity \
-    diag_report net_watchdog; do
+    diag_report net_watchdog c3_temperature; do
     "$OUT/$t" || status=1
 done
 [ $status -eq 0 ] && echo "All host tests passed" || echo "Host tests FAILED"
