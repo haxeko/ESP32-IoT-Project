@@ -112,6 +112,7 @@ static void set_wifi_tx_power()
 #endif
 }
 
+#if CONFIG_APP_WIFI_POWER_SAVE_OFF
 /* BLE is off: never started (already commissioned) or stopped after commissioning. The controller status is kept
  * outside the BLE memory that is given back to the heap. */
 static bool ble_off()
@@ -122,6 +123,7 @@ static bool ble_off()
     return true;
 #endif
 }
+#endif
 
 /* ESP-IDF lets the Wi-Fi radio sleep between beacons by default (WIFI_PS_MIN_MODEM): multicast frames wait for the
  * next DTIM beacon, and can get lost with some routers. Controllers find the device with multicast (mDNS, IPv6
