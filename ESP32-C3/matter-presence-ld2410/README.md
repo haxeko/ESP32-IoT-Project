@@ -22,7 +22,7 @@ Trong Home Assistant có thêm 5 điều khiển (Apple Home không hiện): **H
 | Biến thể build | mặc định, `unique_setup`, `factory` | mặc định, `unique_setup` (`factory` bỏ: PAI test chỉ cấp DAC cho PID `0x8000`) |
 | Mã Thread/OpenThread (`thread_diag`, phần OpenThread của `id_diag`, OT CLI) | có, tắt khi build C3 | bỏ |
 | Tên file build | `matter_presence_c3_wifi*` | giống hệt |
-| Kích thước (`idf.py size`, cùng Docker image) | 1 478 KB, RAM tĩnh 147,0 KB | 1 486 KB, RAM tĩnh 147,4 KB (lớn hơn 8 432 byte flash và 418 byte RAM vì có thêm `diag_report`, `net_watchdog` và endpoint nhiệt độ chip; mã tắt modem sleep không còn được build) |
+| Kích thước (`idf.py size`, cùng Docker image) | 1 478 KB, RAM tĩnh 147,0 KB | 1 479 KB, RAM tĩnh 147,0 KB (lớn hơn 1 280 byte flash vì có thêm `diag_report` và `net_watchdog`, RAM tĩnh ít hơn 22 byte; mã tắt modem sleep và nhiệt độ chip không được build) |
 
 Thay đổi cấu trúc mã (không đổi hành vi):
 - `radar_control.cpp` tách thành phần Matter (`radar_control.cpp`: 4 Mode Select) và phần logic (`radar_worker.cpp`: task `radar_cfg`, các yêu cầu, "lựa chọn cuối cùng thắng", Bluetooth của radar), để chạy được test trên máy tính.
@@ -425,10 +425,11 @@ Watchdog kiểm tra 30 s một lần. Khi thiết bị **đã ghép nối** mà 
 
 | | 1.0.132 (`matter-wifi-presence`) | Bản này |
 |---|---|---|
-| Firmware (phân vùng app 1 920 KB) | 1 513 104 B (1 478 KB), trống 23 % | 1 521 536 B (1 486 KB), trống 23 % |
-| RAM tĩnh (DRAM 313,8 KB) | 150 565 B (147,0 KB, 46,86 %) | 150 983 B (147,4 KB, 46,99 %) |
-| Còn cho heap | 170 731 B (166,7 KB) | 170 313 B (166,3 KB) |
-| Biến thể `unique_setup` | | 1 523 680 B |
+| Firmware (phân vùng app 1 920 KB) | 1 513 104 B (1 478 KB), trống 23 % | 1 514 384 B (1 479 KB), trống 23 % |
+| RAM tĩnh (DRAM 313,8 KB) | 150 565 B (147,0 KB, 46,86 %) | 150 543 B (147,0 KB, 46,85 %) |
+| Còn cho heap | 170 731 B (166,7 KB) | 170 753 B (166,8 KB) |
+| Biến thể `unique_setup` | | 1 516 528 B |
+| Bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6) | | 1 521 536 B, RAM tĩnh 150 983 B (như 1.0.144) |
 
 Task và stack (byte; số "còn trống" đo trên bo với bản 1.0.128–1.0.131, mã các task này không đổi):
 
@@ -516,15 +517,16 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 ## Mức độ kiểm tra
 
 **Đã kiểm chứng bằng build và test trên máy tính (bản này):**
-- Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định và biến thể `unique_setup`.
+- Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định, biến thể `unique_setup` và bản bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6).
 - `sdkconfig` sinh ra giống hệt bản 1.0.132 build trong cùng image, trừ đường dẫn file, mục chọn loại LED đã bỏ, 5 tuỳ chọn mới (`DIAG_REPORT_RSSI_STEP_DB`, `DIAG_REPORT_REFRESH_MIN`, `NET_WATCHDOG_RECONNECT_MIN`, `NET_WATCHDOG_RESTART_MIN`, `PRESENCE_CHIP_TEMPERATURE` tắt) và `PRESENCE_WIFI_STAY_AWAKE` tắt: Wi-Fi bật, OpenThread tắt, BLE chỉ để ghép nối, minimal mDNS, cửa sổ ghép nối 900 s, VID `0xFFF1` / PID `0x8001`, WPA3 SAE, coexistence, stack CHIP 8192, CPU 160 MHz, brownout bật, đúng 21 cluster và giới hạn endpoint động 5 như 1.0.132. So với 1.0.144 chỉ khác 3 điểm: `PRESENCE_CHIP_TEMPERATURE` tắt, cluster Temperature Measurement tắt, giới hạn endpoint động 5. Build với `PRESENCE_CHIP_TEMPERATURE` và giới hạn 6 thì `sdkconfig` giống hệt 1.0.144 (22 cluster: tuỳ chọn tự bật lại cluster Temperature Measurement).
-- Header file OTA (bản build 1.0.144): VID `0xFFF1`, PID `0x8001`, phiên bản 144 / `1.0.144` (lớn hơn 132).
+- Header file OTA (bản build 1.0.147): VID `0xFFF1`, PID `0x8001`, phiên bản 147 / `1.0.147` (lớn hơn 132).
 - Thứ tự tạo endpoint 0–4 giống 1.0.132; esp-matter (`esp_matter_data_model.cpp`) cấp số endpoint theo thứ tự tạo trước `esp_matter::start()`, nên số endpoint giữ nguyên. Endpoint 5 (nhiệt độ chip, chỉ khi bật `PRESENCE_CHIP_TEMPERATURE`) được tạo sau cùng.
-- Kích thước so với 1.0.132 (bảng **RAM và flash**): lớn hơn 8 432 byte flash và 418 byte RAM tĩnh. Phần thêm vào và bớt đi:
+- Kích thước so với 1.0.132 (bảng **RAM và flash**): lớn hơn 1 280 byte flash, RAM tĩnh ít hơn 22 byte. Phần thêm vào và bớt đi:
   - `diag_report` (báo cáo lại Wi-Fi RSSI và Uptime): 416 byte flash, 16 byte RAM tĩnh (so với 1.0.139);
   - `net_watchdog`: 1 808 byte flash, 32 byte RAM tĩnh (so với 1.0.140);
   - nhiệt độ chip (cluster Temperature Measurement, driver cảm biến, endpoint 5): 7 136 byte flash, 440 byte RAM tĩnh (so với 1.0.142);
-  - Wi-Fi modem sleep (`PRESENCE_WIFI_STAY_AWAKE` tắt, mã tắt modem sleep không được build): bớt 672 byte flash, RAM tĩnh không đổi (so với 1.0.143).
+  - Wi-Fi modem sleep (`PRESENCE_WIFI_STAY_AWAKE` tắt, mã tắt modem sleep không được build): bớt 672 byte flash, RAM tĩnh không đổi (so với 1.0.143);
+  - nhiệt độ chip thành tuỳ chọn tắt sẵn (1.0.147): bớt 7 152 byte flash và 440 byte RAM tĩnh (so với 1.0.144). Bật lại thì kích thước đúng bằng 1.0.144.
 - Host test (`test/host/run.sh`, 14 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED, tên thiết bị, lúc nào gửi lại Wi-Fi RSSI và Uptime, việc watchdog kết nối làm theo thời gian không có subscription, đổi và gửi nhiệt độ chip. Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ. Làm hỏng thêm 10 chỗ trong `diag_report.h`, 12 chỗ trong `net_watchdog.h` và 7 chỗ trong `c3_temperature.h`: test bắt được tất cả.
 - Phần gửi lại Wi-Fi RSSI và Uptime: chỉ phần quyết định được test trên máy tính. Lời gọi Matter (`MatterReportingAttributeChangeCallback`, timer của Matter) mới kiểm chứng bằng build và bằng đọc mã nguồn Matter SDK, esp-matter, Home Assistant (đánh dấu đã đổi → subscription gửi lại; Home Assistant cập nhật theo giá trị).
 
