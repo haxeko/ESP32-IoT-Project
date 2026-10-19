@@ -137,15 +137,19 @@ menu "Presence Sensor Configuration"
     config PRESENCE_WIFI_STAY_AWAKE
         bool "Keep Wi-Fi awake once BLE is released"
         depends on ENABLE_WIFI_STATION
-        default y
+        default n
         help
             Turns the Wi-Fi modem sleep (power save) off once BLE is released
-            after commissioning, and at each boot of a commissioned device. In
-            modem sleep the access point keeps the frames for the device until
-            it wakes up for the next DTIM beacon, so the controllers'
-            acknowledgements arrive late and Matter messages are sent again or
-            time out. The device draws more current (it runs from USB anyway).
-            While BLE commissions, the ESP-IDF default (modem sleep) is kept.
+            after commissioning, and at each boot of a commissioned device, so
+            the radio listens all the time. In modem sleep the access point
+            keeps the frames for the device until it wakes up for the next
+            DTIM beacon (usually 100 to 300 ms), so the controllers' messages
+            and acknowledgements arrive that much later.
+            The radio listening all the time draws about 60 mA more (ESP32-C3
+            datasheet) and heats the chip: with this option on (firmware 1.0.132
+            to 1.0.143) a SuperMini read 80 °C on its own and 96 °C in a case.
+            Off (default): the ESP-IDF and esp-matter default (modem sleep) is
+            kept, as in ESPHome on ESP32.
 
 endmenu
 

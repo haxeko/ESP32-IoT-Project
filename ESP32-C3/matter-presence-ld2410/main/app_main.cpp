@@ -187,10 +187,10 @@ static void open_commissioning_window(uint32_t timeout_sec)
 
 #if CONFIG_PRESENCE_WIFI_STAY_AWAKE
 // Wi-Fi modem sleep (the ESP-IDF default) lets the station sleep between DTIM beacons and the access point keeps the
-// frames for the device until then, so the acknowledgements of the controllers arrive late and Matter messages are
-// sent again or time out. Turned off once BLE is released after commissioning; while BLE commissions, the default
-// coexistence setup of ESP-IDF is kept. Matter task, when BLE is released and at each connection after that (the
-// Wi-Fi driver may not run yet when BLE is released at boot).
+// frames for the device until then, so the messages of the controllers arrive later. Off by default: the radio
+// listening all the time heats the chip (80-96 °C on a SuperMini). Turned off once BLE is released after
+// commissioning; while BLE commissions, the default coexistence setup of ESP-IDF is kept. Matter task, when BLE is
+// released and at each connection after that (the Wi-Fi driver may not run yet when BLE is released at boot).
 static void keep_wifi_awake()
 {
     wifi_ps_type_t ps;
