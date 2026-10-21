@@ -254,6 +254,10 @@ Biến thể `esppresence` (1.0.153–1.0.172) có bộ xử lý hiện diện t
 **Mức độ kiểm chứng:**
 - Host test (`learn_peak`, radar giả lập), 12 test: số trong ảnh HLKRadarTool cho đúng bảng trên; sàn 100 % cho đúng ngưỡng xuất xưởng, sàn 0 cho số của riêng phòng; nhiễu + 4; trần + 30 và 99; kênh không có báo cáo và tĩnh vùng 0–1 giữ nguyên; sàn và trần tính từ ngưỡng xuất xưởng; học lại cho cùng ngưỡng; trung bình làm tròn, peak, nhiễu (phân vị 99 và trung vị + 3 độ dao động); ghi 120 s sau 20 s, không gửi 0x000B, ghi 9 vùng rồi đọc lại; xung đơn lẻ được tính vào peak; cùng phòng lần hai không ghi gì; dưới 5 báo cáo mỗi giây; huỷ; radar không giữ ngưỡng; radar không trả lời.
 - Làm hỏng có chủ ý 29 chỗ của cách học này (mỗi lần một chỗ): test bắt được cả 29 (một chỗ bắt được sau khi thêm vùng chuyển động 3 vào phòng giả lập).
+- Build 1.0.175 (biến thể `esplearn`, cùng bản mặc định và `espfilter`): **0 lỗi, 0 cảnh báo**.
+  - `esplearn`: 1 530 673 B (trống 22 %), RAM tĩnh 152 987 B; header file OTA: VID `0xFFF1`, PID `0x8001`, phiên bản 175 / `1.0.175`;
+  - `sdkconfig` của `esplearn` so với biến thể `wroom_n4` của bản ổn định chỉ khác: nhiệt độ chip và cluster Temperature Measurement tắt, giới hạn endpoint động 5, và các tuỳ chọn học (`LD2410_LEARN_PEAK`, `_FLOOR_PERCENT`, `_MIN_MARGIN`, ghi 120 s). Manufacturer, Model, VID/PID, endpoint 1–4, Wi-Fi, BLE giống hệt;
+  - bản mặc định và `espfilter` 1.0.175: `sdkconfig` so với 1.0.172 chỉ còn bỏ menu bộ xử lý (vốn tắt) và thêm dòng `LD2410_LEARN_PEAK` tắt; RAM tĩnh của `espfilter` bằng đúng 1.0.151 của nhánh bộ lọc (153 531 B).
 - **Chưa thử trên bo** (mục **Mức độ kiểm tra**, bước 19): ghi 120 s và đặt ngưỡng trên radar thật; ngưỡng đặt ra có làm radar báo nhầm hay bỏ sót người không.
 
 ## Hold time, Radar Bluetooth, Radar resolution và Range
@@ -605,7 +609,9 @@ Watchdog kiểm tra 30 s một lần. Khi thiết bị **đã ghép nối** mà 
 | Biến thể `unique_setup` (1.0.147) | | 1 516 528 B |
 | Bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6; 1.0.147) | | 1 521 536 B, RAM tĩnh 150 983 B (như 1.0.144) |
 | Biến thể `wroom_n4` (WS2812 và nhiệt độ chip) | | 1 539 824 B (trống 22 %), RAM tĩnh 153 427 B, heap 167 869 B |
-| Biến thể `espfilter` (`wroom_n4` và bộ lọc năng lượng; nhánh `claude/c3-wroom-esp-filter`, 1.0.151) | | 1 542 016 B (trống 22 %), RAM tĩnh 153 531 B, heap 167 765 B |
+| Biến thể `espfilter` (`wroom_n4` và bộ lọc năng lượng; nhánh `claude/c3-wroom-esp-filter`, 1.0.151) | | 1 542 016 B (trống 22 %), RAM tĩnh 153 531 B, heap 167 765 B; nhánh `claude/c3-wroom-esp-presence` 1.0.175: 1 541 545 B, RAM tĩnh 153 531 B |
+| Biến thể `esplearn` (`wroom_n4` không nhiệt độ chip, học từ mức cao nhất; nhánh `claude/c3-wroom-esp-presence`, 1.0.175) | | 1 530 673 B (trống 22 %), RAM tĩnh 152 987 B, heap 168 309 B; lúc học mượn thêm 3,6 KB heap trong 120 s |
+| Bản mặc định của nhánh `claude/c3-wroom-esp-presence` (1.0.175) | | 1 514 215 B (trống 23 %), RAM tĩnh 150 551 B, heap 170 745 B |
 
 Task và stack (byte; số "còn trống" đo trên bo với bản 1.0.128–1.0.131, mã các task này không đổi):
 
@@ -693,9 +699,9 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 ## Mức độ kiểm tra
 
 **Đã kiểm chứng bằng build và test trên máy tính (bản này):**
-- Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định, biến thể `unique_setup` và bản bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6) ở 1.0.147; bản mặc định và biến thể `wroom_n4` ở 1.0.149; biến thể `espfilter` ở 1.0.151 (nhánh `claude/c3-wroom-esp-filter`).
+- Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định, biến thể `unique_setup` và bản bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6) ở 1.0.147; bản mặc định và biến thể `wroom_n4` ở 1.0.149; biến thể `espfilter` ở 1.0.151 (nhánh `claude/c3-wroom-esp-filter`); trên nhánh `claude/c3-wroom-esp-presence`, bản mặc định và các biến thể `espfilter`, `esplearn` ở 1.0.175.
 - `sdkconfig` sinh ra giống hệt bản 1.0.132 build trong cùng image, trừ đường dẫn file, mục chọn loại LED đã bỏ, 5 tuỳ chọn mới (`DIAG_REPORT_RSSI_STEP_DB`, `DIAG_REPORT_REFRESH_MIN`, `NET_WATCHDOG_RECONNECT_MIN`, `NET_WATCHDOG_RESTART_MIN`, `PRESENCE_CHIP_TEMPERATURE` tắt) và `PRESENCE_WIFI_STAY_AWAKE` tắt: Wi-Fi bật, OpenThread tắt, BLE chỉ để ghép nối, minimal mDNS, cửa sổ ghép nối 900 s, VID `0xFFF1` / PID `0x8001`, WPA3 SAE, coexistence, stack CHIP 8192, CPU 160 MHz, brownout bật, đúng 21 cluster và giới hạn endpoint động 5 như 1.0.132. So với 1.0.144 chỉ khác 3 điểm: `PRESENCE_CHIP_TEMPERATURE` tắt, cluster Temperature Measurement tắt, giới hạn endpoint động 5. Build với `PRESENCE_CHIP_TEMPERATURE` và giới hạn 6 thì `sdkconfig` giống hệt 1.0.144 (22 cluster: tuỳ chọn tự bật lại cluster Temperature Measurement).
-- Header file OTA (bản build 1.0.149, biến thể `wroom_n4`): VID `0xFFF1`, PID `0x8001`, phiên bản 149 / `1.0.149` (lớn hơn 132). Biến thể `espfilter` (1.0.151): cùng VID/PID, phiên bản 151 / `1.0.151-espfilter`.
+- Header file OTA (bản build 1.0.149, biến thể `wroom_n4`): VID `0xFFF1`, PID `0x8001`, phiên bản 149 / `1.0.149` (lớn hơn 132). Biến thể `espfilter` (1.0.151): cùng VID/PID, phiên bản 151 / `1.0.151-espfilter`. Nhánh `claude/c3-wroom-esp-presence` (1.0.175): `esplearn` và bản mặc định phiên bản 175 / `1.0.175`, `espfilter` `1.0.175-espfilter`, cùng VID/PID.
 - Thứ tự tạo endpoint 0–4 giống 1.0.132; esp-matter (`esp_matter_data_model.cpp`) cấp số endpoint theo thứ tự tạo trước `esp_matter::start()`, nên số endpoint giữ nguyên. Endpoint 5 (nhiệt độ chip, chỉ khi bật `PRESENCE_CHIP_TEMPERATURE`) được tạo sau cùng.
 - Kích thước so với 1.0.132 (bảng **RAM và flash**): lớn hơn 1 440 byte flash, RAM tĩnh ít hơn 22 byte. Phần thêm vào và bớt đi:
   - `diag_report` (báo cáo lại Wi-Fi RSSI và Uptime): 416 byte flash, 16 byte RAM tĩnh (so với 1.0.139);
