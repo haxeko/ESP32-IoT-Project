@@ -164,7 +164,7 @@ idf.py -B build-espfilter -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.espfilter
 **Mức độ kiểm chứng:**
 - Thuật toán, việc dùng bộ lọc trong task presence, và việc bật lại engineering mode, đọc lại ngưỡng trong task `radar_cfg` đều có host test (radar giả lập).
 - Build biến thể `espfilter` 1.0.151: **0 lỗi, 0 cảnh báo**. `sdkconfig` chỉ khác `wroom_n4` của bản ổn định (1.0.150) ở Model và 3 tuỳ chọn của bộ lọc: cùng VID/PID, cluster, endpoint, Wi-Fi. Header file OTA: VID `0xFFF1`, PID `0x8001`, phiên bản 151 / `1.0.151-espfilter`.
-- Build lại trên nhánh `claude/c3-wroom-esp-presence` (1.0.156, 1.0.159): **0 cảnh báo**, `sdkconfig` vẫn chỉ khác `wroom_n4` ở Model và 3 tuỳ chọn đó. Mã của bộ lọc không đổi; driver radar thêm bộ đếm khung hỏng, log `mem` có bộ đệm dài hơn.
+- Build lại trên nhánh `claude/c3-wroom-esp-presence` (1.0.156, 1.0.159, 1.0.162): **0 cảnh báo**, `sdkconfig` vẫn chỉ khác `wroom_n4` ở Model và 3 tuỳ chọn đó. Mã của bộ lọc không đổi; driver radar thêm bộ đếm khung hỏng, log `mem` có bộ đệm dài hơn.
 - **Chưa thử trên bo:** việc đọc năng lượng từ radar thật, các log, và việc bộ lọc có thật sự chặn được xung nhiễu (mục **Mức độ kiểm tra**, bước 18).
 - Ngưỡng 15 và 3 báo cáo là giá trị ban đầu, **cần chỉnh theo log trên bo thật**.
 
@@ -426,18 +426,20 @@ idf.py -B build-esppresence -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.esppres
   - task `radar_cfg`, 9 test: học qua radar (ESP32 ghi nhiễu, radar tự đo, ngưỡng nâng được ghi vào radar, đọc lại ngưỡng, bật lại engineering mode), huỷ, Factory thresholds, khôi phục radar;
   - học phòng trống (`quiet_learn`), 9 test cho bộ xử lý: ghi nhiễu 30 s rồi tắt engineering mode trước lệnh 0x000B, huỷ, thiếu báo cáo, radar đo thất bại, radar firmware cũ; ngưỡng nâng được ghi vào radar ở cả hai cách học, không ghi khi không có gì để nâng, radar không giữ ngưỡng nâng thì báo thất bại.
 - Làm hỏng có chủ ý 77 chỗ trong bộ xử lý, task `presence_eng`, `radar_cfg` và `quiet_learn` (mỗi lần một chỗ, 1.0.162): test bắt được 74. Ba chỗ còn lại không thể đổi kết quả nào (giới hạn ngưỡng duy trì dưới ngưỡng kích hoạt không bao giờ chạm tới với tuỳ chọn hợp lệ; vùng ngưỡng 100 không bao giờ được nâng vì mức nâng tối đa 99), nên không test nào phân biệt được.
-- **Mô phỏng Monte Carlo** (bộ xử lý 1.0.159; phòng của báo lỗi với 1.0.162: mục **Vì sao ngưỡng kích hoạt cũng phải ở trên nhiễu**), 100 phòng, mỗi phòng học rồi chạy 1 giờ:
+- **Mô phỏng Monte Carlo**, 100 phòng, mỗi phòng học rồi chạy 1 giờ (chạy với 1.0.159, chạy lại với 1.0.162 trên cùng dữ liệu giả lập: kết quả như nhau, trừ một dòng ghi bên dưới; phòng của báo lỗi: mục **Vì sao ngưỡng kích hoạt cũng phải ở trên nhiễu**):
   - mô hình nhiễu tự đặt, **không phải dữ liệu radar thật**;
   - ba bộ ngưỡng radar: xuất xưởng, kiểu radar tự đo (sát nhiễu: phân vị 99 + 5), kiểu ESP32 học của bản ổn định;
   - **có số đo nhiễu:** 0 lần báo nhầm có người. Người ở 10 s rồi ra: trống sau 61 s. Người ngồi yên ở 3,75–6,75 m (năng lượng tĩnh khoảng 14–18 ± 5) được giữ suốt 20 phút với cả ba bộ ngưỡng;
   - **chưa có số đo nhiễu** (ngưỡng duy trì = ngưỡng radar): với ngưỡng xuất xưởng, người ngồi yên đó chỉ được giữ khoảng 74 % thời gian, bị báo trống khoảng một lần mỗi 20 phút;
-  - **xung nhiễu nhiều gấp 3 lần lúc học:** ngưỡng xuất xưởng và ngưỡng ESP32 học không báo nhầm. Ngưỡng sát nhiễu báo nhầm 30 lần trong 100 giờ, do ngưỡng radar chứ không do ngưỡng duy trì: học lại.
-- Build biến thể `esppresence` 1.0.159: **0 lỗi, 0 cảnh báo**.
-  - `sdkconfig` chỉ khác `wroom_n4` ở Model, Hold time ban đầu (60 thay 30) và 11 tuỳ chọn của bộ xử lý: cùng VID/PID, cluster, endpoint, Wi-Fi, BLE.
-  - Header file OTA: VID `0xFFF1`, PID `0x8001`, phiên bản 159 / `1.0.159-esppresence`.
+  - **xung nhiễu nhiều gấp 3 lần lúc học:** ngưỡng xuất xưởng và ngưỡng ESP32 học không báo nhầm. Ngưỡng sát nhiễu báo nhầm 30 lần trong 100 giờ với 1.0.159, 19 lần với 1.0.162 (ngưỡng kích hoạt trên nhiễu), do ngưỡng radar chứ không do ngưỡng duy trì: học lại.
+- Build biến thể `esppresence` 1.0.162 (cùng bản mặc định và `espfilter` để chắc mã học phòng trống dùng chung không đổi hành vi của chúng): **0 lỗi, 0 cảnh báo**.
+  - `sdkconfig` chỉ khác `wroom_n4` ở Model, Hold time ban đầu (60 thay 30) và 13 tuỳ chọn của bộ xử lý: cùng VID/PID, cluster, endpoint, Wi-Fi, BLE.
+  - Header file OTA: VID `0xFFF1`, PID `0x8001`, phiên bản 162 / `1.0.162-esppresence`.
 - **Chưa thử trên bo** (mục **Mức độ kiểm tra**, bước 19):
   - năng lượng của radar thật qua bộ xử lý; ngưỡng radar tự đo trong phòng thật;
   - radar tự đo ngay sau khi ESP32 tắt engineering mode;
+  - ghi ngưỡng đã nâng vào radar thật ngay sau khi radar tự đo, và radar có tự đổi ngưỡng sau 0x000B hay không;
+  - phòng của báo lỗi: hết báo nhầm ở vùng 2, và người ngồi yên ở vùng 2 có còn được giữ (năng lượng tĩnh thật của người ở đó chưa biết);
   - console trên bo của bạn, Hold time từ Home Assistant, các bước khôi phục radar, RAM và stack lúc chạy.
 - Các tham số mặc định là giá trị ban đầu, **cần chỉnh theo log trên bo thật** (mục **Hiệu chỉnh thực tế**).
 
@@ -789,9 +791,9 @@ Watchdog kiểm tra 30 s một lần. Khi thiết bị **đã ghép nối** mà 
 | Biến thể `unique_setup` (1.0.147) | | 1 516 528 B |
 | Bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6; 1.0.147) | | 1 521 536 B, RAM tĩnh 150 983 B (như 1.0.144) |
 | Biến thể `wroom_n4` (WS2812 và nhiệt độ chip) | | 1 539 824 B (trống 22 %), RAM tĩnh 153 427 B, heap 167 869 B |
-| Biến thể `espfilter` (`wroom_n4` và bộ lọc năng lượng; nhánh `claude/c3-wroom-esp-filter`, 1.0.151) | | 1 542 016 B (trống 22 %), RAM tĩnh 153 531 B, heap 167 765 B; build lại trên nhánh này (1.0.159): 1 543 568 B, RAM tĩnh 153 585 B |
-| Bản mặc định của nhánh này (1.0.159: driver radar đếm khung hỏng, có thể xả UART; mã ghi nhiễu cho bộ xử lý không chạy) | | 1 516 208 B (trống 23 %), RAM tĩnh 150 605 B, heap 170 691 B |
-| Biến thể `esppresence` (`wroom_n4` và bộ xử lý hiện diện; nhánh này, 1.0.159) | | 1 577 040 B (trống 20 %), RAM tĩnh 154 439 B, heap 166 857 B |
+| Biến thể `espfilter` (`wroom_n4` và bộ lọc năng lượng; nhánh `claude/c3-wroom-esp-filter`, 1.0.151) | | 1 542 016 B (trống 22 %), RAM tĩnh 153 531 B, heap 167 765 B; build lại trên nhánh này (1.0.162): 1 543 537 B, RAM tĩnh 153 585 B |
+| Bản mặc định của nhánh này (1.0.162: driver radar đếm khung hỏng, có thể xả UART; mã ghi nhiễu và nâng ngưỡng cho bộ xử lý không chạy) | | 1 516 171 B (trống 23 %), RAM tĩnh 150 605 B, heap 170 691 B |
+| Biến thể `esppresence` (`wroom_n4` và bộ xử lý hiện diện; nhánh này, 1.0.162) | | 1 579 279 B (trống 20 %), RAM tĩnh 154 463 B, heap 166 833 B (1.0.159: 1 577 040 B, RAM tĩnh 154 439 B) |
 
 Task và stack (byte; số "còn trống" đo trên bo với bản 1.0.128–1.0.131, mã các task này không đổi):
 
@@ -883,9 +885,9 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 ## Mức độ kiểm tra
 
 **Đã kiểm chứng bằng build và test trên máy tính (bản này):**
-- Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định, biến thể `unique_setup` và bản bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6) ở 1.0.147; bản mặc định và biến thể `wroom_n4` ở 1.0.149; biến thể `espfilter` ở 1.0.151 (nhánh `claude/c3-wroom-esp-filter`); trên nhánh này, bản mặc định và các biến thể `espfilter`, `esppresence` ở 1.0.153, 1.0.156 và 1.0.159.
+- Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định, biến thể `unique_setup` và bản bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6) ở 1.0.147; bản mặc định và biến thể `wroom_n4` ở 1.0.149; biến thể `espfilter` ở 1.0.151 (nhánh `claude/c3-wroom-esp-filter`); trên nhánh này, bản mặc định và các biến thể `espfilter`, `esppresence` ở 1.0.153, 1.0.156, 1.0.159 và 1.0.162.
 - `sdkconfig` sinh ra giống hệt bản 1.0.132 build trong cùng image, trừ đường dẫn file, mục chọn loại LED đã bỏ, 5 tuỳ chọn mới (`DIAG_REPORT_RSSI_STEP_DB`, `DIAG_REPORT_REFRESH_MIN`, `NET_WATCHDOG_RECONNECT_MIN`, `NET_WATCHDOG_RESTART_MIN`, `PRESENCE_CHIP_TEMPERATURE` tắt) và `PRESENCE_WIFI_STAY_AWAKE` tắt: Wi-Fi bật, OpenThread tắt, BLE chỉ để ghép nối, minimal mDNS, cửa sổ ghép nối 900 s, VID `0xFFF1` / PID `0x8001`, WPA3 SAE, coexistence, stack CHIP 8192, CPU 160 MHz, brownout bật, đúng 21 cluster và giới hạn endpoint động 5 như 1.0.132. So với 1.0.144 chỉ khác 3 điểm: `PRESENCE_CHIP_TEMPERATURE` tắt, cluster Temperature Measurement tắt, giới hạn endpoint động 5. Build với `PRESENCE_CHIP_TEMPERATURE` và giới hạn 6 thì `sdkconfig` giống hệt 1.0.144 (22 cluster: tuỳ chọn tự bật lại cluster Temperature Measurement).
-- Header file OTA (bản build 1.0.149, biến thể `wroom_n4`): VID `0xFFF1`, PID `0x8001`, phiên bản 149 / `1.0.149` (lớn hơn 132). Biến thể `espfilter` (1.0.151): cùng VID/PID, phiên bản 151 / `1.0.151-espfilter`. Trên nhánh này (1.0.159): biến thể `esppresence` phiên bản 159 / `1.0.159-esppresence`, `espfilter` phiên bản 159 / `1.0.159-espfilter`, cùng VID/PID.
+- Header file OTA (bản build 1.0.149, biến thể `wroom_n4`): VID `0xFFF1`, PID `0x8001`, phiên bản 149 / `1.0.149` (lớn hơn 132). Biến thể `espfilter` (1.0.151): cùng VID/PID, phiên bản 151 / `1.0.151-espfilter`. Trên nhánh này (1.0.162): biến thể `esppresence` phiên bản 162 / `1.0.162-esppresence`, `espfilter` phiên bản 162 / `1.0.162-espfilter`, cùng VID/PID.
 - Thứ tự tạo endpoint 0–4 giống 1.0.132; esp-matter (`esp_matter_data_model.cpp`) cấp số endpoint theo thứ tự tạo trước `esp_matter::start()`, nên số endpoint giữ nguyên. Endpoint 5 (nhiệt độ chip, chỉ khi bật `PRESENCE_CHIP_TEMPERATURE`) được tạo sau cùng.
 - Kích thước so với 1.0.132 (bảng **RAM và flash**): lớn hơn 1 440 byte flash, RAM tĩnh ít hơn 22 byte. Phần thêm vào và bớt đi:
   - `diag_report` (báo cáo lại Wi-Fi RSSI và Uptime): 416 byte flash, 16 byte RAM tĩnh (so với 1.0.139);
@@ -895,7 +897,7 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
   - nhiệt độ chip thành tuỳ chọn tắt sẵn (1.0.147): bớt 7 152 byte flash và 440 byte RAM tĩnh (so với 1.0.144). Bật lại thì kích thước đúng bằng 1.0.144;
   - WS2812 và tên bo (1.0.149): bản mặc định thêm 160 byte flash, RAM tĩnh không đổi (driver RMT không được build). Biến thể `wroom_n4` (WS2812 và nhiệt độ chip) lớn hơn 1.0.144 18 288 byte flash và 2 444 byte RAM tĩnh: driver RMT và thư viện `led_strip`.
   - bộ lọc năng lượng (biến thể `espfilter`, 1.0.151): lớn hơn `wroom_n4` 1.0.149 2 192 byte flash và 104 byte RAM tĩnh.
-  - bộ xử lý hiện diện (biến thể `esppresence`, 1.0.159): lớn hơn `wroom_n4` 1.0.149 37 216 byte flash và 1 012 byte RAM tĩnh (bộ xử lý, console `esp_console`, driver USB-Serial-JTAG). Lúc chạy dùng thêm khoảng 10 KB heap (stack của `presence_eng` 4 096 byte và `console_repl` 3 584 byte, hàng đợi, bộ đệm USB), cộng 3,6 KB khi học. Thiếu heap thì tắt `PRESENCE_ENGINE_CONSOLE` (bớt khoảng 5 KB).
+  - bộ xử lý hiện diện (biến thể `esppresence`, 1.0.162): lớn hơn `wroom_n4` 1.0.149 39 455 byte flash và 1 036 byte RAM tĩnh (bộ xử lý, console `esp_console`, driver USB-Serial-JTAG). Lúc chạy dùng thêm khoảng 10 KB heap (stack của `presence_eng` 4 096 byte và `console_repl` 3 584 byte, hàng đợi, bộ đệm USB), cộng 3,6 KB khi học. Thiếu heap thì tắt `PRESENCE_ENGINE_CONSOLE` (bớt khoảng 5 KB).
   - mọi bản build của nhánh này lớn hơn 1.0.151 cùng loại khoảng 1,5 KB flash và 54 byte RAM tĩnh: driver radar đếm khung hỏng và có thể xả UART (`uart_flush_input`), và mã ghi nhiễu lúc học; cả hai chỉ chạy khi bật bộ xử lý. Không bật bộ xử lý thì hành vi không đổi.
 - Host test (`test/host/run.sh`, 20 chương trình): parser và lệnh radar, phiên thông số, học trên ESP32 và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED (một màu và màu WS2812), tên thiết bị, lúc nào gửi lại Wi-Fi RSSI và Uptime, việc watchdog kết nối làm theo thời gian không có subscription, đổi và gửi nhiệt độ chip, bộ lọc năng lượng trên ESP32 (thuật toán, task presence, task `radar_cfg` bật lại engineering mode và đọc lại ngưỡng), bộ xử lý hiện diện trên ESP32 (thuật toán với nhiễu giả lập, task `presence_eng`, task `radar_cfg`, ghi nhiễu lúc học; mục **Bộ xử lý hiện diện trên ESP32**, **Mức độ kiểm chứng**). Thử làm hỏng 19 chỗ trong firmware (mỗi lần một chỗ): test bắt được 18; chỗ còn lại (đổi thứ tự ghi ngưỡng mặc định và học trong vòng lặp) không đổi hành vi vì hai yêu cầu đó không bao giờ cùng chờ. Làm hỏng thêm 10 chỗ trong `diag_report.h`, 12 chỗ trong `net_watchdog.h`, 7 chỗ trong `c3_temperature.h`, 6 chỗ ở phần WS2812 của `status_led.cpp` (màu, độ sáng, chân, chỉ gửi khi đổi màu), 25 chỗ của bộ lọc năng lượng (`energy_filter`, `presence.cpp`, `radar_worker.cpp`, driver) và 44 chỗ của bộ xử lý hiện diện (`presence_engine`, `esp_presence`, `radar_worker.cpp`, `quiet_learn.cpp`): test bắt được tất cả.
 - Phần gửi lại Wi-Fi RSSI và Uptime: chỉ phần quyết định được test trên máy tính. Lời gọi Matter (`MatterReportingAttributeChangeCallback`, timer của Matter) mới kiểm chứng bằng build và bằng đọc mã nguồn Matter SDK, esp-matter, Home Assistant (đánh dấu đã đổi → subscription gửi lại; Home Assistant cập nhật theo giá trị).
