@@ -14,7 +14,7 @@ Mọi chức năng giống hệt bản ESP32-H2, cùng thuật toán, ngưỡng,
 | Mạng Matter | Thread (802.15.4), cần Thread Border Router | **Wi-Fi 2,4 GHz** (station), nối thẳng router nhà |
 | Ghép nối | BLE, điện thoại gửi dataset Thread | BLE, điện thoại gửi **SSID và mật khẩu Wi-Fi** |
 | Tìm thấy trên mạng | DNS-SD qua SRP của Border Router | mDNS trên mạng LAN |
-| Radar LD2410 (UART1) | TX → GPIO11, RX ← GPIO12 | **TX → GPIO3, RX ← GPIO4** |
+| Radar LD2410 (UART1) | TX → GPIO12, RX ← GPIO13 (từ 1.0.140; trước đó GPIO11/12) | **TX → GPIO3, RX ← GPIO4** |
 | LED | WS2812 RGB, GPIO8 | **LED xanh dương một màu, GPIO8**, sáng khi chân ở mức thấp |
 | Nút | BOOT, GPIO9 | BOOT, GPIO9 |
 | Log | UART0 (GPIO23/24) + USB-Serial-JTAG | **USB-Serial-JTAG** (cổng USB-C, GPIO18/19) |

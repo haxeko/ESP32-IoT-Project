@@ -50,11 +50,12 @@ menu "Presence Sensor Configuration"
         range 0 21 if IDF_TARGET_ESP32C3
         range 0 27
         default 3 if IDF_TARGET_ESP32C3
-        default 11
+        default 12
         help
             ESP32-H2: avoid the strapping pins (GPIO2, GPIO3, GPIO8, GPIO9,
             GPIO25), the flash pins (GPIO15-GPIO21) and the console UART pins
-            (GPIO23, GPIO24).
+            (GPIO23, GPIO24); GPIO13/GPIO14 too when the RTC clock comes from
+            an external 32 kHz crystal or oscillator.
             ESP32-C3: avoid the strapping pins (GPIO2, GPIO8, GPIO9), the
             flash pins (GPIO11-GPIO17) and the USB pins (GPIO18, GPIO19).
 
@@ -63,7 +64,7 @@ menu "Presence Sensor Configuration"
         range 0 21 if IDF_TARGET_ESP32C3
         range 0 27
         default 4 if IDF_TARGET_ESP32C3
-        default 12
+        default 13
 
     config PRESENCE_MAX_DISTANCE_CM
         int "Only count targets closer than (cm, 0 = use the radar's own gates)"
