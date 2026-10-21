@@ -381,9 +381,22 @@ int main(int argc, char **argv)
         const uint32_t in = b.now;
         b.person = { 4, 70, 30, 0 };
         b.run(1000);
-        CHECK(b.triggers.size() == 1 && b.triggers[0] - in <= 500 && b.triggers[0] - in >= 300);
+        // The first report is filtered away, the next three are strong: present at the fourth
+        CHECK(b.triggers.size() == 1 && b.triggers[0] - in == 400);
         CHECK(b.e.trigger_gate == 4 && b.e.trigger_kind == PE_MOVING && b.e.trigger_threshold == 20);
         CHECK(pe_occupied_report(&b.e));
+    }
+
+    test_begin("someone walking across two gates (one, then the other, report after report): counted together");
+    {
+        Bench b;
+        b.learn_noise();
+        b.run(5000);
+        for (int i = 0; i < 10 && b.triggers.empty(); i++) {
+            b.person = { 3 + i % 2, 70, 0, 0 }; // each gate strong in every other report only
+            b.run(100);
+        }
+        CHECK(b.triggers.size() == 1);
     }
 
     test_begin("a weak signal (above hold, not above the radar threshold) never starts presence");
@@ -543,13 +556,13 @@ int main(int argc, char **argv)
 
     test_begin("32-bit clock wrapping around during the countdown");
     {
-        Bench b(0xFFFF0000u);
+        Bench b(0xFFFFFFFFu - 30000); // wraps around 30 s later, in the middle of the countdown
         b.learn_noise();
         b.person = { 3, 70, 40, 0 };
         b.run(3000);
         b.person = {};
         const uint32_t gone = b.now;
-        b.run(120 * 1000); // wraps around after 65 s
+        b.run(120 * 1000);
         CHECK(b.absents.size() == 1 && b.absents[0] - gone >= 60000 && b.absents[0] - gone <= 61500);
     }
 
