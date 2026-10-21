@@ -195,8 +195,10 @@ idf.py -B build-espfilter -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.espfilter
    - năng lượng tĩnh của vùng 0 và 1 không được tính: radar không có ngưỡng tĩnh ở đó.
 3. **Phòng trống → có người:**
    - một vùng "mạnh" khi năng lượng đã lọc đạt ngưỡng kích hoạt;
-   - cần **3 trong 4 báo cáo gần nhất** mạnh ở cùng chỗ: một vùng hoặc vùng kề (người đi qua ranh giới vùng, còn nhiễu thì nhảy lung tung);
-   - người bước vào được nhận sau khoảng **0,4 s**; xung lẻ hoặc 2 báo cáo liền nhau không kích hoạt được.
+   - **đường chậm:** cần **6 trong 8 báo cáo gần nhất** mạnh ở cùng chỗ (một vùng hoặc vùng kề: người đi qua ranh giới vùng, còn nhiễu thì nhảy lung tung). Nhiễu dài đến khoảng 0,5 s bị bỏ; tín hiệu mạnh vừa phải được nhận sau khoảng **0,7 s** (từ 1.0.166; trước đó 3 trong 4);
+   - **đường nhanh (chỉ năng lượng chuyển động):** năng lượng đã lọc đạt **ngưỡng kích hoạt + 20** trong **3 báo cáo liền nhau** (cùng vùng hoặc vùng kề) thì kích hoạt ngay, khoảng **0,4 s** sau khi người bước vào. Ví dụ vùng 3 ngưỡng radar 30: mạnh từ 31, nhanh từ 51;
+   - xung lẻ hoặc 2 báo cáo liền nhau không bao giờ kích hoạt, dù mạnh đến đâu. Một báo cáo hụt xen giữa được lọc trung vị lấp lại (vẫn tính là liền nhau); hụt 2 báo cáo thì đứt;
+   - năng lượng tĩnh (vi chuyển động) chỉ đi đường chậm.
 4. **Duy trì:**
    - khi đã có người, một vùng có **tín hiệu duy trì** khi năng lượng đã lọc đạt ngưỡng duy trì trong **3 trong 10 báo cáo** gần nhất (nhịp thở, cử động nhẹ);
    - mỗi báo cáo có tín hiệu duy trì đặt lại bộ đếm.
@@ -219,7 +221,7 @@ idf.py -B build-espfilter -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.espfilter
 **Vì sao ngưỡng kích hoạt cũng phải ở trên nhiễu (1.0.162):**
 - Ví dụ giả định (dùng trong test và mô phỏng, chưa đo trong phòng thật nào): radar còn ngưỡng xuất xưởng, năng lượng tĩnh vùng 2 (1,5–2,25 m) của phòng trống trung bình 56, cao nhất 63, trong khi ngưỡng radar là 40.
 - Nhiễu như vậy nằm trên ngưỡng radar gần như liên tục, nên bản 1.0.159 coi vùng 2 là "mạnh" dù không có ai.
-- **Tăng số báo cáo** (3 trong 4 → nhiều hơn) chỉ chặn được xung ngắn: nhiễu nằm trên ngưỡng liên tục thì báo cáo nào cũng mạnh.
+- **Tăng số báo cáo** (3 trong 4 → 6 trong 8, đã làm ở 1.0.166) chỉ chặn được xung ngắn: nhiễu nằm trên ngưỡng liên tục thì báo cáo nào cũng mạnh.
 - **Cộng một khoảng cho mọi vùng** phải cộng ít nhất 23 mới qua 63, làm các vùng khác kém nhạy hẳn.
 - Vì vậy ngưỡng kích hoạt của **từng kênh** phải ở trên nhiễu đo được của chính kênh đó (N + 5). Kênh có nhiễu thấp hơn ngưỡng radar không đổi gì.
 - Mô phỏng Monte Carlo, phòng theo ví dụ trên (mô hình nhiễu tự đặt, **không phải dữ liệu radar thật**), ngưỡng xuất xưởng, 100 phòng × 1 giờ trống:
@@ -302,7 +304,7 @@ Mở cổng làm bo khởi động lại ở một số phần mềm: không sao
 | `filt` | sau lọc trung vị 3 báo cáo: số này được so với ngưỡng |
 | `peak` | cao nhất trong khoảng 1 s gần nhất |
 | `hold` | ngưỡng duy trì: `filt` đạt nó thì giữ người (`never`: kênh không giữ được) |
-| `strong` | ngưỡng kích hoạt: `filt` đạt nó (3 trong 4 báo cáo) thì phòng trống thành có người. Bằng `radar` + 1, hoặc nhiễu + 5 nếu cao hơn (`never`: kênh không kích hoạt được) |
+| `strong` | ngưỡng kích hoạt: `filt` đạt nó (6 trong 8 báo cáo; năng lượng chuyển động đạt nó + 20 trong 3 báo cáo liền nhau) thì phòng trống thành có người. Bằng `radar` + 1, hoặc nhiễu + 5 nếu cao hơn (`never`: kênh không kích hoạt được) |
 | `radar` | ngưỡng lưu trong radar |
 | `(not counted)` | vùng ngoài Range, vùng 0–1 của năng lượng tĩnh, hoặc vùng radar bỏ (ngưỡng 100) |
 
@@ -318,7 +320,7 @@ Cùng phòng đó trước khi học lại (vùng 2 còn ngưỡng radar 40): `s
 (số minh hoạ từ test trên máy tính, không phải từ radar thật)
 
 **Log tự động:**
-- khi có người (`Present: moving gate 3 energy 70, strong from 31 (radar threshold 30), 3 of the last 4 reports strong`): vùng, loại năng lượng và ngưỡng đã kích hoạt;
+- khi có người: `Present (fast): moving gate 3 energy 70, fast from 51 (radar threshold 30), 3 reports in a row` (đường nhanh) hoặc `Present: still gate 5 energy 34, strong from 31 (radar threshold 30), 6 of the last 8 reports strong` (đường chậm): vùng, loại năng lượng và ngưỡng đã kích hoạt;
 - khi phòng trống (`Empty: no hold signal for 60 s ...`);
 - khi lỗi cảm biến;
 - `STATUS` mỗi 5 phút (`PRESENCE_ENGINE_STATUS_LOG_SEC`).
@@ -346,7 +348,7 @@ Console chạy trong task `console_repl` của ESP-IDF. Không cắm máy tính 
    - Cảnh báo `the empty room noise N reaches the radar threshold T, strong there only from S`: vùng đó nhiễu chạm ngưỡng radar; ESP32 đã chỉ kích hoạt từ S. Học lại để ngưỡng radar cũng được nâng.
    - `strong and hold raised`: như trên. `hold raised`: vùng đó nhiễu nên ngưỡng duy trì không hạ được nhiều.
 3. `DIAG_STREAM on`, rồi lần lượt:
-   - **đi vào:** cột `filt` của vùng có người phải vượt `radar` trong vài báo cáo (log `Present: ...` sau khoảng 0,4 s);
+   - **đi vào:** cột `filt` của vùng có người phải vượt `radar` trong vài báo cáo (log `Present (fast): ...` sau khoảng 0,4 s, hoặc `Present: ...` sau khoảng 0,7 s);
    - **ngồi yên ở chỗ xa nhất cần nhận** (ví dụ 4–6 m): cột `filt` của năng lượng tĩnh ở vùng đó phải thường xuyên đạt `hold`. `STATUS` phải báo `present, hold signal at gate ...`;
    - **ra khỏi phòng:** khoảng Hold time + 1 s sau, log `Empty: ...`.
 4. **Ngồi yên mà bị báo trống** (`filt` thấp hơn `hold`):
@@ -359,7 +361,8 @@ Console chạy trong task `console_repl` của ESP-IDF. Không cắm máy tính 
    - hoặc tăng ngưỡng vùng đó trong HLKRadarTool (rồi tắt *Radar Bluetooth* để ESP32 đọc lại);
    - hoặc tăng `PRESENCE_ENGINE_TRIGGER_NOISE_MARGIN` (5 → 8): mọi vùng có nhiễu gần ngưỡng kích hoạt cách nhiễu xa hơn;
    - hoặc `PRESENCE_ENGINE_TRIGGER_MARGIN` (0 → 3–5): mọi vùng kém nhạy đi chừng đó;
-   - hoặc tăng `PRESENCE_ENGINE_TRIGGER_REPORTS` / `_TRIGGER_WINDOW` (3 / 4 → 6 / 8, chậm thêm khoảng 0,3 s): chỉ chặn được xung ngắn, không chặn được nhiễu nằm trên ngưỡng liên tục;
+   - hoặc tăng `PRESENCE_ENGINE_TRIGGER_REPORTS` / `_TRIGGER_WINDOW` (6 / 8 → 8 / 10): chỉ chặn được xung ngắn, không chặn được nhiễu nằm trên ngưỡng liên tục;
+   - log báo nhầm là `Present (fast)`: nhiễu chuyển động rất mạnh kéo dài 3 báo cáo; tăng `PRESENCE_ENGINE_FAST_MARGIN` (20 → 30) hoặc `PRESENCE_ENGINE_FAST_REPORTS` (3 → 4), hay đặt 0 để tắt đường nhanh;
    - hoặc giảm Range.
 6. **Bị trễ tắt** (người đã ra mà vẫn có người lâu): `DIAG_STREAM` cho thấy vùng nào còn đạt `hold` khi trống. Học lại (đo lại nhiễu), giảm `PRESENCE_ENGINE_HOLD_DROP_PERCENT`, hoặc giảm Range.
 7. Môi trường thay đổi (thêm quạt, đổi đồ đạc, đổi chỗ radar) thì học lại.
@@ -369,7 +372,9 @@ Console chạy trong task `console_repl` của ESP-IDF. Không cắm máy tính 
 | Tuỳ chọn | Mặc định | Ý nghĩa |
 |---|---|---|
 | `PRESENCE_ESP_ENGINE` | tắt (bật trong biến thể `esppresence`) | Bật bộ xử lý (không dùng cùng `PRESENCE_ENERGY_FILTER`) |
-| `PRESENCE_ENGINE_TRIGGER_REPORTS` / `_TRIGGER_WINDOW` | 3 / 4 | Số báo cáo đạt ngưỡng kích hoạt / trong số báo cáo gần nhất để kích hoạt |
+| `PRESENCE_ENGINE_TRIGGER_REPORTS` / `_TRIGGER_WINDOW` | 6 / 8 | Số báo cáo đạt ngưỡng kích hoạt / trong số báo cáo gần nhất để kích hoạt (đường chậm) |
+| `PRESENCE_ENGINE_FAST_REPORTS` | 3 | Đường nhanh: số báo cáo liền nhau có năng lượng chuyển động đạt ngưỡng kích hoạt + biên dưới (0: tắt) |
+| `PRESENCE_ENGINE_FAST_MARGIN` | 20 | Đường nhanh: biên trên ngưỡng kích hoạt |
 | `PRESENCE_ENGINE_TRIGGER_NOISE_MARGIN` | 5 | Ngưỡng kích hoạt ít nhất nhiễu phòng trống + chừng này (3–30); ngưỡng radar được nâng lên nhiễu + chừng này − 1 sau khi học |
 | `PRESENCE_ENGINE_TRIGGER_MARGIN` | 0 | Cộng thêm vào ngưỡng kích hoạt của mọi vùng (ngưỡng radar + 1 + chừng này); ngưỡng duy trì không đổi |
 | `PRESENCE_ENGINE_HOLD_REPORTS` / `_HOLD_WINDOW` | 3 / 10 | Số báo cáo đạt ngưỡng duy trì / trong số báo cáo gần nhất để duy trì |
@@ -399,6 +404,7 @@ idf.py -B build-esppresence -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.esppres
 **Phiên bản, OTA, quay lại:**
 - Phiên bản hiện `1.0.<số commit>-esppresence`; số OTA vẫn là số commit, nên OTA được từ bản ổn định, từ `-espfilter` và từ bản `-esppresence` cũ, và vẫn giữ ghép nối.
 - Hold time được đặt về 60 s **một lần** khi bo lần đầu chạy biến thể này. Ghép nối, VID/PID, endpoint và cluster không đổi; không thêm entity.
+- **Từ 1.0.162 lên 1.0.166:** kích hoạt 6 trong 8 báo cáo và đường nhanh. Tự build với file `sdkconfig.esppresence` cũ thì giá trị cũ (3 / 4) được giữ: xoá file đó hoặc chỉnh trong menuconfig.
 - **Từ 1.0.159 lên 1.0.162:**
   - nhiễu đã đo bằng 1.0.159 (NVS key `noise`, cùng định dạng) được dùng ngay cho ngưỡng kích hoạt: hết báo nhầm ở vùng nhiễu mà không cần học lại;
   - học lại một lần để ngưỡng radar ở vùng nhiễu cũng được nâng (thấy trong HLKRadarTool, và bản ổn định dùng được nếu quay lại);
@@ -413,8 +419,9 @@ idf.py -B build-esppresence -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.esppres
 
 **Mức độ kiểm chứng:**
 - Host test (radar và nhiễu giả lập):
-  - thuật toán, 28 test:
+  - thuật toán, 31 test:
     - ngưỡng lấy từ radar: vượt ngưỡng radar mới là mạnh; ngưỡng duy trì hạ 40 %, tối đa 10, không dưới nhiễu + 2; ngưỡng 100 bỏ vùng; năng lượng tĩnh vùng 0–1 không tính;
+    - đường nhanh và đường chậm (1.0.166): người đi vào được nhận ở 0,4 s (nhanh), tín hiệu mạnh vừa ở 0,7 s; xung 5 báo cáo và xung rất mạnh 2 báo cáo bị bỏ; hụt 2 báo cáo làm đứt chuỗi; năng lượng tĩnh không đi đường nhanh; tắt đường nhanh; mức nhanh trên 100;
     - ngưỡng kích hoạt trên nhiễu + 5 ở vùng nhiễu chạm ngưỡng radar, duy trì luôn dưới kích hoạt, nhiễu gần 100, biên cộng thêm cho mọi vùng; 20 000 tổ hợp ngưỡng radar, nhiễu và tuỳ chọn ngẫu nhiên;
     - nâng ngưỡng radar trên nhiễu: nhiễu + 4, tối đa trần, không hạ, bỏ qua vùng 100 và vùng tĩnh 0–1;
     - phòng giả định có vùng 2 tĩnh nhiễu 56 / 63, ngưỡng 40: chưa có số đo nhiễu thì báo nhầm ngay; có thì 30 phút không báo nhầm; sau khi nâng ngưỡng radar, người ngồi ở vùng 2 hay đi vào vùng 3 vẫn được nhận, trống sau 60 s;
@@ -425,7 +432,7 @@ idf.py -B build-esppresence -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.esppres
   - task `presence_eng`, 14 test: ngưỡng radar nhận từ task `radar_cfg`; nhiễu lưu NVS và nạp lại, blob hỏng để nguyên; phòng giả định đó từ đầu đến cuối (báo nhầm khi chưa học, học xong ngưỡng vùng 2 được nâng, 30 phút không báo nhầm, người ngồi đó vẫn được nhận); nhiễu trên ngưỡng xuất xưởng + 30; NVS đầy (không nâng gì); cảnh báo, lệnh, log;
   - task `radar_cfg`, 9 test: học qua radar (ESP32 ghi nhiễu, radar tự đo, ngưỡng nâng được ghi vào radar, đọc lại ngưỡng, bật lại engineering mode), huỷ, Factory thresholds, khôi phục radar;
   - học phòng trống (`quiet_learn`), 9 test cho bộ xử lý: ghi nhiễu 30 s rồi tắt engineering mode trước lệnh 0x000B, huỷ, thiếu báo cáo, radar đo thất bại, radar firmware cũ; ngưỡng nâng được ghi vào radar ở cả hai cách học, không ghi khi không có gì để nâng, radar không giữ ngưỡng nâng thì báo thất bại.
-- Làm hỏng có chủ ý 77 chỗ trong bộ xử lý, task `presence_eng`, `radar_cfg` và `quiet_learn` (mỗi lần một chỗ, 1.0.162): test bắt được 74. Ba chỗ còn lại không thể đổi kết quả nào (giới hạn ngưỡng duy trì dưới ngưỡng kích hoạt không bao giờ chạm tới với tuỳ chọn hợp lệ; vùng ngưỡng 100 không bao giờ được nâng vì mức nâng tối đa 99), nên không test nào phân biệt được.
+- Làm hỏng có chủ ý 77 chỗ trong bộ xử lý, task `presence_eng`, `radar_cfg` và `quiet_learn` (mỗi lần một chỗ, 1.0.162): test bắt được 74. Ba chỗ còn lại không thể đổi kết quả nào (giới hạn ngưỡng duy trì dưới ngưỡng kích hoạt không bao giờ chạm tới với tuỳ chọn hợp lệ; vùng ngưỡng 100 không bao giờ được nâng vì mức nâng tối đa 99), nên không test nào phân biệt được. 1.0.166 thêm 11 chỗ cho đường nhanh và 6 trong 8: bắt được 10, chỗ còn lại (xoá mảng cờ đường nhanh khi đặt lại cửa sổ) cũng không đổi được kết quả.
 - **Mô phỏng Monte Carlo**, 100 phòng, mỗi phòng học rồi chạy 1 giờ (chạy với 1.0.159, chạy lại với 1.0.162 trên cùng dữ liệu giả lập: kết quả như nhau, trừ một dòng ghi bên dưới; phòng giả định có nhiễu trên ngưỡng radar: mục **Vì sao ngưỡng kích hoạt cũng phải ở trên nhiễu**):
   - mô hình nhiễu tự đặt, **không phải dữ liệu radar thật**;
   - ba bộ ngưỡng radar: xuất xưởng, kiểu radar tự đo (sát nhiễu: phân vị 99 + 5), kiểu ESP32 học của bản ổn định;
@@ -967,7 +974,7 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
       - lệnh tự đo 0x000B đã chạy trên radar thật với bản ổn định, nhưng **chưa thử ngay sau khi ESP32 tắt engineering mode** như ở biến thể này;
     - học khi có người đi lại trong phòng: radar đặt ngưỡng cao hoặc học thất bại (log `quiet_learn`); vùng có người đi lại có nhiễu cao (`hold raised above it`);
     - phòng trống vài giờ (quạt, máy lạnh chạy như bình thường): không có `Present: ...`; nếu có, log ghi vùng, năng lượng và ngưỡng `strong from` để chỉnh (mục **Hiệu chỉnh thực tế**, bước 5);
-    - đi vào: `Present: ...` trong khoảng 0,5 s, Home Assistant báo có người;
+    - đi vào: `Present (fast): ...` trong khoảng 0,5 s, Home Assistant báo có người; đi vào chậm hoặc ở xa có thể là `Present: ... 6 of the last 8 reports strong` sau khoảng 0,8 s;
     - ngồi yên ở vùng có nhiễu cao (nếu có): `DIAG_STREAM on`, cột `filt` của năng lượng tĩnh vùng đó phải đạt `hold`, nếu không thì vùng kề hay năng lượng chuyển động phải giữ người;
     - ngồi yên 10 phút ở chỗ xa nhất cần nhận (ví dụ 4–6 m): vẫn có người, `STATUS` báo `hold signal at gate ...`;
     - ra khỏi phòng: `Empty: no hold signal for 60 s` và Home Assistant hết người cùng lúc; quay lại trong lúc đếm thì đếm lại từ đầu;
