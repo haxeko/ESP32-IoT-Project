@@ -236,17 +236,15 @@ menu "ESP32 Presence Engine (experimental)"
             Keeps the radar in engineering mode and decides presence on the
             ESP32 from the moving and still energy of every gate, with two
             thresholds per gate taken from the thresholds stored in the radar
-            (the radar measures and stores them when the empty room is
-            learned: "Learning" in Home Assistant, 3 clicks or LEARN_EMPTY,
-            as with the stable firmware; or set them with HLKRadarTool).
+            (set by the ESP32 when the empty room is learned: "Learning" in
+            Home Assistant, 3 clicks or LEARN_EMPTY; or with HLKRadarTool).
             An empty room needs a strong signal (above the radar threshold)
             confirmed over several reports; once present, a lower hold
             threshold keeps it (people sitting still, small movements), and
             the room is empty after Hold time (Occupancy Sensing HoldTime)
             without it. Both stay above the noise of the empty room, recorded
-            by the ESP32 while learning (stored in NVS); the radar thresholds
-            that noise reaches are raised in the radar after the learning. A
-            silent radar is a sensor fault, never an empty room.
+            by the ESP32 while learning (stored in NVS). A silent radar is a
+            sensor fault, never an empty room.
             Console commands and per-gate diagnostics on the ESP-IDF console.
             README: "Bộ xử lý hiện diện trên ESP32".
 
@@ -298,10 +296,8 @@ menu "ESP32 Presence Engine (experimental)"
             A gate is strong only from the noise recorded while learning +
             this value, even where the radar threshold is lower (a gate whose
             noise reaches its radar threshold would start presence without
-            anyone). After a learning, the radar thresholds the noise reaches
-            are raised to noise + this value - 1 in the radar (at most to the
-            factory threshold + "Highest raise above the factory threshold").
-            The hold threshold stays at least at noise + 2.
+            anyone). A learning sets the radar thresholds at least to noise +
+            this value - 1. The hold threshold stays at least at noise + 2.
 
     config PRESENCE_ENGINE_TRIGGER_MARGIN
         int "Extra margin of the strong signal on every gate (energy 0-100)"
@@ -346,17 +342,28 @@ menu "ESP32 Presence Engine (experimental)"
         range 0 50
         default 10
 
-    config PRESENCE_ENGINE_NOISE_RECORD_SEC
-        int "Noise of the empty room recorded by the ESP32 while learning (seconds)"
+    config PRESENCE_ENGINE_LEARN_FLOOR_PERCENT
+        int "Learning: thresholds at least this share of the factory ones (%)"
         depends on PRESENCE_ESP_ENGINE
-        range 10 120
-        default 30
+        range 0 100
+        default 75
         help
-            Before the radar measures the empty room itself, the ESP32 records
-            the energies of every gate for this long (the room must stay
-            empty), so that the strong and hold thresholds stay above the
-            noise. A radar without its own measurement is recorded by the
-            ESP32 for the learning time instead, which gives the noise too.
+            The ESP32 records the empty room for the learning time ("Empty
+            Room Learning" menu, 120 s in the esppresence variant; the
+            radar's own background noise detection is not used) and sets
+            every radar threshold to its highest filtered energy (median of
+            3 reports) + the larger of "Learning: smallest margin" and
+            (highest - average), at least the noise + "Strong signal above
+            the noise" - 1, at most the factory threshold + "Highest raise
+            above the factory threshold", and at least this share of the
+            factory threshold, so that a quiet room does not get thresholds
+            close to its noise. 100: never below the factory thresholds.
+
+    config PRESENCE_ENGINE_LEARN_MIN_MARGIN
+        int "Learning: smallest margin above the highest energy (energy 0-100)"
+        depends on PRESENCE_ESP_ENGINE
+        range 1 50
+        default 8
 
     config PRESENCE_ENGINE_DATA_TIMEOUT_MS
         int "Sensor fault after (ms) without a valid report with energies"
@@ -413,9 +420,12 @@ menu "Empty Room Learning"
             from which radar firmware on). With this option the learning asks
             the radar first: it waits 10 s, then measures for the recording
             time. Hi-Link does not document how the thresholds are computed;
-            they may be more sensitive than the factory defaults. A radar that
-            refuses the command is learned by the ESP32 as below (noise
-            percentile, margin, highest raise).
+            they may be more sensitive than the factory defaults, and at least
+            one LD2410C was seen to keep its thresholds (it only measured). A
+            radar that refuses the command is learned by the ESP32 as below
+            (noise percentile, margin, highest raise). Not used by the ESP32
+            presence engine, which always records and sets the thresholds
+            itself.
 
     config LD2410_LEARN_PERCENTILE
         int "Noise percentile (%)"

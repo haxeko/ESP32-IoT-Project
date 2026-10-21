@@ -132,6 +132,32 @@ static void test_parser()
     CHECK(capture.moving[0][30] == 1 && capture.moving[8][30] == 1 && capture.still[4][30] == 1);
     CHECK(capture.moving[3][100] == 1 && capture.still[8][100] == 1);
 
+    test_begin("capture: highest median of three successive reports per gate, a lone strong report left out");
+    reset_driver();
+    ld2410_capture_start(&capture);
+    for (uint8_t e : { 30, 90, 30, 30 }) {
+        CHECK(feed(report(0x01, 0x00, 0, 0, e), &t));
+    }
+    CHECK(capture.moving_filtered_max[0] == 30 && capture.still_filtered_max[8] == 30);
+    CHECK(capture.moving[0][90] == 1); // the lone report is still counted in the histogram
+    for (uint8_t e : { 90, 90 }) {
+        CHECK(feed(report(0x01, 0x00, 0, 0, e), &t));
+    }
+    ld2410_capture_stop();
+    CHECK(capture.moving_filtered_max[4] == 90 && capture.still_filtered_max[2] == 90 && capture.frames == 6);
+    ld2410_capture_start(&capture); // cleared, nothing until three reports
+    CHECK(feed(report(0x01, 0x00, 0, 0, 80), &t) && feed(report(0x01, 0x00, 0, 0, 80), &t));
+    CHECK(capture.moving_filtered_max[0] == 0);
+    CHECK(feed(report(0x01, 0x00, 0, 0, 10), &t));
+    ld2410_capture_stop();
+    CHECK(capture.moving_filtered_max[0] == 80);
+    ld2410_capture_start(&capture); // energies above 100 as 100
+    for (int i = 0; i < 3; i++) {
+        CHECK(feed(report(0x01, 0x00, 0, 0, 200), &t));
+    }
+    ld2410_capture_stop();
+    CHECK(capture.moving_filtered_max[0] == 100 && capture.still_filtered_max[8] == 100);
+
     test_begin("parser: engineering data with more than 9 gates is not counted");
     reset_driver();
     ld2410_capture_start(&capture);

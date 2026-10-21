@@ -184,6 +184,79 @@ void pe_noise_from_histograms(const uint16_t moving[PE_GATES][PE_MAX_ENERGY + 1]
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Learning: thresholds from the empty room
+
+void pe_room_from_histograms(const uint16_t moving[PE_GATES][PE_MAX_ENERGY + 1],
+                             const uint16_t still[PE_GATES][PE_MAX_ENERGY + 1], const uint8_t moving_max[PE_GATES],
+                             const uint8_t still_max[PE_GATES], uint32_t frames, pe_room_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->frames = frames;
+    for (int kind = 0; kind < PE_KINDS; kind++) {
+        for (int g = 0; g < PE_GATES; g++) {
+            const uint16_t *hist = kind == PE_MOVING ? moving[g] : still[g];
+            uint64_t n = 0;
+            uint64_t sum = 0;
+            uint8_t peak = 0;
+            for (int v = 0; v <= PE_MAX_ENERGY; v++) {
+                n += hist[v];
+                sum += (uint64_t)hist[v] * v;
+                if (hist[v] > 0) {
+                    peak = (uint8_t)v;
+                }
+            }
+            if (n == 0) {
+                continue;
+            }
+            out->valid[kind][g] = true;
+            out->avg[kind][g] = (uint8_t)((sum + n / 2) / n);
+            out->peak[kind][g] = peak;
+            out->max[kind][g] = std::min<uint8_t>(kind == PE_MOVING ? moving_max[g] : still_max[g], peak);
+        }
+    }
+}
+
+void pe_learn_thresholds(const pe_params_t *p, const pe_learn_params_t *lp, const pe_room_t *room,
+                         const pe_noise_t *noise, const pe_radar_thresholds_t *current, pe_radar_thresholds_t *out,
+                         uint8_t flags[PE_KINDS][PE_GATES])
+{
+    *out = *current;
+    for (int kind = 0; kind < PE_KINDS; kind++) {
+        for (int g = 0; g < PE_GATES; g++) {
+            uint8_t f = 0;
+            uint8_t &t = kind == PE_MOVING ? out->moving[g] : out->still[g];
+            if ((kind == PE_STILL && g < PE_FIRST_STILL_GATE) || !room->valid[kind][g]) {
+                f = PE_LEARN_KEPT;
+            } else {
+                const int max = room->max[kind][g];
+                const int avg = room->avg[kind][g];
+                int want = max + std::max<int>(lp->min_margin, max - avg);
+                const uint8_t level = noise ? noise->level[kind][g] : PE_NOISE_UNKNOWN;
+                if (level != PE_NOISE_UNKNOWN && level + p->trigger_noise_margin - 1 > want) {
+                    want = level + p->trigger_noise_margin - 1;
+                    f |= PE_LEARN_NOISE;
+                }
+                const int factory = kind == PE_MOVING ? kFactoryMoving[g] : kFactoryStill[g];
+                const int floor = (factory * lp->floor_percent + 99) / 100;
+                const int ceiling = std::min(factory + lp->max_raise, PE_MAX_ENERGY - 1);
+                if (want < floor) {
+                    want = floor;
+                    f |= PE_LEARN_FLOOR;
+                }
+                if (want > ceiling) {
+                    want = ceiling;
+                    f |= PE_LEARN_LIMIT;
+                }
+                t = (uint8_t)want;
+            }
+            if (flags) {
+                flags[kind][g] = f;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Engine
 
 void pe_default_params(pe_params_t *p)
@@ -272,28 +345,6 @@ void pe_configure(pe_engine_t *e, const pe_radar_thresholds_t *radar, const pe_r
     r.max_still_gate = std::min<uint8_t>(r.max_still_gate, PE_GATES - 1);
     e->radar = *radar;
     apply(e, true, &r);
-}
-
-int pe_raise_above_noise(const pe_params_t *p, const pe_noise_t *noise, const pe_radar_thresholds_t *ceiling,
-                         pe_radar_thresholds_t *radar)
-{
-    int raised = 0;
-    for (int kind = 0; kind < PE_KINDS; kind++) {
-        for (int g = kind == PE_STILL ? PE_FIRST_STILL_GATE : 0; g < PE_GATES; g++) {
-            uint8_t &t = kind == PE_MOVING ? radar->moving[g] : radar->still[g];
-            const uint8_t level = noise->level[kind][g];
-            if (level == PE_NOISE_UNKNOWN || t >= PE_MAX_ENERGY) {
-                continue;
-            }
-            const uint8_t top = kind == PE_MOVING ? ceiling->moving[g] : ceiling->still[g];
-            const int want = std::min({ level + p->trigger_noise_margin - 1, (int)top, PE_MAX_ENERGY - 1 });
-            if (want > t) {
-                t = (uint8_t)want;
-                raised++;
-            }
-        }
-    }
-    return raised;
 }
 
 bool pe_set_noise(pe_engine_t *e, const pe_noise_t *noise, uint32_t now_ms)

@@ -24,6 +24,8 @@ static constexpr uint32_t kPollMs = 100;
 // The radar sends about 10 engineering reports per second; fewer than 2 per second means the reports did not
 // come through.
 static constexpr uint32_t kMinFramesPerSec = 2;
+// The ESP32 presence engine sets every threshold from the averages and maxima of the recording: at least 5 per second
+static constexpr uint32_t kMinRoomFramesPerSec = 5;
 
 // Factory defaults (HLK-LD2410 serial protocol, table 7). The still thresholds of gates 0 and 1 cannot be set.
 static const uint8_t kFactoryMoving[LD2410_GATE_COUNT] = { 50, 50, 40, 30, 20, 15, 15, 15, 15 };
@@ -184,30 +186,6 @@ static bool write_thresholds(const ld2410_thresholds_t *want)
     return true;
 }
 
-// Once a learning succeeded: hands the recording of the empty room to on_noise with the thresholds the radar holds
-// (held), then writes those it raised. QUIET_LEARN_FAILED when the radar did not keep them.
-static quiet_learn_result_t hand_noise(quiet_learn_noise_cb_t on_noise, const ld2410_capture_t *capture,
-                                       uint16_t gate_cm, const ld2410_thresholds_t *held)
-{
-    ld2410_thresholds_t want = *held;
-    on_noise(capture, gate_cm, &want);
-    if (same_thresholds(&want, held)) {
-        return QUIET_LEARN_SAVED;
-    }
-    log_threshold_list("Thresholds raised above the noise recorded by the ESP32", &want);
-    if (ld2410_config_begin() != ESP_OK) {
-        ESP_LOGE(TAG, "The radar stopped answering commands, the raised thresholds were not written");
-        return QUIET_LEARN_FAILED;
-    }
-    const bool written = write_thresholds(&want);
-    end_config();
-    if (!written) {
-        return QUIET_LEARN_FAILED;
-    }
-    ESP_LOGI(TAG, "Raised thresholds saved in the LD2410");
-    return QUIET_LEARN_SAVED;
-}
-
 // ---------------------------------------------------------------------------------------------------------------------
 // Learning on the ESP32
 
@@ -261,14 +239,25 @@ static void log_thresholds(uint32_t frames, uint16_t gate_cm, const quiet_learn_
     }
 }
 
-// Inside configuration mode: computes and writes the new thresholds (saved), then reads them back. True when the
-// radar holds the new values.
-static bool apply_thresholds(const ld2410_capture_t *capture, uint16_t gate_cm, ld2410_thresholds_t *saved)
+// Inside configuration mode: computes the new thresholds (set_thresholds when given, else from the noise
+// percentile), writes them and reads them back. True when the radar holds the new values.
+static bool apply_thresholds(const ld2410_capture_t *capture, uint16_t gate_cm, quiet_learn_set_cb_t set_thresholds)
 {
     ld2410_thresholds_t before;
     if (ld2410_read_thresholds(&before) != ESP_OK) {
         ESP_LOGE(TAG, "Could not read the radar thresholds, nothing changed");
         return false;
+    }
+    if (set_thresholds) {
+        ld2410_thresholds_t want = before;
+        set_thresholds(capture, gate_cm, &want);
+        log_threshold_list("Thresholds before", &before);
+        log_threshold_list("Thresholds set by the ESP32", &want);
+        if (same_thresholds(&want, &before)) {
+            ESP_LOGI(TAG, "The radar holds these thresholds already, nothing written");
+            return true;
+        }
+        return write_thresholds(&want);
     }
     quiet_learn_levels_t noise;
     quiet_learn_levels_t peak;
@@ -277,17 +266,17 @@ static bool apply_thresholds(const ld2410_capture_t *capture, uint16_t gate_cm, 
     ld2410_thresholds_t after;
     quiet_learn_compute_thresholds(&noise, &before, CONFIG_LD2410_LEARN_MARGIN, CONFIG_LD2410_LEARN_MAX_RAISE, &after);
     log_thresholds(capture->frames, gate_cm, &noise, &peak, &before, &after);
-    *saved = after;
     return write_thresholds(&after);
 }
 
-// Records the engineering reports after wait_ms more of the delay before recording, then writes the thresholds
-// (saved).
+// Records the engineering reports after wait_ms more of the delay before recording, then writes the thresholds.
 static quiet_learn_result_t run_with_capture(ld2410_capture_t *capture, quiet_learn_cancelled_cb_t cancelled,
                                              quiet_learn_phase_cb_t on_phase, uint16_t gate_cm, uint32_t wait_ms,
-                                             ld2410_thresholds_t *saved)
+                                             quiet_learn_set_cb_t set_thresholds)
 {
     const uint32_t duration_s = CONFIG_LD2410_LEARN_DURATION_SEC;
+    // The averages and maxima of the ESP32 presence engine need about every report (10 per second)
+    const uint32_t min_per_sec = set_thresholds ? kMinRoomFramesPerSec : kMinFramesPerSec;
     if (!wait_unless_cancelled(wait_ms, cancelled)) {
         ESP_LOGI(TAG, "Learning cancelled, nothing changed");
         return QUIET_LEARN_CANCELLED;
@@ -323,37 +312,37 @@ static quiet_learn_result_t run_with_capture(ld2410_capture_t *capture, quiet_le
     if (!completed) {
         ESP_LOGI(TAG, "Learning cancelled, nothing changed");
         result = QUIET_LEARN_CANCELLED;
-    } else if (capture->frames < duration_s * kMinFramesPerSec) {
+    } else if (capture->frames < duration_s * min_per_sec) {
         ESP_LOGE(TAG, "Only %" PRIu32 " engineering reports in %" PRIu32 " s, nothing changed", capture->frames,
                  duration_s);
-    } else if (apply_thresholds(capture, gate_cm, saved)) {
+    } else if (apply_thresholds(capture, gate_cm, set_thresholds)) {
         result = QUIET_LEARN_SAVED;
     }
     if (ld2410_set_engineering_mode(false) != ESP_OK) {
         ESP_LOGW(TAG, "Could not leave engineering mode (it ends when the radar restarts)");
     }
     end_config();
-    if (result == QUIET_LEARN_SAVED) {
+    if (result == QUIET_LEARN_SAVED && set_thresholds) {
+        ESP_LOGI(TAG, "Learning done: thresholds set by the ESP32 (%" PRIu32 " reports in %" PRIu32 " s)",
+                 capture->frames, duration_s);
+    } else if (result == QUIET_LEARN_SAVED) {
         ESP_LOGI(TAG, "Learning done: new thresholds saved in the LD2410 (%" PRIu32 " reports)", capture->frames);
     }
     return result;
 }
 
 static quiet_learn_result_t run_on_esp32(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
-                                         uint16_t gate_cm, uint32_t wait_ms, quiet_learn_noise_cb_t on_noise)
+                                         uint16_t gate_cm, uint32_t wait_ms, quiet_learn_set_cb_t set_thresholds)
 {
-    // Energy counts of every gate (about 3.6 KB), only while learning
+    // Energy counts of every gate (about 3.7 KB), only while learning
     ld2410_capture_t *capture = static_cast<ld2410_capture_t *>(malloc(sizeof(ld2410_capture_t)));
     if (capture == nullptr) {
         ESP_LOGE(TAG, "Not enough memory for the recording (%u bytes), nothing changed",
                  (unsigned)sizeof(ld2410_capture_t));
         return QUIET_LEARN_FAILED;
     }
-    ld2410_thresholds_t saved = {};
-    quiet_learn_result_t result = run_with_capture(capture, cancelled, on_phase, gate_cm, wait_ms, &saved);
-    if (result == QUIET_LEARN_SAVED && on_noise) {
-        result = hand_noise(on_noise, capture, gate_cm, &saved);
-    }
+    const quiet_learn_result_t result =
+        run_with_capture(capture, cancelled, on_phase, gate_cm, wait_ms, set_thresholds);
     free(capture);
     return result;
 }
@@ -370,22 +359,15 @@ static constexpr uint32_t kRadarStartMs = 15 * 1000;
 static constexpr uint32_t kRadarMarginMs = 30 * 1000;
 // The radar answers commands again about a second after a restart
 static constexpr uint32_t kRadarRestartMs = 1000;
-// The noise of the empty room for the presence engine needs more engineering reports than the thresholds
-static constexpr uint32_t kMinNoiseFramesPerSec = 5;
 
 enum RadarAutoStart { kRadarAutoStarted, kRadarAutoUnsupported, kRadarAutoNoAnswer };
 
 // Reads the radar version and thresholds, then asks the radar for its background noise detection. Unsupported: the
-// radar refused the command or did not answer it, but answers the others. engineering_off: the engineering mode
-// is turned off first, so that the radar measures as without it (the presence engine keeps it on otherwise).
-static RadarAutoStart start_radar_auto(uint32_t duration_s, ld2410_thresholds_t *before, bool *before_ok,
-                                       bool engineering_off)
+// radar refused the command or did not answer it, but answers the others.
+static RadarAutoStart start_radar_auto(uint32_t duration_s, ld2410_thresholds_t *before, bool *before_ok)
 {
     if (ld2410_config_begin() != ESP_OK) {
         return kRadarAutoNoAnswer;
-    }
-    if (engineering_off && ld2410_set_engineering_mode(false) != ESP_OK) {
-        ESP_LOGW(TAG, "Could not leave engineering mode before the radar measures");
     }
     ld2410_version_t version;
     if (ld2410_read_firmware_version(&version) == ESP_OK) {
@@ -434,48 +416,9 @@ static void log_radar_auto_result(const ld2410_thresholds_t *before, bool before
     }
 }
 
-// Engineering reports of the empty room for the presence engine, before the radar measures itself. False: nothing
-// usable, *result says why (logged).
-static bool record_noise(ld2410_capture_t *capture, uint32_t seconds, quiet_learn_cancelled_cb_t cancelled,
-                         quiet_learn_phase_cb_t on_phase, quiet_learn_result_t *result)
-{
-    *result = QUIET_LEARN_FAILED;
-    esp_err_t err = ld2410_config_begin();
-    if (err == ESP_OK) {
-        err = ld2410_set_engineering_mode(true);
-        if (ld2410_config_end() != ESP_OK && err == ESP_OK) {
-            err = ESP_FAIL;
-        }
-    }
-    if (err != ESP_OK) {
-        log_no_answer();
-        return false;
-    }
-    ESP_LOGI(TAG, "Recording the noise of the empty room on the ESP32 for %" PRIu32 " s, then the LD2410 measures",
-             seconds);
-    if (on_phase) {
-        on_phase(QUIET_LEARN_RECORDING);
-    }
-    ld2410_capture_start(capture);
-    const bool completed = wait_unless_cancelled(seconds * 1000, cancelled);
-    ld2410_capture_stop();
-    if (!completed) {
-        ESP_LOGI(TAG, "Learning cancelled, nothing changed");
-        *result = QUIET_LEARN_CANCELLED;
-        return false;
-    }
-    if (capture->frames < seconds * kMinNoiseFramesPerSec) {
-        ESP_LOGE(TAG, "Only %" PRIu32 " engineering reports in %" PRIu32 " s, nothing changed", capture->frames,
-                 seconds);
-        return false;
-    }
-    return true;
-}
-
-// Waits for the radar's background noise detection to end, then reads the thresholds it stored (saved).
+// Waits for the radar's background noise detection to end, then reads the thresholds it stored.
 static quiet_learn_result_t run_radar_auto(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
-                                           uint32_t duration_s, const ld2410_thresholds_t *before, bool before_ok,
-                                           ld2410_thresholds_t *saved)
+                                           uint32_t duration_s, const ld2410_thresholds_t *before, bool before_ok)
 {
     ESP_LOGI(TAG, "The LD2410 measures the empty room itself: %" PRIu32 " s more to leave, then %" PRIu32 " s",
              kRadarLeaveMs / 1000, duration_s);
@@ -540,7 +483,6 @@ static quiet_learn_result_t run_radar_auto(quiet_learn_cancelled_cb_t cancelled,
     }
     log_radar_auto_result(before, before_ok, &after);
     ESP_LOGI(TAG, "Learning done: thresholds set by the LD2410 background noise detection");
-    *saved = after;
     return QUIET_LEARN_SAVED;
 }
 #endif // CONFIG_LD2410_LEARN_RADAR_AUTO
@@ -548,78 +490,42 @@ static quiet_learn_result_t run_radar_auto(quiet_learn_cancelled_cb_t cancelled,
 // ---------------------------------------------------------------------------------------------------------------------
 
 quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
-                                     uint16_t gate_cm, quiet_learn_noise_cb_t on_noise, uint32_t noise_seconds)
+                                     uint16_t gate_cm, quiet_learn_set_cb_t set_thresholds)
 {
     const uint32_t delay_s = CONFIG_LD2410_LEARN_DELAY_SEC;
     const uint32_t duration_s = CONFIG_LD2410_LEARN_DURATION_SEC;
-#if CONFIG_LD2410_LEARN_RADAR_AUTO
-    if (on_noise) {
-        ESP_LOGI(TAG, "Empty room learning: leave the room. In %" PRIu32 " s the ESP32 records the noise for %" PRIu32
-                      " s, then the LD2410 measures the room itself (%" PRIu32 " s): stay out until the LED stops "
-                      "blinking", delay_s, noise_seconds, kRadarLeaveMs / 1000 + duration_s);
-    } else
-#endif
-    {
-        ESP_LOGI(TAG, "Empty room learning: leave the room, recording starts in %" PRIu32 " s and lasts %" PRIu32
-                      " s", delay_s, duration_s);
-    }
+    ESP_LOGI(TAG, "Empty room learning: leave the room, recording starts in %" PRIu32 " s and lasts %" PRIu32 " s",
+             delay_s, duration_s);
     if (on_phase) {
         on_phase(QUIET_LEARN_WAITING);
     }
     uint32_t wait_ms = delay_s * 1000;
-#if CONFIG_LD2410_LEARN_RADAR_AUTO
-    // Noise of the empty room for the presence engine, recorded before the radar measures (allocated meanwhile)
-    ld2410_capture_t *noise = nullptr;
-    if (on_noise) {
-        if (!wait_unless_cancelled(wait_ms, cancelled)) {
-            ESP_LOGI(TAG, "Learning cancelled, nothing changed");
-            return QUIET_LEARN_CANCELLED;
-        }
-        wait_ms = 0;
-        noise = static_cast<ld2410_capture_t *>(malloc(sizeof(ld2410_capture_t)));
-        if (noise == nullptr) {
-            ESP_LOGE(TAG, "Not enough memory for the recording (%u bytes), nothing changed",
-                     (unsigned)sizeof(ld2410_capture_t));
-            return QUIET_LEARN_FAILED;
-        }
-        quiet_learn_result_t result;
-        if (!record_noise(noise, noise_seconds, cancelled, on_phase, &result)) {
-            free(noise);
-            return result;
-        }
-    } else {
-        // The radar waits kRadarLeaveMs itself: ask it that much before the end of the delay.
-        const uint32_t lead_ms = wait_ms > kRadarLeaveMs ? wait_ms - kRadarLeaveMs : 0;
-        if (!wait_unless_cancelled(lead_ms, cancelled)) {
-            ESP_LOGI(TAG, "Learning cancelled, nothing changed");
-            return QUIET_LEARN_CANCELLED;
-        }
-        wait_ms -= lead_ms;
+    if (set_thresholds) {
+        // The ESP32 presence engine: recorded by the ESP32, never the radar's own background noise detection
+        return run_on_esp32(cancelled, on_phase, gate_cm, wait_ms, set_thresholds);
     }
+#if CONFIG_LD2410_LEARN_RADAR_AUTO
+    // The radar waits kRadarLeaveMs itself: ask it that much before the end of the delay.
+    const uint32_t lead_ms = wait_ms > kRadarLeaveMs ? wait_ms - kRadarLeaveMs : 0;
+    if (!wait_unless_cancelled(lead_ms, cancelled)) {
+        ESP_LOGI(TAG, "Learning cancelled, nothing changed");
+        return QUIET_LEARN_CANCELLED;
+    }
+    wait_ms -= lead_ms;
     ld2410_thresholds_t before;
     bool before_ok = false;
-    switch (start_radar_auto(duration_s, &before, &before_ok, noise != nullptr)) {
-    case kRadarAutoStarted: {
-        ld2410_thresholds_t saved = {};
-        quiet_learn_result_t result = run_radar_auto(cancelled, on_phase, duration_s, &before, before_ok, &saved);
-        if (result == QUIET_LEARN_SAVED && noise != nullptr) {
-            result = hand_noise(on_noise, noise, gate_cm, &saved);
-        }
-        free(noise);
-        return result;
-    }
+    switch (start_radar_auto(duration_s, &before, &before_ok)) {
+    case kRadarAutoStarted:
+        return run_radar_auto(cancelled, on_phase, duration_s, &before, before_ok);
     case kRadarAutoNoAnswer:
-        free(noise);
         log_no_answer();
         return QUIET_LEARN_FAILED;
     case kRadarAutoUnsupported:
-        // The ESP32 records the room again for the thresholds (and the noise from that recording)
-        free(noise);
         ESP_LOGI(TAG, "This LD2410 firmware has no background noise detection: learning on the ESP32");
         break;
     }
 #endif
-    return run_on_esp32(cancelled, on_phase, gate_cm, wait_ms, on_noise);
+    return run_on_esp32(cancelled, on_phase, gate_cm, wait_ms, nullptr);
 }
 
 bool quiet_learn_restore_factory(void)

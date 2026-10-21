@@ -374,12 +374,11 @@ static void run_requested_learning()
     show_learn_mode(RADAR_LEARN_ON);
     // gate_cm is 0 (unknown) before the radar settings were read
 #if CONFIG_PRESENCE_ESP_ENGINE
-    // The ESP32 records the noise of the empty room first, then the radar measures and stores its thresholds; the
-    // engine labels the radar's silence or missing energies meanwhile as the learning.
+    // The ESP32 records the empty room and sets every threshold itself (not the radar's own detection); the engine
+    // labels the radar's silence or missing energies meanwhile (configuration sessions) as the learning.
     radar_busy(true);
     const quiet_learn_result_t result =
-        quiet_learn_run(learning_cancelled, show_learning_phase, s_settings.gate_cm, esp_presence_learned_noise,
-                        CONFIG_PRESENCE_ENGINE_NOISE_RECORD_SEC);
+        quiet_learn_run(learning_cancelled, show_learning_phase, s_settings.gate_cm, esp_presence_learned_room);
     radar_busy(false);
 #else
     const quiet_learn_result_t result = quiet_learn_run(learning_cancelled, show_learning_phase, s_settings.gate_cm);

@@ -24,8 +24,10 @@
 // The noise of every channel is recorded by the ESP32 while the empty room is learned (pe_noise_t, stored in NVS on
 // the ESP32): the radar does not report it. Without it (never learned with this firmware, or learned with another
 // gate length) the hold threshold is T and the trigger above T: no lower than the radar's own.
-// After a learning, the radar thresholds the noise reaches are raised in the radar too (pe_raise_above_noise(), at
-// most to the factory threshold + CONFIG_LD2410_LEARN_MAX_RAISE): the engine trigger then follows the radar's.
+// Learning (pe_learn_thresholds()): the ESP32 records the empty room (the radar's own background noise detection
+// is not used) and sets every radar threshold from the average and the highest filtered energy of its channel,
+// written to the radar once: max + the larger of min_margin and (max - average), at least the noise +
+// trigger_noise_margin - 1, between floor_percent % of the factory threshold and the factory threshold + max_raise.
 // The still energy of gates 0 and 1 is not counted: the LD2410 has no still threshold there (it cannot be set).
 //
 // Noise filter: each channel is the median of its last three energies before any comparison. A report that stands
@@ -106,6 +108,28 @@ typedef struct {
     uint8_t pad[2];
     uint32_t crc32; // CRC-32 of all the bytes before it
 } pe_noise_t;
+
+// The empty room recorded for a learning, per channel
+typedef struct {
+    uint32_t frames;
+    uint8_t avg[PE_KINDS][PE_GATES];  // average energy of the reports (rounded)
+    uint8_t max[PE_KINDS][PE_GATES];  // highest median of three successive reports (a report alone left out)
+    uint8_t peak[PE_KINDS][PE_GATES]; // highest single report (what HLKRadarTool shows as the maximum)
+    bool valid[PE_KINDS][PE_GATES];   // reports were recorded for the channel
+} pe_room_t;
+
+// Thresholds learned from the empty room
+typedef struct {
+    uint8_t floor_percent; // at least this share of the factory threshold (rounded up)
+    uint8_t min_margin;    // threshold = max + the larger of min_margin and (max - average)...
+    uint8_t max_raise;     // ...at most the factory threshold + max_raise (and 99)
+} pe_learn_params_t;
+
+// What happened to a learned threshold
+#define PE_LEARN_FLOOR 0x01 // raised to the floor (a quiet channel)
+#define PE_LEARN_LIMIT 0x02 // limited to factory + max_raise: the channel moved a lot while recording
+#define PE_LEARN_KEPT 0x04  // kept as it was: no reports, or a still threshold of gates 0-1 (not settable)
+#define PE_LEARN_NOISE 0x08 // raised to the noise + trigger_noise_margin - 1
 
 // Thresholds in use
 typedef struct {
@@ -242,11 +266,17 @@ bool pe_noise_valid(const pe_noise_t *noise);
 void pe_configure(pe_engine_t *e, const pe_radar_thresholds_t *radar, const pe_range_t *range, uint32_t now_ms);
 // Noise recorded while learning (nullptr: none). False (nothing changed) when the record is not valid.
 bool pe_set_noise(pe_engine_t *e, const pe_noise_t *noise, uint32_t now_ms);
-// Radar thresholds the recorded noise reaches, raised so that the noise stays below the trigger (noise +
-// trigger_noise_margin - 1), at most `ceiling` (and 99); the others stay. Still gates 0 and 1 are left as they are.
-// Returns how many were raised.
-int pe_raise_above_noise(const pe_params_t *p, const pe_noise_t *noise, const pe_radar_thresholds_t *ceiling,
-                         pe_radar_thresholds_t *radar);
+// The empty room from a recording: histograms of the energies ([gate][energy 0-100], frames reports) and the highest
+// filtered energy of every gate.
+void pe_room_from_histograms(const uint16_t moving[PE_GATES][PE_MAX_ENERGY + 1],
+                             const uint16_t still[PE_GATES][PE_MAX_ENERGY + 1], const uint8_t moving_max[PE_GATES],
+                             const uint8_t still_max[PE_GATES], uint32_t frames, pe_room_t *out);
+// Radar thresholds learned from the empty room (see the top of this file); noise (nullptr: none) from the same
+// recording, current: what the radar holds (kept where nothing was recorded, and for the still gates 0 and 1).
+// flags (may be nullptr): PE_LEARN_* of every channel.
+void pe_learn_thresholds(const pe_params_t *p, const pe_learn_params_t *lp, const pe_room_t *room,
+                         const pe_noise_t *noise, const pe_radar_thresholds_t *current, pe_radar_thresholds_t *out,
+                         uint8_t flags[PE_KINDS][PE_GATES]);
 // Occupancy Sensing HoldTime
 void pe_set_absence_time(pe_engine_t *e, uint32_t absence_ms);
 // A configuration session or a learning of the radar starts or ends (no reports or no energies meanwhile).

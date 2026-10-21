@@ -219,6 +219,53 @@ struct Bench {
         const pe_noise_t noise = record_noise();
         CHECK(pe_set_noise(&e, &noise, now));
     }
+
+    // What the ESP32 records while the empty room is learned (120 s of the room as it is): the statistics of every
+    // channel (average, highest median of 3 reports, highest report) and its noise
+    void record_room(pe_room_t *out_room, pe_noise_t *out_noise, uint32_t ms = 120000)
+    {
+        static uint16_t moving[PE_GATES][PE_MAX_ENERGY + 1];
+        static uint16_t still[PE_GATES][PE_MAX_ENERGY + 1];
+        memset(moving, 0, sizeof(moving));
+        memset(still, 0, sizeof(still));
+        uint8_t last[3][PE_KINDS][PE_GATES] = {};
+        uint8_t max[PE_KINDS][PE_GATES] = {};
+        uint32_t frames = 0;
+        for (uint32_t t = 0; t < ms; t += 100) {
+            pe_frame_t f = room_frame(room, rng);
+            add_person(f, person, rng);
+            for (int g = 0; g < PE_GATES; g++) {
+                moving[g][f.moving[g]]++;
+                still[g][f.still[g]]++;
+                for (int kind = 0; kind < PE_KINDS; kind++) {
+                    last[2][kind][g] = last[1][kind][g];
+                    last[1][kind][g] = last[0][kind][g];
+                    last[0][kind][g] = kind == PE_MOVING ? f.moving[g] : f.still[g];
+                    if (frames >= 2) {
+                        const uint8_t a = last[0][kind][g], b = last[1][kind][g], c = last[2][kind][g];
+                        const uint8_t median = std::max(std::min(a, b), std::min(std::max(a, b), c));
+                        max[kind][g] = std::max(max[kind][g], median);
+                    }
+                }
+            }
+            frames++;
+        }
+        pe_room_from_histograms(moving, still, max[PE_MOVING], max[PE_STILL], frames, out_room);
+        pe_noise_from_histograms(moving, still, frames, range.gate_cm, out_noise);
+    }
+
+    // A learning: thresholds set from the room recorded, written to the radar, read back; the noise kept
+    void learn_room(const pe_learn_params_t &lp = { 75, 8, 30 })
+    {
+        pe_room_t r;
+        pe_noise_t noise;
+        record_room(&r, &noise);
+        pe_radar_thresholds_t learned;
+        pe_learn_thresholds(&e.p, &lp, &r, &noise, &radar, &learned, nullptr);
+        radar = learned;
+        configure();
+        CHECK(pe_set_noise(&e, &noise, now));
+    }
 };
 
 // Thresholds a channel should get with the default parameters: strong above T and from noise + 5 (above 100: never);
@@ -415,46 +462,115 @@ int main(int argc, char **argv)
         }
     }
 
-    test_begin("radar thresholds raised above the noise after a learning: noise + 4, at most the ceiling, never "
-               "lowered");
+    test_begin("learned thresholds with the numbers of the HLKRadarTool screenshots (average / highest): max + the "
+               "larger of 8 and (max - average), at least 75 % of the factory thresholds");
     {
         pe_params_t p;
         pe_default_params(&p);
-        pe_radar_thresholds_t radar;
-        pe_factory_thresholds(&radar);
-        pe_radar_thresholds_t ceiling; // factory + 30
-        pe_factory_thresholds(&ceiling);
+        pe_room_t room = {};
+        const uint8_t moving_max[PE_GATES] = { 26, 17, 8, 9, 6, 7, 4, 7, 5 };
+        const uint8_t moving_avg[PE_GATES] = { 13, 7, 2, 4, 2, 4, 2, 3, 3 };
+        const uint8_t still_max[PE_GATES] = { 0, 0, 12, 12, 6, 4, 3, 3, 3 };
+        const uint8_t still_avg[PE_GATES] = { 0, 0, 3, 4, 3, 2, 2, 2, 2 };
         for (int g = 0; g < PE_GATES; g++) {
-            ceiling.moving[g] += 30;
-            ceiling.still[g] += 30;
+            room.max[PE_MOVING][g] = room.peak[PE_MOVING][g] = moving_max[g];
+            room.avg[PE_MOVING][g] = moving_avg[g];
+            room.max[PE_STILL][g] = room.peak[PE_STILL][g] = still_max[g];
+            room.avg[PE_STILL][g] = still_avg[g];
+            room.valid[PE_MOVING][g] = room.valid[PE_STILL][g] = true;
         }
+        pe_radar_thresholds_t current;
+        pe_factory_thresholds(&current);
+        current.still[0] = 21; // what the app shows there: not settable, kept
+        current.still[1] = 24;
+        const pe_learn_params_t lp = { 75, 8, 30 };
+        pe_radar_thresholds_t out;
+        uint8_t flags[PE_KINDS][PE_GATES];
+        pe_learn_thresholds(&p, &lp, &room, nullptr, &current, &out, flags);
+        const uint8_t want_moving[PE_GATES] = { 39, 38, 30, 23, 15, 15, 12, 15, 13 };
+        const uint8_t want_still[PE_GATES] = { 21, 24, 30, 30, 23, 23, 15, 15, 15 };
+        CHECK(memcmp(out.moving, want_moving, PE_GATES) == 0 && memcmp(out.still, want_still, PE_GATES) == 0);
+        CHECK(flags[PE_MOVING][0] == 0 && flags[PE_MOVING][1] == PE_LEARN_FLOOR && flags[PE_MOVING][6] == 0);
+        CHECK(flags[PE_STILL][0] == PE_LEARN_KEPT && flags[PE_STILL][2] == PE_LEARN_FLOOR);
+        // Floor 100 %: never below the factory thresholds (here: the factory thresholds themselves)
+        const pe_learn_params_t never_lower = { 100, 8, 30 };
+        pe_learn_thresholds(&p, &never_lower, &room, nullptr, &current, &out, nullptr);
+        const uint8_t factory_moving[PE_GATES] = { 50, 50, 40, 30, 20, 15, 15, 15, 15 };
+        CHECK(memcmp(out.moving, factory_moving, PE_GATES) == 0 && out.still[2] == 40 && out.still[8] == 20);
+        // Floor 0: the room alone
+        const pe_learn_params_t room_only = { 0, 8, 30 };
+        pe_learn_thresholds(&p, &room_only, &room, nullptr, &current, &out, nullptr);
+        CHECK(out.moving[1] == 27 && out.moving[2] == 16 && out.still[2] == 21 && out.still[8] == 11);
+    }
+
+    test_begin("learned thresholds: at least the noise + 4, at most factory + 30 (and 99), kept where nothing was "
+               "recorded");
+    {
+        pe_params_t p;
+        pe_default_params(&p);
+        pe_room_t room = {};
+        for (int kind = 0; kind < PE_KINDS; kind++) {
+            for (int g = 0; g < PE_GATES; g++) {
+                room.valid[kind][g] = true;
+                room.avg[kind][g] = 3;
+                room.max[kind][g] = room.peak[kind][g] = 6;
+            }
+        }
+        room.max[PE_STILL][2] = 85; // something moved there: 85 + 82 limited to 40 + 30
+        room.valid[PE_MOVING][7] = false; // no reports: kept
         pe_noise_t noise = {};
-        memset(noise.level, 3, sizeof(noise.level));
-        noise.level[PE_STILL][2] = 64;  // 40 -> 68
-        noise.level[PE_STILL][3] = 36;  // 36 + 4 = 40: stays
-        noise.level[PE_STILL][4] = 27;  // 30 -> 31
-        noise.level[PE_MOVING][0] = 80; // 50 -> 80, the ceiling
-        noise.level[PE_MOVING][1] = PE_NOISE_UNKNOWN;
-        noise.level[PE_STILL][0] = 90; // still gates 0 and 1 cannot be set
-        radar.moving[5] = 100;         // ignored, stays ignored
-        noise.level[PE_MOVING][5] = 99;
-        radar.moving[6] = 60; // above the noise + 4 already: never lowered
-        noise.level[PE_MOVING][6] = 50;
-        CHECK(pe_raise_above_noise(&p, &noise, &ceiling, &radar) == 3);
-        CHECK(radar.still[2] == 68 && radar.still[3] == 40 && radar.still[4] == 31 && radar.moving[0] == 80);
-        CHECK(radar.moving[1] == 50 && radar.still[0] == 0 && radar.moving[5] == 100 && radar.moving[6] == 60);
-        CHECK(radar.moving[2] == 40 && radar.still[8] == 20);
-        // The engine then follows the radar threshold where it could be raised enough, the noise elsewhere
-        pe_thresholds_t th;
-        pe_compute_thresholds(&p, &radar, &noise, &th);
-        CHECK(th.ch[PE_STILL][2].trigger == 69 && !(th.ch[PE_STILL][2].flags & PE_CH_NOISE_TRIGGER));
-        CHECK(th.ch[PE_MOVING][0].trigger == 85 && (th.ch[PE_MOVING][0].flags & PE_CH_NOISE_TRIGGER));
-        // Learned again with the same noise: nothing more to raise
-        CHECK(pe_raise_above_noise(&p, &noise, &ceiling, &radar) == 0);
-        // Ceiling above 99: at most 99 (100 would ignore the gate)
-        memset(&ceiling, 120, sizeof(ceiling));
-        noise.level[PE_STILL][2] = 98;
-        CHECK(pe_raise_above_noise(&p, &noise, &ceiling, &radar) >= 1 && radar.still[2] == 99);
+        memset(noise.level, PE_NOISE_UNKNOWN, sizeof(noise.level));
+        noise.level[PE_STILL][4] = 30; // the robust noise above max + 8: 30 + 4
+        pe_radar_thresholds_t current;
+        pe_factory_thresholds(&current);
+        current.moving[7] = 44;
+        const pe_learn_params_t lp = { 75, 8, 30 };
+        pe_radar_thresholds_t out;
+        uint8_t flags[PE_KINDS][PE_GATES];
+        pe_learn_thresholds(&p, &lp, &room, &noise, &current, &out, flags);
+        CHECK(out.still[2] == 70 && flags[PE_STILL][2] == PE_LEARN_LIMIT);
+        CHECK(out.still[4] == 34 && flags[PE_STILL][4] == PE_LEARN_NOISE);
+        CHECK(out.moving[7] == 44 && flags[PE_MOVING][7] == PE_LEARN_KEPT);
+        CHECK(out.moving[8] == 14 && flags[PE_MOVING][8] == 0); // 6 + 8, floor 12
+        CHECK(out.moving[0] == 38 && flags[PE_MOVING][0] == PE_LEARN_FLOOR);
+        const pe_learn_params_t no_limit = { 75, 8, 100 }; // at most 99, never 100 (the gate would be ignored)
+        pe_learn_thresholds(&p, &no_limit, &room, &noise, &current, &out, flags);
+        CHECK(out.still[2] == 99 && flags[PE_STILL][2] == PE_LEARN_LIMIT);
+        // Learning again from the thresholds it set gives the same ones
+        pe_radar_thresholds_t again;
+        pe_learn_thresholds(&p, &lp, &room, &noise, &current, &out, nullptr);
+        pe_learn_thresholds(&p, &lp, &room, &noise, &out, &again, nullptr);
+        CHECK(memcmp(&out, &again, sizeof(out)) == 0);
+        // The radar held other thresholds (HLKRadarTool, an earlier firmware): floor and ceiling from the factory
+        // thresholds all the same
+        pe_radar_thresholds_t other = current;
+        other.moving[3] = 60; // factory 30: floor 23
+        other.moving[5] = 5;  // factory 15: ceiling 45
+        room.max[PE_MOVING][5] = 60;
+        pe_learn_thresholds(&p, &lp, &room, &noise, &other, &out, flags);
+        CHECK(out.moving[3] == 23 && flags[PE_MOVING][3] == PE_LEARN_FLOOR);
+        CHECK(out.moving[5] == 45 && flags[PE_MOVING][5] == PE_LEARN_LIMIT);
+    }
+
+    test_begin("room statistics from the histograms: rounded average, highest report, highest filtered energy");
+    {
+        static uint16_t moving[PE_GATES][PE_MAX_ENERGY + 1];
+        static uint16_t still[PE_GATES][PE_MAX_ENERGY + 1];
+        memset(moving, 0, sizeof(moving));
+        memset(still, 0, sizeof(still));
+        moving[0][10] = 9; // 9 x 10 and one 60: average 15, highest report 60
+        moving[0][60] = 1;
+        still[3][4] = 1; // 4 and 5: average 4.5 -> 5
+        still[3][5] = 1;
+        uint8_t moving_max[PE_GATES] = {};
+        uint8_t still_max[PE_GATES] = {};
+        moving_max[0] = 10; // the 60 stood alone
+        still_max[3] = 9;   // never above the highest report
+        pe_room_t room;
+        pe_room_from_histograms(moving, still, moving_max, still_max, 10, &room);
+        CHECK(room.valid[PE_MOVING][0] && room.avg[PE_MOVING][0] == 15 && room.peak[PE_MOVING][0] == 60);
+        CHECK(room.max[PE_MOVING][0] == 10 && room.avg[PE_STILL][3] == 5 && room.max[PE_STILL][3] == 5);
+        CHECK(!room.valid[PE_MOVING][1] && room.frames == 10);
     }
 
     test_begin("noise of a recording: 99th percentile, at least median + 3 spreads; record checked by its CRC");
@@ -545,23 +661,14 @@ int main(int argc, char **argv)
         CHECK(n.triggers.empty() && n.e.presence == PE_PRESENCE_WAITING);
     }
 
-    test_begin("room of the report, radar thresholds raised after the learning: 30 min never present; someone "
-               "sitting at gate 2 or walking at gate 3 is present, empty 60 s after leaving");
+    test_begin("room of the report learned by the ESP32 (120 s): still gate 2 set above its noise, 30 min never "
+               "present; someone sitting at gate 2 or walking at gate 3 is present, empty 60 s after leaving");
     {
         for (int seed = 0; seed < 5; seed++) {
             Bench b(1000, 30 + seed);
             b.room = reported_room();
-            const pe_noise_t noise = b.record_noise();
-            CHECK(pe_set_noise(&b.e, &noise, b.now));
-            pe_radar_thresholds_t ceiling;
-            pe_factory_thresholds(&ceiling);
-            for (int g = 0; g < PE_GATES; g++) {
-                ceiling.moving[g] += 30;
-                ceiling.still[g] += 30;
-            }
-            CHECK(pe_raise_above_noise(&b.p, &noise, &ceiling, &b.radar) >= 1);
-            CHECK(b.radar.still[2] >= 65 && b.radar.still[2] <= 70 && b.radar.still[3] == 40);
-            b.configure();
+            b.learn_room();
+            CHECK(b.radar.still[2] >= 65 && b.radar.still[2] <= 70);
             CHECK(!(b.e.th.ch[PE_STILL][2].flags & PE_CH_NOISE_TRIGGER));
             b.run(30 * 60 * 1000);
             CHECK(b.triggers.empty());
@@ -578,6 +685,31 @@ int main(int argc, char **argv)
             b.person = { 3, 60, 35, 5 }; // walks in at 2.25-3 m
             b.run(3000);
             CHECK(b.triggers.size() == 2);
+        }
+    }
+
+    test_begin("typical room learned by the ESP32: every threshold from 75 % of factory to factory + 30; 20 rooms, "
+               "30 min never present, a still person far away held");
+    {
+        for (int seed = 0; seed < 20; seed++) {
+            Bench b(1000, 200 + seed);
+            const pe_radar_thresholds_t was = b.radar;
+            b.learn_room();
+            for (int kind = 0; kind < PE_KINDS; kind++) {
+                for (int g = kind == PE_STILL ? PE_FIRST_STILL_GATE : 0; g < PE_GATES; g++) {
+                    const int f = kind == PE_MOVING ? was.moving[g] : was.still[g];
+                    const int t = kind == PE_MOVING ? b.radar.moving[g] : b.radar.still[g];
+                    CHECK(t >= (f * 75 + 99) / 100 && t <= f + 30);
+                }
+            }
+            b.run(30 * 60 * 1000);
+            CHECK(b.triggers.empty());
+            b.person = { 7, 60, 30, 0 }; // walks in far away, then sits still (weak still energy around 14)
+            b.run(3000);
+            CHECK(b.triggers.size() == 1);
+            b.person = { 7, 3, 14, 4 };
+            b.run(20 * 60 * 1000);
+            CHECK(b.absents.empty());
         }
     }
 

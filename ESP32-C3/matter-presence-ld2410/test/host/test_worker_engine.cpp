@@ -2,8 +2,8 @@
 // engine replaced by a fake that records what the task hands it: the radar settings (thresholds, Range) after each
 // session, the busy flag around sessions and learnings, the engineering mode turned on when reports lack energies,
 // the recovery of a silent radar (UART resynchronised, configuration mode left, restarts at growing intervals), and
-// the learning as with the stable firmware (the radar measures and stores its thresholds), with the noise recorded
-// for the engine first, the thresholds it raises above that noise written, and the thresholds read again afterwards.
+// the learning: the ESP32 records the empty room for 120 s (never the radar's own detection), the engine sets the
+// thresholds, they are written to the radar and read again afterwards.
 #include "sim.h"
 
 #include "radar_worker.cpp"
@@ -42,8 +42,8 @@ struct NoiseCall {
     bool busy;
 };
 static std::vector<NoiseCall> g_noise;
-static int g_raise_still_gate = -1; // the engine raises this still threshold to g_raise_value
-static uint8_t g_raise_value;
+static int g_set_still_gate = -1; // the engine sets this still threshold to g_set_value
+static uint8_t g_set_value;
 
 bool esp_presence_needs_engineering(void)
 {
@@ -63,11 +63,11 @@ void esp_presence_configure(const radar_settings_t *settings)
     g_configured++;
     g_settings = *settings;
 }
-void esp_presence_learned_noise(const ld2410_capture_t *capture, uint16_t gate_cm, ld2410_thresholds_t *thresholds)
+void esp_presence_learned_room(const ld2410_capture_t *capture, uint16_t gate_cm, ld2410_thresholds_t *thresholds)
 {
     g_noise.push_back({ sim_ms(), capture->frames, gate_cm, g_busy });
-    if (g_raise_still_gate >= 0) {
-        thresholds->still[g_raise_still_gate] = g_raise_value;
+    if (g_set_still_gate >= 0) {
+        thresholds->still[g_set_still_gate] = g_set_value;
     }
 }
 
@@ -107,7 +107,7 @@ static void boot(RadarSim &radar)
     g_configured = 0;
     g_settings = {};
     g_noise.clear();
-    g_raise_still_gate = -1;
+    g_set_still_gate = -1;
     g_led.clear();
     g_view.clear();
 }
@@ -218,49 +218,35 @@ int main(int argc, char **argv)
         CHECK(sim_log_contains("resynchronising the UART and leaving the configuration mode"));
     }
 
-    test_begin("Learning from Home Assistant: the ESP32 records the noise, the radar measures and stores its "
-               "thresholds, which are read again and handed to the engine; engineering mode back on");
+    test_begin("Learning from Home Assistant: the ESP32 records the empty room for 120 s, never the radar's own "
+               "detection; the thresholds the engine sets are written, read again and handed to it; engineering mode "
+               "back on");
     {
         RadarSim radar;
         boot(radar);
         run_worker(3000);
+        g_set_still_gate = 2;
+        g_set_value = 69;
         CHECK(radar_worker_select(RADAR_SELECT_LEARN, RADAR_LEARN_ON) == ESP_OK);
-        bool busy_while_measuring = false;
-        sim_at(90000, [&busy_while_measuring]() { busy_while_measuring = g_busy; });
-        // The radar measured without the engineering mode: reports without energies afterwards
-        sim_at(126000, []() { g_needs_engineering = true; });
-        sim_at(130000, []() { g_needs_engineering = false; });
-        run_worker(135000);
-        CHECK(radar.count(0x000B) == 1 && radar.count(0x0064) == 0);
-        CHECK(g_noise.size() == 1 && g_noise[0].frames >= 280 && g_noise[0].gate_cm == 75 && g_noise[0].busy);
-        CHECK(g_noise[0].ms >= 123000 && g_noise[0].ms < 125000);
-        CHECK(busy_while_measuring && !g_busy);
-        // Thresholds the radar stored, read again and handed over (each run_worker() starts with a session)
-        CHECK(g_configured == 3);
-        CHECK(memcmp(g_settings.config.thresholds.moving, radar.auto_moving, 9) == 0);
-        CHECK(memcmp(g_settings.config.thresholds.still + 2, radar.auto_still + 2, 7) == 0);
+        bool busy_while_recording = false;
+        sim_at(90000, [&busy_while_recording]() { busy_while_recording = g_busy; });
+        // The learning leaves the engineering mode off: reports without energies afterwards
+        sim_at(146000, []() { g_needs_engineering = true; });
+        sim_at(150000, []() { g_needs_engineering = false; });
+        run_worker(155000);
+        CHECK(radar.count(0x000B) == 0 && radar.count(0x0064) == 9 && radar.still[2] == 69);
+        CHECK(g_noise.size() == 1 && g_noise[0].frames >= 1100 && g_noise[0].gate_cm == 75 && g_noise[0].busy);
+        CHECK(g_noise[0].ms >= 143000 && g_noise[0].ms < 145000);
+        CHECK(busy_while_recording && !g_busy);
+        // Thresholds the engine set, read again and handed over (each run_worker() starts with a session)
+        CHECK(g_configured == 3 && g_settings.config.thresholds.still[2] == 69);
+        CHECK(memcmp(g_settings.config.thresholds.moving, RadarSim().moving, 9) == 0);
         CHECK(radar.engineering && sim_log_contains("Engineering mode on: the energy of every gate for the ESP32 "
                                                    "presence engine"));
         CHECK(g_led.size() >= 3 && g_led[0] == STATUS_LED_LEARNING_WAITING &&
               g_led[1] == STATUS_LED_LEARNING_RECORDING && g_led.back() == STATUS_LED_LEARNING_DONE);
         CHECK(!g_view.empty() && g_view.back() == RADAR_LEARN_OFF);
-        CHECK(sim_log_contains("Recording the noise of the empty room on the ESP32 for 30 s"));
-    }
-
-    test_begin("Learning: a threshold the engine raises above the noise is written into the radar, then read again "
-               "and handed to the engine");
-    {
-        RadarSim radar;
-        boot(radar);
-        run_worker(3000);
-        g_raise_still_gate = 2;
-        g_raise_value = 69;
-        CHECK(radar_worker_request_learning());
-        run_worker(135000);
-        CHECK(radar.count(0x000B) == 1 && radar.count(0x0064) == 9 && radar.still[2] == 69);
-        CHECK(g_noise.size() == 1 && g_settings.config.thresholds.still[2] == 69);
-        CHECK(memcmp(g_settings.config.thresholds.moving, radar.auto_moving, 9) == 0);
-        CHECK(g_led.back() == STATUS_LED_LEARNING_DONE && !g_busy);
+        CHECK(sim_log_contains("Recording the empty room for 120 s"));
     }
 
     test_begin("3 clicks learn too; Off cancels: nothing measured, nothing handed over, thresholds kept");
@@ -271,7 +257,7 @@ int main(int argc, char **argv)
         CHECK(radar_worker_request_learning());
         sim_at(30000, []() { CHECK(radar_worker_select(RADAR_SELECT_LEARN, RADAR_LEARN_OFF) == ESP_OK); });
         run_worker(40000);
-        CHECK(radar.count(0x000B) == 0 && g_noise.empty() && g_configured == 3);
+        CHECK(radar.count(0x000B) == 0 && radar.count(0x0064) == 0 && g_noise.empty() && g_configured == 3);
         CHECK(g_led.back() == STATUS_LED_LEARNING_NONE && g_view.back() == RADAR_LEARN_OFF);
         CHECK(memcmp(g_settings.config.thresholds.moving, RadarSim().moving, 9) == 0);
     }

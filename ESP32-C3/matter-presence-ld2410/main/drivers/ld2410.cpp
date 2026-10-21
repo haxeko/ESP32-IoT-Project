@@ -109,6 +109,29 @@ static void count_energies(uint16_t (*counts)[LD2410_MAX_ENERGY + 1], const uint
     }
 }
 
+// Median of each gate's last three energies: the highest one of the capture.
+static void track_filtered_max(uint8_t *max, uint8_t (*last)[LD2410_GATE_COUNT], uint8_t *seen,
+                               const uint8_t *energy, size_t gates)
+{
+    for (size_t g = 0; g < gates; g++) {
+        const uint8_t x = energy[g] > LD2410_MAX_ENERGY ? LD2410_MAX_ENERGY : energy[g];
+        if (seen[g] >= 2) {
+            const uint8_t a = last[0][g];
+            const uint8_t b = last[1][g];
+            const uint8_t lo = a < b ? a : b;
+            const uint8_t hi = a < b ? b : a;
+            const uint8_t median = x < lo ? lo : (x > hi ? hi : x);
+            if (median > max[g]) {
+                max[g] = median;
+            }
+        } else {
+            seen[g]++;
+        }
+        last[1][g] = last[0][g];
+        last[0][g] = x;
+    }
+}
+
 static void handle_target_payload(const uint8_t *p, size_t len)
 {
     // TYPE (0x01 engineering / 0x02 basic), 0xAA head, the basic target data (11 bytes from TYPE), engineering
@@ -150,6 +173,10 @@ static void handle_target_payload(const uint8_t *p, size_t len)
     if (s_capture && moving_energy) {
         count_energies(s_capture->moving, moving_energy, moving_gates);
         count_energies(s_capture->still, still_energy, still_gates);
+        track_filtered_max(s_capture->moving_filtered_max, s_capture->moving_last, s_capture->moving_seen,
+                           moving_energy, moving_gates);
+        track_filtered_max(s_capture->still_filtered_max, s_capture->still_last, s_capture->still_seen, still_energy,
+                           still_gates);
         s_capture->frames++;
     }
     taskEXIT_CRITICAL(&s_lock);

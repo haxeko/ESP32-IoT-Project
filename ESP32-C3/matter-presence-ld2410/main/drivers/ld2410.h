@@ -32,7 +32,8 @@
 // Target state byte of the reports: 0 none, 1 moving, 2 still, 3 both, and while the radar runs its background
 // noise detection (ld2410_start_noise_detection()):
 #define LD2410_STATE_NOISE_RUNNING 0x04 // measuring (also during its 10 s wait)
-#define LD2410_STATE_NOISE_DONE 0x05    // finished, new thresholds stored
+#define LD2410_STATE_NOISE_DONE 0x05    // finished (whether it changes the thresholds is not documented; one
+                                        // LD2410C was seen to keep them)
 #define LD2410_STATE_NOISE_FAILED 0x06  // failed
 
 // Latest target report.
@@ -82,12 +83,21 @@ typedef struct {
 // read, so it must be short and must not block.
 typedef void (*ld2410_report_hook_t)(const ld2410_report_t *report);
 
-// Engineering reports counted per gate and energy while capturing, about 3.6 KB: allocate it only for a capture.
+// Engineering reports counted per gate and energy while capturing, about 3.7 KB: allocate it only for a capture.
 // Energies above LD2410_MAX_ENERGY are counted as LD2410_MAX_ENERGY, a count stops at UINT16_MAX.
 typedef struct {
     uint16_t moving[LD2410_GATE_COUNT][LD2410_MAX_ENERGY + 1];
     uint16_t still[LD2410_GATE_COUNT][LD2410_MAX_ENERGY + 1];
     uint32_t frames;
+    // Highest median of three successive energies of each gate: a report that stands alone, however strong, is
+    // left out (as the ESP32 presence engine filters). 0 until a gate has three reports.
+    uint8_t moving_filtered_max[LD2410_GATE_COUNT];
+    uint8_t still_filtered_max[LD2410_GATE_COUNT];
+    // The last two energies of each gate ([0] the latest) and how many were seen (up to 2), for the median
+    uint8_t moving_last[2][LD2410_GATE_COUNT];
+    uint8_t still_last[2][LD2410_GATE_COUNT];
+    uint8_t moving_seen[LD2410_GATE_COUNT];
+    uint8_t still_seen[LD2410_GATE_COUNT];
 } ld2410_capture_t;
 
 // Starts UART1 and the reader task (priority 5).

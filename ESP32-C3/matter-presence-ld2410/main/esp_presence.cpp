@@ -52,6 +52,12 @@ static constexpr const char *kNvsNoiseKey = "noise";
 static pe_engine_t s_engine;
 // Its parameters (as the engine checked them): set before the task starts, only read afterwards (radar_cfg task)
 static pe_params_t s_params;
+// Thresholds learned from the empty room (radar_cfg task)
+static const pe_learn_params_t s_learn = {
+    CONFIG_PRESENCE_ENGINE_LEARN_FLOOR_PERCENT, // floor_percent
+    CONFIG_PRESENCE_ENGINE_LEARN_MIN_MARGIN,    // min_margin
+    CONFIG_LD2410_LEARN_MAX_RAISE,              // max_raise
+};
 static QueueHandle_t s_frames;   // pe_frame_t, from the LD2410 reader task
 static QueueHandle_t s_commands; // uint8_t (esp_presence_command_t)
 static std::atomic<uint32_t> s_dropped{0};
@@ -432,7 +438,7 @@ static void apply_inputs(uint32_t now)
     s_noise_pending = false;
     taskEXIT_CRITICAL(&s_input_lock);
     if (learned) {
-        (void)pe_set_noise(&e, &noise, now); // valid: made by esp_presence_learned_noise()
+        (void)pe_set_noise(&e, &noise, now); // valid: made by esp_presence_learned_room()
     }
     if (config) {
         pe_configure(&e, &radar, &range, now);
@@ -613,64 +619,82 @@ uint32_t esp_presence_silent_ms(void)
     return s_silent_ms;
 }
 
-// Radar thresholds the noise reaches, raised above it (noise + trigger margin - 1), at most to the factory threshold
-// + CONFIG_LD2410_LEARN_MAX_RAISE (a gate where something moved while recording does not go deaf in the radar).
-static void raise_radar_thresholds(const pe_noise_t *noise, ld2410_thresholds_t *thresholds)
+// "avg 2 max 8 peak 9 -> 30 floor (was 40)", "not settable"
+static void format_learned(const pe_room_t &room, int kind, int g, uint8_t was, uint8_t now, uint8_t flags, char *buf,
+                           size_t len)
 {
-    pe_radar_thresholds_t before;
-    memcpy(before.moving, thresholds->moving, sizeof(before.moving));
-    memcpy(before.still, thresholds->still, sizeof(before.still));
+    if (kind == PE_STILL && g < PE_FIRST_STILL_GATE) {
+        snprintf(buf, len, "not settable");
+        return;
+    }
+    if (!room.valid[kind][g]) {
+        snprintf(buf, len, "no reports, kept %u", now);
+        return;
+    }
+    const char *tag = (flags & PE_LEARN_LIMIT)   ? " limit"
+                      : (flags & PE_LEARN_FLOOR) ? " floor"
+                      : (flags & PE_LEARN_NOISE) ? " noise"
+                                                 : "";
+    snprintf(buf, len, "avg %u max %u peak %u -> %u%s (was %u)", room.avg[kind][g], room.max[kind][g],
+             room.peak[kind][g], now, tag, was);
+}
+
+static void log_learned(const pe_room_t &room, const pe_radar_thresholds_t &was, const pe_radar_thresholds_t &now,
+                        const uint8_t flags[PE_KINDS][PE_GATES], uint16_t gate_cm)
+{
+    ESP_LOGI(TAG, "Empty room, %" PRIu32 " reports: threshold = max + the larger of %u and (max - avg), at least the "
+                  "noise + %u, from %u %% of factory to factory + %u (max: highest median of 3 reports, peak: highest "
+                  "report)", room.frames, s_learn.min_margin, s_params.trigger_noise_margin - 1, s_learn.floor_percent,
+             s_learn.max_raise);
+    for (int g = 0; g < PE_GATES; g++) {
+        char where[24];
+        format_gate(g, gate_cm, where, sizeof(where));
+        char moving[64];
+        char still[64];
+        format_learned(room, PE_MOVING, g, was.moving[g], now.moving[g], flags[PE_MOVING][g], moving, sizeof(moving));
+        format_learned(room, PE_STILL, g, was.still[g], now.still[g], flags[PE_STILL][g], still, sizeof(still));
+        ESP_LOGI(TAG, "  gate %d %-11s moving: %s | still: %s", g, where, moving, still);
+    }
     pe_radar_thresholds_t factory;
     pe_factory_thresholds(&factory);
-    pe_radar_thresholds_t ceiling;
-    for (int g = 0; g < PE_GATES; g++) {
-        ceiling.moving[g] = (uint8_t)std::min(factory.moving[g] + CONFIG_LD2410_LEARN_MAX_RAISE, PE_MAX_ENERGY - 1);
-        ceiling.still[g] = (uint8_t)std::min(factory.still[g] + CONFIG_LD2410_LEARN_MAX_RAISE, PE_MAX_ENERGY - 1);
-    }
-    pe_radar_thresholds_t after = before;
-    const int raised = pe_raise_above_noise(&s_params, noise, &ceiling, &after);
     for (int kind = 0; kind < PE_KINDS; kind++) {
-        for (int g = kind == PE_STILL ? PE_FIRST_STILL_GATE : 0; g < PE_GATES; g++) {
-            const uint8_t level = noise->level[kind][g];
-            const uint8_t was = kind == PE_MOVING ? before.moving[g] : before.still[g];
-            const uint8_t now = kind == PE_MOVING ? after.moving[g] : after.still[g];
-            if (level == PE_NOISE_UNKNOWN || was >= PE_MAX_ENERGY) {
+        for (int g = 0; g < PE_GATES; g++) {
+            if (!(flags[kind][g] & PE_LEARN_LIMIT)) {
                 continue;
             }
-            const char *name = kind == PE_MOVING ? "moving" : "still";
-            if (now != was) {
-                ESP_LOGI(TAG, "Gate %d %s: empty room noise %u, radar threshold %u -> %u", g, name, level, was, now);
-            }
-            const int strong = std::max(now + 1 + s_params.trigger_margin, level + s_params.trigger_noise_margin);
-            if (level + s_params.trigger_noise_margin - 1 > now) {
-                ESP_LOGW(TAG, "Gate %d %s: empty room noise %u, radar threshold %u (raised at most to factory %u + "
-                              "%d): the ESP32 starts presence there only from %d%s. If something kept moving there "
-                              "while learning (fan, curtain, someone), learn again without it",
-                         g, name, level, now, kind == PE_MOVING ? factory.moving[g] : factory.still[g],
-                         CONFIG_LD2410_LEARN_MAX_RAISE, strong, strong > PE_MAX_ENERGY ? " (never)" : "");
-            }
+            ESP_LOGW(TAG, "Gate %d %s: max %u, average %u: threshold limited to %u (factory %u + %u). Something kept "
+                          "moving there while recording (fan, curtain, someone)? Learn again without it",
+                     g, kind == PE_MOVING ? "moving" : "still", room.max[kind][g], room.avg[kind][g],
+                     kind == PE_MOVING ? now.moving[g] : now.still[g],
+                     kind == PE_MOVING ? factory.moving[g] : factory.still[g], s_learn.max_raise);
         }
-    }
-    if (raised > 0) {
-        memcpy(thresholds->moving, after.moving, sizeof(after.moving));
-        memcpy(thresholds->still, after.still, sizeof(after.still));
     }
 }
 
-void esp_presence_learned_noise(const ld2410_capture_t *capture, uint16_t gate_cm, ld2410_thresholds_t *thresholds)
+void esp_presence_learned_room(const ld2410_capture_t *capture, uint16_t gate_cm, ld2410_thresholds_t *thresholds)
 {
     pe_noise_t noise;
     pe_noise_from_histograms(capture->moving, capture->still, capture->frames, gate_cm, &noise);
-    if (!save_noise(&noise)) {
-        return;
+    if (save_noise(&noise)) {
+        ESP_LOGI(TAG, "Noise of the empty room recorded (%" PRIu32 " reports) and saved: the thresholds stay above "
+                      "it", noise.frames);
+        taskENTER_CRITICAL(&s_input_lock);
+        s_noise_in = noise;
+        s_noise_pending = true;
+        taskEXIT_CRITICAL(&s_input_lock);
     }
-    ESP_LOGI(TAG, "Noise of the empty room recorded (%" PRIu32 " reports) and saved: the thresholds stay above it",
-             noise.frames);
-    taskENTER_CRITICAL(&s_input_lock);
-    s_noise_in = noise;
-    s_noise_pending = true;
-    taskEXIT_CRITICAL(&s_input_lock);
-    raise_radar_thresholds(&noise, thresholds);
+    pe_room_t room;
+    pe_room_from_histograms(capture->moving, capture->still, capture->moving_filtered_max,
+                            capture->still_filtered_max, capture->frames, &room);
+    pe_radar_thresholds_t was;
+    memcpy(was.moving, thresholds->moving, sizeof(was.moving));
+    memcpy(was.still, thresholds->still, sizeof(was.still));
+    pe_radar_thresholds_t now;
+    uint8_t flags[PE_KINDS][PE_GATES];
+    pe_learn_thresholds(&s_params, &s_learn, &room, &noise, &was, &now, flags);
+    log_learned(room, was, now, flags, gate_cm);
+    memcpy(thresholds->moving, now.moving, sizeof(now.moving));
+    memcpy(thresholds->still, now.still, sizeof(now.still));
 }
 
 #endif // CONFIG_PRESENCE_ESP_ENGINE

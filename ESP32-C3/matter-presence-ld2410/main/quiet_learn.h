@@ -34,11 +34,10 @@ typedef enum {
                            // thresholds, or no memory for the recording
 } quiet_learn_result_t;
 
-// Engineering reports of the empty room (and the gate length while recording), handed over once the learning
-// succeeded: the ESP32 presence engine keeps the noise of every gate from them. thresholds: what the radar holds
-// then; the callback may raise some of them (above that noise), which are then written to the radar.
-typedef void (*quiet_learn_noise_cb_t)(const ld2410_capture_t *capture, uint16_t gate_cm,
-                                       ld2410_thresholds_t *thresholds);
+// The ESP32 presence engine sets the thresholds itself: the engineering reports of the empty room (and the gate
+// length while recording) and the thresholds the radar holds (in); the thresholds to write (out).
+typedef void (*quiet_learn_set_cb_t)(const ld2410_capture_t *capture, uint16_t gate_cm,
+                                     ld2410_thresholds_t *thresholds);
 
 // Runs one learning in the calling task: waits CONFIG_LD2410_LEARN_DELAY_SEC (time to leave the room), then
 // records CONFIG_LD2410_LEARN_DURATION_SEC.
@@ -46,15 +45,13 @@ typedef void (*quiet_learn_noise_cb_t)(const ld2410_capture_t *capture, uint16_t
 // LD2410B/C firmware) measures and stores its thresholds itself over the same times. Otherwise the ESP32 records
 // the engineering reports (ld2410_capture_t, allocated meanwhile) and writes the thresholds it computes from them
 // (quiet_learn_noise(), quiet_learn_compute_thresholds()); the radar keeps them in its flash.
-// With on_noise (ESP32 presence engine): the engineering reports of the empty room are handed to it when the
-// learning succeeded, with the radar's thresholds; those it raises are written to the radar (QUIET_LEARN_FAILED when
-// that fails). Before the radar measures itself, the ESP32 records them for noise_seconds (after the whole delay),
-// then turns the engineering mode off: the radar measures as with the stable firmware.
+// With set_thresholds (ESP32 presence engine): always recorded by the ESP32 (never the radar's own detection, which
+// keeps the thresholds of at least one LD2410C as they are), at least 5 reports per second; set_thresholds gives
+// every threshold, written to the radar once (nothing written when the radar holds them already).
 // Sends radar commands, so no other task may configure the radar meanwhile. The callbacks are optional.
 // gate_cm: length of one gate, for the distances in the log (0: unknown).
 quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
-                                     uint16_t gate_cm, quiet_learn_noise_cb_t on_noise = nullptr,
-                                     uint32_t noise_seconds = 0);
+                                     uint16_t gate_cm, quiet_learn_set_cb_t set_thresholds = nullptr);
 
 // Writes the LD2410 factory thresholds to every gate and reads them back; nothing is written when the radar holds
 // them already. The farthest gates, no-one duration, resolution and Bluetooth stay as they are, the radar does not
