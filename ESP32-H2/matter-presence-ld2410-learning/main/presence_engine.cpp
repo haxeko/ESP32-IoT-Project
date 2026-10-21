@@ -58,25 +58,32 @@ void pe_compute_thresholds(const pe_params_t *p, const pe_radar_thresholds_t *ra
                 ch.flags = PE_CH_IGNORED;
                 continue;
             }
-            // Strong: above the radar threshold, as the radar counts a target
-            ch.trigger = (uint8_t)(t + 1);
+            // Strong: above the radar threshold, as the radar counts a target, and above the noise of the empty room
             const uint8_t level = noise ? noise->level[kind][g] : PE_NOISE_UNKNOWN;
+            int trigger = t + 1 + p->trigger_margin;
+            if (level != PE_NOISE_UNKNOWN && level + p->trigger_noise_margin > trigger) {
+                trigger = level + p->trigger_noise_margin;
+                ch.flags |= PE_CH_NOISE_TRIGGER;
+            }
+            ch.trigger = (uint8_t)std::min(trigger, PE_OFF); // above 100: cannot trigger
+            // Hold: below the trigger, never 0 (always reached)
+            const int highest = ch.trigger == PE_OFF ? PE_MAX_ENERGY : ch.trigger - 1;
             if (level == PE_NOISE_UNKNOWN) {
-                // Nothing known about the noise below the radar threshold: no lower than it (never 0: always reached)
-                ch.hold = (uint8_t)std::max<int>(t, 1);
-                ch.flags = PE_CH_NO_NOISE;
+                // Nothing known about the noise below the radar threshold: no lower than it
+                ch.hold = (uint8_t)std::max(1, std::min((int)t, highest));
+                ch.flags |= PE_CH_NO_NOISE;
                 continue;
             }
-            // Hold: a share of the threshold lower, at most hold_drop_max, but above the noise of the empty room
-            // (else the noise would keep presence), at most the threshold itself, never 0 (always reached)
+            // A share of the threshold lower, at most hold_drop_max, but above the noise of the empty room (else the
+            // noise would keep presence; a noise that close to 100 cannot be told from anyone: no hold)
             const int drop = std::min<int>(p->hold_drop_max, (t * p->hold_drop_percent + 50) / 100);
             const int floor = level + p->hold_noise_margin;
             int hold = t - drop;
             if (hold < floor) {
                 hold = floor;
-                ch.flags = PE_CH_NOISE_HOLD;
+                ch.flags |= PE_CH_NOISE_HOLD;
             }
-            ch.hold = (uint8_t)std::max(1, std::min(hold, (int)t));
+            ch.hold = hold > PE_MAX_ENERGY ? PE_OFF : (uint8_t)std::max(1, std::min(hold, highest));
         }
     }
     out->factory = factory;
@@ -182,11 +189,15 @@ void pe_noise_from_histograms(const uint16_t moving[PE_GATES][PE_MAX_ENERGY + 1]
 void pe_default_params(pe_params_t *p)
 {
     memset(p, 0, sizeof(*p));
-    p->trigger_frames = 3;
-    p->trigger_window = 4;
+    p->trigger_frames = 6;
+    p->trigger_window = 8;
+    p->fast_frames = 3;
+    p->fast_margin = 20;
     p->hold_frames = 3;
     p->hold_window = 10;
     p->data_timeout_ms = 2000;
+    p->trigger_margin = 0;
+    p->trigger_noise_margin = 5;
     p->hold_drop_percent = 40;
     p->hold_drop_max = 10;
     p->hold_noise_margin = 2;
@@ -196,10 +207,14 @@ static void sanitize_params(pe_params_t *p)
 {
     p->trigger_window = std::clamp<uint8_t>(p->trigger_window, 1, PE_WINDOW_MAX);
     p->trigger_frames = std::clamp<uint8_t>(p->trigger_frames, 1, p->trigger_window);
+    p->fast_frames = std::min<uint8_t>(p->fast_frames, PE_WINDOW_MAX);
     p->hold_window = std::clamp<uint8_t>(p->hold_window, 1, PE_WINDOW_MAX);
     p->hold_frames = std::clamp<uint8_t>(p->hold_frames, 1, p->hold_window);
     p->data_timeout_ms = std::max<uint32_t>(p->data_timeout_ms, 300);
     p->hold_drop_percent = std::min<uint8_t>(p->hold_drop_percent, 90);
+    p->trigger_noise_margin = std::max<uint8_t>(p->trigger_noise_margin, 1);
+    // The hold threshold stays below the trigger
+    p->hold_noise_margin = std::min<uint8_t>(p->hold_noise_margin, p->trigger_noise_margin - 1);
 }
 
 static void clear_window(pe_engine_t *e)
@@ -207,6 +222,7 @@ static void clear_window(pe_engine_t *e)
     e->window_count = 0;
     e->window_pos = 0;
     memset(e->trig_bits, 0, sizeof(e->trig_bits));
+    memset(e->fast_bits, 0, sizeof(e->fast_bits));
     memset(e->hold_bits, 0, sizeof(e->hold_bits));
     memset(e->recent, 0, sizeof(e->recent));
 }
@@ -256,6 +272,28 @@ void pe_configure(pe_engine_t *e, const pe_radar_thresholds_t *radar, const pe_r
     r.max_still_gate = std::min<uint8_t>(r.max_still_gate, PE_GATES - 1);
     e->radar = *radar;
     apply(e, true, &r);
+}
+
+int pe_raise_above_noise(const pe_params_t *p, const pe_noise_t *noise, const pe_radar_thresholds_t *ceiling,
+                         pe_radar_thresholds_t *radar)
+{
+    int raised = 0;
+    for (int kind = 0; kind < PE_KINDS; kind++) {
+        for (int g = kind == PE_STILL ? PE_FIRST_STILL_GATE : 0; g < PE_GATES; g++) {
+            uint8_t &t = kind == PE_MOVING ? radar->moving[g] : radar->still[g];
+            const uint8_t level = noise->level[kind][g];
+            if (level == PE_NOISE_UNKNOWN || t >= PE_MAX_ENERGY) {
+                continue;
+            }
+            const uint8_t top = kind == PE_MOVING ? ceiling->moving[g] : ceiling->still[g];
+            const int want = std::min({ level + p->trigger_noise_margin - 1, (int)top, PE_MAX_ENERGY - 1 });
+            if (want > t) {
+                t = (uint8_t)want;
+                raised++;
+            }
+        }
+    }
+    return raised;
 }
 
 bool pe_set_noise(pe_engine_t *e, const pe_noise_t *noise, uint32_t now_ms)
@@ -371,9 +409,9 @@ static int count_reports(const pe_engine_t *e, const uint16_t *bits, int window,
     return count;
 }
 
-// Gate where presence is confirmed (trigger_frames strong reports among the last trigger_window, at that gate or
-// a neighbour), -1 if none.
-static int confirmed_gate(const pe_engine_t *e)
+// Gate where presence is confirmed (frames reports with bits among the last window, at that gate or a neighbour), -1
+// if none.
+static int confirmed_gate(const pe_engine_t *e, const uint16_t *bits, int window, int frames)
 {
     for (int g = 0; g < PE_GATES; g++) {
         uint16_t mask = (uint16_t)(1u << g);
@@ -383,7 +421,7 @@ static int confirmed_gate(const pe_engine_t *e)
         if (g < PE_GATES - 1) {
             mask |= (uint16_t)(1u << (g + 1));
         }
-        if (count_reports(e, e->trig_bits, e->p.trigger_window, mask) >= e->p.trigger_frames) {
+        if (count_reports(e, bits, window, mask) >= frames) {
             return g;
         }
     }
@@ -455,6 +493,7 @@ static void evaluate(pe_engine_t *e, const pe_frame_t *f, uint32_t now_ms)
 {
     uint16_t trig = 0;
     uint16_t hold = 0;
+    uint16_t fast = 0;
     e->window_pos = (uint8_t)((e->window_pos + 1) % PE_WINDOW_MAX);
     e->window_count = (uint8_t)std::min<int>(e->window_count + 1, PE_WINDOW_MAX);
     uint8_t(*recent)[PE_GATES] = e->recent[e->window_pos];
@@ -472,6 +511,13 @@ static void evaluate(pe_engine_t *e, const pe_frame_t *f, uint32_t now_ms)
     uint8_t best_kind = 0;
     uint8_t best_energy = 0;
     uint8_t best_threshold = 0;
+    uint8_t best_strong = 0;
+    // Strongest moving channel at its fast level (fast start of presence)
+    int fast_excess = -1;
+    uint8_t fast_gate = 0;
+    uint8_t fast_energy = 0;
+    uint8_t fast_threshold = 0;
+    uint8_t fast_level = 0;
     for (int kind = 0; kind < PE_KINDS; kind++) {
         for (int g = 0; g < PE_GATES; g++) {
             if (!pe_channel_counted(e, kind, g)) {
@@ -487,6 +533,18 @@ static void evaluate(pe_engine_t *e, const pe_frame_t *f, uint32_t now_ms)
                     best_kind = (uint8_t)kind;
                     best_energy = x;
                     best_threshold = e->th.ch[kind][g].radar;
+                    best_strong = t;
+                }
+                const int level = t + e->p.fast_margin;
+                if (kind == PE_MOVING && e->p.fast_frames > 0 && level <= PE_MAX_ENERGY && x >= level) {
+                    fast |= (uint16_t)(1u << g);
+                    if (x - level > fast_excess) {
+                        fast_excess = x - level;
+                        fast_gate = (uint8_t)g;
+                        fast_energy = x;
+                        fast_threshold = e->th.ch[kind][g].radar;
+                        fast_level = (uint8_t)level;
+                    }
                 }
             }
             if (x >= pe_hold_threshold(e, kind, g)) {
@@ -496,18 +554,39 @@ static void evaluate(pe_engine_t *e, const pe_frame_t *f, uint32_t now_ms)
     }
     e->trig_bits[e->window_pos] = trig;
     e->hold_bits[e->window_pos] = hold;
+    e->fast_bits[e->window_pos] = fast;
 
     if (e->presence == PE_PRESENCE_WAITING) {
-        const int g = confirmed_gate(e);
+        // A very strong moving energy in fast_frames reports in a row starts presence at once, anything else needs
+        // trigger_frames strong reports among the last trigger_window
+        int g = -1;
+        bool by_fast = false;
+        if (e->p.fast_frames > 0) {
+            g = confirmed_gate(e, e->fast_bits, e->p.fast_frames, e->p.fast_frames);
+            by_fast = g >= 0;
+        }
+        if (g < 0) {
+            g = confirmed_gate(e, e->trig_bits, e->p.trigger_window, e->p.trigger_frames);
+        }
         if (g >= 0) {
             e->presence = PE_PRESENCE_PRESENT;
             e->evidence = true;
             e->evidence_gate = (uint8_t)g;
             e->last_evidence_ms = now_ms;
-            e->trigger_gate = best_excess >= 0 ? best_gate : (uint8_t)g;
-            e->trigger_kind = best_kind;
-            e->trigger_energy = best_energy;
-            e->trigger_threshold = best_threshold;
+            e->trigger_fast = by_fast && fast_excess >= 0;
+            if (e->trigger_fast) {
+                e->trigger_gate = fast_gate;
+                e->trigger_kind = PE_MOVING;
+                e->trigger_energy = fast_energy;
+                e->trigger_threshold = fast_threshold;
+                e->trigger_strong = fast_level;
+            } else {
+                e->trigger_gate = best_excess >= 0 ? best_gate : (uint8_t)g;
+                e->trigger_kind = best_kind;
+                e->trigger_energy = best_energy;
+                e->trigger_threshold = best_threshold;
+                e->trigger_strong = best_strong;
+            }
             e->events |= PE_EV_TRIGGERED | PE_EV_EVIDENCE;
         }
         return;

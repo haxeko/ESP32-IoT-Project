@@ -174,7 +174,7 @@ Chân hợp lệ: GPIO0–GPIO21, trừ chân flash (GPIO11–GPIO17) và USB (G
 
 ## Bộ xử lý hiện diện trên ESP32 (biến thể `esppresence`, thử nghiệm)
 
-Cùng bộ xử lý với bản ESP32-C3-WROOM 1.0.159: ESP32 tự quyết định có người từ năng lượng từng vùng của radar, với ngưỡng lưu trong radar, ngưỡng duy trì thấp hơn nhưng trên nhiễu phòng trống, Hold time là bộ đếm tắt (60 s trong biến thể này). Thuật toán, việc học phòng trống, lệnh console, hiệu chỉnh, tuỳ chọn và cách quay về bản mặc định: [README bản ESP32-H2](../../ESP32-H2/matter-presence-ld2410-learning/README.md), mục **Bộ xử lý hiện diện trên ESP32**. Bản build mặc định **không** có bộ xử lý này.
+Cùng bộ xử lý với bản ESP32-C3-WROOM **1.0.166**: ESP32 tự quyết định có người từ năng lượng từng vùng của radar, với ngưỡng lưu trong radar; tín hiệu mạnh phải vượt cả ngưỡng radar và nhiễu phòng trống + 5 trong 6 trên 8 báo cáo (năng lượng chuyển động rất mạnh 3 báo cáo liền thì kích hoạt ngay); ngưỡng duy trì thấp hơn nhưng trên nhiễu; Hold time là bộ đếm tắt (60 s trong biến thể này). Học xong, ngưỡng radar ở vùng có nhiễu chạm ngưỡng được nâng lên trên nhiễu và ghi vào radar một lần. Thuật toán, việc học phòng trống, lệnh console, hiệu chỉnh, tuỳ chọn và cách quay về bản mặc định: [README bản ESP32-H2](../../ESP32-H2/matter-presence-ld2410-learning/README.md), mục **Bộ xử lý hiện diện trên ESP32**. Bản build mặc định **không** có bộ xử lý này.
 
 ```bash
 cd ESP32-C3/matter-wifi-presence
@@ -186,11 +186,11 @@ Kết quả ở `build-esppresence/`: `matter_presence_c3_wifi.bin`, file OTA `m
 
 Riêng bản ESP32-C3 SuperMini:
 - **Console:** log và lệnh ở cổng USB-C như bản mặc định (USB-Serial-JTAG). Dấu nhắc `presence>` (REPL của ESP-IDF, task `console_repl`); gõ `help`, `STATUS`, `DIAG_STREAM on`... Console Matter vẫn tắt như bản mặc định.
-- **LED một màu** khi học phòng trống: sáng 20 s (rời phòng), nháy chậm khoảng 100 s (ESP32 ghi nhiễu 30 s, rồi radar tự đo), rồi sáng 10 s cả khi xong lẫn khi thất bại: xem kết quả trong log `quiet_learn`.
+- **LED một màu** khi học phòng trống: sáng 20 s (rời phòng), nháy chậm khoảng 100 s (ESP32 ghi nhiễu 30 s, rồi radar tự đo), rồi sáng 10 s cả khi xong lẫn khi thất bại: xem kết quả trong log `quiet_learn` (kể cả các ngưỡng được nâng trên nhiễu).
 - Firmware `1.0.<số commit>-esppresence`, Model `Presence LD2410 ESP engine`; VID/PID giữ `0xFFF1`/`0x8001`, chân radar GPIO3/GPIO4 như bản mặc định.
 - **RAM khi chạy:** biến thể này thêm task `presence_eng` (stack 4 KB) và `console_repl` (stack 3,5 KB), cùng hàng đợi báo cáo radar và bộ đệm console, nên heap còn ít hơn bản mặc định khoảng 10–11 KB (ước tính từ kích thước stack và bộ đệm, **chưa đo trên bo**). Heap thấp nhất của bản C3 đo được lúc ghép nối là 40,0 KB (1.0.131, mục **RAM và flash**); kiểm tra lại bằng log `mem` với biến thể này, nhất là lúc ghép nối (BLE và Wi-Fi cùng chạy).
-- **Kiểm chứng:** host test như bản H2 (chung mã nguồn). Build 1.0.136 (Docker `release-v1.6.1_idf_v6.0.2`): **0 lỗi, 0 cảnh báo**; firmware 1 550 352 B (phân vùng app còn trống 21 %), RAM tĩnh 151 531 B, hơn bản mặc định cùng mã 35 600 B flash và 958 B RAM tĩnh; `sdkconfig` chỉ khác bản mặc định ở Model, Hold time ban đầu (60) và 11 tuỳ chọn của bộ xử lý; header OTA VID `0xFFF1`, PID `0x8001`, phiên bản 136 / `1.0.136-esppresence`. Bản mặc định C3 vẫn build 0 lỗi, 0 cảnh báo, `sdkconfig` chỉ thêm dòng tuỳ chọn bộ xử lý (tắt).
-- **Chưa thử trên bo thật:** console `presence>` trên cổng USB-C, bộ xử lý với radar thật, RAM khi chạy, OTA lên biến thể này.
+- **Kiểm chứng:** host test như bản H2 (chung mã nguồn, mục **Mức độ kiểm chứng** của biến thể ở README bản H2).
+- **Chưa thử trên bo thật:** console `presence>` trên cổng USB-C, bộ xử lý với radar thật, bước nâng ngưỡng radar trên nhiễu với radar thật, RAM khi chạy, OTA lên biến thể này.
 
 ## Wi-Fi và BLE
 

@@ -221,9 +221,36 @@ static bool write_thresholds(const ld2410_thresholds_t *want)
     return true;
 }
 
-// Inside configuration mode: computes and writes the new thresholds, then reads
-// them back. Returns true when the radar holds the new values.
-static bool apply_thresholds(const ld2410_capture_t *capture, uint16_t gate_cm)
+// Once a learning succeeded: hands the recording of the empty room to
+// on_noise with the thresholds the radar holds (held), then writes those it
+// raised. QUIET_LEARN_FAILED when the radar did not keep them.
+static quiet_learn_result_t hand_noise(quiet_learn_noise_cb_t on_noise, const ld2410_capture_t *capture,
+                                       uint16_t gate_cm, const ld2410_thresholds_t *held)
+{
+    ld2410_thresholds_t want = *held;
+    on_noise(capture, gate_cm, &want);
+    if (same_thresholds(&want, held)) {
+        return QUIET_LEARN_SAVED;
+    }
+    log_threshold_list("Thresholds raised above the noise recorded by the ESP32", &want);
+    if (ld2410_config_begin() != ESP_OK) {
+        ESP_LOGE(TAG, "The radar stopped answering commands, the raised thresholds were not written");
+        return QUIET_LEARN_FAILED;
+    }
+    const bool written = write_thresholds(&want);
+    if (ld2410_config_end() != ESP_OK) {
+        ESP_LOGW(TAG, "Could not end the configuration mode");
+    }
+    if (!written) {
+        return QUIET_LEARN_FAILED;
+    }
+    ESP_LOGI(TAG, "Raised thresholds saved in the LD2410");
+    return QUIET_LEARN_SAVED;
+}
+
+// Inside configuration mode: computes and writes the new thresholds (saved),
+// then reads them back. Returns true when the radar holds the new values.
+static bool apply_thresholds(const ld2410_capture_t *capture, uint16_t gate_cm, ld2410_thresholds_t *saved)
 {
     ld2410_thresholds_t before;
     if (ld2410_read_thresholds(&before) != ESP_OK) {
@@ -238,13 +265,15 @@ static bool apply_thresholds(const ld2410_capture_t *capture, uint16_t gate_cm)
     quiet_learn_compute_thresholds(&noise, &before, CONFIG_LD2410_LEARN_MARGIN, CONFIG_LD2410_LEARN_MAX_RAISE,
                                    &after);
     log_thresholds(capture->frames, gate_cm, &noise, &peak, &before, &after);
+    *saved = after;
     return write_thresholds(&after);
 }
 
 // The ESP32 learning: records the engineering reports after `wait_ms` more
-// of the delay before recording, then writes the thresholds itself.
+// of the delay before recording, then writes the thresholds itself (saved).
 static quiet_learn_result_t run_with_capture(ld2410_capture_t *capture, quiet_learn_cancelled_cb_t cancelled,
-                                             quiet_learn_phase_cb_t on_phase, uint16_t gate_cm, uint32_t wait_ms)
+                                             quiet_learn_phase_cb_t on_phase, uint16_t gate_cm, uint32_t wait_ms,
+                                             ld2410_thresholds_t *saved)
 {
     const uint32_t duration_s = CONFIG_LD2410_LEARN_DURATION_SEC;
     if (!wait_unless_cancelled(wait_ms, cancelled)) {
@@ -286,7 +315,7 @@ static quiet_learn_result_t run_with_capture(ld2410_capture_t *capture, quiet_le
     } else if (capture->frames < duration_s * kMinFramesPerSec) {
         ESP_LOGE(TAG, "Only %" PRIu32 " engineering reports in %" PRIu32 " s, nothing changed", capture->frames,
                  duration_s);
-    } else if (apply_thresholds(capture, gate_cm)) {
+    } else if (apply_thresholds(capture, gate_cm, saved)) {
         result = QUIET_LEARN_SAVED;
     }
     if (ld2410_set_engineering_mode(false) != ESP_OK) {
@@ -430,9 +459,10 @@ static bool record_noise(ld2410_capture_t *capture, uint32_t seconds, quiet_lear
 }
 
 // Waits for the radar's background noise detection to end, then reads the
-// thresholds it stored.
+// thresholds it stored (saved).
 static quiet_learn_result_t run_radar_auto(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
-                                           uint32_t duration_s, const ld2410_thresholds_t *before, bool before_ok)
+                                           uint32_t duration_s, const ld2410_thresholds_t *before, bool before_ok,
+                                           ld2410_thresholds_t *saved)
 {
     ESP_LOGI(TAG, "The LD2410 measures the empty room itself: %" PRIu32 " s more to leave, then %" PRIu32 " s",
              kRadarLeaveMs / 1000, duration_s);
@@ -499,6 +529,7 @@ static quiet_learn_result_t run_radar_auto(quiet_learn_cancelled_cb_t cancelled,
     }
     log_radar_auto_result(before, before_ok, &after);
     ESP_LOGI(TAG, "Learning done: thresholds set by the LD2410 background noise detection");
+    *saved = after;
     return QUIET_LEARN_SAVED;
 }
 #endif // CONFIG_LD2410_LEARN_RADAR_AUTO
@@ -557,9 +588,10 @@ quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet
     bool before_ok = false;
     switch (start_radar_auto(duration_s, &before, &before_ok, noise != nullptr)) {
     case kRadarAutoStarted: {
-        const quiet_learn_result_t result = run_radar_auto(cancelled, on_phase, duration_s, &before, before_ok);
+        ld2410_thresholds_t saved = {};
+        quiet_learn_result_t result = run_radar_auto(cancelled, on_phase, duration_s, &before, before_ok, &saved);
         if (result == QUIET_LEARN_SAVED && noise != nullptr) {
-            on_noise(noise, gate_cm);
+            result = hand_noise(on_noise, noise, gate_cm, &saved);
         }
         free(noise);
         return result;
@@ -583,9 +615,10 @@ quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet
                  (unsigned)sizeof(ld2410_capture_t));
         return QUIET_LEARN_FAILED;
     }
-    const quiet_learn_result_t result = run_with_capture(capture, cancelled, on_phase, gate_cm, wait_ms);
+    ld2410_thresholds_t saved = {};
+    quiet_learn_result_t result = run_with_capture(capture, cancelled, on_phase, gate_cm, wait_ms, &saved);
     if (result == QUIET_LEARN_SAVED && on_noise) {
-        on_noise(capture, gate_cm);
+        result = hand_noise(on_noise, capture, gate_cm, &saved);
     }
     free(capture);
     return result;

@@ -1,5 +1,5 @@
 # Experimental ESP32 presence engine (README "Bộ xử lý hiện diện trên ESP32"), the engine of the ESP32-C3-WROOM
-# firmware 1.0.159 of branch claude/c3-wroom-esp-presence. For both targets, applied after sdkconfig.defaults and
+# firmware 1.0.166 of branch claude/c3-wroom-esp-presence. For both targets, applied after sdkconfig.defaults and
 # sdkconfig.defaults.<target>:
 #   ESP32-H2 (this directory):
 #     idf.py -B build-esppresence -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.esppresence \
