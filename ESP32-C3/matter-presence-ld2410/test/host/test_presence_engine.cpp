@@ -595,7 +595,8 @@ int main(int argc, char **argv)
         CHECK(b.triggers.empty());
     }
 
-    test_begin("someone walking in: present after 4 strong reports (about 0.4 s), the log names the gate");
+    test_begin("someone walking in (moving energy 70, fast level 21 + 20): fast start after 4 reports (about 0.4 s), "
+               "the log names the gate");
     {
         Bench b;
         b.learn_noise();
@@ -603,11 +604,92 @@ int main(int argc, char **argv)
         const uint32_t in = b.now;
         b.person = { 4, 70, 30, 0 };
         b.run(1000);
-        // The first report is filtered away, the next three are strong: present at the fourth
+        // The first report is filtered away, the next three are at the fast level: present at the fourth
         CHECK(b.triggers.size() == 1 && b.triggers[0] - in == 400);
         CHECK(b.e.trigger_gate == 4 && b.e.trigger_kind == PE_MOVING && b.e.trigger_threshold == 20);
-        CHECK(b.e.trigger_strong == 21);
+        CHECK(b.e.trigger_fast && b.e.trigger_strong == 41);
         CHECK(pe_occupied_report(&b.e));
+    }
+
+    test_begin("strong but not very strong (moving 35 at gate 4: strong 21, fast 41): 6 of 8 reports, about 0.7 s");
+    {
+        Bench b;
+        b.learn_noise();
+        b.run(5000);
+        const uint32_t in = b.now;
+        b.person = { 4, 35, 0, 0 };
+        b.run(1000);
+        // Filtered strong from the second report on: the sixth strong one is the seventh report
+        CHECK(b.triggers.size() == 1 && b.triggers[0] - in == 700);
+        CHECK(!b.e.trigger_fast && b.e.trigger_strong == 21 && b.e.trigger_energy == 35);
+    }
+
+    test_begin("bursts: 5 strong reports (0.5 s) never start presence; 2 very strong reports never; 3 very strong in a "
+               "row do (fast); very strong reports with a gap of two do not");
+    {
+        Bench b;
+        b.learn_noise();
+        b.run(5000);
+        for (int i = 0; i < 20; i++) {
+            b.person = { 3, 45, 0, 0 }; // gate 3: strong (31), not fast (51)
+            b.run(500);
+            b.person = {};
+            b.run(3000);
+        }
+        CHECK(b.triggers.empty());
+        for (int i = 0; i < 20; i++) {
+            b.person = { 3, 95, 0, 0 };
+            b.run(200);
+            b.person = {};
+            b.run(3000);
+        }
+        CHECK(b.triggers.empty());
+        // Very strong in reports 1, 2, 5, 6 (a gap of two): filtered fast in 2, 3, 6, 7, never 3 in a row; strong in
+        // 4 of 8 only. (A gap of one report is filled by the median filter: that counts as in a row.)
+        for (int r = 1; r <= 6; r++) {
+            b.person = (r == 3 || r == 4) ? Person{} : Person{ 3, 95, 0, 0 };
+            b.run(100);
+        }
+        b.person = {};
+        b.run(3000);
+        CHECK(b.triggers.empty());
+        const uint32_t in = b.now;
+        b.person = { 3, 95, 0, 0 };
+        b.run(300);
+        b.person = {};
+        b.run(1000);
+        CHECK(b.triggers.size() == 1 && b.triggers[0] - in == 400 && b.e.trigger_fast);
+    }
+
+    test_begin("fast start: only moving energy; fast start off (0 reports): very strong moving energy needs 6 of 8");
+    {
+        Bench b;
+        b.learn_noise();
+        b.run(5000);
+        uint32_t in = b.now;
+        b.person = { 4, 0, 95, 0 }; // still energy, however strong: 6 of 8
+        b.run(1000);
+        CHECK(b.triggers.size() == 1 && b.triggers[0] - in == 700 && !b.e.trigger_fast);
+        Bench o;
+        o.p.fast_frames = 0;
+        pe_init(&o.e, &o.p, o.now);
+        o.configure();
+        o.learn_noise();
+        o.run(5000);
+        in = o.now;
+        o.person = { 4, 95, 0, 0 };
+        o.run(1000);
+        CHECK(o.triggers.size() == 1 && o.triggers[0] - in == 700 && !o.e.trigger_fast);
+        // Fast level above 100 (strong 90 + 20): that channel has no fast start
+        Bench h;
+        h.radar.moving[4] = 89;
+        h.configure();
+        h.learn_noise();
+        h.run(5000);
+        in = h.now;
+        h.person = { 4, 100, 0, 0 };
+        h.run(1000);
+        CHECK(h.triggers.size() == 1 && h.triggers[0] - in == 700 && !h.e.trigger_fast);
     }
 
     test_begin("someone walking across two gates (one, then the other, report after report): counted together");

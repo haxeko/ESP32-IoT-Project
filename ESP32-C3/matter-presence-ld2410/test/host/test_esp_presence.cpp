@@ -176,7 +176,8 @@ int main(int argc, char **argv)
                                "hold 20"));
         CHECK(sim_log_contains("  gate 0 0-0.75 m    moving: radar 50 strong 51 hold 50 | still: no radar threshold"));
         CHECK(sim_log_contains("ESP32 presence engine: strong signal (from radar threshold + 1, at least the empty "
-                               "room noise + 5) in 3 of 4 reports to start, hold signal in 3 of 10 reports to stay"));
+                               "room noise + 5) in 6 of 8 reports to start, hold signal in 3 of 10 reports to stay"));
+        CHECK(sim_log_contains("Fast start: moving energy at the strong level + 20 in 3 reports in a row"));
         CHECK(sim_log_contains("The radar holds its factory thresholds: learn the empty room"));
         CHECK(sim_log_contains("No noise of the empty room recorded: hold = radar threshold until the empty room is "
                                "learned"));
@@ -277,7 +278,7 @@ int main(int argc, char **argv)
         g_still2_spread = 2; // 50-62
         run_engine(5000);
         CHECK(esp_presence_occupied() && sim_log_contains("Present: still gate 2 energy")); // the false trigger
-        CHECK(sim_log_contains(", strong from 41 (radar threshold 40), 3 of the last 4 reports strong"));
+        CHECK(sim_log_contains(", strong from 41 (radar threshold 40), 6 of the last 8 reports strong"));
         // Learned: the noise handed over with the thresholds the radar holds, gate 2 still raised and written
         static ld2410_thresholds_t written;
         sim_at(5000, []() {
@@ -371,8 +372,8 @@ int main(int argc, char **argv)
             g_person_still = 40;
         });
         run_engine(6000);
-        CHECK(esp_presence_occupied() && sim_log_contains("Present: moving gate 4 energy"));
-        CHECK(sim_log_contains(", strong from 21 (radar threshold 20), 3 of the last 4 reports strong"));
+        CHECK(esp_presence_occupied() && sim_log_contains("Present (fast): moving gate 4 energy"));
+        CHECK(sim_log_contains(", fast from 41 (radar threshold 20), 3 reports in a row"));
         sim_at(9000, []() {
             g_person_moving = 0;
             g_person_still = (uint8_t)(pe_hold_threshold(&s_engine, PE_STILL, 4) + 4);

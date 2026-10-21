@@ -254,20 +254,40 @@ menu "ESP32 Presence Engine (experimental)"
         int "Strong reports that start presence"
         depends on PRESENCE_ESP_ENGINE
         range 1 16
-        default 3
+        default 6
         help
             A gate (or its neighbours) must be strong (filtered energy above
             its radar threshold and the noise of the empty room) in this many
             of the last "report window" reports (about 100 ms each) for an
-            empty room to become present. More reports only help against short
-            bursts: a noise that stays above the radar threshold is handled by
-            the noise of the empty room (see "Strong signal above the noise").
+            empty room to become present. 6 of 8: bursts of noise up to about
+            0.5 s are left out, presence starts after about 0.7 s (a very
+            strong moving energy starts it sooner, see "Fast start"). More
+            reports only help against bursts: a noise that stays above the
+            radar threshold is handled by the noise of the empty room (see
+            "Strong signal above the noise").
 
     config PRESENCE_ENGINE_TRIGGER_WINDOW
         int "Report window of the strong signal"
         depends on PRESENCE_ESP_ENGINE
         range 1 16
-        default 4
+        default 8
+
+    config PRESENCE_ENGINE_FAST_REPORTS
+        int "Fast start: reports in a row of a very strong moving energy"
+        depends on PRESENCE_ESP_ENGINE
+        range 0 8
+        default 3
+        help
+            A filtered moving energy at the strong level + "Fast start margin"
+            in this many reports in a row (at a gate or its neighbours) starts
+            presence at once: 3 reports, about 0.4 s after someone walks in.
+            Bursts of one or two reports never start it. 0: no fast start.
+
+    config PRESENCE_ENGINE_FAST_MARGIN
+        int "Fast start margin above the strong level (energy 0-100)"
+        depends on PRESENCE_ESP_ENGINE
+        range 0 100
+        default 20
 
     config PRESENCE_ENGINE_TRIGGER_NOISE_MARGIN
         int "Strong signal above the noise of the empty room (energy 0-100)"

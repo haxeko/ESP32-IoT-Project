@@ -358,9 +358,15 @@ static bool handle_events()
         }
     }
     if (ev & PE_EV_TRIGGERED) {
-        ESP_LOGI(TAG, "Present: %s gate %u energy %u, strong from %u (radar threshold %u), %u of the last %u reports "
-                      "strong", e.trigger_kind == PE_MOVING ? "moving" : "still", e.trigger_gate, e.trigger_energy,
-                 e.trigger_strong, e.trigger_threshold, e.p.trigger_frames, e.p.trigger_window);
+        if (e.trigger_fast) {
+            ESP_LOGI(TAG, "Present (fast): moving gate %u energy %u, fast from %u (radar threshold %u), %u reports in "
+                          "a row", e.trigger_gate, e.trigger_energy, e.trigger_strong, e.trigger_threshold,
+                     e.p.fast_frames);
+        } else {
+            ESP_LOGI(TAG, "Present: %s gate %u energy %u, strong from %u (radar threshold %u), %u of the last %u "
+                          "reports strong", e.trigger_kind == PE_MOVING ? "moving" : "still", e.trigger_gate,
+                     e.trigger_energy, e.trigger_strong, e.trigger_threshold, e.p.trigger_frames, e.p.trigger_window);
+        }
     }
     if (ev & PE_EV_EVIDENCE) {
         if (e.presence == PE_PRESENCE_PRESENT && !e.evidence) {
@@ -499,6 +505,8 @@ static void params_from_config(pe_params_t *p)
     pe_default_params(p);
     p->trigger_frames = CONFIG_PRESENCE_ENGINE_TRIGGER_REPORTS;
     p->trigger_window = CONFIG_PRESENCE_ENGINE_TRIGGER_WINDOW;
+    p->fast_frames = CONFIG_PRESENCE_ENGINE_FAST_REPORTS;
+    p->fast_margin = CONFIG_PRESENCE_ENGINE_FAST_MARGIN;
     p->hold_frames = CONFIG_PRESENCE_ENGINE_HOLD_REPORTS;
     p->hold_window = CONFIG_PRESENCE_ENGINE_HOLD_WINDOW;
     p->data_timeout_ms = CONFIG_PRESENCE_ENGINE_DATA_TIMEOUT_MS;
@@ -529,6 +537,10 @@ esp_err_t esp_presence_start(void)
                   "%u) in %u of %u reports to start, hold signal in %u of %u reports to stay, data timeout %" PRIu32
                   " ms", margin, s_params.trigger_noise_margin, s_params.trigger_frames, s_params.trigger_window,
              s_params.hold_frames, s_params.hold_window, s_params.data_timeout_ms);
+    if (s_params.fast_frames > 0) {
+        ESP_LOGI(TAG, "Fast start: moving energy at the strong level + %u in %u reports in a row", s_params.fast_margin,
+                 s_params.fast_frames);
+    }
     load_noise(now);
     (void)pe_take_events(&s_engine); // the thresholds are logged once read from the radar
     if (xTaskCreate(engine_task, "presence_eng", kTaskStack, nullptr, kTaskPriority, nullptr) != pdPASS) {

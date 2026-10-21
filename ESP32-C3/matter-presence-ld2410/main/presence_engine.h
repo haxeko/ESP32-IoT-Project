@@ -36,8 +36,9 @@
 //   - WAITING (empty): a gate counts as "strong" in a report when one of its filtered energies reaches its trigger
 //     (above the radar threshold and the noise). Presence starts once `trigger_frames` of the last `trigger_window`
 //     reports were strong in the same place (a gate or its neighbours: someone walking crosses gates, noise jumps
-//     around). With the filter, that is about four reports (0.4 s) of a strong signal; isolated or two-report bursts
-//     never start it.
+//     around); by default 6 of 8, about 0.7 s, so that bursts of noise up to about 0.5 s are left out. Fast start:
+//     a filtered moving energy at the trigger + `fast_margin` (20) in `fast_frames` (3) reports in a row, about
+//     0.4 s, starts presence at once (someone walking in). Isolated or two-report bursts never start it.
 //   - PRESENT: a gate holds presence when one of its filtered energies reaches its hold threshold in `hold_frames`
 //     of the last `hold_window` reports (breathing, small movements). Each report with that evidence restarts the
 //     absence countdown; after `absence_ms` without it (the Occupancy Sensing HoldTime, 60 s by default) the room is
@@ -118,6 +119,8 @@ typedef struct {
     // Confirmation (reports, about 100 ms each)
     uint8_t trigger_frames; // strong reports needed...
     uint8_t trigger_window; // ...among this many last reports (at most PE_WINDOW_MAX)
+    uint8_t fast_frames;    // or a moving energy at trigger + fast_margin in this many reports in a row (0: never)
+    uint8_t fast_margin;
     uint8_t hold_frames;    // reports reaching hold in a gate needed...
     uint8_t hold_window;    // ...among this many last reports (at most PE_WINDOW_MAX)
     uint32_t data_timeout_ms; // nothing valid (or no energies) for this long: sensor fault
@@ -195,6 +198,7 @@ typedef struct {
     // Last reports, newest at window_pos: gates (bit = gate) reaching trigger and hold
     uint16_t trig_bits[PE_WINDOW_MAX];
     uint16_t hold_bits[PE_WINDOW_MAX];
+    uint16_t fast_bits[PE_WINDOW_MAX]; // gates with a moving energy at trigger + fast_margin
     uint8_t window_pos;
     uint8_t window_count;
     uint8_t trigger_gate; // last start of presence: gate, kind, energy, radar threshold, trigger of the channel
@@ -202,6 +206,7 @@ typedef struct {
     uint8_t trigger_energy;
     uint8_t trigger_threshold;
     uint8_t trigger_strong;
+    bool trigger_fast; // started by a very strong moving energy (trigger_strong: its fast level)
     uint8_t evidence_gate; // gate of the latest hold evidence
 
     // Latest energies and the last reports of every channel (filter, diagnostics)
