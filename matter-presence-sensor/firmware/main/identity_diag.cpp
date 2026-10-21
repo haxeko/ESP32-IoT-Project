@@ -14,12 +14,29 @@
 
 #include <esp_log.h>
 #include <esp_mac.h>
-#include <esp_netif.h>
 #include <esp_system.h>
-#include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <nvs.h>
+
+#if CONFIG_OPENTHREAD_ENABLED
+#include <esp_openthread.h>
+#include <esp_openthread_lock.h>
+#include <openthread/dataset.h>
+#include <openthread/ip6.h>
+#include <openthread/link.h>
+#include <openthread/netdata.h>
+#include <openthread/srp_client.h>
+#include <openthread/thread.h>
+#if CONFIG_OPENTHREAD_FTD
+#include <openthread/thread_ftd.h>
+#endif
+#elif CONFIG_ENABLE_WIFI_STATION
+#include <esp_netif.h>
+#include <esp_wifi.h>
+#else
+#error "identity_diag logs the Thread (CONFIG_OPENTHREAD_ENABLED) or Wi-Fi (CONFIG_ENABLE_WIFI_STATION) network"
+#endif
 
 #include <esp_matter.h> // esp-matter event types: kFabricRemoved, kFabricCommitted, ...
 
@@ -40,10 +57,10 @@ using namespace chip::DeviceLayer;
 
 static const char *TAG = "id_diag";
 
-// Same priority as the Matter task (CONFIG_CHIP_TASK_PRIORITY = 1), below Wi-Fi; the task mostly sleeps.
+// Same priority as the Matter task (CONFIG_CHIP_TASK_PRIORITY = 1), below OpenThread or Wi-Fi; the task mostly sleeps.
 static constexpr UBaseType_t kTaskPriority = tskIDLE_PRIORITY + 1;
 static constexpr uint32_t kTaskStack = 4096;
-// How long the CHIP stack lock is waited for before this round is skipped (and logged as such)
+// How long the CHIP stack lock (and the OpenThread lock) is waited for before this round is skipped (and logged as such)
 static constexpr TickType_t kLockWait = pdMS_TO_TICKS(2000);
 // Event-triggered blocks are coalesced: at most one every kMinEventGap
 static constexpr TickType_t kMinEventGap = pdMS_TO_TICKS(5000);
@@ -51,7 +68,7 @@ static constexpr TickType_t kMinEventGap = pdMS_TO_TICKS(5000);
 static constexpr uint32_t kNvsScanEvery = 12;
 
 static constexpr uint32_t kNotifyFull = 1u << 0;
-static constexpr uint32_t kNotifyNet = 1u << 1; // Wi-Fi block only
+static constexpr uint32_t kNotifyNet = 1u << 1; // Wi-Fi or Thread block only
 
 static TaskHandle_t s_task = nullptr;
 static uint32_t s_period_s = 0;
@@ -96,6 +113,39 @@ struct ChipSnap {
     uint16_t discriminator;
 };
 
+#if CONFIG_OPENTHREAD_ENABLED
+struct OtSnap {
+    bool valid;
+    otDeviceRole role;
+    otExtAddress ext;
+    otExtAddress eui64;
+    uint16_t rloc16;
+    char mleid[OT_IP6_ADDRESS_STRING_SIZE];
+    bool dataset_commissioned;
+    uint32_t partition_id;
+    uint8_t leader_router_id;
+    char net_name[OT_NETWORK_NAME_MAX_SIZE + 1];
+    otExtendedPanId xpanid;
+    uint16_t pan_id;
+    uint8_t channel;
+    uint16_t nbr_routers, nbr_children;
+    uint16_t routers_allocated;
+    bool has_parent;
+    otRouterInfo parent;
+    int8_t parent_avg_rssi, parent_last_rssi;
+    bool parent_avg_ok, parent_last_ok;
+    uint32_t attach_duration_s;
+    otMleCounters mle;
+    uint16_t onmesh_prefixes, default_routes;
+    bool has_omr;
+    bool srp_running;
+    char srp_server[OT_IP6_SOCK_ADDR_STRING_SIZE];
+    char srp_host[64];
+    const char *srp_host_state; // static string from otSrpClientItemStateToString()
+    uint16_t srp_svc_total, srp_svc_registered;
+};
+
+#else
 struct WifiSnap {
     bool connected; // associated with an access point
     char ssid[33];
@@ -109,9 +159,14 @@ struct WifiSnap {
     esp_ip4_addr_t ip4;
     uint8_t ip6_link_local, ip6_unique_local, ip6_global;
 };
+#endif
 
 static ChipSnap s_chip;
+#if CONFIG_OPENTHREAD_ENABLED
+static OtSnap s_ot;
+#else
 static WifiSnap s_wifi;
+#endif
 
 static void to_hex(const uint8_t *b, size_t n, char *out, size_t out_size)
 {
@@ -362,6 +417,119 @@ static bool collect_chip(ChipSnap &c)
     return true;
 }
 
+#if CONFIG_OPENTHREAD_ENABLED
+// ---------------------------------------------------------------------------------------------------------------------
+// OpenThread snapshot: OpenThread lock held, CHIP lock NOT held
+
+static bool is_link_local(const otIp6Address &a)
+{
+    return a.mFields.m8[0] == 0xfe && (a.mFields.m8[1] & 0xc0) == 0x80;
+}
+
+static void collect_ot_locked(otInstance *ot, OtSnap &o)
+{
+    memset(&o, 0, sizeof(o));
+    o.role = otThreadGetDeviceRole(ot);
+    memcpy(&o.ext, otLinkGetExtendedAddress(ot), sizeof(o.ext));
+    otLinkGetFactoryAssignedIeeeEui64(ot, &o.eui64);
+    o.rloc16 = otThreadGetRloc16(ot);
+    otIp6AddressToString(otThreadGetMeshLocalEid(ot), o.mleid, sizeof(o.mleid));
+    o.dataset_commissioned = otDatasetIsCommissioned(ot);
+
+    // Individual getters, not otDatasetGetActive(): that would copy the network key and PSKc
+    strlcpy(o.net_name, otThreadGetNetworkName(ot), sizeof(o.net_name));
+    memcpy(&o.xpanid, otThreadGetExtendedPanId(ot), sizeof(o.xpanid));
+    o.pan_id = otLinkGetPanId(ot);
+    o.channel = otLinkGetChannel(ot);
+
+    const bool attached =
+        o.role == OT_DEVICE_ROLE_CHILD || o.role == OT_DEVICE_ROLE_ROUTER || o.role == OT_DEVICE_ROLE_LEADER;
+    if (attached) {
+        o.partition_id = otThreadGetPartitionId(ot);
+        o.leader_router_id = otThreadGetLeaderRouterId(ot);
+        o.attach_duration_s = otThreadGetCurrentAttachDuration(ot);
+    }
+
+    otNeighborInfoIterator it = OT_NEIGHBOR_INFO_ITERATOR_INIT;
+    otNeighborInfo nbr;
+    while (otThreadGetNextNeighborInfo(ot, &it, &nbr) == OT_ERROR_NONE) {
+        if (nbr.mIsChild) {
+            o.nbr_children++;
+        } else {
+            o.nbr_routers++;
+        }
+    }
+
+#if CONFIG_OPENTHREAD_FTD
+    if (o.role == OT_DEVICE_ROLE_ROUTER || o.role == OT_DEVICE_ROLE_LEADER) {
+        const uint8_t max_id = otThreadGetMaxRouterId(ot);
+        for (uint16_t id = 0; id <= max_id; id++) {
+            otRouterInfo r;
+            if (otThreadGetRouterInfo(ot, id, &r) == OT_ERROR_NONE && r.mAllocated) {
+                o.routers_allocated++;
+            }
+        }
+    }
+#endif
+
+    if (o.role == OT_DEVICE_ROLE_CHILD) {
+        o.has_parent = otThreadGetParentInfo(ot, &o.parent) == OT_ERROR_NONE;
+        o.parent_avg_ok = otThreadGetParentAverageRssi(ot, &o.parent_avg_rssi) == OT_ERROR_NONE;
+        o.parent_last_ok = otThreadGetParentLastRssi(ot, &o.parent_last_rssi) == OT_ERROR_NONE;
+    }
+
+    memcpy(&o.mle, otThreadGetMleCounters(ot), sizeof(o.mle));
+
+    // On-mesh prefixes published by Border Routers (OMR prefixes and default routes)
+    otNetworkDataIterator nd_it = OT_NETWORK_DATA_ITERATOR_INIT;
+    otBorderRouterConfig prefix;
+    while (otNetDataGetNextOnMeshPrefix(ot, &nd_it, &prefix) == OT_ERROR_NONE) {
+        o.onmesh_prefixes++;
+        if (prefix.mDefaultRoute) {
+            o.default_routes++;
+        }
+    }
+
+    const otMeshLocalPrefix *ml = otThreadGetMeshLocalPrefix(ot);
+    for (const otNetifAddress *a = otIp6GetUnicastAddresses(ot); a; a = a->mNext) {
+        const bool mesh_local = ml && memcmp(a->mAddress.mFields.m8, ml->m8, sizeof(ml->m8)) == 0;
+        if (!is_link_local(a->mAddress) && !mesh_local) {
+            o.has_omr = true;
+        }
+    }
+
+    o.srp_running = otSrpClientIsRunning(ot);
+    if (o.srp_running) {
+        otIp6SockAddrToString(otSrpClientGetServerAddress(ot), o.srp_server, sizeof(o.srp_server));
+    } else {
+        strlcpy(o.srp_server, "-", sizeof(o.srp_server));
+    }
+    const otSrpClientHostInfo *host = otSrpClientGetHostInfo(ot);
+    if (host) {
+        strlcpy(o.srp_host, host->mName ? host->mName : "(none)", sizeof(o.srp_host));
+        o.srp_host_state = otSrpClientItemStateToString(host->mState);
+    }
+    for (const otSrpClientService *s = otSrpClientGetServices(ot); s; s = s->mNext) {
+        o.srp_svc_total++;
+        if (s->mState == OT_SRP_CLIENT_ITEM_STATE_REGISTERED) {
+            o.srp_svc_registered++;
+        }
+    }
+    o.valid = true;
+}
+
+static bool collect_ot(OtSnap &o)
+{
+    if (!esp_openthread_lock_acquire(kLockWait)) {
+        o.valid = false;
+        return false;
+    }
+    collect_ot_locked(esp_openthread_get_instance(), o);
+    esp_openthread_lock_release();
+    return true;
+}
+
+#else
 // ---------------------------------------------------------------------------------------------------------------------
 // Wi-Fi snapshot: no lock needed (the Wi-Fi driver and esp_netif getters can be called from any task)
 
@@ -408,6 +576,7 @@ static void collect_wifi(WifiSnap &w)
         }
     }
 }
+#endif // CONFIG_OPENTHREAD_ENABLED
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Logging, no lock held
@@ -415,14 +584,22 @@ static void collect_wifi(WifiSnap &w)
 static void log_hw(const ChipSnap &c)
 {
     uint8_t mac[6] = {};
-    uint8_t wifi_mac[6] = {};
-    char mac_s[13], wifi_mac_s[13];
+#if CONFIG_OPENTHREAD_ENABLED
+    uint8_t radio[8] = {}; // IEEE 802.15.4 EUI-64
+    const esp_mac_type_t radio_type = ESP_MAC_IEEE802154;
+    const char *radio_name = "eui64";
+#else
+    uint8_t radio[6] = {};
+    const esp_mac_type_t radio_type = ESP_MAC_WIFI_STA;
+    const char *radio_name = "wifi_mac";
+#endif
+    char mac_s[13], radio_s[2 * sizeof(radio) + 1];
     const bool mac_ok = esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY) == ESP_OK;
-    const bool wifi_mac_ok = esp_read_mac(wifi_mac, ESP_MAC_WIFI_STA) == ESP_OK;
+    const bool radio_ok = esp_read_mac(radio, radio_type) == ESP_OK;
     to_hex(mac, sizeof(mac), mac_s, sizeof(mac_s));
-    to_hex(wifi_mac, sizeof(wifi_mac), wifi_mac_s, sizeof(wifi_mac_s));
-    ESP_LOGI(TAG, "hw   efuse_mac=%s wifi_mac=%s reset=%s up=%" PRIu32 "s heap=%" PRIu32 " min_heap=%" PRIu32,
-             mac_ok ? mac_s : "?", wifi_mac_ok ? wifi_mac_s : "?", reset_reason_str(esp_reset_reason()),
+    to_hex(radio, sizeof(radio), radio_s, sizeof(radio_s));
+    ESP_LOGI(TAG, "hw   efuse_mac=%s %s=%s reset=%s up=%" PRIu32 "s heap=%" PRIu32 " min_heap=%" PRIu32,
+             mac_ok ? mac_s : "?", radio_name, radio_ok ? radio_s : "?", reset_reason_str(esp_reset_reason()),
              (uint32_t)(xTaskGetTickCount() / configTICK_RATE_HZ), esp_get_free_heap_size(),
              esp_get_minimum_free_heap_size());
     if (!c.valid) {
@@ -437,6 +614,49 @@ static void log_hw(const ChipSnap &c)
              CHIP_DEVICE_CONFIG_ENABLE_TEST_SETUP_PARAMS ? "yes" : "no");
 }
 
+#if CONFIG_OPENTHREAD_ENABLED
+static void log_ot(const OtSnap &o)
+{
+    if (!o.valid) {
+        ESP_LOGW(TAG, "ot   OpenThread lock busy for %u ms, skipped", (unsigned)pdTICKS_TO_MS(kLockWait));
+        return;
+    }
+    char ext_s[17], eui_s[17], xpan_s[17];
+    to_hex(o.ext.m8, sizeof(o.ext.m8), ext_s, sizeof(ext_s));
+    to_hex(o.eui64.m8, sizeof(o.eui64.m8), eui_s, sizeof(eui_s));
+    to_hex(o.xpanid.m8, sizeof(o.xpanid.m8), xpan_s, sizeof(xpan_s));
+
+    ESP_LOGI(TAG, "ot   role=%s rloc16=0x%04X ext_addr=%s eui64=%s ml_eid=%s", otThreadDeviceRoleToString(o.role),
+             o.rloc16, ext_s, eui_s, o.mleid);
+    ESP_LOGI(TAG,
+             "ot   dataset=%s net=\"%s\" ext_panid=%s panid=0x%04X ch=%u partition=0x%08" PRIX32
+             " leader_rid=%u attached=%" PRIu32 "s",
+             o.dataset_commissioned ? "yes" : "no", o.net_name, xpan_s, o.pan_id, o.channel, o.partition_id,
+             o.leader_router_id, o.attach_duration_s);
+    ESP_LOGI(TAG, "ot   neighbours: routers=%u children=%u, routers in partition=%u", o.nbr_routers, o.nbr_children,
+             o.routers_allocated);
+    if (o.has_parent) {
+        char p_ext[17];
+        to_hex(o.parent.mExtAddress.m8, sizeof(o.parent.mExtAddress.m8), p_ext, sizeof(p_ext));
+        ESP_LOGI(TAG, "ot   parent rloc16=0x%04X ext=%s lq_in=%u lq_out=%u rssi_avg=%d%s rssi_last=%d%s",
+                 o.parent.mRloc16, p_ext, o.parent.mLinkQualityIn, o.parent.mLinkQualityOut, o.parent_avg_rssi,
+                 o.parent_avg_ok ? "" : "(n/a)", o.parent_last_rssi, o.parent_last_ok ? "" : "(n/a)");
+    }
+    ESP_LOGI(TAG,
+             "mle  roles: disabled=%u detached=%u child=%u router=%u leader=%u; attach_attempts=%u "
+             "partition_changes=%u better_partition=%u parent_changes=%u",
+             o.mle.mDisabledRole, o.mle.mDetachedRole, o.mle.mChildRole, o.mle.mRouterRole, o.mle.mLeaderRole,
+             o.mle.mAttachAttempts, o.mle.mPartitionIdChanges, o.mle.mBetterPartitionAttachAttempts,
+             o.mle.mParentChanges);
+    ESP_LOGI(TAG, "br   on-mesh prefixes=%u (default route %u), OMR address=%s", o.onmesh_prefixes, o.default_routes,
+             o.has_omr ? "yes" : "NO");
+    ESP_LOGI(TAG, "srp  server=%s host=%s state=%s services=%u/%u registered", o.srp_server, o.srp_host,
+             o.srp_host_state ? o.srp_host_state : "-", o.srp_svc_registered, o.srp_svc_total);
+    if (o.dataset_commissioned && !o.has_omr) {
+        ESP_LOGW(TAG, "No OMR address: no Border Router routes between the LAN and this Thread network");
+    }
+}
+#else
 static const char *ps_str(const WifiSnap &w)
 {
     if (!w.ps_ok) {
@@ -560,6 +780,7 @@ static void log_wifi_system_event(int32_t id, const wifi_event_sta_connected_t &
                  wifi_reason_str(disconnected.reason), bssid_s, disconnected.rssi);
     }
 }
+#endif // CONFIG_OPENTHREAD_ENABLED
 
 static void log_chip(const ChipSnap &c)
 {
@@ -645,17 +866,26 @@ static void log_nvs(bool scan_namespaces)
 
 static void dump(bool full, bool scan_nvs)
 {
+    // Strictly one lock after the other: CHIP lock taken and released, then the OpenThread lock
     if (full) {
         collect_chip(s_chip);
     }
+#if CONFIG_OPENTHREAD_ENABLED
+    collect_ot(s_ot);
+#else
     collect_wifi(s_wifi);
+#endif
 
     ESP_LOGI(TAG, "===== identity diagnostics =====");
     if (full) {
         log_hw(s_chip);
         log_chip(s_chip);
     }
+#if CONFIG_OPENTHREAD_ENABLED
+    log_ot(s_ot);
+#else
     log_wifi(s_wifi);
+#endif
     if (full) {
         log_nvs(scan_nvs);
     }
@@ -667,6 +897,9 @@ static void identity_diag_task(void *)
     // Seconds to ticks directly: pdMS_TO_TICKS() multiplies in 32 bits and wraps above ~42950 s
     const TickType_t period = (TickType_t)s_period_s * (TickType_t)configTICK_RATE_HZ;
     uint32_t blocks = 0;
+#if CONFIG_OPENTHREAD_ENABLED
+    TickType_t last_event_dump = 0;
+#endif
     dump(true, true);
     blocks++;
     // Absolute deadline: event-triggered blocks must not push the periodic full block back forever
@@ -677,13 +910,26 @@ static void identity_diag_task(void *)
         const TickType_t remaining = (int32_t)(next_full - now) > 0 ? next_full - now : 0;
         uint32_t bits = 0;
         if (remaining > 0 && xTaskNotifyWait(0, UINT32_MAX, &bits, remaining) == pdTRUE) {
-            // Always wait the full gap: when the connection event arrives, the IPv6 link-local address is still
-            // tentative (duplicate address detection) and the address events are still to come. Bursts (connection
-            // + address changes + fabric events) are coalesced into one block.
+#if CONFIG_OPENTHREAD_ENABLED
+            // Thread: wait only the rest of the gap since the last event block. Bursts (role change + address
+            // change + network data change ...) are coalesced into one block.
+            const TickType_t since = xTaskGetTickCount() - last_event_dump;
+            if (since < kMinEventGap) {
+                vTaskDelay(kMinEventGap - since);
+                uint32_t more = 0;
+                xTaskNotifyWait(0, UINT32_MAX, &more, 0);
+                bits |= more;
+            }
+            last_event_dump = xTaskGetTickCount();
+#else
+            // Wi-Fi: always wait the full gap. When the connection event arrives, the IPv6 link-local address is
+            // still tentative (duplicate address detection) and the address events are still to come. Bursts
+            // (connection + address changes + fabric events) are coalesced into one block.
             vTaskDelay(kMinEventGap);
             uint32_t more = 0;
             xTaskNotifyWait(0, UINT32_MAX, &more, 0);
             bits |= more;
+#endif
             dump((bits & kNotifyFull) != 0, false);
             continue;
         }
@@ -713,13 +959,29 @@ static void request(uint32_t bits)
     }
 }
 
-// CHIP task, CHIP lock held: only event data and CHIP-owned data
+// CHIP task, CHIP lock held: only event data and CHIP-owned data, never the OpenThread lock
 void identity_diag_on_event(const ChipDeviceEvent *event)
 {
     if (!s_task || !event) {
         return;
     }
     switch (event->Type) {
+#if CONFIG_OPENTHREAD_ENABLED
+    case DeviceEventType::kThreadStateChange:
+        if (event->ThreadStateChange.RoleChanged) {
+            ESP_LOGI(TAG, "EV Thread role changed");
+            request(kNotifyNet);
+        }
+        break;
+
+    case DeviceEventType::kThreadConnectivityChange:
+        ESP_LOGI(TAG, "EV Thread connectivity %s",
+                 event->ThreadConnectivityChange.Result == kConnectivity_Established ? "established"
+                 : event->ThreadConnectivityChange.Result == kConnectivity_Lost      ? "LOST"
+                                                                                     : "unchanged");
+        request(kNotifyNet);
+        break;
+#else
     case DeviceEventType::kWiFiConnectivityChange:
         ESP_LOGI(TAG, "EV Wi-Fi connectivity %s",
                  event->WiFiConnectivityChange.Result == kConnectivity_Established ? "established"
@@ -740,6 +1002,7 @@ void identity_diag_on_event(const ChipDeviceEvent *event)
         }
         break;
     }
+#endif
 
     case DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "EV commissioning complete: node " ChipLogFormatX64 " fabric %u",

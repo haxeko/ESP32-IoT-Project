@@ -3,6 +3,7 @@
 #   tools/build.sh <board> [feature ...]
 #   tools/build.sh c3-wroom-devkit
 #   tools/build.sh c3-radar-r45 unique_setup
+#   tools/build.sh h2-mini
 # Run from anywhere, with ESP-IDF and esp-matter set up (README, "Build"). Build directory build/<name>, where <name> is
 # the board and its features joined by "-"; the files to flash or to hand to the OTA provider are copied to dist/:
 #   presence-<name>-<version>.ota                    Matter OTA image (Home Assistant Matter Server)
@@ -30,6 +31,10 @@ defaults="sdkconfig.defaults;boards/$board.defaults"
 for feature in "$@"; do
     if [ ! -f "features/$feature.defaults" ]; then
         echo "unknown feature $feature; features: $(ls features | sed 's/\.defaults$//' | tr '\n' ' ')" >&2
+        exit 1
+    fi
+    if [ "$feature" = factory ] && [ "$target" != esp32h2 ]; then
+        echo "feature factory: ESP32-H2 boards only (the SDK test PAI only covers the product ID 0x8000)" >&2
         exit 1
     fi
     name="$name-$feature"

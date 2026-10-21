@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board: [c3-supermini, c3-wroom-devkit, c3-radar-r45]
+        board: [c3-supermini, c3-wroom-devkit, c3-radar-r45, h2-mini]
     defaults:
       run:
         working-directory: matter-presence-sensor/firmware

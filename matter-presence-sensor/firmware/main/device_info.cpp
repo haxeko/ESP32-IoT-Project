@@ -25,6 +25,7 @@
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/ESP32/ESP32Config.h>
 #include <platform/internal/GenericDeviceInstanceInfoProvider.h>
+#include <soc/soc_caps.h>
 #include <string.h>
 
 #include "device_info.h"
@@ -80,10 +81,19 @@ private:
 
 void device_info_get_serial(char *buf, size_t size)
 {
-    // The factory base MAC burned in eFuse (6 bytes on the ESP32-C3): unique per chip, survives erase-flash, and
-    // also the Wi-Fi station MAC shown by the router.
+    // The factory base MAC burned in eFuse: unique per chip, survives erase-flash.
+#if SOC_IEEE802154_SUPPORTED
+    // ESP32-H2: on 802.15.4 chips the MAC comes as an EUI-64: the 3 OUI bytes, the 2 MAC_EXT bytes (FF FE), then the
+    // 3 bytes that differ from chip to chip. The serial number is the 6 bytes without FF FE, as in the earlier ESP32-H2
+    // firmware.
+    uint8_t eui64[8] = {};
+    const esp_err_t err = esp_efuse_mac_get_default(eui64);
+    const uint8_t mac[6] = { eui64[0], eui64[1], eui64[2], eui64[5], eui64[6], eui64[7] };
+#else
+    // ESP32-C3: 6 bytes, also the Wi-Fi station MAC shown by the router.
     uint8_t mac[6] = {};
     const esp_err_t err = esp_efuse_mac_get_default(mac);
+#endif
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to read the MAC address from eFuse, err:%d", err);
     }

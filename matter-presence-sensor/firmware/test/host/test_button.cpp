@@ -5,7 +5,8 @@
 
 static int s_double, s_triple, s_quadruple, s_long;
 
-static void reset_button()
+// four_clicks false: nothing for four clicks, as the ESP32-H2 firmware (CONFIG_PRESENCE_BUTTON_LED_H2)
+static void reset_button(bool four_clicks = true)
 {
     sim_reset();
     s_now_ms = 0;
@@ -20,7 +21,7 @@ static void reset_button()
     const user_button_config_t config = {
         .on_double_click = []() { s_double++; },
         .on_triple_click = []() { s_triple++; },
-        .on_quadruple_click = []() { s_quadruple++; },
+        .on_quadruple_click = four_clicks ? +[]() { s_quadruple++; } : nullptr,
         .on_long_press = []() { s_long++; },
         .long_press_ms = 5000,
     };
@@ -66,6 +67,16 @@ int main(int argc, char **argv)
     clicks(4);
     hold(1, 1000);
     CHECK(s_quadruple == 1 && s_triple == 1);
+
+    test_begin("four clicks without an action (ESP32-H2 firmware): ignored like five");
+    reset_button(false);
+    clicks(4);
+    hold(1, 1000);
+    CHECK(s_double + s_triple + s_quadruple + s_long == 0);
+    CHECK(sim_log_contains("4 clicks, ignored") && !sim_log_contains("Quadruple click"));
+    clicks(3);
+    hold(1, 1000);
+    CHECK(s_triple == 1 && s_double + s_quadruple + s_long == 0);
 
     test_begin("five clicks or more do nothing");
     reset_button();

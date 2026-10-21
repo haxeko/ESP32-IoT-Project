@@ -26,7 +26,8 @@ void device_info_add_attributes(esp_matter::node_t *node);
 // factory reset), and makes it the Bluetooth (GAP) name used while waiting to be commissioned.
 void device_info_apply_name(void);
 
-// Serial number: the factory base MAC address in eFuse, also the Wi-Fi station MAC, e.g. "58CF79A1B2C4".
+// Serial number: the factory base MAC address in eFuse, e.g. "58CF79A1B2C4" (ESP32-C3: also the Wi-Fi station MAC;
+// ESP32-H2: the EUI-64 without its FF FE bytes).
 void device_info_get_serial(char *buf, size_t size);
 
 // CONFIG_DEVICE_NAME_PREFIX + the last 4 characters of the serial number, e.g. "Presence-B2C4", or

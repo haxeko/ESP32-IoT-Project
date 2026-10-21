@@ -16,7 +16,7 @@ typedef void (*user_button_cb_t)(void);
 typedef struct {
     user_button_cb_t on_double_click;    // two short presses in a row
     user_button_cb_t on_triple_click;    // three short presses in a row
-    user_button_cb_t on_quadruple_click; // four short presses in a row
+    user_button_cb_t on_quadruple_click; // four short presses in a row (nullptr: ignored like five or more)
     user_button_cb_t on_long_press;      // fires once when held for long_press_ms, while still held
     uint32_t long_press_ms;
 } user_button_config_t;

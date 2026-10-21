@@ -73,10 +73,22 @@ int main(int argc, char **argv)
     status_led_set_learning(STATUS_LED_LEARNING_FAILED);
     CHECK(tick() == "20,0,0");
 
+#if CONFIG_PRESENCE_BUTTON_LED_H2
+    test_begin("factory thresholds, ESP32-H2 firmware: green for 10 s, then the mode");
+    reset_led();
+    status_led_set_learning(STATUS_LED_LEARNING_FACTORY);
+    for (int i = 0; i < 100; i++) {
+        CHECK(tick() == "0,20,0");
+    }
+    CHECK(tick() == "0,0,0");
+#else
     test_begin("factory thresholds: purple");
     reset_led();
     status_led_set_learning(STATUS_LED_LEARNING_FACTORY);
     CHECK(tick() == "12,0,20");
+    tick();
+    CHECK(tick() == "0,0,0"); // 2.5 Hz blink
+#endif
 
     return test_end();
 }

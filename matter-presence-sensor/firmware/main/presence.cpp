@@ -18,8 +18,8 @@ static const char *TAG = "presence";
 
 static constexpr uint32_t kPollMs = 100;
 static constexpr uint32_t kTaskStack = 4096;
-// Above the Matter task (CONFIG_CHIP_TASK_PRIORITY = 1) so the polling keeps its pace, below the Wi-Fi and lwIP
-// tasks; the task sleeps between polls.
+// Above the Matter task (CONFIG_CHIP_TASK_PRIORITY = 1) so the polling keeps its pace, below OpenThread (5) or the
+// Wi-Fi and lwIP tasks; the task sleeps between polls.
 static constexpr UBaseType_t kTaskPriority = 2;
 
 static presence_report_cb_t s_report;

@@ -6,17 +6,18 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-// Matter over Wi-Fi Occupancy Sensor (device type 0x0107) on an ESP32-C3 SuperMini, fed by an HLK-LD2410C 24 GHz
-// presence radar. The Occupancy Sensing cluster has the Radar feature and the HoldTime attribute, so controllers can
-// tune how long the room stays "occupied" after the radar stops seeing anyone.
+// Matter Occupancy Sensor (device type 0x0107) over Wi-Fi on an ESP32-C3 or over Thread on an ESP32-H2 (board.h), fed
+// by an HLK-LD2410C 24 GHz presence radar. The Occupancy Sensing cluster has the Radar feature and the HoldTime
+// attribute, so controllers can tune how long the room stays "occupied" after the radar stops seeing anyone.
 //
-// The phone sends the Wi-Fi SSID and password over BLE during commissioning; afterwards the device talks to the
-// controllers directly over the Wi-Fi LAN and BLE is released.
+// The phone sends the network credentials (Wi-Fi SSID and password, or Thread dataset) over BLE during
+// commissioning; afterwards the device talks to the controllers directly over the Wi-Fi LAN, or through a Thread
+// Border Router, and BLE is released.
 //
 // Endpoints (their numbers follow the creation order and must not change: controllers that paired with an earlier
 // firmware keep them across OTA updates):
 //   0 Root Node: Basic Information (+ ProductLabel, SerialNumber), OTA Requestor, Wi-Fi network clusters (Wi-Fi RSSI
-//     and UpTime reported again by diag_report.cpp)
+//     and UpTime reported again by diag_report.cpp) or Thread network clusters
 //   1 Occupancy Sensor: Occupancy Sensing (Radar, HoldTime), Identify, Mode Select "Learn empty room"
 //   2, 3, 4 Mode Select: "Range", "Radar resolution", "Radar Bluetooth" (radar_control.cpp)
 //   5 Temperature Sensor: temperature of the ESP32-C3 chip (c3_temperature.cpp), only with
@@ -33,13 +34,20 @@
 #include <esp_matter_console.h>
 #endif
 #include <esp_system.h>
-#include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <inttypes.h>
 #include <nvs_flash.h>
 #include <platform/KeyValueStoreManager.h>
 #include <stdio.h>
+
+#if CONFIG_ENABLE_WIFI_STATION
+#include <esp_wifi.h>
+#endif
+#if CONFIG_OPENTHREAD_ENABLED
+#include <esp_openthread_types.h>
+#include <platform/ESP32/OpenthreadLauncher.h>
+#endif
 
 #include <atomic>
 
@@ -48,16 +56,21 @@
 #include <drivers/user_button.h>
 
 #include "board.h"
-#include "c3_temperature.h"
 #include "device_info.h"
-#include "diag_report.h"
 #include "identity_diag.h"
 #include "mem_monitor.h"
-#include "net_watchdog.h"
 #include "presence.h"
 #include "radar_control.h"
 #include "radar_worker.h"
 #include "setup_code.h"
+#if CONFIG_ENABLE_WIFI_STATION
+#include "c3_temperature.h"
+#include "diag_report.h"
+#include "net_watchdog.h"
+#endif
+#if CONFIG_OPENTHREAD_ENABLED
+#include "thread_diag.h"
+#endif
 
 static const char *TAG = "app_main";
 
@@ -181,7 +194,8 @@ static void open_commissioning_window(uint32_t timeout_sec)
         ESP_LOGI(TAG, "Commissioning window already open");
         return;
     }
-    // Once BLE is released the device is only found over the Wi-Fi LAN (DNS-SD over mDNS).
+    // Once BLE is released the device is only found over the network: DNS-SD over mDNS on the Wi-Fi LAN, or through
+    // the SRP server of the Thread Border Router.
     const auto advertisement = s_ble_released ? chip::CommissioningWindowAdvertisement::kDnssdOnly
                                               : chip::CommissioningWindowAdvertisement::kAllSupported;
     const CHIP_ERROR err =
@@ -223,22 +237,37 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kServerReady:
         apply_hold_time_config();
+#if CONFIG_ENABLE_WIFI_STATION
         diag_report_start();
+#endif
 #if CONFIG_PRESENCE_CHIP_TEMPERATURE
         c3_temperature_start();
 #endif
         if (!is_commissioned()) {
             setup_code_print(false); // the SDK opened the boot commissioning window (BLE and network)
         }
+#if CONFIG_OPENTHREAD_ENABLED
+        else {
+            thread_diag_stop(); // already commissioned: no need for the periodic Thread diagnostics
+        }
+#endif
         break;
 
     case chip::DeviceLayer::DeviceEventType::kInterfaceIpAddressChanged:
         ESP_LOGI(TAG, "Interface IP Address changed");
         break;
 
+#if CONFIG_ENABLE_WIFI_STATION
     case chip::DeviceLayer::DeviceEventType::kWiFiConnectivityChange:
         ESP_LOGI(TAG, "Wi-Fi connectivity changed");
         break;
+#endif
+
+#if CONFIG_OPENTHREAD_ENABLED
+    case chip::DeviceLayer::DeviceEventType::kThreadConnectivityChange:
+        ESP_LOGI(TAG, "Thread connectivity changed");
+        break;
+#endif
 
 #if CONFIG_PRESENCE_WIFI_STAY_AWAKE
     case chip::DeviceLayer::DeviceEventType::kESPSystemEvent:
@@ -251,6 +280,9 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete");
+#if CONFIG_OPENTHREAD_ENABLED
+        thread_diag_stop();
+#endif
         break;
 
     case chip::DeviceLayer::DeviceEventType::kFailSafeTimerExpired:
@@ -267,8 +299,8 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kFabricRemoved:
         ESP_LOGI(TAG, "Fabric removed successfully");
-        // After removing the last fabric the Wi-Fi credentials are kept, so the device can be added again over the
-        // network right away.
+        // After removing the last fabric the Wi-Fi credentials or the Thread dataset are kept, so the device can be
+        // added again over the network right away.
         if (!is_commissioned()) {
             open_commissioning_window(kRecommissioningWindowSec);
         }
@@ -339,7 +371,17 @@ static esp_err_t start_matter()
     }
 #endif
 
-    // Per-board setup code (sdkconfig.defaults.unique_setup); nothing to do in the default build
+#if CONFIG_OPENTHREAD_ENABLED
+    // OpenThread on the ESP32-H2 native 802.15.4 radio (no RCP, no host)
+    esp_openthread_platform_config_t ot_config = {
+        .radio_config = { .radio_mode = RADIO_MODE_NATIVE },
+        .host_config = { .host_connection_mode = HOST_CONNECTION_MODE_NONE },
+        .port_config = { .storage_partition_name = "nvs", .netif_queue_size = 10, .task_queue_size = 10 },
+    };
+    set_openthread_platform_config(&ot_config);
+#endif
+
+    // Per-board setup code (features/unique_setup.defaults); nothing to do in the default build
     setup_code_init();
 
     // Wi-Fi: the station is started by the Matter stack with the credentials from commissioning
@@ -355,20 +397,30 @@ static esp_err_t start_matter()
         ESP_LOGE(TAG, "Failed to start the radar configuration task");
     }
 
-    // Identity / Wi-Fi / Matter state at boot, on events and every CONFIG_IDENTITY_DIAG_PERIOD_SEC
+#if CONFIG_OPENTHREAD_ENABLED
+    // Thread addresses / SRP state every 10 s until commissioned (README, troubleshooting)
+    thread_diag_start();
+#endif
+
+    // Identity / network / Matter state at boot, on events and every CONFIG_IDENTITY_DIAG_PERIOD_SEC
     if (identity_diag_start(CONFIG_IDENTITY_DIAG_PERIOD_SEC) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the identity diagnostics");
     }
 
+#if CONFIG_ENABLE_WIFI_STATION
     // Brings the device back when no controller subscribes any more (DNS-SD, Wi-Fi reconnect, restart)
     if (net_watchdog_start() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the connection watchdog");
     }
+#endif
 
 #if CONFIG_ENABLE_CHIP_SHELL
     esp_matter::console::diagnostics_register_commands();
     esp_matter::console::factoryreset_register_commands();
     esp_matter::console::attribute_register_commands();
+#if CONFIG_OPENTHREAD_CLI
+    esp_matter::console::otcli_register_commands();
+#endif
     esp_matter::console::init();
 #endif
     return ESP_OK;
@@ -398,18 +450,21 @@ static void learning_button_cb()
     radar_worker_request_learning();
 }
 
-// Four clicks: the LD2410 factory thresholds, like "Factory thresholds" in Home Assistant.
+#if !CONFIG_PRESENCE_BUTTON_LED_H2
+// Four clicks: the LD2410 factory thresholds, like "Factory thresholds" in Home Assistant. Nothing with the button
+// of the ESP32-H2 firmware (CONFIG_PRESENCE_BUTTON_LED_H2).
 static void factory_thresholds_button_cb()
 {
     radar_worker_request_factory_thresholds();
 }
+#endif
 
 // Long press: factory reset.
 static void factory_reset_cb()
 {
-    ESP_LOGW(TAG, "Factory reset: erasing the Wi-Fi network and Matter pairing");
+    ESP_LOGW(TAG, "Factory reset: erasing the " BOARD_NETWORK " network and Matter pairing");
     if (s_matter_started) {
-        esp_matter::factory_reset(); // also clears the Wi-Fi credentials, then restarts
+        esp_matter::factory_reset(); // also clears the Wi-Fi credentials or the Thread dataset, then restarts
     } else {
         nvs_flash_erase();
         esp_restart();
@@ -429,7 +484,7 @@ extern "C" void app_main()
 
     ESP_LOGI(TAG, "%s %s, firmware %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME,
              esp_app_get_description()->version);
-    ESP_LOGI(TAG, "Target %s, board %s, Matter over Wi-Fi", CONFIG_IDF_TARGET, BOARD_NAME);
+    ESP_LOGI(TAG, "Target %s, board %s, Matter over %s", CONFIG_IDF_TARGET, BOARD_NAME, BOARD_NETWORK);
     char button[12] = "none";
     if (CONFIG_RESET_BUTTON_GPIO >= 0) {
         snprintf(button, sizeof(button), "GPIO%d", CONFIG_RESET_BUTTON_GPIO);
@@ -446,7 +501,11 @@ extern "C" void app_main()
     const user_button_config_t button_config = {
         .on_double_click = pairing_button_cb,
         .on_triple_click = learning_button_cb,
+#if CONFIG_PRESENCE_BUTTON_LED_H2
+        .on_quadruple_click = nullptr, // "4 clicks, ignored"
+#else
         .on_quadruple_click = factory_thresholds_button_cb,
+#endif
         .on_long_press = factory_reset_cb,
         .long_press_ms = kFactoryResetHoldMs,
     };

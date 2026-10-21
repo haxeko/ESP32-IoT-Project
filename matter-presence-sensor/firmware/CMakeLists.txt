@@ -40,9 +40,9 @@ set(MATTER_SDK_PATH ${ESP_MATTER_PATH}/connectedhomeip/connectedhomeip)
 # This should be done before using the IDF_TARGET variable.
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
-if(NOT IDF_TARGET STREQUAL "esp32c3")
-    message(FATAL_ERROR "Target ${IDF_TARGET} is not supported: this project builds the ESP32-C3 firmware only "
-                        "(idf.py set-target esp32c3)")
+if(NOT IDF_TARGET STREQUAL "esp32c3" AND NOT IDF_TARGET STREQUAL "esp32h2")
+    message(FATAL_ERROR "Target ${IDF_TARGET} is not supported: ESP32-C3 (Wi-Fi) or ESP32-H2 (Thread) boards, "
+                        "tools/build.sh <board>")
 endif()
 
 set(EXTRA_COMPONENT_DIRS

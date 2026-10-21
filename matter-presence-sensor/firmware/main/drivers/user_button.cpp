@@ -60,9 +60,13 @@ static void end_sequence()
         fire(s_config.on_triple_click);
         break;
     case 4:
-        ESP_LOGI(TAG, "Quadruple click");
-        fire(s_config.on_quadruple_click);
-        break;
+        if (s_config.on_quadruple_click) {
+            ESP_LOGI(TAG, "Quadruple click");
+            fire(s_config.on_quadruple_click);
+            break;
+        }
+        // No action for four clicks: ignored like five or more
+        [[fallthrough]];
     default:
         ESP_LOGI(TAG, "%u clicks, ignored", (unsigned)clicks);
         break;

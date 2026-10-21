@@ -48,7 +48,9 @@ static constexpr color_t kWhite = {255, 255, 255};
 static constexpr color_t kCyan = {0, 255, 255};
 static constexpr color_t kGreen = {0, 255, 0};
 static constexpr color_t kRed = {255, 0, 0};
+#if !CONFIG_PRESENCE_BUTTON_LED_H2
 static constexpr color_t kPurple = {160, 0, 255};
+#endif
 
 static color_t led_color()
 {
@@ -72,7 +74,11 @@ static color_t led_color()
         break;
     case STATUS_LED_LEARNING_FACTORY:
         if (s_learning_ticks < kResultTicks) {
+#if CONFIG_PRESENCE_BUTTON_LED_H2
+            return kGreen; // as a learning that succeeded, like the ESP32-H2 firmware
+#else
             return (s_learning_ticks / 2) % 2 == 0 ? kPurple : kOff; // 2.5 Hz, lit first
+#endif
         }
         break;
     case STATUS_LED_LEARNING_NONE:

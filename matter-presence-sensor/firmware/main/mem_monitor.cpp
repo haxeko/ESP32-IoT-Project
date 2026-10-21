@@ -19,10 +19,14 @@
 
 static const char *TAG = "mem";
 
-// Matter, Wi-Fi, the timers (LED, button, this log), the application tasks, and the serial console of the Matter
-// shell when it is on
+// Matter, Wi-Fi or OpenThread, the timers (LED, button, this log), the application tasks, and the serial console of
+// the Matter shell when it is on
 static const char *const kTasks[] = {
+#if CONFIG_OPENTHREAD_ENABLED
+    "CHIP", "ot_task", "esp_timer", "presence", "ld2410", "radar_cfg", "id_diag",
+#else
     "CHIP", "wifi", "esp_timer", "presence", "ld2410", "radar_cfg", "id_diag",
+#endif
 #if CONFIG_ENABLE_CHIP_SHELL
     "console",
 #endif

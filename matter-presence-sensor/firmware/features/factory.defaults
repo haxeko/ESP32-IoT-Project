@@ -1,0 +1,14 @@
+# Optional feature, ESP32-H2 boards only (the SDK test PAI only issues DACs for the product ID 0x8000): manufacturing
+# build, tools/build.sh h2-<board> factory. DAC, PAI, Certification Declaration, passcode verifier and discriminator
+# come from a per-board factory partition made with esp-matter-mfg-tool (ESP32-H2/tools/matter-mfg).
+# Flash each board's <uuid>-partition.bin to the "fctry" partition BEFORE this firmware: without it the board keeps
+# working with its existing controllers but cannot be commissioned again.
+CONFIG_ENABLE_ESP32_FACTORY_DATA_PROVIDER=y
+CONFIG_FACTORY_PARTITION_DAC_PROVIDER=y
+CONFIG_FACTORY_COMMISSIONABLE_DATA_PROVIDER=y
+# Manufacturer, model, hardware string and eFuse-MAC serial number still come from main/device_info.cpp
+CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
+CONFIG_CHIP_FACTORY_NAMESPACE_PARTITION_LABEL="fctry"
+CONFIG_ENABLE_TEST_SETUP_PARAMS=n
+# The factory partition holds the verifier, not the passcode: the board cannot print its own QR code
+CONFIG_PRINT_ONBOARDING_CODES=n

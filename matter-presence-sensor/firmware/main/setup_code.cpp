@@ -31,6 +31,7 @@
 #include <platform/PlatformManager.h>
 #endif
 
+#include "board.h"
 #include "setup_code.h"
 
 // Unused when CONFIG_UNIQUE_SETUP_CODE and CONFIG_PRINT_ONBOARDING_CODES are both off
@@ -319,7 +320,7 @@ void setup_code_print(bool on_network)
     char url[160];
     const bool url_ok = GetQRCodeUrl(url, sizeof(url), chip::CharSpan(qr_span.data(), qr_span.size())) == CHIP_NO_ERROR;
 
-    ESP_LOGI(TAG, "Setup code of this board (%s%s):", on_network ? "Wi-Fi / DNS-SD" : "BLE",
+    ESP_LOGI(TAG, "Setup code of this board (%s%s):", on_network ? BOARD_NETWORK " / DNS-SD" : "BLE",
              CHIP_DEVICE_CONFIG_ENABLE_TEST_SETUP_PARAMS ? ", SDK TEST CODE shared by every board" : "");
     ESP_LOGI(TAG, "  QR code: %s", qr_span.data());
     if (url_ok) {

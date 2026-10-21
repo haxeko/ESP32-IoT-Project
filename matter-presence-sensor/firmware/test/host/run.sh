@@ -28,6 +28,8 @@ $CXX $FLAGS -o "$OUT/led" test_led.cpp sim.cpp
 $CXX $FLAGS -DCONFIG_STATUS_LED_ACTIVE_HIGH=1 -o "$OUT/led_active_high" test_led.cpp sim.cpp
 $CXX $FLAGS -DCONFIG_STATUS_LED_TYPE_WS2812=1 -DCONFIG_STATUS_LED_BRIGHTNESS=20 -o "$OUT/led_ws2812" test_led_ws2812.cpp \
     sim.cpp
+$CXX $FLAGS -DCONFIG_STATUS_LED_TYPE_WS2812=1 -DCONFIG_STATUS_LED_BRIGHTNESS=20 -DCONFIG_PRESENCE_BUTTON_LED_H2=1 \
+    -o "$OUT/led_ws2812_h2" test_led_ws2812.cpp sim.cpp
 $CXX $FLAGS -DCONFIG_STATUS_LED_TYPE_NONE=1 -o "$OUT/led_none" test_led_none.cpp sim.cpp
 $CXX $FLAGS -o "$OUT/identity" test_identity.cpp $MAIN/device_name.cpp sim.cpp
 $CXX $FLAGS -o "$OUT/diag_report" test_diag_report.cpp sim.cpp
@@ -36,7 +38,7 @@ $CXX $FLAGS -o "$OUT/c3_temperature" test_c3_temperature.cpp sim.cpp
 
 status=0
 for t in ld2410 settings learn_esp32 learn_radar learn_peak worker presence presence_distance button led led_active_high \
-    led_ws2812 led_none \
+    led_ws2812 led_ws2812_h2 led_none \
     identity diag_report net_watchdog c3_temperature; do
     "$OUT/$t" || status=1
 done

@@ -1,0 +1,35 @@
+# ESP32-H2 boards (flash 4 MB): Matter over Thread on the 802.15.4 radio, commissioning over BLE. Loaded by ESP-IDF
+# after sdkconfig.defaults when the target is esp32h2. The settings of the earlier ESP32-H2 firmware
+# (ESP32-H2/matter-presence-ld2410-learning), unchanged.
+CONFIG_IDF_TARGET="esp32h2"
+
+# Matter over Thread: 802.15.4 radio, commissioning over BLE
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_SRP_CLIENT=y
+CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
+CONFIG_OPENTHREAD_LOG_LEVEL_NOTE=y
+# OpenThread CLI on the serial console for network diagnostics: "matter esp ot_cli <command>"
+CONFIG_OPENTHREAD_CLI=y
+# USB/mains-powered sensor (the LD2410 radar draws ~80 mA all the time, so sleeping makes no sense): Full Thread
+# Device, can become a Thread router and extend the mesh
+CONFIG_OPENTHREAD_FTD=y
+
+# Disable lwip ipv6 autoconfig (Thread assigns the addresses)
+CONFIG_LWIP_IPV6_AUTOCONFIG=n
+
+# LwIP config for OpenThread
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=8
+CONFIG_LWIP_MULTICAST_PING=y
+
+# MDNS platform: SRP over Thread instead of mDNS
+CONFIG_USE_MINIMAL_MDNS=n
+
+# No Wi-Fi on ESP32-H2
+CONFIG_ENABLE_WIFI_STATION=n
+
+# Matter console (diagnostics, factoryreset, attribute, OpenThread CLI) on the serial console
+CONFIG_ENABLE_CHIP_SHELL=y
+
+# Matter: the product ID of the ESP32-H2 firmware (the default of esp-matter; the SDK test DAC, PAI and
+# Certification Declaration cover 0xFFF1/0x8000)
+CONFIG_DEVICE_PRODUCT_ID=0x8000

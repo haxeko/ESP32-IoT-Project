@@ -27,7 +27,8 @@ typedef enum {
     STATUS_LED_LEARNING_RECORDING, // slow blink, dark first (cyan): recording the empty room
     STATUS_LED_LEARNING_DONE,      // on for 10 s (green): new thresholds saved, then the mode
     STATUS_LED_LEARNING_FAILED,    // on for 10 s (red): the learning or the factory thresholds failed, then the mode
-    STATUS_LED_LEARNING_FACTORY,   // 2.5 Hz blink for 10 s (purple): factory thresholds written, then the mode
+    STATUS_LED_LEARNING_FACTORY,   // 2.5 Hz blink for 10 s (purple): factory thresholds written, then the mode;
+                                   // green for 10 s with CONFIG_PRESENCE_BUTTON_LED_H2
 } status_led_learning_t;
 
 // Type, pin and polarity or brightness from menuconfig (CONFIG_STATUS_LED_TYPE_*, CONFIG_STATUS_LED_GPIO,
