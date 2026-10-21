@@ -8,82 +8,14 @@ CONFIG_OPENTHREAD_ENABLED=n
 # No SoftAP (commissioning is over BLE only)
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
-# Wi-Fi code in flash instead of IRAM: on the ESP32-C3, IRAM and DRAM share
-# the same SRAM, so this leaves more heap. The lowest free heap measured on a
-# board during the first 10 minutes was 15.7 KB (BLE and Wi-Fi both on while
-# commissioning). Costs a little Wi-Fi throughput, which Matter does not need.
-CONFIG_ESP_WIFI_IRAM_OPT=n
-CONFIG_ESP_WIFI_RX_IRAM_OPT=n
-
-# Wi-Fi security modes the Matter SDK never uses: it only sets the SSID and
-# passphrase of the network (WPA/WPA2/WPA3 Personal), so no enterprise
-# (802.1X/EAP) and no OWE (never turned on in the station configuration)
-CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
-CONFIG_ESP_WIFI_ENABLE_WPA3_OWE_STA=n
-
-# BLE is only used for commissioning and released afterwards
-# (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING): one connection from the phone, no
-# BLE pairing (Matter secures the session itself, PASE), legacy advertising
-# and 1M PHY only, small buffer pools. Less RAM while BLE and Wi-Fi run
-# together during commissioning. Values of the "BLE Optimizations" in the
-# esp-matter RAM guide (docs/en/optimizations.rst), as in its ESP32-C2 example.
-CONFIG_BT_NIMBLE_MAX_CCCDS=2
-CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
-CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT=n
-CONFIG_BT_NIMBLE_WHITELIST_SIZE=1
-CONFIG_BT_NIMBLE_GATT_MAX_PROCS=1
-CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=10
-CONFIG_BT_NIMBLE_MSYS_1_BLOCK_SIZE=100
-CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=4
-CONFIG_BT_NIMBLE_MSYS_2_BLOCK_SIZE=320
-CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=5
-CONFIG_BT_NIMBLE_TRANSPORT_EVT_COUNT=5
-CONFIG_BT_NIMBLE_TRANSPORT_EVT_DISCARD_COUNT=3
-
-# No Matter console on the USB port (logs still go there): about 10 KB more
-# heap (esp-matter RAM guide). Turn it back on in menuconfig to debug.
-CONFIG_ENABLE_CHIP_SHELL=n
-
-# Matter event history: critical events (start-up, boot reason) are rare and
-# there are no debug events; the info buffer (occupancy changes) is kept
-CONFIG_EVENT_LOGGING_CRIT_BUFFER_SIZE=1024
-CONFIG_EVENT_LOGGING_DEBUG_BUFFER_SIZE=256
-
-# Matter clusters no endpoint of this device has (on top of the list in
-# sdkconfig.defaults): less flash. Scenes stays, the Mode Select server of the
-# SDK registers a scene handler; so do On/Off, Level and Color Control, whose
-# code the SDK builds anyway.
-CONFIG_SUPPORT_ACTIONS_CLUSTER=n
-CONFIG_SUPPORT_AMBIENT_CONTEXT_SENSING_CLUSTER=n
-CONFIG_SUPPORT_BOOLEAN_STATE_CLUSTER=n
-CONFIG_SUPPORT_CAMERA_AV_STREAM_MANAGEMENT_CLUSTER=n
-CONFIG_SUPPORT_ETHERNET_NETWORK_DIAGNOSTICS_CLUSTER=n
-CONFIG_SUPPORT_FLOW_MEASUREMENT_CLUSTER=n
-CONFIG_SUPPORT_HUMIDISTAT_CLUSTER=n
-CONFIG_SUPPORT_ILLUMINANCE_MEASUREMENT_CLUSTER=n
-CONFIG_SUPPORT_JOINT_FABRIC_ADMINISTRATOR_CLUSTER=n
-CONFIG_SUPPORT_JOINT_FABRIC_DATASTORE_CLUSTER=n
-CONFIG_SUPPORT_MEDIA_FILE_MANAGEMENT_CLUSTER=n
-CONFIG_SUPPORT_NETWORK_IDENTITY_MANAGEMENT_CLUSTER=n
-CONFIG_SUPPORT_PRESSURE_MEASUREMENT_CLUSTER=n
-CONFIG_SUPPORT_PROXIMITY_RANGING_CLUSTER=n
-CONFIG_SUPPORT_RELATIVE_HUMIDITY_MEASUREMENT_CLUSTER=n
-CONFIG_SUPPORT_SOIL_MEASUREMENT_CLUSTER=n
-CONFIG_SUPPORT_TEMPERATURE_MEASUREMENT_CLUSTER=n
-CONFIG_SUPPORT_TLS_CERTIFICATE_MANAGEMENT_CLUSTER=n
-CONFIG_SUPPORT_TLS_CLIENT_MANAGEMENT_CLUSTER=n
-CONFIG_SUPPORT_WEB_RTC_TRANSPORT_PROVIDER_CLUSTER=n
-CONFIG_SUPPORT_WEB_RTC_TRANSPORT_REQUESTOR_CLUSTER=n
-CONFIG_SUPPORT_ZONE_MANAGEMENT_CLUSTER=n
-
 # IPv6 addresses from the router advertisements (SLAAC) on the Wi-Fi LAN
 CONFIG_LWIP_IPV6_AUTOCONFIG=y
 # Link-local address + up to 5 SLAAC addresses (as in the esp-matter Wi-Fi
 # examples)
 CONFIG_LWIP_IPV6_NUM_ADDRESSES=6
 
-# The SuperMini has no USB-UART chip: logs on the built-in USB-Serial-JTAG of
-# the USB-C port (GPIO18/GPIO19)
+# The SuperMini has no USB-UART chip: logs and the Matter console on the
+# built-in USB-Serial-JTAG of the USB-C port (GPIO18/GPIO19)
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 

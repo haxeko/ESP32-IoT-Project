@@ -34,8 +34,7 @@ static uint8_t s_clicks;    // short presses in the current sequence
 static bool s_hint_logged;
 static bool s_long_fired;
 
-// The sequence of clicks is over: 2 is a double click, 3 a triple click, 4 a
-// quadruple click.
+// The sequence of clicks is over: 2 is a double click, 3 a triple click.
 static void end_sequence()
 {
     const uint8_t clicks = s_clicks;
@@ -50,12 +49,7 @@ static void end_sequence()
         if (s_config.on_triple_click) {
             s_config.on_triple_click();
         }
-    } else if (clicks == 4) {
-        ESP_LOGI(TAG, "Quadruple click");
-        if (s_config.on_quadruple_click) {
-            s_config.on_quadruple_click();
-        }
-    } else if (clicks > 4) {
+    } else if (clicks > 3) {
         ESP_LOGI(TAG, "%u clicks, ignored", (unsigned)clicks);
     }
 }

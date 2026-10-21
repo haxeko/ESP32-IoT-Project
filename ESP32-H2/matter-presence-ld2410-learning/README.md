@@ -1,6 +1,6 @@
 # Matter Presence Sensor + học phòng trống (ESP32-H2 + HLK-LD2410, Thread)
 
-> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt); thời gian chờ chỉnh bằng **Hold time**. Học phòng trống cũng bắt đầu được bằng cách **bấm nút BOOT 3 lần**, LED báo từng bước; **bấm 4 lần** ghi lại ngưỡng mặc định của radar (LED nháy tím). Tên thiết bị: **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C3** (mỗi mạch một tên). Phần cứng, chân nối, ghép nối giống hệt bản gốc; LED và nút bấm thêm phần học phòng trống.
+> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt); thời gian chờ chỉnh bằng **Hold time**. Học phòng trống cũng bắt đầu được bằng cách **bấm nút BOOT 3 lần**, LED báo từng bước. Tên thiết bị: **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C3** (mỗi mạch một tên). Phần cứng, chân nối, ghép nối giống hệt bản gốc; LED và nút bấm thêm phần học phòng trống.
 
 Cảm biến hiện diện chuẩn **Matter over Thread** chạy trên **ESP32-H2** với radar 24 GHz **HLK-LD2410**. Đây là bản chuyển từ Zigbee (`ESP32-H2/zigbee-presence-occupancy`) sang Matter: cùng chip ESP32-H2, cùng radio 802.15.4, nhưng thay Zigbee bằng Thread + Matter. Thêm trực tiếp vào **Apple Home**, Google Home, Home Assistant, SmartThings, Alexa... mà không cần Zigbee coordinator / Zigbee2MQTT.
 
@@ -83,12 +83,12 @@ I quiet_learn: Learning done: new thresholds saved in the LD2410 (600 reports)
 
 Ở gate 5 (3,75–4,5 m) trong ví dụ, một người đi ngang lúc ghi đẩy năng lượng cao nhất lên 40. Cách cũ sẽ đặt ngưỡng chuyển động 50 cho gate này, nên người ở khoảng 4 m dễ bị bỏ sót. Mức 95 % bỏ đợt đó nên ngưỡng chỉ là 25.
 
-**Factory thresholds:** ghi lại ngưỡng mặc định của nhà sản xuất vào LD2410, ví dụ sau một lần học hỏng. Chọn trong Home Assistant, hoặc **bấm nhanh nút BOOT 4 lần** (không cần ghép nối hay mạng; entity trong Home Assistant cũng chuyển sang `Factory thresholds` trong lúc ghi).
+**Factory thresholds:** ghi lại ngưỡng mặc định của nhà sản xuất vào LD2410, ví dụ sau một lần học hỏng.
 - Chỉ ngưỡng từng gate được ghi lại. Range, Radar resolution, Radar Bluetooth và *no-one duration* giữ nguyên, radar không khởi động lại.
-- Ghi xong: **LED nháy tím 10 s** (0,2 s sáng, 0,2 s tắt), entity trở về **Off**. Radar không trả lời hoặc đọc lại không khớp: **LED đỏ 10 s**. Bản 1.0.131 trở về trước báo xanh lá 10 s như khi học xong.
-- Log ghi cả ngưỡng cũ (`Thresholds until now: ...`), để chép lại nếu cần. Radar đã giữ ngưỡng mặc định thì không ghi gì (LED vẫn nháy tím).
-- Chọn *Factory thresholds* (hoặc bấm 4 lần) trong lúc đang học: huỷ việc học (không ghi ngưỡng học được), rồi ghi ngưỡng mặc định. Nếu radar đang tự đo (lệnh 0x000B), thiết bị khởi động lại radar, chờ 1 s cho radar sẵn sàng rồi mới ghi.
-- Lựa chọn cuối cùng luôn thắng: chọn **Learning** hoặc bấm nút 3 lần sau *Factory thresholds* (hoặc sau 4 lần bấm) thì thiết bị học; chọn **Off** trước khi kịp ghi thì không làm gì.
+- Ghi xong: **LED xanh lá 10 s**, entity trở về **Off**. Radar không trả lời hoặc đọc lại không khớp: **LED đỏ 10 s**.
+- Log ghi cả ngưỡng cũ (`Thresholds until now: ...`), để chép lại nếu cần. Radar đã giữ ngưỡng mặc định thì không ghi gì.
+- Chọn *Factory thresholds* trong lúc đang học: huỷ việc học (không ghi ngưỡng học được), rồi ghi ngưỡng mặc định.
+- Lựa chọn cuối cùng luôn thắng: chọn **Learning** hoặc bấm nút 3 lần sau *Factory thresholds* thì thiết bị học; chọn **Off** trước khi kịp ghi thì không làm gì.
 
 Các trường hợp khác:
 - Chọn **Off** trong lúc đang học: huỷ, không ghi gì vào radar. LED trở lại bình thường ngay (không xanh, không đỏ).
@@ -166,7 +166,7 @@ LD2410 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng
 |---|---|
 | Radar LD2410 (UART1) | RX = GPIO11, TX = GPIO12 |
 | LED RGB WS2812 trên board | GPIO8 |
-| Nút BOOT: bấm đúp = chế độ ghép nối, bấm 3 lần = học phòng trống, bấm 4 lần = ngưỡng mặc định, giữ 5 s = factory reset | GPIO9 |
+| Nút BOOT: bấm đúp = chế độ ghép nối, bấm 3 lần = học phòng trống, giữ 5 s = factory reset | GPIO9 |
 
 ### Đèn LED
 
@@ -177,11 +177,10 @@ LD2410 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng
 | Trắng nháy nhanh | Ứng dụng yêu cầu *Identify* (xác định thiết bị) |
 | Cyan sáng liên tục | Vừa bắt đầu học phòng trống: rời khỏi phòng (20 s) |
 | Cyan nháy chậm (1 s tắt, 1 s sáng) | Đang ghi năng lượng nền của phòng trống (60 s) |
-| Xanh lá trong 10 s | Học xong, ngưỡng mới đã lưu vào radar |
-| Tím nháy nhanh (0,2 s sáng, 0,2 s tắt) trong 10 s | Đã ghi lại ngưỡng mặc định của radar (*Factory thresholds* hoặc bấm nút 4 lần) |
+| Xanh lá trong 10 s | Học xong, ngưỡng mới đã lưu vào radar; hoặc đã ghi lại ngưỡng mặc định (*Factory thresholds*) |
 | Đỏ trong 10 s | Học hoặc ghi ngưỡng mặc định thất bại, xem lý do trong log `quiet_learn` |
 
-Trong lúc học, LED báo việc học thay cho chế độ ghép nối (học xong thì nháy xanh dương lại nếu vẫn đang chờ ghép nối); *Identify* vẫn được ưu tiên. Huỷ học thì LED trở lại bình thường ngay. Học bắt đầu từ Home Assistant cũng báo LED như vậy. LED một màu (*Single-colour LED on a GPIO*) không đổi màu được: sáng 20 s, nháy chậm 60 s, rồi sáng 10 s cả khi xong lẫn khi thất bại; ghi ngưỡng mặc định xong thì nháy nhanh 10 s.
+Trong lúc học, LED báo việc học thay cho chế độ ghép nối (học xong thì nháy xanh dương lại nếu vẫn đang chờ ghép nối); *Identify* vẫn được ưu tiên. Huỷ học thì LED trở lại bình thường ngay. Học bắt đầu từ Home Assistant cũng báo LED như vậy. LED một màu (*Single-colour LED on a GPIO*) không đổi màu được: sáng 20 s, nháy chậm 60 s, rồi sáng 10 s cả khi xong lẫn khi thất bại.
 
 Trạng thái radar (có người / mất tín hiệu) chỉ xem được trong app và trong log, LED không báo.
 
@@ -193,10 +192,9 @@ Board không có LED WS2812: chọn *Single-colour LED on a GPIO* hoặc *None* 
 |---|---|
 | **Bấm đúp** (2 lần nhanh) | Vào **chế độ ghép nối** trong 15 phút, LED nháy xanh. Chưa ghép nối: thêm lại thiết bị khi chế độ ghép nối lúc khởi động đã hết giờ. Đã ghép nối: thêm thiết bị vào ứng dụng thứ hai (Multi-Admin) bằng chính mã ghép nối của thiết bị |
 | **Bấm 3 lần** (nhanh) | Bắt đầu **học phòng trống**, như chọn *Learning* trong Home Assistant: LED cyan (rời phòng), cyan nháy chậm (đang ghi), xanh lá 10 s (xong) hoặc đỏ 10 s (thất bại). Xem mục **Học phòng trống** |
-| **Bấm 4 lần** (nhanh) | Ghi lại **ngưỡng mặc định** của radar, như chọn *Factory thresholds* trong Home Assistant (huỷ việc học đang chạy nếu có): LED nháy tím 10 s (xong) hoặc đỏ 10 s (thất bại) |
 | **Giữ 5 giây** | **Factory reset**: xoá mạng Thread và toàn bộ thông tin ghép nối Matter, khởi động lại. Sau đó LED nháy xanh chờ ghép nối |
 
-Các lần bấm được đếm cho tới khi nhả nút quá 0,4 s, nên bấm đúp có tác dụng sau khi nhả nút khoảng 0,4 s (để phân biệt với bấm 3 lần); bấm 3 lần và 4 lần cũng vậy. Bấm 5 lần trở lên thì không làm gì. Một lần bấm giữ quá 0,5 s huỷ các lần bấm trước nó.
+Các lần bấm được đếm cho tới khi nhả nút quá 0,4 s, nên bấm đúp có tác dụng sau khi nhả nút khoảng 0,4 s (để phân biệt với bấm 3 lần). Bấm 4 lần trở lên thì không làm gì. Một lần bấm giữ quá 0,5 s huỷ các lần bấm trước nó.
 
 Sau khi đã ghép nối, BLE được tắt để tiết kiệm RAM. Khi đó chế độ ghép nối bằng nút bấm chỉ quảng bá qua mạng Thread (Border Router), nên ứng dụng thứ hai cần dùng cùng mạng Wi-Fi/LAN với Border Router.
 
@@ -347,7 +345,7 @@ Mỗi bản build có thêm file `matter_presence_h2_learn.ota` (trong Artifacts
 | Status LED | WS2812 | WS2812 / LED một màu trên GPIO / không có |
 | Status LED pin | 8 | Chân LED |
 | WS2812 brightness | 20 | Độ sáng LED WS2812 (1–255) |
-| Button pin | 9 | Nút BOOT: bấm đúp = chế độ ghép nối, bấm 3 lần = học phòng trống, bấm 4 lần = ngưỡng mặc định của radar, giữ 5 giây = reset. `-1` để tắt |
+| Button pin | 9 | Nút BOOT: bấm đúp = chế độ ghép nối, bấm 3 lần = học phòng trống, giữ 5 giây = reset. `-1` để tắt |
 
 Build sẽ báo lỗi nếu hai chức năng dùng trùng một chân, hoặc nếu chọn chân flash (GPIO15–GPIO21). Mặc định của bản ESP32-C3 khác (GPIO3/4, LED một màu): xem README bản C3.
 
@@ -402,13 +400,7 @@ I mem: Heap: <còn trống> bytes free, lowest <thấp nhất> since boot, large
 I mem: Stack unused bytes: CHIP <n> ot_task <n> esp_timer <n> console <n> presence <n> ld2410 <n> radar_cfg <n>
 ```
 
-Log in lúc khởi động rồi 10 phút một lần; con số quan trọng là `lowest ... since boot` (heap thấp nhất kể từ khi bật, thường rơi vào lúc ghép nối khi BLE còn chạy). Log chuyển sang cảnh báo `W mem` khi một stack còn dưới 512 byte, và khi heap thấp nhất xuống dưới 16 KB. Từ bản 1.0.130, cảnh báo heap chỉ in **một lần cho mỗi mức thấp mới**, kèm khoảng thời gian nó xảy ra (giữa hai lần log), rồi trở lại dòng `I mem: Heap` bình thường:
-
-```
-W mem: Heap low: lowest 16060 bytes free since boot, reached between 2 s and 602 s; now 96552 free, largest block 26624
-```
-
-Bản trước lặp lại cảnh báo mỗi 10 phút cho tới lần khởi động sau, dù heap đã hồi lại từ lâu. Trên console còn có lệnh `matter esp diagnostics mem-dump`.
+Log in lúc khởi động rồi 10 phút một lần; con số quan trọng là `lowest ... since boot` (heap thấp nhất kể từ khi bật, thường rơi vào lúc ghép nối khi BLE còn chạy). Log chuyển sang cảnh báo `W mem` khi heap thấp nhất dưới 16 KB hoặc một stack còn dưới 512 byte. Trên console còn có lệnh `matter esp diagnostics mem-dump`.
 
 ## Xử lý sự cố: điện thoại không tìm thấy thiết bị
 
@@ -492,5 +484,5 @@ matter-presence-ld2410-learning/
     └── drivers/
         ├── ld2410.cpp          # Radar LD2410 (UART1, 256000 baud): đọc báo cáo, gửi lệnh cấu hình
         ├── status_led.cpp      # LED trạng thái (WS2812 hoặc LED thường): ghép nối, Identify, học phòng trống
-        └── user_button.cpp     # Nút BOOT: bấm đúp, bấm 3 lần, bấm 4 lần, giữ lâu
+        └── user_button.cpp     # Nút BOOT: bấm đúp, bấm 3 lần, giữ lâu
 ```

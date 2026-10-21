@@ -307,8 +307,6 @@ static constexpr uint32_t kRadarLeaveMs = 10 * 1000;
 static constexpr uint32_t kRadarStartMs = 15 * 1000;
 // Margin after its wait and measuring time before giving up
 static constexpr uint32_t kRadarMarginMs = 30 * 1000;
-// The radar answers commands again about a second after a restart
-static constexpr uint32_t kRadarRestartMs = 1000;
 
 enum RadarAutoStart { kRadarAutoStarted, kRadarAutoUnsupported, kRadarAutoNoAnswer };
 
@@ -334,24 +332,12 @@ static RadarAutoStart start_radar_auto(uint32_t duration_s, ld2410_thresholds_t 
     return err == ESP_OK ? kRadarAutoStarted : kRadarAutoUnsupported;
 }
 
-// Stops a running detection: the radar restarts, its thresholds stay as they were [not documented by Hi-Link].
-// Returns once the radar answers commands again, so a command sent next (e.g. the factory thresholds chosen while
-// the radar measured) does not time out.
+// Stops a running detection: the radar restarts, its thresholds stay as they were [not documented by Hi-Link]
 static void abort_radar_auto()
 {
-    if (ld2410_config_begin() != ESP_OK) {
+    if (ld2410_config_begin() != ESP_OK || ld2410_restart() != ESP_OK) {
         ESP_LOGW(TAG, "Could not restart the radar to stop its background noise detection");
-        return;
     }
-    // The radar may restart before its answer is sent: only a refusal is an error.
-    if (ld2410_restart() == ESP_FAIL) {
-        ESP_LOGW(TAG, "The radar refused to restart, its background noise detection may go on");
-        if (ld2410_config_end() != ESP_OK) {
-            ESP_LOGW(TAG, "Could not end the configuration mode");
-        }
-        return;
-    }
-    vTaskDelay(pdMS_TO_TICKS(kRadarRestartMs));
 }
 
 static void log_radar_auto_result(const ld2410_thresholds_t *before, bool before_ok, const ld2410_thresholds_t *after)

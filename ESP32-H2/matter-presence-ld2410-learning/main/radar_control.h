@@ -42,13 +42,6 @@ esp_err_t radar_control_start(void);
 // shows the learning and its result (status_led.h).
 bool radar_control_request_learning(void);
 
-// Writes the LD2410 factory thresholds like "Factory thresholds" chosen in Home
-// Assistant (four clicks on the button): a learning requested or running is
-// cancelled first. Does not wait, so it may run in an esp_timer callback.
-// False when the worker is not running (the status LED shows a failure). The
-// status LED blinks purple once they are written, or shows red (status_led.h).
-bool radar_control_request_factory_thresholds(void);
-
 // PRE_UPDATE attribute callback, on the Matter task: handles the CurrentMode
 // changes of the clusters above. An error rejects the change.
 esp_err_t radar_control_pre_update(uint16_t endpoint_id, uint32_t cluster_id, uint32_t attribute_id,

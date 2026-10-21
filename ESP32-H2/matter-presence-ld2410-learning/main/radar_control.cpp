@@ -205,9 +205,9 @@ static RadarModesManager s_modes;
 // worker.
 enum LearnState : uint8_t { kLearnIdle, kLearnRequested, kLearnRunning, kLearnCancelling };
 static std::atomic<LearnState> s_learn_state{kLearnIdle};
-// Factory thresholds chosen in Home Assistant or with four clicks, not written
-// yet. The last choice wins: Factory thresholds cancels a learning, Learning
-// or Off (or three clicks) drops a Factory thresholds that has not started.
+// Factory thresholds chosen in Home Assistant, not written yet. The last
+// choice wins: Factory thresholds cancels a learning, Learning or Off (or the
+// button) drops a Factory thresholds that has not started.
 static std::atomic<bool> s_want_factory{false};
 
 // Range (gate), Radar resolution (gate length) and Radar Bluetooth (off / on)
@@ -220,8 +220,8 @@ static std::atomic<int32_t> s_want_bluetooth{RADAR_KEEP};
 static std::atomic<bool> s_synced{false};
 static std::atomic<TaskHandle_t> s_task{nullptr};
 
-// Matter task or button: Learning starts a learning (or keeps a cancelled one
-// running), Off cancels it.
+// Matter task: Learning starts a learning (or keeps a cancelled one running),
+// Off cancels it.
 static void request_learning(bool on)
 {
     LearnState state = s_learn_state.load();
@@ -463,18 +463,15 @@ static void run_requested_learning()
     }
 }
 
-// Factory thresholds chosen in Home Assistant or with four clicks: written,
-// the LED blinks purple or shows red for a while, then the select shows Off
-// (or Learning when chosen meanwhile).
+// Factory thresholds chosen in Home Assistant: written, the LED green or red
+// for a while, then the select shows Off (or Learning when chosen meanwhile).
 static void run_requested_factory_thresholds()
 {
     if (!s_want_factory.exchange(false)) {
         return;
     }
-    // Shown already when chosen in Home Assistant; covers the button.
-    report_current_mode(s_learn.endpoint_id, kLearnFactory);
     const bool restored = quiet_learn_restore_factory();
-    status_led_set_learning(restored ? STATUS_LED_LEARNING_FACTORY : STATUS_LED_LEARNING_FAILED);
+    status_led_set_learning(restored ? STATUS_LED_LEARNING_DONE : STATUS_LED_LEARNING_FAILED);
     if (s_learn_state.load() == kLearnIdle && !s_want_factory) {
         report_current_mode(s_learn.endpoint_id, kLearnOff);
     }
@@ -626,22 +623,6 @@ bool radar_control_request_learning(void)
         return false;
     }
     s_want_factory = false; // the last choice wins
-    xTaskNotifyGive(task);
-    return true;
-}
-
-bool radar_control_request_factory_thresholds(void)
-{
-    TaskHandle_t task = s_task;
-    if (task == nullptr) {
-        ESP_LOGW(TAG, "Cannot restore the factory thresholds: the radar task is not running");
-        status_led_set_learning(STATUS_LED_LEARNING_FAILED);
-        return false;
-    }
-    // The last choice wins, as in Home Assistant: a learning requested or
-    // running is cancelled first.
-    s_want_factory = true;
-    request_learning(false);
     xTaskNotifyGive(task);
     return true;
 }

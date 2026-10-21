@@ -13,5 +13,5 @@
 
 // Logs the free heap (now, lowest since boot, largest block) and the unused
 // stack of the main tasks once now and then every period_s seconds, as a
-// warning when a stack runs low or the heap reaches a new low. Runs in the esp_timer task.
+// warning when one runs low. Runs in the esp_timer task.
 esp_err_t mem_monitor_start(uint32_t period_s);
