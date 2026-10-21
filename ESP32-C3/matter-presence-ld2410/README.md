@@ -72,7 +72,7 @@ LED của SuperMini chỉ có một màu, mọi màu ở cột cuối đều là
 | Nháy rất nhanh (5 lần mỗi giây) | Ứng dụng yêu cầu *Identify* | trắng |
 | Sáng liên tục 20 s | Vừa bắt đầu học phòng trống: rời khỏi phòng | cyan |
 | Nháy chậm (1 s tắt, 1 s sáng) trong 60 s | Đang ghi năng lượng nền của phòng trống | cyan nháy |
-| Sáng liên tục 10 s | Học xong **hoặc** học thất bại, hoặc ghi ngưỡng mặc định thất bại; xem log `quiet_learn` | xanh lá / đỏ |
+| Sáng liên tục 10 s | Học xong **hoặc** học thất bại, hoặc ghi ngưỡng mặc định thất bại; xem log `quiet_learn` (biến thể `esppresence`: `esp_presence`) | xanh lá / đỏ |
 | Nháy nhanh (0,2 s sáng, 0,2 s tắt) trong 10 s | Đã ghi ngưỡng mặc định của radar | tím |
 | Nháy chậm (1 s sáng, 1 s tắt) | Chế độ ghép nối: đang chờ thêm vào ứng dụng Matter | xanh dương |
 | Tắt | Hoạt động bình thường (đã ghép nối), hoặc chế độ ghép nối đã hết giờ | |
@@ -203,11 +203,40 @@ Chạy bằng một trong các cách: lệnh `LEARN_EMPTY` trên console, chọn
 
 **Off** trên select (hoặc `LEARN_CANCEL`) huỷ việc học. **Factory thresholds** (hoặc bấm 4 lần, `PROFILE_RESET YES`) xoá ngưỡng đã học, quay về ngưỡng dựng sẵn. Với biến thể này, các lựa chọn đó không đụng tới ngưỡng trong radar.
 
+**Khác bản ổn định:**
+- Radar **không tự đo** (không có lệnh 0x000B, nút *Auto* của app HLKRadarTool). Radar chỉ gửi năng lượng như mọi lúc; ESP32 ghi lại và tự tính ngưỡng.
+- Ngưỡng **trong radar không đổi** sau khi học: app HLKRadarTool và log `LD2410 settings` vẫn hiện ngưỡng cũ. Ngưỡng đó không được dùng.
+- Ngưỡng mới nằm trong ESP32: xem bằng lệnh `PROFILE` (mục **Console**).
+- Không có console thì xem kết quả học bằng LED và select:
+  - LED cyan sáng 20 s, rồi cyan nháy 60 s;
+  - sau đó **xanh lá 10 s** là học xong, **đỏ 10 s** là thất bại (ngưỡng cũ giữ nguyên);
+  - select *Learn empty room* hiện *Learning* khoảng 80 s rồi về *Off*.
+- Bấm *Learning* trên điện thoại khi đang ở trong phòng: ra khỏi phòng trong 20 s và ở ngoài hết 60 s ghi. Người ngồi yên trong phòng lúc ghi làm ngưỡng vùng đó cao, chỗ đó kém nhạy; khi đó học lại.
+
 **Chưa học:** firmware dùng ngưỡng dựng sẵn theo từng vùng (hold = ngưỡng xuất xưởng của LD2410, trigger = hold + 15) và cảnh báo trong log cần học phòng trống. Ngưỡng đã học cho vùng 0,75 m mà radar đang dùng vùng 0,2 m (hoặc ngược lại) thì cũng quay về ngưỡng dựng sẵn và báo cần học lại.
 
 ### Console
 
 Console ESP-IDF (`esp_console`) trên cổng log: USB-Serial-JTAG (mặc định). Lệnh chỉ xếp hàng yêu cầu, câu trả lời in ra log; gõ `help` để xem danh sách.
+
+**Mở console:**
+1. Cắm cổng USB của bo (cổng dùng để nạp) vào máy tính.
+2. Mở terminal nối tiếp:
+   - có ESP-IDF: `idf.py -p COM5 monitor` (Linux `/dev/ttyACM0`, macOS `/dev/cu.usbmodem*`); thoát bằng `Ctrl+]`;
+   - không có ESP-IDF: phần mềm terminal nối tiếp bất kỳ, ví dụ PuTTY (*Serial*, cổng `COMx`) hay *Serial Monitor* của Arduino IDE. Tốc độ baud không quan trọng với USB-Serial-JTAG (chọn 115200).
+3. Bấm Enter để thấy dấu nhắc `presence>`, gõ lệnh (ví dụ `DIAG_STREAM on`) rồi Enter. Chữ thường cũng được (`diag_stream on`). Log khác vẫn in xen giữa, lệnh vẫn được nhận.
+
+Mở cổng làm bo khởi động lại ở một số phần mềm: không sao, console chạy sau khi khởi động. Chỉ thấy vài dòng `ESP-ROM:esp32c3...` lúc bấm RESET rồi im: cổng USB của bo đi qua chip USB-UART (CP2102, CH340...), không ra console của bản này (mục **Chân UART và phạm vi**).
+
+**Bảng `DIAG`**, mỗi vùng một dòng, cho năng lượng chuyển động (*moving*) và tĩnh (*still*):
+
+| Cột | Nghĩa |
+|---|---|
+| `now` | năng lượng trong báo cáo mới nhất |
+| `filt` | sau lọc trung vị 3 báo cáo: số này được so với ngưỡng |
+| `peak` | cao nhất trong khoảng 1 s gần nhất |
+| `hold` / `trig` | ngưỡng duy trì / kích hoạt đang dùng (`off`: kênh không dùng hoặc không kích hoạt được) |
+| `(not counted)` | vùng ngoài Range, hoặc không có dữ liệu lúc học |
 
 | Lệnh | Việc làm |
 |---|---|
