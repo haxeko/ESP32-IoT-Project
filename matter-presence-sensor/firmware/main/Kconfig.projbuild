@@ -230,7 +230,7 @@ menu "Empty Room Learning"
             default + "Highest raise above the factory threshold" (and 99).
             The thresholds are written to the radar once; nothing is written
             when the radar holds them already. Needs at least 5 reports per
-            second. The esplearn variant turns it on.
+            second. sdkconfig.defaults turns it on for every board.
 
     config LD2410_LEARN_FLOOR_PERCENT
         int "Lowest share of the factory threshold (%)"

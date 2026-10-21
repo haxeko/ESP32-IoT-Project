@@ -6,30 +6,31 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-// ESP32-C3 SuperMini (flash 4 MB): Matter over Wi-Fi (station), commissioning over BLE. The pins are Kconfig
-// options (main/Kconfig.projbuild): LD2410C on GPIO3 (radar TX) / GPIO4 (radar RX), BOOT button GPIO9, blue LED
-// GPIO8 (on when the pin is low). Checked here at build time.
+// ESP32-C3 boards (flash 4 MB): Matter over Wi-Fi (station), commissioning over BLE. The pins are Kconfig options
+// (main/Kconfig.projbuild) set by boards/<board>.defaults, e.g. the SuperMini: LD2410C on GPIO3 (radar TX) / GPIO4
+// (radar RX), BOOT button GPIO9, blue LED GPIO8 (on when the pin is low). Checked here at build time.
 //
 // Other pins to keep in mind: strapping pins GPIO2, GPIO8, GPIO9 (GPIO8 must be high and GPIO9 low to enter
 // download mode, so nothing else goes on GPIO8 and GPIO9); JTAG pads GPIO4-GPIO7 (free: JTAG goes through the USB
-// port); UART0 GPIO20 (RX) / GPIO21 (TX), unused by the console but the ROM prints its boot messages on GPIO21.
+// port); UART0 GPIO20 (RX) / GPIO21 (TX): the ROM prints its boot messages on GPIO21, and boards without a USB port
+// to the computer (c3-radar r45) log there.
 
 #pragma once
 
 #include <sdkconfig.h>
 
 #if !CONFIG_IDF_TARGET_ESP32C3
-#error "This firmware is for the ESP32-C3 SuperMini: idf.py set-target esp32c3"
+#error "Only ESP32-C3 boards so far: tools/build.sh c3-<board>"
 #endif
 #if !CONFIG_ENABLE_WIFI_STATION
 #error "Matter over Wi-Fi: CONFIG_ENABLE_WIFI_STATION must stay on"
 #endif
 
-// Shown in the boot log (menuconfig CONFIG_BOARD_NAME; sdkconfig.defaults.wroom_n4 names the WROOM board)
+// Shown in the boot log (CONFIG_BOARD_NAME, set by boards/<board>.defaults)
 #define BOARD_NAME CONFIG_BOARD_NAME
 
-// GPIO11-GPIO17 connect the flash (GPIO11 = VDD_SPI). GPIO18/GPIO19 are the USB D-/D+ of the USB-C port, the only
-// link to the computer on this board: logs and flashing (USB-Serial-JTAG).
+// GPIO11-GPIO17 connect the flash (GPIO11 = VDD_SPI). GPIO18/GPIO19 are the USB D-/D+ (USB-Serial-JTAG: logs and
+// flashing on the SuperMini and the WROOM devkit), kept free on every board.
 constexpr bool board_pin_reserved(int gpio)
 {
     return (gpio >= 11 && gpio <= 17) || gpio == 18 || gpio == 19;
