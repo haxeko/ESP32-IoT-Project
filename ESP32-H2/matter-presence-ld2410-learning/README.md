@@ -207,6 +207,11 @@ Kết quả ở `build-espfilter/`: `matter_presence_h2_learn.bin`, file OTA `ma
   - file merged ghi đè vùng NVS: phải ghép nối lại.
 
 **Mức độ kiểm chứng:**
+- **Build biến thể `espfilter` 1.0.134** (Docker `release-v1.6.1_idf_v6.0.2`): **0 lỗi, 0 cảnh báo**.
+  - `sdkconfig` chỉ khác bản mặc định ở Model và 3 tuỳ chọn của bộ lọc: cùng VID/PID, cluster, endpoint, Thread.
+  - Header file OTA: VID `0xFFF1`, PID `0x8000`, phiên bản 134 / `1.0.134-espfilter`.
+  - Firmware 1 810 624 B (phân vùng app còn trống 8 %), RAM tĩnh 175 282 B: hơn bản mặc định 2 336 B flash và 72 B RAM tĩnh.
+  - Bản mặc định H2 và bản C3 vẫn build 0 lỗi, 0 cảnh báo; `sdkconfig` của hai bản này chỉ thêm dòng tuỳ chọn bộ lọc (tắt).
 - **Host test:**
   - thuật toán (các trường hợp lấy từ bản C3-WROOM);
   - hook của driver với khung báo cáo dạng radar thật;
