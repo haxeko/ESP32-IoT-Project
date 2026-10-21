@@ -1,0 +1,432 @@
+menu "Device Information"
+
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+        help
+            Max 32 characters.
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName and ProductLabel)"
+        default "Presence LD2410"
+        help
+            Home Assistant shows ProductLabel (else ProductName) as the model.
+            Max 32 characters.
+
+    config DEVICE_NAME_PREFIX
+        string "Device name prefix, followed by the last 4 characters of the serial number"
+        default "Presence-"
+        help
+            Device name: this prefix and the last 4 characters of the serial
+            number (factory MAC in eFuse), e.g. "Presence-B2C4", so boards
+            flashed with the same firmware get different names. Max 11
+            characters.
+            Written to Basic Information NodeLabel at boot when no label is
+            stored yet (new board, after a factory reset); a label set from an
+            app is kept. Home Assistant names the device after NodeLabel.
+            Also the Bluetooth (GAP) name while waiting to be commissioned,
+            seen only once connected: the Matter advertisement has no name.
+            Empty: NodeLabel DEVICE_DISPLAY_NAME and the Bluetooth name
+            "<BLE_DEVICE_NAME_PREFIX><discriminator>".
+
+    config DEVICE_DISPLAY_NAME
+        string "Name advertised before commissioning (DNS-SD)"
+        default "Presence Sensor"
+        help
+            Name in commissionable node discovery (DNS-SD "DN"), the same for
+            every board. Also the NodeLabel when DEVICE_NAME_PREFIX is empty.
+            Max 32 characters.
+
+    config DEVICE_HARDWARE_VERSION_STRING
+        string "Hardware (Basic Information HardwareVersionString)"
+        default "ESP32C3-LD2410"
+        help
+            Shown as Hardware by controllers. Max 64 characters.
+
+endmenu
+
+menu "Presence Sensor Configuration"
+
+    config LD2410_UART_RX_PIN
+        int "UART RX pin (connect to LD2410 TX)"
+        range 0 21
+        default 3
+        help
+            ESP32-C3 SuperMini: GPIO3. Not the flash pins (GPIO11-GPIO17) or
+            the USB pins (GPIO18, GPIO19): the build fails on them. Avoid the
+            strapping pins GPIO2, GPIO8 and GPIO9.
+
+    config LD2410_UART_TX_PIN
+        int "UART TX pin (connect to LD2410 RX)"
+        range 0 21
+        default 4
+        help
+            ESP32-C3 SuperMini: GPIO4 (a JTAG pad, free because JTAG goes
+            through the USB port).
+
+    config PRESENCE_MAX_DISTANCE_CM
+        int "Only count targets closer than (cm, 0 = use the radar's own gates)"
+        range 0 800
+        default 0
+        help
+            The LD2410 decides presence with its own per-gate sensitivity
+            (default up to 6 m). A non-zero value additionally ignores targets
+            further away than this distance.
+
+    config PRESENCE_HOLD_TIME_SEC
+        int "Default hold time (seconds)"
+        range 1 300
+        default 30
+        help
+            Occupancy Sensing HoldTime at first boot: how long the device keeps
+            reporting "occupied" after the radar stops seeing anyone.
+            Controllers (Home Assistant...) can change it later in 1-300 s;
+            the new value is kept across reboots.
+
+    config RADAR_TIMEOUT_SEC
+        int "Report unoccupied when the radar sends nothing for (seconds)"
+        range 1 300
+        default 10
+
+    config BOARD_NAME
+        string "Board name in the boot log"
+        default "ESP32-C3 SuperMini"
+        help
+            Only shown in the log ("Target esp32c3, board ..."). The pins are
+            the options below.
+
+    choice STATUS_LED_TYPE
+        prompt "Status LED"
+        default STATUS_LED_TYPE_GPIO
+        help
+            Blinks slowly (blue) while the device waits to be commissioned
+            (pairing mode) and stays off otherwise. Blinks fast (white) when
+            an app asks the device to identify itself. Empty room learning:
+            on (cyan) while there is time to leave the room, slow blink (cyan)
+            while recording, then on for 10 s: green once the new thresholds
+            are saved, red when it failed. Blinks (purple) for 10 s once the
+            factory thresholds are written. A single-colour LED shows every
+            colour as on.
+
+        config STATUS_LED_TYPE_GPIO
+            bool "Single-colour LED on a GPIO (ESP32-C3 SuperMini: GPIO8)"
+
+        config STATUS_LED_TYPE_WS2812
+            bool "Addressable WS2812 RGB LED (data in on the pin)"
+            help
+                One WS2812 (or compatible) LED, driven by the RMT peripheral.
+                Its data line idles low: on GPIO8 of the SuperMini the blue
+                on-board LED (on when GPIO8 is low) then stays lit, so another
+                pin is better for the WS2812.
+
+        config STATUS_LED_TYPE_NONE
+            bool "No status LED"
+            help
+                A board without a status LED (c3-radar r45): pairing,
+                identify and learning are shown in the log only.
+    endchoice
+
+    config STATUS_LED_GPIO
+        int "Status LED pin"
+        depends on !STATUS_LED_TYPE_NONE
+        range 0 21
+        default 8
+
+    config STATUS_LED_ACTIVE_HIGH
+        bool "Status LED is on when the pin is high"
+        depends on STATUS_LED_TYPE_GPIO
+        default n
+        help
+            The blue LED of the ESP32-C3 SuperMini is on when GPIO8 is low.
+
+    config STATUS_LED_BRIGHTNESS
+        int "WS2812 brightness (1-255)"
+        depends on STATUS_LED_TYPE_WS2812
+        range 1 255
+        default 20
+
+    config RESET_BUTTON_GPIO
+        int "Button pin (-1 = none)"
+        range -1 21
+        default 9
+        help
+            Active-low push button, GPIO9 is the BOOT button.
+            Double click: pairing mode (opens the commissioning window for
+            15 minutes, also to add the device to a second app).
+            Triple click: empty room learning, as "Learning" in Home
+            Assistant.
+            Four clicks: the LD2410 factory thresholds, as "Factory
+            thresholds" in Home Assistant.
+            Hold 5 seconds: factory reset (erases the Wi-Fi credentials and the
+            Matter pairing).
+
+    config PRESENCE_CHIP_TEMPERATURE
+        bool "Chip temperature in Home Assistant (Temperature Sensor endpoint 5)"
+        default n
+        select SUPPORT_TEMPERATURE_MEASUREMENT_CLUSTER
+        help
+            Internal temperature sensor of the ESP32-C3, read every minute and
+            reported when it changed by 0.5 °C (endpoint 5, device type
+            Temperature Sensor, with its own Identify). Home Assistant shows
+            it as a temperature entity of the device, Apple Home as a
+            temperature sensor. It is the temperature of the chip, above the
+            room temperature: it shows whether the board gets hot. The LD2410
+            cannot report its own temperature.
+            Off by default (on in 1.0.143 to 1.0.146, to find why the board
+            ran hot). Turning it on also needs
+            CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=6.
+
+    config PRESENCE_WIFI_STAY_AWAKE
+        bool "Keep Wi-Fi awake once BLE is released"
+        depends on ENABLE_WIFI_STATION
+        default n
+        help
+            Turns the Wi-Fi modem sleep (power save) off once BLE is released
+            after commissioning, and at each boot of a commissioned device, so
+            the radio listens all the time. In modem sleep the access point
+            keeps the frames for the device until it wakes up for the next
+            DTIM beacon (usually 100 to 300 ms), so the controllers' messages
+            and acknowledgements arrive that much later.
+            The radio listening all the time draws about 60 mA more (ESP32-C3
+            datasheet) and heats the chip: with this option on (firmware 1.0.132
+            to 1.0.143) a SuperMini read 80 °C on its own and 96 °C in a case.
+            Off (default): the ESP-IDF and esp-matter default (modem sleep) is
+            kept, as in ESPHome on ESP32.
+
+endmenu
+
+menu "Empty Room Learning"
+
+    config LD2410_LEARN_DELAY_SEC
+        int "Delay before recording (seconds)"
+        range 0 120
+        default 20
+        help
+            Time to leave the room after choosing "Learning" in Home Assistant
+            or a triple click on the button (the LED is on meanwhile).
+            The room must stay empty while the radar is recorded: the radar
+            sees about 6 m, also through wooden doors and thin walls.
+
+    config LD2410_LEARN_DURATION_SEC
+        int "Recording time (seconds)"
+        range 10 300
+        default 60
+        help
+            How long the per-gate energy of the empty room is recorded (the
+            LED blinks slowly meanwhile). Long enough for a fan or an air
+            conditioner that sweeps the room to pass a few times.
+
+    config LD2410_LEARN_PEAK
+        bool "Learn on the ESP32 from the highest energy and the average"
+        default n
+        help
+            The ESP32 always records the empty room itself (the radar's own
+            background noise detection is not used) and sets every radar
+            threshold to the highest energy recorded + the larger of
+            "Smallest margin above the highest energy" and (highest -
+            average), at least the noise + 4 (99th percentile, or median + 3
+            robust spreads), at least "Lowest share of the factory threshold"
+            of the factory default (rounded up), and at most the factory
+            default + "Highest raise above the factory threshold" (and 99).
+            The thresholds are written to the radar once; nothing is written
+            when the radar holds them already. Needs at least 5 reports per
+            second. sdkconfig.defaults turns it on for every board.
+
+    config LD2410_LEARN_FLOOR_PERCENT
+        int "Lowest share of the factory threshold (%)"
+        depends on LD2410_LEARN_PEAK
+        range 0 100
+        default 75
+        help
+            A quiet room does not get thresholds close to its noise: never
+            below this share of the factory default. 100: never below the
+            factory thresholds.
+
+    config LD2410_LEARN_MIN_MARGIN
+        int "Smallest margin above the highest energy (energy 0-100)"
+        depends on LD2410_LEARN_PEAK
+        range 1 50
+        default 8
+
+    config LD2410_LEARN_RADAR_AUTO
+        bool "Let the radar measure the room itself when it can"
+        depends on !LD2410_LEARN_PEAK
+        default y
+        help
+            LD2410B/C radars with newer firmware measure the background noise
+            of every gate themselves and set their moving and still
+            thresholds (command 0x000B of the LD2410C serial protocol V1.09,
+            the "Auto" button of the HLKRadarTool app; Hi-Link does not say
+            from which radar firmware on). With this option the learning asks
+            the radar first: it waits 10 s, then measures for the recording
+            time. Hi-Link does not document how the thresholds are computed;
+            they may be more sensitive than the factory defaults. A radar that
+            refuses the command is learned by the ESP32 as below (noise
+            percentile, margin, highest raise).
+
+    config LD2410_LEARN_PERCENTILE
+        int "Noise percentile (%)"
+        depends on !LD2410_LEARN_PEAK
+        range 50 100
+        default 95
+        help
+            Noise of each gate = the energy that this share of the recorded
+            reports stays at or below: the highest (100 - value) % of the
+            reports are left out, so a short burst (someone walking past the
+            door, a door closing) does not raise the threshold. At 95 % and
+            60 s of recording, bursts of less than 3 s in total are left out,
+            while something that moves more than 5 % of the time (fan,
+            curtain) is learned. 100 takes the highest energy recorded.
+
+    config LD2410_LEARN_MARGIN
+        int "Margin above the recorded noise (energy 0-100)"
+        depends on !LD2410_LEARN_PEAK
+        range 0 50
+        default 10
+        help
+            New threshold of each gate = recorded noise + this margin, never
+            below the LD2410 factory default, at most the factory default +
+            the highest raise below, and at most 100 (gate ignored).
+
+    config LD2410_LEARN_MAX_RAISE
+        int "Highest raise above the factory threshold (energy 0-100)"
+        range 0 100
+        default 30
+        help
+            A learned threshold is at most the factory default + this value,
+            so a person or something moving during the recording cannot make
+            a gate deaf. A gate limited this way is logged as a warning: what
+            moved there may still be reported as presence. 100: no limit, a
+            gate can be raised up to 100 (ignored).
+
+endmenu
+
+menu "Identity Diagnostics and Setup Code"
+
+    config IDENTITY_DIAG_PERIOD_SEC
+        int "Identity / network / Matter diagnostics period (seconds, 0 = off)"
+        range 0 86400
+        default 300
+        help
+            Logs (tag "id_diag") at boot, at this period and on Wi-Fi, IP
+            address, fabric and session events: reset reason, factory MAC,
+            Wi-Fi station MAC, serial number, UniqueID, discriminator, Matter
+            fabrics (index, node ID, fabric ID, compressed fabric ID,
+            controller vendor), CASE sessions, subscriptions, Wi-Fi SSID,
+            BSSID, channel, RSSI, power save, IPv4 address, IPv6 addresses per
+            kind and NVS usage. Never logs the setup passcode, private keys or
+            the Wi-Fi password.
+
+    config IDENTITY_DIAG_SUBSCRIPTION_LOG
+        bool "Log every subscription request, establishment and termination"
+        default y
+        help
+            One line per subscription event with the fabric index, the controller
+            node ID and the negotiated report intervals. Only observes: the
+            subscriptions and their intervals are not changed.
+
+    config PRINT_ONBOARDING_CODES
+        bool "Log the QR code and manual pairing code when pairing is possible"
+        default y
+        help
+            At boot when not commissioned, and when the device opens its own
+            pairing window (button, last fabric removed). Development aid: the
+            QR code contains the setup passcode, turn this off in production
+            builds.
+
+    config UNIQUE_SETUP_CODE
+        bool "Per-board random setup code stored in flash"
+        depends on CUSTOM_COMMISSIONABLE_DATA_PROVIDER
+        default y
+        help
+            Enabled by sdkconfig.defaults.unique_setup (see README). Each board
+            generates its own passcode, discriminator and SPAKE2+ salt on first
+            use, computes the SPAKE2+ verifier and stores them in the partition
+            below. Kept across reboots, OTA, factory reset and flashing the
+            merged or app image; regenerated only after erase-flash.
+
+    config UNIQUE_SETUP_CODE_PARTITION
+        string "Flash partition for the per-board setup code"
+        depends on UNIQUE_SETUP_CODE
+        default "fctry"
+        help
+            NVS data partition, namespace "setup-code". "fctry" is otherwise
+            unused by this firmware and lies outside the area written by the
+            merged image.
+
+endmenu
+
+menu "Connection Watchdog"
+
+    config NET_WATCHDOG_RECONNECT_MIN
+        int "Reconnect Wi-Fi every (minutes without any controller subscription, 0 = never)"
+        range 0 1440
+        default 10
+        help
+            A commissioned device with no subscription from any controller
+            (Home Assistant, Apple Home...) cannot report anything: the
+            controllers lost it. The watchdog announces the device again on
+            DNS-SD every 5 minutes, so the controllers find it as soon as it
+            can be reached, and every this many minutes disconnects Wi-Fi; the
+            Matter stack then connects again at once (scan of all channels,
+            strongest access point first, new address lease, new
+            announcements).
+
+    config NET_WATCHDOG_RESTART_MIN
+        int "Restart after (minutes without any controller subscription, 0 = never)"
+        range 0 1440
+        default 30
+        help
+            Last resort when reconnecting Wi-Fi did not help. With 0 the device
+            is never restarted by the watchdog, also not when the Matter task
+            has stopped running for 3 minutes (otherwise a restart).
+            A device whose controllers are all off for longer than this
+            restarts every this many minutes until one subscribes again.
+
+endmenu
+
+menu "Wi-Fi RSSI and Uptime Reports"
+
+    config DIAG_REPORT_RSSI_STEP_DB
+        int "Report the Wi-Fi RSSI when it changes by (dB, 0 = only with the refresh below)"
+        range 0 30
+        default 3
+        help
+            Home Assistant shows the RSSI of Wi-Fi Network Diagnostics as
+            "Wi-Fi RSSI" and the UpTime of General Diagnostics as "Uptime"
+            (diagnostic entities, disabled by default: enable them on the
+            device page). Both attributes have the "changes omitted" quality:
+            the Matter SDK sends them only when a controller subscribes, so
+            the RSSI would stay at that value. The RSSI is checked every
+            minute and reported again when it changed by this much since the
+            last report.
+
+    config DIAG_REPORT_REFRESH_MIN
+        int "Report the Wi-Fi RSSI and the uptime again every (minutes, 0 = never)"
+        range 0 1440
+        default 10
+        help
+            Home Assistant computes the boot time ("Uptime") from the uptime
+            it last received, so after a restart of Home Assistant it shows a
+            later boot time until the uptime is sent again; this refresh
+            corrects it (recent Home Assistant versions ignore a drift of less
+            than a minute, so the entity does not change otherwise). Also
+            brings RSSI changes smaller than the step above.
+            Both options at 0: no reports, as in firmware 1.0.132.
+
+endmenu
+
+menu "Memory Monitor"
+
+    config MEM_MONITOR_PERIOD_SEC
+        int "Memory log period (seconds, 0 = only at boot)"
+        range 0 86400
+        default 600
+        help
+            Logs the free heap (now, lowest since boot, largest block) and the
+            unused stack of the main tasks at boot and then at this period,
+            as a warning when a stack drops below 512 bytes, and once each
+            time the lowest free heap reaches a new low below 16 KB (with the
+            time window it happened in).
+
+endmenu

@@ -1,0 +1,7 @@
+# Experimental ESP32 energy filter (branch claude/c3-wroom-esp-filter, README "Bộ lọc năng lượng trên ESP32"), for
+# the ESP32-C3-WROOM-02-N4 board. Applied after sdkconfig.defaults and sdkconfig.defaults.wroom_n4:
+#   idf.py -B build-espfilter -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.espfilter \
+#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.wroom_n4;sdkconfig.defaults.espfilter" build
+# Model in Home Assistant (ProductName), so this firmware is not mistaken for the stable one.
+CONFIG_DEVICE_PRODUCT_NAME="Presence LD2410 ESP filter"
+CONFIG_PRESENCE_ENERGY_FILTER=y

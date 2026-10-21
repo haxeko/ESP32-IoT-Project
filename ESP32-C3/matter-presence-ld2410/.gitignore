@@ -1,0 +1,13 @@
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+build-unique/
+sdkconfig.unique
+build-wroom/
+sdkconfig.wroom
+build-espfilter/
+sdkconfig.espfilter
+build-esplearn/
+sdkconfig.esplearn

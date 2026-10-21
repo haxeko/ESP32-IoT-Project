@@ -1,0 +1,19 @@
+References,Qty,Value,Footprint,Side,Part / note
+C1,1,22uF,C_0805_2012Metric,bottom,MLCC X5R/X7R >=10 V
+C8,1,100nF,C_0603_1608Metric,bottom,MLCC X5R/X7R >=10 V
+C2,1,4.7uF,C_0603_1608Metric,bottom,"MLCC X5R/X7R >=10 V, LDO input (AP2112K needs >=1 uF at VIN)"
+C3 C7,2,10uF,C_0805_2012Metric,bottom,MLCC X5R/X7R >=10 V
+C4,1,10uF,C_0805_2012Metric,top,MLCC X5R/X7R >=10 V
+C5,1,100nF,C_0603_1608Metric,top,MLCC X5R/X7R >=10 V
+C6,1,1uF,C_0603_1608Metric,bottom,MLCC X5R/X7R >=10 V
+D1,1,SMF5.0A,D_SOD-123F,bottom,"SMF5.0A TVS, SOD-123F/SOD-123FL"
+F1,1,PTC 0.5A,Fuse_0805_2012Metric,bottom,"PTC resettable fuse 0805, Ihold 0.5 A, >=6 V"
+J1,1,USB-C 6P (power only),USB_C_Receptacle_GCT_USB4135-GF-A_6P_TopMnt_Horizontal,bottom,GCT USB4135-GF-A or equivalent 6P SMD USB-C (check footprint!)
+R1 R2,2,5.1k,R_0402_1005Metric,bottom,5.1k 1% 0402
+R3 R4 R5 R6,4,10k,R_0603_1608Metric,bottom,
+R7,1,100k,R_0603_1608Metric,bottom,
+RD1,1,HLK-LD2410C,HLK-LD2410C_1x05_P2.54mm,top,"Hi-Link HLK-LD2410C (hand-soldered, header on the PCB)"
+SW1,1,RESET,SW_SPST_B3U-1000P,bottom,Omron B3U-1000P
+U1,1,ESP32-C3-WROOM-02-N4,ESP32-C3-WROOM-02,top,Espressif ESP32-C3-WROOM-02-N4
+U2,1,AP2112K-3.3,SOT-23-5,bottom,"Diodes AP2112K-3.3TRG1 (alt: ME6211C33M5G, same pinout)"
+H1 H2,2,M2 mounting hole,MountingHole_2.2mm_M2,-,"NPTH, no part"

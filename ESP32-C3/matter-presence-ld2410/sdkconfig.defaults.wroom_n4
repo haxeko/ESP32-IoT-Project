@@ -1,0 +1,12 @@
+# Optional: board with the ESP32-C3-WROOM-02-N4 module (flash 4 MB) and a WS2812 RGB status LED on GPIO8 (as on the
+# ESP32-C3-DevKitC-02), with the features of firmware 1.0.144 (chip temperature entity on). README, "Bo
+# ESP32-C3-WROOM-02-N4". Applied after sdkconfig.defaults:
+#   idf.py -B build-wroom -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.wroom \
+#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.wroom_n4" build
+# The other pins and the console stay as on the SuperMini: LD2410 radar TX -> GPIO3, radar RX -> GPIO4, button GPIO9,
+# logs on the USB-Serial-JTAG (GPIO18/GPIO19).
+CONFIG_BOARD_NAME="ESP32-C3-WROOM-02-N4"
+CONFIG_STATUS_LED_TYPE_WS2812=y
+CONFIG_STATUS_LED_GPIO=8
+CONFIG_PRESENCE_CHIP_TEMPERATURE=y
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=6

@@ -1,0 +1,12 @@
+# Radar presence as the stable firmware, with the empty room learned on the ESP32 from the highest energy and the
+# average of every gate (CONFIG_LD2410_LEARN_PEAK, README "Học phòng trống từ mức cao nhất"), for the
+# ESP32-C3-WROOM-02-N4 board. Applied after sdkconfig.defaults and sdkconfig.defaults.wroom_n4:
+#   idf.py -B build-esplearn -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.esplearn \
+#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.wroom_n4;sdkconfig.defaults.esplearn" build
+# Manufacturer, Model, serial number, version string (1.0.<count>) and commissioning name as the stable firmware; no
+# chip temperature entity (endpoint 5), unlike sdkconfig.defaults.wroom_n4.
+CONFIG_PRESENCE_CHIP_TEMPERATURE=n
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=5
+# The ESP32 records the empty room for 120 s and sets every radar threshold (the radar's own detection is not used)
+CONFIG_LD2410_LEARN_PEAK=y
+CONFIG_LD2410_LEARN_DURATION_SEC=120

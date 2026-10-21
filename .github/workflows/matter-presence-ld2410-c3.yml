@@ -1,0 +1,53 @@
+name: Build matter-presence-ld2410 (ESP32-C3)
+
+on:
+  push:
+    paths:
+      - 'ESP32-C3/matter-presence-ld2410/**'
+      - '.github/workflows/matter-presence-ld2410-c3.yml'
+  pull_request:
+    paths:
+      - 'ESP32-C3/matter-presence-ld2410/**'
+      - '.github/workflows/matter-presence-ld2410-c3.yml'
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host tests (g++, no ESP-IDF)
+        run: ESP32-C3/matter-presence-ld2410/test/host/run.sh
+
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/esp-matter:release-v1.6.1_idf_v6.0.2
+    defaults:
+      run:
+        working-directory: ESP32-C3/matter-presence-ld2410
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the firmware version is the git commit count
+      - name: Build (esp32c3)
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          pushd $IDF_PATH && . ./export.sh && popd
+          pushd $ESP_MATTER_PATH && . ./export.sh && popd
+          idf.py set-target esp32c3
+          idf.py build
+          idf.py merge-bin -o matter_presence_c3_wifi_merged.bin
+          # Matter OTA image (CONFIG_CHIP_OTA_IMAGE_BUILD); .ota is the extension controllers expect
+          cp build/matter_presence_c3_wifi-ota.bin build/matter_presence_c3_wifi.ota
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matter-presence-ld2410-esp32c3
+          path: |
+            ESP32-C3/matter-presence-ld2410/build/matter_presence_c3_wifi.bin
+            ESP32-C3/matter-presence-ld2410/build/bootloader/bootloader.bin
+            ESP32-C3/matter-presence-ld2410/build/partition_table/partition-table.bin
+            ESP32-C3/matter-presence-ld2410/build/ota_data_initial.bin
+            ESP32-C3/matter-presence-ld2410/build/flash_args
+            ESP32-C3/matter-presence-ld2410/build/matter_presence_c3_wifi_merged.bin
+            ESP32-C3/matter-presence-ld2410/build/matter_presence_c3_wifi.ota
