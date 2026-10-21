@@ -166,6 +166,7 @@ Các tuỳ chọn giống bản H2 (*Presence Sensor Configuration*, *Empty Room
 | Status LED is on when the pin is high | tắt (LED sáng khi mức thấp) |
 | Button pin | 9 |
 | Keep Wi-Fi awake once BLE is released | bật (xem **Wi-Fi và BLE**) |
+| ESP32 Energy Filter (experimental) | tắt. Biến thể `espfilter` mới được build và kiểm tra cho ESP32-H2 (README bản H2) |
 | Hardware (Basic Information) | `ESP32C3-LD2410` |
 
 Chân hợp lệ: GPIO0–GPIO21, trừ chân flash (GPIO11–GPIO17) và USB (GPIO18, GPIO19). Không có menu *Thread Diagnostics* trên ESP32-C3.

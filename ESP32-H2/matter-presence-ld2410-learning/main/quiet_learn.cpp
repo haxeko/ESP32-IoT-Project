@@ -327,6 +327,14 @@ static RadarAutoStart start_radar_auto(uint32_t duration_s, ld2410_thresholds_t 
         ESP_LOGI(TAG, "LD2410 firmware %s", v);
     }
     *before_ok = ld2410_read_thresholds(before) == ESP_OK;
+#if CONFIG_PRESENCE_ENERGY_FILTER
+    // The energy filter keeps the engineering mode on. The radar's own detection
+    // has only been tried with it off, as without the filter: turned off here,
+    // on again by the radar task after the learning.
+    if (ld2410_set_engineering_mode(false) != ESP_OK) {
+        ESP_LOGW(TAG, "Could not leave engineering mode before the radar's background noise detection");
+    }
+#endif
     const esp_err_t err = ld2410_start_noise_detection((uint16_t)duration_s);
     if (ld2410_config_end() != ESP_OK) {
         ESP_LOGW(TAG, "Could not end the configuration mode");

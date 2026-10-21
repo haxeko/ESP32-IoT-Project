@@ -1,6 +1,6 @@
 # Matter Presence Sensor + học phòng trống (ESP32-H2 + HLK-LD2410, Thread)
 
-> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt); thời gian chờ chỉnh bằng **Hold time**. Học phòng trống cũng bắt đầu được bằng cách **bấm nút BOOT 3 lần**, LED báo từng bước; **bấm 4 lần** ghi lại ngưỡng mặc định của radar (LED nháy tím). Tên thiết bị: **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C3** (mỗi mạch một tên). Phần cứng, chân nối, ghép nối giống hệt bản gốc; LED và nút bấm thêm phần học phòng trống.
+> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt); thời gian chờ chỉnh bằng **Hold time**. Học phòng trống cũng bắt đầu được bằng cách **bấm nút BOOT 3 lần**, LED báo từng bước; **bấm 4 lần** ghi lại ngưỡng mặc định của radar (LED nháy tím). Tên thiết bị: **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C3** (mỗi mạch một tên). Phần cứng, chân nối, ghép nối giống hệt bản gốc; LED và nút bấm thêm phần học phòng trống. Biến thể thử nghiệm **`espfilter`**: ESP tự xác nhận các phát hiện yếu của radar trước khi báo có người (mục **Bộ lọc năng lượng trên ESP32**).
 
 Cảm biến hiện diện chuẩn **Matter over Thread** chạy trên **ESP32-H2** với radar 24 GHz **HLK-LD2410**. Đây là bản chuyển từ Zigbee (`ESP32-H2/zigbee-presence-occupancy`) sang Matter: cùng chip ESP32-H2, cùng radio 802.15.4, nhưng thay Zigbee bằng Thread + Matter. Thêm trực tiếp vào **Apple Home**, Google Home, Home Assistant, SmartThings, Alexa... mà không cần Zigbee coordinator / Zigbee2MQTT.
 
@@ -25,6 +25,7 @@ Logic phát hiện giữ nguyên như các bản LD2410 khác trong repo:
 - **Không có người** sau khi radar không thấy ai trong khoảng **HoldTime**. Bộ đếm do cluster Matter xử lý, nên chỉnh HoldTime trong app có tác dụng ngay. Bản thân LD2410 cũng giữ trạng thái có người thêm một khoảng (*unmanned duration*, mặc định 5 s) trước khi báo mất mục tiêu, nên tổng thời gian = khoảng đó + HoldTime.
 - Nếu radar không gửi dữ liệu quá **10 giây** (lỏng dây, mất nguồn), thiết bị báo **không có người** và ghi lỗi vào log. Có dữ liệu lại thì tự hoạt động bình thường.
 - Tuỳ chọn chỉ tính người ở gần hơn một khoảng cách (*Only count targets closer than*). Độ nhạy từng vùng (gate) được chỉnh tự động bằng chức năng **học phòng trống** bên dưới, khoảng cách phát hiện bằng entity **Range** (hoặc bằng app **HLKRadarTool** qua Bluetooth của LD2410B/C).
+- Biến thể `espfilter` (thử nghiệm) thêm một bước trên ESP khi phòng đang trống: năng lượng vượt ngưỡng nhiều thì báo có người ngay, vượt ít thì phải vài báo cáo liên tiếp. Xem mục **Bộ lọc năng lượng trên ESP32**.
 
 ## Học phòng trống (giảm báo nhầm)
 
@@ -141,6 +142,82 @@ chip-tool modeselect change-to-mode 6 0x7283 2    # Range gate 6 = 4.5 m
 chip-tool modeselect change-to-mode 1 0x7283 3    # Radar resolution 0.2 m
 chip-tool modeselect change-to-mode 0 0x7283 4    # Radar Bluetooth Off
 ```
+
+## Bộ lọc năng lượng trên ESP32 (biến thể `espfilter`, thử nghiệm)
+
+Cùng thuật toán với bộ lọc của bản ESP32-C3-WROOM (nhánh `claude/c3-wroom-esp-filter`), chạy trên ESP32-H2. Bản build mặc định **không** có bộ lọc; bộ lọc chỉ bật trong biến thể `espfilter`.
+
+**Vấn đề:** LD2410 báo có người ngay khi **một** báo cáo (khoảng 100 ms) có năng lượng vượt ngưỡng ở một gate, rồi tự giữ trạng thái đó thêm *no-one duration*. Cộng thêm Hold time, một xung nhiễu nhỏ làm phòng trống thành "có người" khoảng 35 s (với no-one duration 5 s và Hold time 30 s).
+
+**Cách ESP quyết định:**
+- ESP giữ radar ở **engineering mode**: mỗi báo cáo có năng lượng chuyển động và đứng yên của 9 gate.
+- ESP so năng lượng với **ngưỡng đang lưu trong radar** và với **Range**:
+  - ngưỡng đọc bằng lệnh 0x0061, đọc lại sau mỗi lần học phòng trống hoặc ghi ngưỡng mặc định;
+  - gate đứng yên chỉ tính từ gate 2, như radar (ngưỡng đứng yên của gate 0 và 1 không đặt được);
+  - tuỳ chọn *Only count targets closer than* cũng bỏ các gate xa hơn.
+- **Khi phòng đang trống**, một báo cáo được tính là "vượt" khi radar báo có người **và** có gate vượt ngưỡng:
+  - **mức kích hoạt cao**, vượt ngưỡng **từ 15 trở lên**: báo có người **ngay**, nhanh như bản không có bộ lọc;
+  - **mức thấp**, vượt ít hơn: phải có **3 báo cáo vượt liên tiếp** (khoảng 0,3 s). Một báo cáo không vượt thì đếm lại từ đầu.
+- Bộ lọc đếm theo **năng lượng của từng báo cáo**, không theo cờ "có người" của radar, vì radar còn giữ cờ đó thêm no-one duration sau một xung nhiễu.
+- **Khi đã có người:** radar tự quyết định như bản mặc định (giữ có người khi radar còn thấy, cộng no-one duration và Hold time). Người ngồi im vẫn được giữ như trước.
+- **Bộ lọc chỉ bỏ bớt, không bao giờ báo có người khi radar không báo.** Không ghi gì vào radar.
+- **Chưa có dữ liệu năng lượng**: radar tự quyết định. Trường hợp này xảy ra:
+  - ngay sau khi khởi động;
+  - khi radar khởi động lại (đổi Radar resolution, Radar Bluetooth, mất điện);
+  - ngay sau khi học phòng trống.
+
+  Task `radar_cfg` kiểm tra mỗi 2 s và bật lại engineering mode, tối đa 10 s một lần.
+- **Khác bản C3-WROOM:** trước khi radar tự đo nhiễu nền (lệnh 0x000B), firmware tắt engineering mode, để radar đo đúng trong điều kiện đã chạy được trên radar thật (như bản mặc định). Engineering mode được bật lại sau khi học xong.
+
+**Log** (cần cắm USB; số minh hoạ từ test trên máy tính):
+
+```
+I app_main: ESP32 energy filter on: an energy 15 above a threshold occupies the empty room at once, weaker ones after 3 reports in a row
+I radar_ctl: Engineering mode on: the energy of every gate for the energy filter
+I app_main: Energy filter: ignored 1 report above a threshold (highest moving gate 3 energy 35, threshold 30, +5)
+I app_main: Energy filter: moving gate 3 energy 70, threshold 30 (+40): occupied at once
+I app_main: Energy filter: 3 reports in a row above a threshold (highest still gate 4 energy 36, threshold 30, +6): occupied
+```
+
+**Tuỳ chọn** (`menuconfig` → *ESP32 Energy Filter (experimental)*; không thêm entity nào):
+
+| Tuỳ chọn | Mặc định | Ý nghĩa |
+|---|---|---|
+| `PRESENCE_ENERGY_FILTER` | tắt (bật trong biến thể `espfilter`) | Bật bộ lọc |
+| `PRESENCE_ENERGY_FILTER_STRONG` | 15 (1–100) | Vượt ngưỡng từng này trở lên thì báo có người ngay |
+| `PRESENCE_ENERGY_FILTER_FRAMES` | 3 (2–20) | Số báo cáo vượt liên tiếp cần cho mức thấp |
+
+**Build biến thể `espfilter`:**
+
+```bash
+cd ESP32-H2/matter-presence-ld2410-learning
+idf.py -B build-espfilter -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.espfilter \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.espfilter" build
+```
+
+Kết quả ở `build-espfilter/`: `matter_presence_h2_learn.bin`, file OTA `matter_presence_h2_learn-ota.bin` (đổi đuôi thành `.ota`). GitHub Actions chỉ build bản mặc định.
+
+**Phiên bản, OTA và quay về bản mặc định:**
+- Home Assistant hiện firmware `1.0.<số commit>-espfilter` và Model `Presence LD2410 ESP filter`. Số dùng cho OTA vẫn là số commit.
+- VID/PID giữ `0xFFF1`/`0x8000`, endpoint giữ nguyên, nên OTA được từ bản mặc định có số commit nhỏ hơn và vẫn giữ ghép nối.
+- Hai dòng firmware cùng VID/PID nên Matter Server không phân biệt được: chỉ cập nhật bo nào muốn chạy bộ lọc bằng file `-espfilter`.
+- **Quay về bản mặc định:** radar không bị ghi gì (engineering mode mất khi radar khởi động lại hoặc mất điện), chỉ cần nạp lại firmware mặc định:
+  - OTA bản mặc định có số commit lớn hơn bản `-espfilter` đang chạy: giữ ghép nối;
+  - hoặc nạp USB bằng `idf.py flash` từ bản build mặc định (ghi cả `otadata`): giữ ghép nối;
+  - file merged ghi đè vùng NVS: phải ghép nối lại.
+
+**Mức độ kiểm chứng:**
+- **Host test:**
+  - thuật toán (các trường hợp lấy từ bản C3-WROOM);
+  - hook của driver với khung báo cáo dạng radar thật;
+  - phần chạy của bộ lọc;
+  - task `radar_cfg`: bật lại engineering mode, đọc lại ngưỡng sau khi học và sau khi ghi ngưỡng mặc định, tắt engineering mode trước 0x000B.
+- **Thử làm hỏng 28 chỗ** trong bộ lọc, driver, task `radar_cfg` và phần học: test bắt được cả 28.
+- **Chưa thử trên bo thật:**
+  - đọc năng lượng từ radar thật, các log;
+  - việc bộ lọc có thật sự chặn được xung nhiễu;
+  - radar tự đo (0x000B) khi chạy cùng bộ lọc.
+- Mức 15 và 3 báo cáo là giá trị ban đầu, **cần chỉnh theo log trên bo thật**.
 
 ## Phần cứng
 
@@ -315,6 +392,8 @@ esptool.py --chip esp32h2 -p /dev/ttyUSB0 write_flash 0x0 matter_presence_h2_lea
 
 Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 
+Biến thể `espfilter` (bộ lọc năng lượng trên ESP32) không có trong Actions: lệnh build ở mục **Bộ lọc năng lượng trên ESP32**.
+
 > File merged ghi đè cả vùng NVS (`0x10000`), tức là **xoá thông tin ghép nối**: sau khi nạp phải thêm lại thiết bị. Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại.
 >
 > Nâng cấp bản fork mà **giữ ghép nối** (thiết bị chưa từng cập nhật OTA): chỉ nạp phần ứng dụng `esptool.py --chip esp32h2 -p /dev/ttyUSB0 write_flash 0x20000 matter_presence_h2_learn.bin` (hoặc `idf.py flash`).
@@ -380,6 +459,8 @@ I app_main: Pins: LD2410 RX GPIO11 (radar TX), TX GPIO12 (radar RX), button GPIO
 | Margin above the recorded noise | 10 | Ngưỡng mới = mức nhiễu + giá trị này |
 | Highest raise above the factory threshold | 30 | Ngưỡng học được tối đa = mặc định nhà sản xuất + giá trị này. `100` = không giới hạn |
 | Let the radar measure the room itself when it can | bật | Radar có lệnh đo nhiễu nền (0x000B) thì để radar tự đo và tự đặt ngưỡng; tắt = luôn học trên ESP32 |
+
+*ESP32 Energy Filter (experimental)*: `PRESENCE_ENERGY_FILTER` (tắt), `_STRONG` (15), `_FRAMES` (3), xem mục **Bộ lọc năng lượng trên ESP32**.
 
 *Thread Diagnostics*: `THREAD_DIAG_LOG` (bật mặc định) in khối chẩn đoán Thread ra log mỗi 10 s cho tới khi ghép nối xong.
 
@@ -476,8 +557,11 @@ matter-presence-ld2410-learning/
 ├── sdkconfig.defaults.esp32c3  # Bản ESP32-C3: Wi-Fi, console USB, PID 0x8001, chân radar / LED
 ├── sdkconfig.defaults.unique_setup  # Mã ghép nối riêng từng bo (tùy chọn)
 ├── sdkconfig.defaults.factory       # Factory data riêng từng bo (tùy chọn)
+├── sdkconfig.defaults.espfilter     # Bộ lọc năng lượng trên ESP32, Model riêng (thử nghiệm)
 └── main/
-    ├── app_main.cpp            # Matter node, endpoint Occupancy Sensor, OpenThread (H2) / Wi-Fi (C3)
+    ├── app_main.cpp            # Matter node, endpoint Occupancy Sensor, OpenThread (H2) / Wi-Fi (C3), task presence
+    ├── presence.h              # Có người theo báo cáo của radar (và khoảng cách tối đa)
+    ├── energy_filter.cpp/.h    # Bộ lọc năng lượng trên ESP32 (biến thể espfilter, mặc định tắt)
     ├── board.h                 # Chọn board_esp32h2.h / board_esp32c3.h theo chip: tên board, mạng, chân cấm
     ├── radar_control.cpp       # Mode Select "Learn empty room" / "Range" / "Radar resolution" / "Radar Bluetooth", task cấu hình radar, Bluetooth, học phòng trống (Home Assistant hoặc nút bấm)
     ├── radar_settings.cpp      # Danh sách lựa chọn, đọc/ghi thông số LD2410 (khởi động lại radar khi đổi độ phân giải, Bluetooth)

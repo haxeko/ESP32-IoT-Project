@@ -24,6 +24,10 @@
 // write the factory thresholds back), "Range"
 // (farthest detection gate), "Radar resolution" (gate length) and "Radar
 // Bluetooth" (off by default) on endpoints of their own.
+//
+// With CONFIG_PRESENCE_ENERGY_FILTER (variant sdkconfig.defaults.espfilter),
+// the ESP32 confirms the radar's detections from the energy of every gate
+// while the room is empty (energy_filter.h).
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
@@ -60,9 +64,13 @@
 #include <drivers/user_button.h>
 #include <identity_diag.h>
 #include <mem_monitor.h>
+#include <presence.h>
 #include <radar_control.h>
 #include <setup_code.h>
 #include <thread_diag.h>
+#if CONFIG_PRESENCE_ENERGY_FILTER
+#include <energy_filter.h>
+#endif
 
 static const char *TAG = "app_main";
 
@@ -140,14 +148,36 @@ static bool report_occupancy(bool present)
     return true;
 }
 
-static bool radar_presence(const ld2410_target_t &t)
+#if CONFIG_PRESENCE_ENERGY_FILTER
+// Logs what the energy filter did since the last poll (one event per poll at most).
+static void log_filter_event()
 {
-    if (CONFIG_PRESENCE_MAX_DISTANCE_CM == 0) {
-        return t.moving || t.still;
+    energy_filter_state_t ev;
+    if (!energy_filter_take_event(&ev)) {
+        return;
     }
-    return (t.moving && t.moving_cm <= CONFIG_PRESENCE_MAX_DISTANCE_CM) ||
-           (t.still && t.still_cm <= CONFIG_PRESENCE_MAX_DISTANCE_CM);
+    const energy_filter_peak_t &p = ev.peak;
+    const char *kind = p.moving ? "moving" : "still";
+    switch (ev.event) {
+    case ENERGY_FILTER_STRONG:
+        ESP_LOGI(TAG, "Energy filter: %s gate %u energy %u, threshold %u (+%d): occupied at once", kind, p.gate,
+                 p.energy, p.threshold, p.excess);
+        break;
+    case ENERGY_FILTER_CONFIRMED:
+        ESP_LOGI(TAG, "Energy filter: %u reports in a row above a threshold (highest %s gate %u energy %u, "
+                      "threshold %u, +%d): occupied",
+                 ev.event_frames, kind, p.gate, p.energy, p.threshold, p.excess);
+        break;
+    case ENERGY_FILTER_IGNORED:
+        ESP_LOGI(TAG, "Energy filter: ignored %u report%s above a threshold (highest %s gate %u energy %u, "
+                      "threshold %u, +%d)",
+                 ev.event_frames, ev.event_frames == 1 ? "" : "s", kind, p.gate, p.energy, p.threshold, p.excess);
+        break;
+    case ENERGY_FILTER_NO_EVENT:
+        break;
+    }
 }
+#endif
 
 // Polls the radar every kRadarPollMs. Runs in its own task rather than an
 // esp_timer callback: it logs and may wait for the Matter stack lock, which
@@ -177,8 +207,17 @@ static void presence_task(void *arg)
             }
         }
 
+#if CONFIG_PRESENCE_ENERGY_FILTER
+        // The energy filter's decision once it has the radar's thresholds, the radar's until then.
+        log_filter_event();
+        bool filtered = false;
+        const bool target = energy_filter_presence(&filtered) ? filtered
+                                                               : presence_from_target(&t, CONFIG_PRESENCE_MAX_DISTANCE_CM);
+#else
+        const bool target = presence_from_target(&t, CONFIG_PRESENCE_MAX_DISTANCE_CM);
+#endif
         // A silent radar counts as "no one", so the room does not stay occupied forever.
-        const bool now_present = fresh && radar_presence(t);
+        const bool now_present = fresh && target;
         if (now_present != present) {
             present = now_present;
             if (fresh) {
@@ -559,6 +598,13 @@ extern "C" void app_main()
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the LD2410 driver, err:%d", err);
     }
+#if CONFIG_PRESENCE_ENERGY_FILTER
+    // Fed by every report; it decides once the radar task gives it the radar's thresholds and Range.
+    energy_filter_start();
+    ESP_LOGI(TAG, "ESP32 energy filter on: an energy %d above a threshold occupies the empty room at once, weaker "
+                  "ones after %d reports in a row",
+             CONFIG_PRESENCE_ENERGY_FILTER_STRONG, CONFIG_PRESENCE_ENERGY_FILTER_FRAMES);
+#endif
 
     if (start_matter() != ESP_OK) {
         ESP_LOGE(TAG, "Matter is not running");

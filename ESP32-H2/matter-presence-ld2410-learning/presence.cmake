@@ -37,7 +37,15 @@ else()
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${git_dir}/logs/HEAD")
     endif()
 endif()
-set(PROJECT_VER "${FIRMWARE_VERSION_BASE}.${FIRMWARE_BUILD_NUMBER}")
+# Variant with the experimental ESP32 energy filter (sdkconfig.defaults.espfilter
+# in SDKCONFIG_DEFAULTS): the version string ends in "-espfilter", so that this
+# firmware is never mistaken for the stable one. The number compared by OTA
+# stays the commit count.
+set(FIRMWARE_VERSION_LABEL "")
+if("${SDKCONFIG_DEFAULTS};$ENV{SDKCONFIG_DEFAULTS}" MATCHES "sdkconfig\\.defaults\\.espfilter")
+    set(FIRMWARE_VERSION_LABEL "-espfilter")
+endif()
+set(PROJECT_VER "${FIRMWARE_VERSION_BASE}.${FIRMWARE_BUILD_NUMBER}${FIRMWARE_VERSION_LABEL}")
 set(PROJECT_VER_NUMBER ${FIRMWARE_BUILD_NUMBER})
 message(STATUS "Firmware version ${PROJECT_VER} (${PROJECT_VER_NUMBER})")
 

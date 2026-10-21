@@ -7,3 +7,5 @@ sdkconfig.unique
 build-unique/
 sdkconfig.factory
 build-factory/
+sdkconfig.espfilter
+build-espfilter/

@@ -64,6 +64,22 @@ typedef struct {
     uint16_t no_one_duration_s; // "unmanned duration": a lost target is still reported for this long
 } ld2410_config_t;
 
+// One report as received, with the energy of every gate when the radar is in
+// engineering mode.
+typedef struct {
+    ld2410_target_t target;
+    bool engineering;     // engineering mode: the energies below are valid
+    uint8_t moving_gates; // energies of gates 0..moving_gates-1
+    uint8_t still_gates;  // energies of gates 0..still_gates-1
+    uint8_t moving_energy[LD2410_GATE_COUNT];
+    uint8_t still_energy[LD2410_GATE_COUNT];
+} ld2410_report_t;
+
+// Called on the reader task for every valid report, once ld2410_get_target()
+// returns it. It runs while the UART is read, so it must be short and must not
+// block.
+typedef void (*ld2410_report_hook_t)(const ld2410_report_t *report);
+
 // Highest energy of a gate in engineering frames
 #define LD2410_MAX_ENERGY 100
 
@@ -80,6 +96,9 @@ esp_err_t ld2410_init(int rx_pin, int tx_pin);
 
 // Returns false when no valid frame has been received yet.
 bool ld2410_get_target(ld2410_target_t *out);
+
+// Sets the report hook (nullptr: none).
+void ld2410_set_report_hook(ld2410_report_hook_t hook);
 
 // Configuration commands. Each one waits for the radar's ACK, so call them
 // from a normal task, never from the Matter task or an esp_timer callback.
