@@ -1,0 +1,21 @@
+# Experimental ESP32 presence engine (README "Bộ xử lý hiện diện trên ESP32"), the engine of the ESP32-C3-WROOM
+# firmware 1.0.159 of branch claude/c3-wroom-esp-presence. For both targets, applied after sdkconfig.defaults and
+# sdkconfig.defaults.<target>:
+#   ESP32-H2 (this directory):
+#     idf.py -B build-esppresence -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.esppresence \
+#       -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esppresence" build
+#   ESP32-C3 (ESP32-C3/matter-wifi-presence):
+#     idf.py -B build-esppresence -D SDKCONFIG=sdkconfig.esppresence \
+#       -D SDKCONFIG_DEFAULTS=../../ESP32-H2/matter-presence-ld2410-learning/sdkconfig.defaults.esppresence build
+# The firmware version ends in "-esppresence" (presence.cmake) and the Model in Home Assistant (ProductName)
+# differs, so this firmware is not mistaken for the stable one.
+CONFIG_DEVICE_PRODUCT_NAME="Presence LD2410 ESP engine"
+CONFIG_PRESENCE_ESP_ENGINE=y
+# Hold time = the absence countdown of the engine: empty after 60 s without a hold signal
+CONFIG_PRESENCE_HOLD_TIME_SEC=60
+
+# Console (logs and the commands of the engine) on the chip's own USB port, USB-Serial-JTAG: an ESP-IDF REPL takes
+# input there only when it is the primary console. Already so in the ESP32-C3 build; the ESP32-H2 build moves it
+# from UART0 (GPIO23/GPIO24, with USB-Serial-JTAG as a second output only), and its Matter shell goes along.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

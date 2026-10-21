@@ -38,12 +38,15 @@ else()
     endif()
 endif()
 # Variant with the experimental ESP32 energy filter (sdkconfig.defaults.espfilter
-# in SDKCONFIG_DEFAULTS): the version string ends in "-espfilter", so that this
-# firmware is never mistaken for the stable one. The number compared by OTA
-# stays the commit count.
+# in SDKCONFIG_DEFAULTS): the version string ends in "-espfilter", and with the
+# experimental ESP32 presence engine (sdkconfig.defaults.esppresence) in
+# "-esppresence", so that these firmwares are never mistaken for the stable
+# one. The number compared by OTA stays the commit count.
 set(FIRMWARE_VERSION_LABEL "")
 if("${SDKCONFIG_DEFAULTS};$ENV{SDKCONFIG_DEFAULTS}" MATCHES "sdkconfig\\.defaults\\.espfilter")
     set(FIRMWARE_VERSION_LABEL "-espfilter")
+elseif("${SDKCONFIG_DEFAULTS};$ENV{SDKCONFIG_DEFAULTS}" MATCHES "sdkconfig\\.defaults\\.esppresence")
+    set(FIRMWARE_VERSION_LABEL "-esppresence")
 endif()
 set(PROJECT_VER "${FIRMWARE_VERSION_BASE}.${FIRMWARE_BUILD_NUMBER}${FIRMWARE_VERSION_LABEL}")
 set(PROJECT_VER_NUMBER ${FIRMWARE_BUILD_NUMBER})

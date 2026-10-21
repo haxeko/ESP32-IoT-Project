@@ -10,6 +10,7 @@
 
 #include <esp_err.h>
 #include <esp_matter.h>
+#include <sdkconfig.h>
 
 // LD2410 controls for Home Assistant, as Mode Select clusters: Home Assistant
 // shows each one as a select entity named after the cluster Description,
@@ -48,6 +49,13 @@ bool radar_control_request_learning(void);
 // False when the worker is not running (the status LED shows a failure). The
 // status LED blinks purple once they are written, or shows red (status_led.h).
 bool radar_control_request_factory_thresholds(void);
+
+#if CONFIG_PRESENCE_ESP_ENGINE
+// LEARN_CANCEL on the console of the ESP32 presence engine, like "Off" chosen
+// in Home Assistant: cancels a learning requested or running (the thresholds
+// stay as they were) and Factory thresholds not written yet. Does not wait.
+void radar_control_cancel_learning(void);
+#endif
 
 // PRE_UPDATE attribute callback, on the Matter task: handles the CurrentMode
 // changes of the clusters above. An error rejects the change.

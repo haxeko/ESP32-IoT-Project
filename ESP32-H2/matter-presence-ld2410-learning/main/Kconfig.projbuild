@@ -167,6 +167,7 @@ menu "ESP32 Energy Filter (experimental)"
 
     config PRESENCE_ENERGY_FILTER
         bool "Confirm weak radar detections on the ESP32"
+        depends on !PRESENCE_ESP_ENGINE
         default n
         help
             Keeps the radar in engineering mode (the energy of every gate in
@@ -199,6 +200,119 @@ menu "ESP32 Energy Filter (experimental)"
         help
             A weaker detection makes the empty room occupied once this many
             reports in a row (about 100 ms each) are above a threshold.
+
+endmenu
+
+menu "ESP32 Presence Engine (experimental)"
+
+    config PRESENCE_ESP_ENGINE
+        bool "The ESP32 decides presence from the energy of every gate"
+        default n
+        help
+            Keeps the radar in engineering mode and decides presence on the
+            ESP32 from the moving and still energy of every gate, with two
+            thresholds per gate taken from the thresholds stored in the radar
+            (the radar measures and stores them when the empty room is
+            learned: "Learning" in Home Assistant, 3 clicks or LEARN_EMPTY,
+            as with the stable firmware; or set them with HLKRadarTool).
+            An empty room needs a strong signal (above the radar threshold)
+            confirmed over several reports; once present, a lower hold
+            threshold keeps it (people sitting still, small movements), and
+            the room is empty after Hold time (Occupancy Sensing HoldTime)
+            without it. The hold threshold stays above the noise of the empty
+            room, recorded by the ESP32 while learning (stored in NVS). A
+            silent radar is a sensor fault, never an empty room.
+            Console commands and per-gate diagnostics on the ESP-IDF console.
+            Same engine as the ESP32-C3-WROOM firmware 1.0.159 (branch
+            claude/c3-wroom-esp-presence). Turned on by the variant
+            sdkconfig.defaults.esppresence. README: "Bộ xử lý hiện diện trên
+            ESP32".
+
+    config PRESENCE_ENGINE_TRIGGER_REPORTS
+        int "Strong reports that start presence"
+        depends on PRESENCE_ESP_ENGINE
+        range 1 16
+        default 3
+        help
+            A gate (or its neighbours) must be above its radar threshold in
+            this many of the last "report window" reports (filtered energy,
+            about 100 ms each) for an empty room to become present.
+
+    config PRESENCE_ENGINE_TRIGGER_WINDOW
+        int "Report window of the strong signal"
+        depends on PRESENCE_ESP_ENGINE
+        range 1 16
+        default 4
+
+    config PRESENCE_ENGINE_HOLD_REPORTS
+        int "Reports with a hold signal that keep presence"
+        depends on PRESENCE_ESP_ENGINE
+        range 1 16
+        default 3
+        help
+            While present, a gate must reach its hold threshold in this many
+            of the last "hold window" reports to restart the countdown.
+
+    config PRESENCE_ENGINE_HOLD_WINDOW
+        int "Report window of the hold signal"
+        depends on PRESENCE_ESP_ENGINE
+        range 1 16
+        default 10
+
+    config PRESENCE_ENGINE_HOLD_DROP_PERCENT
+        int "Hold threshold: this share (%) below the radar threshold"
+        depends on PRESENCE_ESP_ENGINE
+        range 0 90
+        default 40
+        help
+            Hold threshold of a gate = its radar threshold minus this share of
+            it, at most "largest drop" below it, and never below the noise of
+            the empty room recorded while learning + 2 (without a recording:
+            the radar threshold itself). 0: hold at the radar threshold.
+
+    config PRESENCE_ENGINE_HOLD_DROP_MAX
+        int "Hold threshold: largest drop below the radar threshold"
+        depends on PRESENCE_ESP_ENGINE
+        range 0 50
+        default 10
+
+    config PRESENCE_ENGINE_NOISE_RECORD_SEC
+        int "Noise of the empty room recorded by the ESP32 while learning (seconds)"
+        depends on PRESENCE_ESP_ENGINE
+        range 10 120
+        default 30
+        help
+            Before the radar measures the empty room itself, the ESP32 records
+            the energies of every gate for this long (the room must stay
+            empty), so that the hold thresholds stay above the noise. A radar
+            without its own measurement is recorded by the ESP32 for the
+            learning time instead, which gives the noise too.
+
+    config PRESENCE_ENGINE_DATA_TIMEOUT_MS
+        int "Sensor fault after (ms) without a valid report with energies"
+        depends on PRESENCE_ESP_ENGINE
+        range 300 30000
+        default 2000
+
+    config PRESENCE_ENGINE_STATUS_LOG_SEC
+        int "Log the status every (seconds, 0 = never)"
+        depends on PRESENCE_ESP_ENGINE
+        range 0 86400
+        default 300
+
+    config PRESENCE_ENGINE_CONSOLE
+        bool "Console commands (LEARN_EMPTY, STATUS, DIAG...)"
+        depends on PRESENCE_ESP_ENGINE
+        default y
+        help
+            On the configured ESP-IDF console: USB-Serial-JTAG in
+            sdkconfig.defaults.esppresence (the chip's own USB port, GPIO26 /
+            GPIO27 on ESP32-H2, GPIO18 / GPIO19 on ESP32-C3); set the UART
+            console in menuconfig for a board whose USB port goes through a
+            USB-UART chip. With the Matter shell (CONFIG_ENABLE_CHIP_SHELL,
+            on in the ESP32-H2 build) the commands are added to its console,
+            next to "matter"; without it (ESP32-C3 build) they get a REPL of
+            their own, about 5 KB of RAM.
 
 endmenu
 

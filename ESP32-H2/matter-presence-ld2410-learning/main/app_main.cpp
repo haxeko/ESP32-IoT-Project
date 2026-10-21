@@ -27,7 +27,9 @@
 //
 // With CONFIG_PRESENCE_ENERGY_FILTER (variant sdkconfig.defaults.espfilter),
 // the ESP32 confirms the radar's detections from the energy of every gate
-// while the room is empty (energy_filter.h).
+// while the room is empty (energy_filter.h). With CONFIG_PRESENCE_ESP_ENGINE
+// (variant sdkconfig.defaults.esppresence), the ESP32 decides presence itself
+// from the energy of every gate (esp_presence.h, presence_engine.h).
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
@@ -71,6 +73,9 @@
 #if CONFIG_PRESENCE_ENERGY_FILTER
 #include <energy_filter.h>
 #endif
+#if CONFIG_PRESENCE_ESP_ENGINE
+#include <esp_presence.h>
+#endif
 
 static const char *TAG = "app_main";
 
@@ -96,8 +101,15 @@ static constexpr uint16_t kHoldTimeMin = 1;
 static constexpr uint16_t kHoldTimeMax = 300;
 
 // Key in the Matter key-value store (erased by a factory reset): set once the
-// default HoldTime from menuconfig has been applied.
+// default HoldTime from menuconfig has been applied. With the ESP32 presence
+// engine, HoldTime is its absence countdown (60 s in that variant), applied
+// once more under its own key when a board comes to this firmware; a value
+// set afterwards in an app is kept.
+#if CONFIG_PRESENCE_ESP_ENGINE
+static const char kHoldTimeInitKey[] = "app/hold-init2";
+#else
 static const char kHoldTimeInitKey[] = "app/hold-init";
+#endif
 
 // Catch pin mistakes from menuconfig at build time: the board's flash (and on
 // ESP32-C3 USB) pins, see board_<target>.h.
@@ -148,6 +160,52 @@ static bool report_occupancy(bool present)
     return true;
 }
 
+#if CONFIG_PRESENCE_ESP_ENGINE
+// The ESP32 presence engine decides (esp_presence.cpp, which logs why); the
+// presence task hands its occupancy to the cluster and the cluster's HoldTime
+// to the engine (the absence countdown of both). A silent radar is a sensor
+// fault for the engine, not "no one": the occupancy then stays as it is.
+static constexpr uint32_t kHoldTimeReadPolls = 10; // HoldTime read every second
+
+// Presence task: the HoldTime the cluster serves (set from an app or by
+// apply_hold_time_config()). False when it cannot be read yet.
+static bool read_hold_time(uint16_t *out)
+{
+    if (!s_matter_started) {
+        return false;
+    }
+    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
+    OccupancySensingCluster *cluster = OccupancySensing::FindClusterOnEndpoint(s_occupancy_endpoint_id);
+    VerifyOrReturnValue(cluster != nullptr && cluster->IsHoldTimeEnabled(), false);
+    *out = cluster->GetHoldTime();
+    return true;
+}
+
+static void presence_task(void *arg)
+{
+    bool reported = false;
+    bool reported_present = false;
+    uint32_t polls = 0;
+    ESP_LOGI(TAG, "Occupancy from the ESP32 presence engine");
+    TickType_t last_wake = xTaskGetTickCount();
+    while (true) {
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(kRadarPollMs));
+        uint16_t hold_s = 0;
+        if (polls++ % kHoldTimeReadPolls == 0 && read_hold_time(&hold_s)) {
+            esp_presence_set_hold_time(hold_s);
+        }
+        // Occupied, or present but counting down (false: the cluster counts
+        // HoldTime from then on, as the engine)
+        const bool present = esp_presence_occupied();
+        // Only transitions go to the cluster; a report that does not reach it
+        // is retried on the next poll.
+        if (s_matter_started && (!reported || present != reported_present) && report_occupancy(present)) {
+            reported = true;
+            reported_present = present;
+        }
+    }
+}
+#else
 #if CONFIG_PRESENCE_ENERGY_FILTER
 // Logs what the energy filter did since the last poll (one event per poll at most).
 static void log_filter_event()
@@ -236,6 +294,7 @@ static void presence_task(void *arg)
         }
     }
 }
+#endif // CONFIG_PRESENCE_ESP_ENGINE
 
 // ---------------------------------------------------------------------------
 // Matter
@@ -605,6 +664,12 @@ extern "C" void app_main()
                   "ones after %d reports in a row",
              CONFIG_PRESENCE_ENERGY_FILTER_STRONG, CONFIG_PRESENCE_ENERGY_FILTER_FRAMES);
 #endif
+#if CONFIG_PRESENCE_ESP_ENGINE
+    // Before the radar task (started with Matter), which hands it the radar settings
+    if (esp_presence_start() != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start the ESP32 presence engine");
+    }
+#endif
 
     if (start_matter() != ESP_OK) {
         ESP_LOGE(TAG, "Matter is not running");
@@ -614,6 +679,12 @@ extern "C" void app_main()
     if (xTaskCreate(presence_task, "presence", kPresenceTaskStack, NULL, kPresenceTaskPriority, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create the presence task");
     }
+#if CONFIG_PRESENCE_ESP_ENGINE
+    // After Matter, which needs the most memory while it starts
+    if (esp_presence_console_start() != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start the console of the presence engine");
+    }
+#endif
 
     if (mem_monitor_start(CONFIG_MEM_MONITOR_PERIOD_SEC) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the memory log");

@@ -91,6 +91,9 @@ static ld2410_target_t s_target;
 static bool s_has_target;
 static ld2410_capture_t *s_capture; // engineering frames are counted here while set
 static std::atomic<ld2410_report_hook_t> s_report_hook{nullptr};
+static ld2410_parser_t s_parser; // reader task only
+static std::atomic<uint32_t> s_frame_errors{0};
+static std::atomic<bool> s_resync{false};
 
 static QueueHandle_t s_ack_queue;
 static SemaphoreHandle_t s_cmd_mutex;
@@ -112,6 +115,7 @@ static void handle_target_payload(const uint8_t *p, size_t len)
     // (11 bytes from TYPE), engineering data if any, then the 0x55 tail and a
     // check byte (0x00). The tail rejects frames corrupted by line noise.
     if (len < 13 || (p[0] != 0x01 && p[0] != 0x02) || p[1] != 0xAA || p[len - 2] != 0x55 || p[len - 1] != 0x00) {
+        s_frame_errors++;
         return;
     }
     ld2410_target_t t = {
@@ -210,6 +214,7 @@ static void parser_feed(ld2410_parser_t *ps, uint8_t b)
     if (ps->pos == sizeof(k_data_header) + 2) {
         size_t payload_len = ps->buf[4] | (ps->buf[5] << 8);
         if (payload_len > LD2410_MAX_PAYLOAD) {
+            s_frame_errors++;
             ps->pos = 0;
             return;
         }
@@ -226,19 +231,31 @@ static void parser_feed(ld2410_parser_t *ps, uint8_t b)
         } else {
             handle_ack_payload(payload, payload_len);
         }
+    } else {
+        s_frame_errors++;
     }
     ps->pos = 0;
 }
 
+void ld2410_feed(const uint8_t *data, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        parser_feed(&s_parser, data[i]);
+    }
+}
+
 static void ld2410_task(void *arg)
 {
-    static ld2410_parser_t s_parser;
     uint8_t rx[128];
 
     while (true) {
+        if (s_resync.exchange(false)) {
+            uart_flush_input(LD2410_UART_NUM);
+            s_parser.pos = 0;
+        }
         int len = uart_read_bytes(LD2410_UART_NUM, rx, sizeof(rx), pdMS_TO_TICKS(100));
-        for (int i = 0; i < len; i++) {
-            parser_feed(&s_parser, rx[i]);
+        if (len > 0) {
+            ld2410_feed(rx, (size_t)len);
         }
     }
 }
@@ -255,6 +272,16 @@ bool ld2410_get_target(ld2410_target_t *out)
 void ld2410_set_report_hook(ld2410_report_hook_t hook)
 {
     s_report_hook = hook;
+}
+
+uint32_t ld2410_frame_errors(void)
+{
+    return s_frame_errors;
+}
+
+void ld2410_resync(void)
+{
+    s_resync = true;
 }
 
 // Sends one command and waits for its ACK. ack_out (optional) receives the

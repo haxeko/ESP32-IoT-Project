@@ -9,3 +9,5 @@ sdkconfig.factory
 build-factory/
 sdkconfig.espfilter
 build-espfilter/
+sdkconfig.esppresence
+build-esppresence/

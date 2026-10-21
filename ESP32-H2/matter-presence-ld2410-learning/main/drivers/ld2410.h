@@ -94,11 +94,23 @@ typedef struct {
 
 esp_err_t ld2410_init(int rx_pin, int tx_pin);
 
+// Parses bytes received from the radar. Called by the reader task; the host
+// tests feed their bytes here.
+void ld2410_feed(const uint8_t *data, size_t len);
+
 // Returns false when no valid frame has been received yet.
 bool ld2410_get_target(ld2410_target_t *out);
 
 // Sets the report hook (nullptr: none).
 void ld2410_set_report_hook(ld2410_report_hook_t hook);
+
+// Frames that failed their checks since start (wrong tail, report too short
+// or of an unknown type): line noise or a loose wire. Counted, never handed
+// over.
+uint32_t ld2410_frame_errors(void);
+// Recovery after a silence: the reader task drops what is waiting in the UART
+// and restarts the frame parser.
+void ld2410_resync(void);
 
 // Configuration commands. Each one waits for the radar's ACK, so call them
 // from a normal task, never from the Matter task or an esp_timer callback.

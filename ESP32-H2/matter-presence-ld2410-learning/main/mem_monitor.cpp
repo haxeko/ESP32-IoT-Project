@@ -20,13 +20,28 @@
 static const char *TAG = "mem";
 
 // Matter, OpenThread or Wi-Fi, the timers (LED, button, this log), the serial
-// console and the application tasks
+// console and the application tasks, and the ESP32 presence engine and its
+// console (esp_console REPL) when they are on
+#if CONFIG_PRESENCE_ESP_ENGINE
+static const char *const kTasks[] = {
 #if CONFIG_OPENTHREAD_ENABLED
+    "CHIP", "ot_task", "esp_timer", "console", "presence", "ld2410", "radar_cfg", "id_diag", "presence_eng",
+#else
+    "CHIP", "wifi", "esp_timer", "console", "presence", "ld2410", "radar_cfg", "id_diag", "presence_eng",
+#endif
+#if CONFIG_PRESENCE_ENGINE_CONSOLE && !CONFIG_ENABLE_CHIP_SHELL
+    "console_repl",
+#endif
+};
+static constexpr size_t kLineLen = 192;
+#elif CONFIG_OPENTHREAD_ENABLED
 static const char *const kTasks[] = { "CHIP",     "ot_task", "esp_timer", "console",
                                       "presence", "ld2410",  "radar_cfg", "id_diag" };
+static constexpr size_t kLineLen = 128;
 #else
 static const char *const kTasks[] = { "CHIP",     "wifi",   "esp_timer", "console",
                                       "presence", "ld2410", "radar_cfg", "id_diag" };
+static constexpr size_t kLineLen = 128;
 #endif
 
 // Below these the device is close to failing allocations or overflowing a stack.
@@ -60,7 +75,7 @@ static void log_memory(void *arg)
 
     // Unused stack in bytes (StackType_t is one byte on ESP-IDF), the lowest
     // since the task started.
-    char line[128] = "";
+    char line[kLineLen] = "";
     size_t len = 0;
     bool low = false;
     for (const char *name : kTasks) {

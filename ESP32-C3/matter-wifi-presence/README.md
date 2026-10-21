@@ -4,7 +4,7 @@
 
 Cảm biến hiện diện chuẩn Matter (device type **Occupancy Sensor 0x0107**) với radar 24 GHz **HLK-LD2410C**. Thêm trực tiếp vào **Apple Home**, Google Home, Home Assistant, SmartThings, Alexa... qua Wi-Fi nhà, **không cần Thread Border Router**.
 
-Mọi chức năng giống hệt bản ESP32-H2, cùng thuật toán, ngưỡng, thời gian và trạng thái cảm biến: **học phòng trống** (bấm nút BOOT 3 lần hoặc từ Home Assistant), **ngưỡng mặc định của radar** (bấm nút BOOT 4 lần hoặc *Factory thresholds* trong Home Assistant), **Range**, **Radar resolution**, **Radar Bluetooth**, **Hold time**, cập nhật **OTA**. Cách dùng các chức năng này xem [README bản ESP32-H2](../../ESP32-H2/matter-presence-ld2410-learning/README.md); tài liệu này chỉ ghi phần khác.
+Mọi chức năng giống hệt bản ESP32-H2, cùng thuật toán, ngưỡng, thời gian và trạng thái cảm biến (kể cả biến thể thử nghiệm `esppresence`, mục **Bộ xử lý hiện diện trên ESP32**): **học phòng trống** (bấm nút BOOT 3 lần hoặc từ Home Assistant), **ngưỡng mặc định của radar** (bấm nút BOOT 4 lần hoặc *Factory thresholds* trong Home Assistant), **Range**, **Radar resolution**, **Radar Bluetooth**, **Hold time**, cập nhật **OTA**. Cách dùng các chức năng này xem [README bản ESP32-H2](../../ESP32-H2/matter-presence-ld2410-learning/README.md); tài liệu này chỉ ghi phần khác.
 
 ## Khác biệt so với bản ESP32-H2
 
@@ -167,9 +167,29 @@ Các tuỳ chọn giống bản H2 (*Presence Sensor Configuration*, *Empty Room
 | Button pin | 9 |
 | Keep Wi-Fi awake once BLE is released | bật (xem **Wi-Fi và BLE**) |
 | ESP32 Energy Filter (experimental) | tắt. Biến thể `espfilter` mới được build và kiểm tra cho ESP32-H2 (README bản H2) |
+| ESP32 Presence Engine (experimental) | tắt. Biến thể `esppresence` build được cho ESP32-C3 SuperMini (mục **Bộ xử lý hiện diện trên ESP32** bên dưới) |
 | Hardware (Basic Information) | `ESP32C3-LD2410` |
 
 Chân hợp lệ: GPIO0–GPIO21, trừ chân flash (GPIO11–GPIO17) và USB (GPIO18, GPIO19). Không có menu *Thread Diagnostics* trên ESP32-C3.
+
+## Bộ xử lý hiện diện trên ESP32 (biến thể `esppresence`, thử nghiệm)
+
+Cùng bộ xử lý với bản ESP32-C3-WROOM 1.0.159: ESP32 tự quyết định có người từ năng lượng từng vùng của radar, với ngưỡng lưu trong radar, ngưỡng duy trì thấp hơn nhưng trên nhiễu phòng trống, Hold time là bộ đếm tắt (60 s trong biến thể này). Thuật toán, việc học phòng trống, lệnh console, hiệu chỉnh, tuỳ chọn và cách quay về bản mặc định: [README bản ESP32-H2](../../ESP32-H2/matter-presence-ld2410-learning/README.md), mục **Bộ xử lý hiện diện trên ESP32**. Bản build mặc định **không** có bộ xử lý này.
+
+```bash
+cd ESP32-C3/matter-wifi-presence
+idf.py -B build-esppresence -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.esppresence \
+  -D SDKCONFIG_DEFAULTS=../../ESP32-H2/matter-presence-ld2410-learning/sdkconfig.defaults.esppresence build
+```
+
+Kết quả ở `build-esppresence/`: `matter_presence_c3_wifi.bin`, file OTA `matter_presence_c3_wifi-ota.bin` (đổi đuôi thành `.ota`).
+
+Riêng bản ESP32-C3 SuperMini:
+- **Console:** log và lệnh ở cổng USB-C như bản mặc định (USB-Serial-JTAG). Dấu nhắc `presence>` (REPL của ESP-IDF, task `console_repl`); gõ `help`, `STATUS`, `DIAG_STREAM on`... Console Matter vẫn tắt như bản mặc định.
+- **LED một màu** khi học phòng trống: sáng 20 s (rời phòng), nháy chậm khoảng 100 s (ESP32 ghi nhiễu 30 s, rồi radar tự đo), rồi sáng 10 s cả khi xong lẫn khi thất bại: xem kết quả trong log `quiet_learn`.
+- Firmware `1.0.<số commit>-esppresence`, Model `Presence LD2410 ESP engine`; VID/PID giữ `0xFFF1`/`0x8001`, chân radar GPIO3/GPIO4 như bản mặc định.
+- **RAM khi chạy:** biến thể này thêm task `presence_eng` (stack 4 KB) và `console_repl` (stack 3,5 KB), cùng hàng đợi báo cáo radar và bộ đệm console, nên heap còn ít hơn bản mặc định khoảng 10–11 KB (ước tính từ kích thước stack và bộ đệm, **chưa đo trên bo**). Heap thấp nhất của bản C3 đo được lúc ghép nối là 40,0 KB (1.0.131, mục **RAM và flash**); kiểm tra lại bằng log `mem` với biến thể này, nhất là lúc ghép nối (BLE và Wi-Fi cùng chạy).
+- **Kiểm chứng:** host test như bản H2 (chung mã nguồn); build cho ESP32-C3 ghi ở dưới. **Chưa thử trên bo thật**: console `presence>` trên cổng USB-C, bộ xử lý với radar thật, RAM khi chạy, OTA lên biến thể này.
 
 ## Wi-Fi và BLE
 

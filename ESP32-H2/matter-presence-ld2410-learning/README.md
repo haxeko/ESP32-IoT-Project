@@ -1,6 +1,6 @@
 # Matter Presence Sensor + học phòng trống (ESP32-H2 + HLK-LD2410, Thread)
 
-> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt); thời gian chờ chỉnh bằng **Hold time**. Học phòng trống cũng bắt đầu được bằng cách **bấm nút BOOT 3 lần**, LED báo từng bước; **bấm 4 lần** ghi lại ngưỡng mặc định của radar (LED nháy tím). Tên thiết bị: **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C3** (mỗi mạch một tên). Phần cứng, chân nối, ghép nối giống hệt bản gốc; LED và nút bấm thêm phần học phòng trống. Biến thể thử nghiệm **`espfilter`**: ESP tự xác nhận các phát hiện yếu của radar trước khi báo có người (mục **Bộ lọc năng lượng trên ESP32**).
+> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt); thời gian chờ chỉnh bằng **Hold time**. Học phòng trống cũng bắt đầu được bằng cách **bấm nút BOOT 3 lần**, LED báo từng bước; **bấm 4 lần** ghi lại ngưỡng mặc định của radar (LED nháy tím). Tên thiết bị: **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C3** (mỗi mạch một tên). Phần cứng, chân nối, ghép nối giống hệt bản gốc; LED và nút bấm thêm phần học phòng trống. Biến thể thử nghiệm **`espfilter`**: ESP tự xác nhận các phát hiện yếu của radar trước khi báo có người (mục **Bộ lọc năng lượng trên ESP32**). Biến thể thử nghiệm **`esppresence`**: ESP tự quyết định có người từ năng lượng từng vùng của radar, cùng bộ xử lý với bản ESP32-C3-WROOM 1.0.159, cho ESP32-H2 SuperMini và ESP32-C3 SuperMini (mục **Bộ xử lý hiện diện trên ESP32**).
 
 Cảm biến hiện diện chuẩn **Matter over Thread** chạy trên **ESP32-H2** với radar 24 GHz **HLK-LD2410**. Đây là bản chuyển từ Zigbee (`ESP32-H2/zigbee-presence-occupancy`) sang Matter: cùng chip ESP32-H2, cùng radio 802.15.4, nhưng thay Zigbee bằng Thread + Matter. Thêm trực tiếp vào **Apple Home**, Google Home, Home Assistant, SmartThings, Alexa... mà không cần Zigbee coordinator / Zigbee2MQTT.
 
@@ -26,6 +26,7 @@ Logic phát hiện giữ nguyên như các bản LD2410 khác trong repo:
 - Nếu radar không gửi dữ liệu quá **10 giây** (lỏng dây, mất nguồn), thiết bị báo **không có người** và ghi lỗi vào log. Có dữ liệu lại thì tự hoạt động bình thường.
 - Tuỳ chọn chỉ tính người ở gần hơn một khoảng cách (*Only count targets closer than*). Độ nhạy từng vùng (gate) được chỉnh tự động bằng chức năng **học phòng trống** bên dưới, khoảng cách phát hiện bằng entity **Range** (hoặc bằng app **HLKRadarTool** qua Bluetooth của LD2410B/C).
 - Biến thể `espfilter` (thử nghiệm) thêm một bước trên ESP khi phòng đang trống: năng lượng vượt ngưỡng nhiều thì báo có người ngay, vượt ít thì phải vài báo cáo liên tiếp. Xem mục **Bộ lọc năng lượng trên ESP32**.
+- Biến thể `esppresence` (thử nghiệm) thay logic trên bằng bộ xử lý trên ESP: hai ngưỡng cho từng vùng (kích hoạt, duy trì), tắt sau Hold time không còn tín hiệu duy trì, radar mất dữ liệu là lỗi cảm biến chứ không phải phòng trống. Xem mục **Bộ xử lý hiện diện trên ESP32**.
 
 ## Học phòng trống (giảm báo nhầm)
 
@@ -224,6 +225,228 @@ Kết quả ở `build-espfilter/`: `matter_presence_h2_learn.bin`, file OTA `ma
   - radar tự đo (0x000B) khi chạy cùng bộ lọc.
 - Mức 15 và 3 báo cáo là giá trị ban đầu, **cần chỉnh theo log trên bo thật**.
 
+## Bộ xử lý hiện diện trên ESP32 (biến thể `esppresence`, thử nghiệm)
+
+Cùng bộ xử lý với bản ESP32-C3-WROOM 1.0.159 (nhánh `claude/c3-wroom-esp-presence`), chạy trên **ESP32-H2 SuperMini** (Thread) và **ESP32-C3 SuperMini** (Wi-Fi, [`ESP32-C3/matter-wifi-presence`](../../ESP32-C3/matter-wifi-presence)) từ cùng mã nguồn. Bản build mặc định và biến thể `espfilter` **không** có bộ xử lý này; nó chỉ bật trong biến thể `esppresence` (`sdkconfig.defaults.esppresence`).
+
+**Khác với bản ổn định và bộ lọc năng lượng:**
+- ESP32 tự quyết định có người hay không, từ năng lượng radar gửi lên ở engineering mode: năng lượng chuyển động và năng lượng tĩnh của 9 vùng khoảng cách (gate), mỗi báo cáo khoảng 100 ms. Đây là số radar đã tự xử lý (0–100 mỗi vùng) gửi qua UART, không phải tín hiệu radar thô.
+- Cờ "có người" của radar không được dùng.
+- **Ngưỡng là ngưỡng lưu trong radar.** Radar tự đo khi học phòng trống, như bản ổn định; cũng chỉnh được bằng app HLKRadarTool. ESP32 không lưu ngưỡng riêng.
+- ESP32 đọc lại ngưỡng sau mỗi lần học hay ghi ngưỡng mặc định, rồi dùng cho cơ chế hai ngưỡng.
+
+### Thuật toán
+
+1. **Lọc xung (trung vị 3 báo cáo).**
+   - Mỗi kênh lấy trung vị của 3 báo cáo gần nhất trước khi so ngưỡng.
+   - Một báo cáo đứng riêng, dù mạnh đến đâu, bị loại; phải có 2 trong 3 báo cáo liên tiếp cùng cao.
+   - Đổi lại chậm thêm một báo cáo (0,1 s).
+2. **Hai ngưỡng cho từng kênh** (18 kênh: 9 vùng × chuyển động/tĩnh), tính từ ngưỡng radar T của kênh đó:
+   - **kích hoạt:** năng lượng đã lọc **vượt T** (lớn hơn T), đúng như radar tự tính có người. T = 100: radar bỏ vùng đó, ESP32 cũng bỏ;
+   - **duy trì:** năng lượng đã lọc **đạt T − 40 % của T, bớt tối đa 10**. Ví dụ T = 20 → 12, T = 15 → 9, T = 50 → 40;
+   - ngưỡng duy trì **không thấp hơn nhiễu phòng trống + 2**, và không cao hơn T;
+   - **nhiễu phòng trống** của một kênh là số lớn hơn trong hai số: phân vị 99, và trung vị + 3 × độ dao động (1,4826 × MAD). ESP32 đo nó lúc học (mục dưới);
+   - chưa có số đo nhiễu (chưa học bằng firmware này, hoặc học với độ phân giải khác): ngưỡng duy trì = T;
+   - năng lượng tĩnh của vùng 0 và 1 không được tính: radar không có ngưỡng tĩnh ở đó.
+3. **Phòng trống → có người:**
+   - một vùng "mạnh" khi năng lượng đã lọc vượt ngưỡng radar;
+   - cần **3 trong 4 báo cáo gần nhất** mạnh ở cùng chỗ: một vùng hoặc vùng kề (người đi qua ranh giới vùng, còn nhiễu thì nhảy lung tung);
+   - người bước vào được nhận sau khoảng **0,4 s**; xung lẻ hoặc 2 báo cáo liền nhau không kích hoạt được.
+4. **Duy trì:**
+   - khi đã có người, một vùng có **tín hiệu duy trì** khi năng lượng đã lọc đạt ngưỡng duy trì trong **3 trong 10 báo cáo** gần nhất (nhịp thở, cử động nhẹ);
+   - mỗi báo cáo có tín hiệu duy trì đặt lại bộ đếm.
+5. **Tắt hiện diện:**
+   - hết tín hiệu duy trì liên tục **Hold time** (60 s trong biến thể này) thì phòng trống, quay về chờ tín hiệu mạnh;
+   - tín hiệu duy trì quay lại trong lúc đếm thì bộ đếm bắt đầu lại;
+   - Hold time là entity *Hold time* trên Home Assistant (1–300 s): đổi ở đó là đổi bộ đếm (task `presence` đọc lại mỗi giây).
+   - Cluster Occupancy Sensing nhận "có người" khi có tín hiệu duy trì, và nhận "không" ngay lúc tín hiệu duy trì hết: cluster tự đếm Hold time như bộ xử lý, nên Home Assistant báo trống cùng lúc với bộ xử lý.
+6. **Mất dữ liệu không phải phòng trống:**
+   - không có báo cáo hợp lệ, hoặc báo cáo không có năng lượng, quá 2 s là **lỗi cảm biến**;
+   - trạng thái giữ nguyên (đang có người thì vẫn báo có người), bộ đếm tạm dừng; khi dữ liệu trở lại, bộ đếm chạy lại từ đầu;
+   - khác bản ổn định: bản ổn định coi radar im lặng quá `RADAR_TIMEOUT_SEC` (10 s) là không có người;
+   - **lưu ý:** radar hỏng hoặc tuột dây lúc đang có người thì Home Assistant giữ *có người* cho tới khi radar báo lại, không có giới hạn thời gian (giống bản C3-WROOM 1.0.159). ESP32 vẫn tìm cách khôi phục radar (mục **Phạm vi, chân và khôi phục radar**) và ghi log `Sensor fault: ...`;
+   - báo cáo hỏng (sai đuôi, năng lượng trên 100) bị bỏ và được đếm.
+
+**Vì sao ngưỡng duy trì phải ở trên nhiễu:** radar tự đo thường đặt ngưỡng sát nhiễu. Hạ ngưỡng duy trì một khoảng cố định dưới ngưỡng đó thì nhiễu có thể chạm ngưỡng duy trì liên tục, và phòng không bao giờ trống. Vì vậy firmware không hạ khi chưa đo nhiễu. Test của bộ xử lý có phòng giả lập theo mô hình nhiễu tự đặt (không phải dữ liệu radar thật): với ngưỡng sát nhiễu, phòng vẫn trống lại sau khoảng Hold time khi ngưỡng duy trì được giữ trên nhiễu đã đo. Chưa có dữ liệu trên radar thật.
+
+**Thời gian và tài nguyên:**
+- Đồng hồ là mili-giây 32 bit, quay vòng sau 49,7 ngày; firmware chỉ dùng hiệu thời gian nên không bị ảnh hưởng (có test).
+- Mỗi báo cáo chỉ vài trăm phép tính, không chờ ai. Task đọc UART (`ld2410`) đưa báo cáo vào hàng đợi 20 báo cáo (đầy thì bỏ và đếm); task `presence_eng` (priority 3, stack 4096) xử lý.
+- Flash của ESP32 chỉ được ghi khi học thành công (nhiễu, 40 byte, NVS namespace `esp_presence`, key `noise`, có CRC). Flash của radar chỉ được ghi khi học hay ghi ngưỡng mặc định, như bản ổn định; không có lệnh nào ghi ngưỡng tự động hay định kỳ.
+
+### Học phòng trống
+
+**Cách bắt đầu:** chọn **Learning** trên Home Assistant, bấm BOOT 3 lần, hoặc lệnh `LEARN_EMPTY` trên console. Việc học như bản ổn định (mục **Học phòng trống**):
+- radar firmware có lệnh tự đo nhiễu nền (0x000B) thì radar tự đo và lưu ngưỡng;
+- radar firmware cũ không có lệnh đó thì ESP32 đo và ghi ngưỡng vào radar.
+
+Biến thể này thêm một bước: **ESP32 ghi nhiễu phòng trống 30 s trước khi radar đo.**
+
+| Thời điểm | Việc | LED (ESP32-H2: WS2812) | LED (ESP32-C3 SuperMini: một màu) |
+|---|---|---|---|
+| 0–20 s | rời khỏi phòng | cyan sáng | sáng |
+| 20–50 s | ESP32 ghi nhiễu (engineering mode) | cyan nháy | nháy chậm |
+| 50–60 s | ESP32 tắt engineering mode, gửi lệnh tự đo 0x000B; radar tự chờ 10 s | cyan nháy | nháy chậm |
+| 60–120 s | radar đo và lưu ngưỡng | cyan nháy | nháy chậm |
+| khoảng 120 s | ESP32 đọc lại ngưỡng, bật lại engineering mode, lưu nhiễu vào NVS | xanh lá 10 s (đỏ: thất bại) | sáng 10 s (cả khi thất bại: xem log) |
+
+- **Ở ngoài phòng đến khi LED thôi nháy** (khoảng 2 phút, lâu hơn bản ổn định khoảng 40 s). Select *Learn empty room* hiện *Learning* trong lúc đó rồi về *Off*.
+- **Thất bại** (ngưỡng radar và nhiễu đã đo đều giữ nguyên):
+  - ít hơn 5 báo cáo có năng lượng mỗi giây lúc ESP32 ghi nhiễu (radar không được yêu cầu đo);
+  - hoặc radar đo thất bại (các trường hợp ở mục **Học phòng trống**).
+- **Radar firmware cũ** (không có lệnh 0x000B): sau 30 s ghi nhiễu, ESP32 ghi tiếp 60 s, tự tính và ghi ngưỡng vào radar như bản ổn định; nhiễu lấy từ lần ghi 60 s đó.
+- **Huỷ** (*Off* trên Home Assistant hoặc `LEARN_CANCEL`): không ghi gì; đang đo thì radar được khởi động lại để dừng, như bản ổn định.
+- **Factory thresholds** (Home Assistant, bấm 4 lần, hoặc `FACTORY_THRESHOLDS YES`): ghi ngưỡng mặc định vào radar; nhiễu đã đo giữ nguyên.
+- **Trong lúc học:** lúc radar tự đo thì không có năng lượng (lỗi cảm biến, không phải phòng trống), nên Home Assistant giữ trạng thái trước khi học; học xong mà không có ai thì hết người sau Hold time.
+- **Chỉnh ngưỡng từng vùng bằng app HLKRadarTool** (bật *Radar Bluetooth* trên Home Assistant trước). ESP32 đọc lại ngưỡng khi bật hoặc tắt *Radar Bluetooth*, đổi Range hoặc độ phân giải, học xong, ghi ngưỡng mặc định xong, và khi khởi động.
+- **Chưa học bằng firmware này:** log nhắc học phòng trống, và ngưỡng duy trì = ngưỡng radar. Radar còn giữ ngưỡng xuất xưởng thì log cũng nhắc.
+
+Thời gian chờ và thời gian đo là các tuỳ chọn *Empty Room Learning* như bản ổn định (20 s, 60 s); số ở bảng là với giá trị mặc định.
+
+### Console
+
+Lệnh chỉ xếp hàng yêu cầu, câu trả lời in ra log; gõ `help` để xem danh sách. Chữ thường cũng được (`diag_stream on`).
+
+| Lệnh | Việc làm |
+|---|---|
+| `LEARN_EMPTY` | Học phòng trống, như *Learning* trên Home Assistant |
+| `LEARN_CANCEL` | Huỷ việc học, giữ ngưỡng cũ |
+| `STATUS` | Trạng thái hiện diện, thời gian còn lại trước khi tắt, cảm biến, nguồn ngưỡng (radar, xuất xưởng), nhiễu đã đo, Range |
+| `DIAG` | Bảng 9 vùng: năng lượng hiện tại, đã lọc, cao nhất trong 1 s, ngưỡng duy trì và ngưỡng radar, của chuyển động và tĩnh |
+| `DIAG_STREAM on` / `off` | In `DIAG` mỗi giây (để hiệu chỉnh) |
+| `THRESHOLDS` | Ngưỡng radar, ngưỡng duy trì và nhiễu đo được của từng vùng |
+| `FACTORY_THRESHOLDS YES` | Ghi ngưỡng mặc định vào radar, như *Factory thresholds* trên Home Assistant |
+
+**Cổng:** biến thể này đặt console (log và lệnh) lên **cổng USB gốc của chip** (USB-Serial-JTAG: GPIO26/27 trên ESP32-H2, GPIO18/19 trên ESP32-C3). ESP-IDF 6.0.2 chỉ nhận lệnh gõ vào USB-Serial-JTAG khi đó là console chính, nên:
+- **ESP32-C3:** như bản ổn định (log vốn ở USB-Serial-JTAG). Lệnh chạy trên REPL riêng của ESP-IDF, dấu nhắc `presence>` (task `console_repl`, khoảng 5 KB RAM).
+- **ESP32-H2:** bản ổn định để console ở UART0 (GPIO23/24) và chỉ *xuất* log ra USB-Serial-JTAG. Biến thể này chuyển console chính sang USB-Serial-JTAG: **log và lệnh đều ở cổng USB gốc**, UART0 không còn log của firmware. Console Matter (`matter ...`, `matter esp ot_cli ...`) vẫn bật như bản ổn định và cũng chuyển sang cổng này; các lệnh của bộ xử lý được thêm vào cùng console đó (dấu nhắc `>`, sau mỗi lệnh console Matter in `Done` hoặc `Error: 1`).
+- Bo cắm USB qua chip USB-UART (CH340, CP2102...) vào UART0, như cổng UART của ESP32-H2-DevKitM-1: đặt `ESP_CONSOLE_UART_DEFAULT` trong menuconfig rồi build lại; log và lệnh chuyển về UART0.
+
+**Mở console:**
+1. Cắm cổng USB của bo (cổng dùng để nạp) vào máy tính.
+2. `idf.py -p /dev/ttyACM0 monitor` (macOS `/dev/cu.usbmodem*`, Windows `COMx`); thoát bằng `Ctrl+]`. Không có ESP-IDF: phần mềm terminal nối tiếp bất kỳ (PuTTY, *Serial Monitor* của Arduino IDE), tốc độ baud không quan trọng với USB-Serial-JTAG (chọn 115200).
+3. Bấm Enter để thấy dấu nhắc, gõ lệnh (ví dụ `DIAG_STREAM on`) rồi Enter. Log khác vẫn in xen giữa, lệnh vẫn được nhận.
+
+Không cắm máy tính (ví dụ cấp nguồn bằng sạc USB): log bị bỏ, không làm chậm task khác. Không cần console thì tắt `PRESENCE_ENGINE_CONSOLE`; học phòng trống vẫn chạy được từ Home Assistant hoặc nút BOOT.
+
+**Bảng `DIAG`**, mỗi vùng một dòng, cho năng lượng chuyển động (*moving*) và tĩnh (*still*):
+
+| Cột | Nghĩa |
+|---|---|
+| `now` | năng lượng trong báo cáo mới nhất |
+| `filt` | sau lọc trung vị 3 báo cáo: số này được so với ngưỡng |
+| `peak` | cao nhất trong khoảng 1 s gần nhất |
+| `hold` | ngưỡng duy trì: `filt` đạt nó thì giữ người |
+| `radar` | ngưỡng radar: `filt` vượt nó (3 trong 4 báo cáo) thì phòng trống thành có người |
+| `(not counted)` | vùng ngoài Range, vùng 0–1 của năng lượng tĩnh, hoặc vùng radar bỏ (ngưỡng 100) |
+
+**Bảng ngưỡng** (khi khởi động, khi ngưỡng đổi, lệnh `THRESHOLDS`):
+
+```
+I esp_presence: Thresholds from the radar (75 cm gates): strong above the radar threshold, hold at radar - 40 % (at most 10), at least the empty room noise + 2
+I esp_presence:   gate 0 0-0.75 m    moving: radar 50 hold 44 (noise 42, hold raised above it) | still: no radar threshold
+I esp_presence:   gate 4 3-3.75 m    moving: radar 20 hold 13 (noise 11, hold raised above it) | still: radar 30 hold 20 (noise 9)
+```
+(số minh hoạ từ test trên máy tính, không phải từ radar thật)
+
+**Log tự động** (tag `esp_presence`): khi có người (`Present: moving gate 3 energy 70 above the radar threshold 30 ...`), khi phòng trống (`Empty: no hold signal for 60 s ...`), khi lỗi cảm biến, và `STATUS` mỗi 5 phút (`PRESENCE_ENGINE_STATUS_LOG_SEC`). Log của việc học có tag `quiet_learn`, của task cấu hình radar tag `radar_ctl`, như bản ổn định.
+
+### Phạm vi, chân và khôi phục radar
+
+- **Chân UART của radar:** như bản ổn định (ESP32-H2: radar TX → GPIO11, RX ← GPIO12; ESP32-C3: TX → GPIO3, RX ← GPIO4), không đổi trong biến thể này.
+- **Phạm vi:** select **Range** trên Home Assistant (vùng xa nhất, ghi vào radar khi chọn) và `PRESENCE_MAX_DISTANCE_CM` (bỏ các vùng bắt đầu xa hơn khoảng cách đó, tính ở ESP32). Vùng ngoài phạm vi không được tính. Nhiễu được đo ở mọi vùng, nên mở rộng Range sau đó không cần học lại.
+- **Báo cáo không có năng lượng:** task `radar_cfg` bật lại engineering mode, kiểm tra mỗi 2 s, gửi lệnh tối đa 10 s một lần.
+- **Radar im lặng 5 s**, và đã 5 s sau phiên cấu hình gần nhất (trong phiên, radar không gửi báo cáo):
+  - ESP32 bỏ dữ liệu đang chờ trong UART;
+  - gửi lệnh thoát chế độ cấu hình (radar bị bỏ lại trong chế độ đó thì không gửi báo cáo);
+  - im lặng tiếp thì khởi động lại radar sau 15 s, 30 s, 1 phút... tối đa 5 phút một lần (không ghi gì vào flash của radar). Log `radar_ctl`: `No valid report from the LD2410 for N s: ...`, rồi `The LD2410 reports again`.
+
+### Hiệu chỉnh thực tế
+
+1. Lắp radar cố định ở chỗ dùng thật, chọn **Range** vừa đủ phòng (bớt vùng sau tường), rồi **học phòng trống** (ở ngoài đến khi LED thôi nháy).
+2. Mở console, gõ `THRESHOLDS`: xem ngưỡng radar, ngưỡng duy trì và nhiễu từng vùng.
+   - Cảnh báo `the empty room noise N is above the radar threshold`: vùng đó dễ báo nhầm có người.
+   - `hold raised above it`: vùng đó nhiễu nên ngưỡng duy trì không hạ được nhiều.
+3. `DIAG_STREAM on`, rồi lần lượt:
+   - **đi vào:** cột `filt` của vùng có người phải vượt `radar` trong vài báo cáo (log `Present: ...` sau khoảng 0,4 s);
+   - **ngồi yên ở chỗ xa nhất cần nhận:** cột `filt` của năng lượng tĩnh ở vùng đó phải thường xuyên đạt `hold`. `STATUS` phải báo `present, hold signal at gate ...`;
+   - **ra khỏi phòng:** khoảng Hold time + 1 s sau, log `Empty: ...`.
+4. **Ngồi yên mà bị báo trống** (`filt` thấp hơn `hold`):
+   - hạ ngưỡng vùng đó trong HLKRadarTool (ngưỡng duy trì hạ theo), rồi tắt *Radar Bluetooth* để ESP32 đọc lại;
+   - hoặc tăng `PRESENCE_ENGINE_HOLD_DROP_PERCENT` (40 → 50) hay `PRESENCE_ENGINE_HOLD_DROP_MAX` (10 → 15);
+   - hoặc tăng Hold time trên Home Assistant;
+   - nếu cột `hold` bị nâng lên vì nhiễu: học lại khi phòng thật sự trống, hoặc dời radar.
+5. **Phòng trống mà bị báo có người** (log `Present: ...` không có ai): xem vùng và năng lượng trong log, rồi tăng ngưỡng vùng đó trong HLKRadarTool, học lại khi nguồn nhiễu chạy như bình thường, tăng `PRESENCE_ENGINE_TRIGGER_REPORTS` (3 → 4), hoặc giảm Range.
+6. **Bị trễ tắt** (người đã ra mà vẫn có người lâu): `DIAG_STREAM` cho thấy vùng nào còn đạt `hold` khi trống. Học lại (đo lại nhiễu), giảm `PRESENCE_ENGINE_HOLD_DROP_PERCENT`, hoặc giảm Range.
+7. Môi trường thay đổi (thêm quạt, đổi đồ đạc, đổi chỗ radar) thì học lại.
+
+### Tuỳ chọn (`menuconfig` → *ESP32 Presence Engine (experimental)*)
+
+| Tuỳ chọn | Mặc định | Ý nghĩa |
+|---|---|---|
+| `PRESENCE_ESP_ENGINE` | tắt (bật trong biến thể `esppresence`) | Bật bộ xử lý (không dùng cùng `PRESENCE_ENERGY_FILTER`) |
+| `PRESENCE_ENGINE_TRIGGER_REPORTS` / `_TRIGGER_WINDOW` | 3 / 4 | Số báo cáo vượt ngưỡng radar / trong số báo cáo gần nhất để kích hoạt |
+| `PRESENCE_ENGINE_HOLD_REPORTS` / `_HOLD_WINDOW` | 3 / 10 | Số báo cáo đạt ngưỡng duy trì / trong số báo cáo gần nhất để duy trì |
+| `PRESENCE_ENGINE_HOLD_DROP_PERCENT` | 40 | Ngưỡng duy trì thấp hơn ngưỡng radar bao nhiêu % (0: bằng ngưỡng radar) |
+| `PRESENCE_ENGINE_HOLD_DROP_MAX` | 10 | ...nhưng thấp hơn tối đa chừng này |
+| `PRESENCE_ENGINE_NOISE_RECORD_SEC` | 30 | ESP32 ghi nhiễu bao lâu lúc học, trước khi radar đo |
+| `PRESENCE_ENGINE_DATA_TIMEOUT_MS` | 2000 | Không có dữ liệu bao lâu thì là lỗi cảm biến |
+| `PRESENCE_ENGINE_STATUS_LOG_SEC` | 300 | In `STATUS` mỗi (0: không) |
+| `PRESENCE_ENGINE_CONSOLE` | bật | Lệnh console |
+| `PRESENCE_HOLD_TIME_SEC` | 60 trong biến thể này | Hold time ban đầu (bộ đếm tắt hiện diện) |
+| `LD2410_LEARN_*` (*Empty Room Learning*) | như bản ổn định | Thời gian chờ, thời gian radar đo, radar tự đo hay ESP32 đo |
+
+Không thêm entity nào trên Home Assistant.
+
+### Build biến thể `esppresence`
+
+ESP32-H2 SuperMini (Thread):
+
+```bash
+cd ESP32-H2/matter-presence-ld2410-learning
+idf.py -B build-esppresence -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.esppresence \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esppresence" build
+```
+
+ESP32-C3 SuperMini (Wi-Fi):
+
+```bash
+cd ESP32-C3/matter-wifi-presence
+idf.py -B build-esppresence -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.esppresence \
+  -D SDKCONFIG_DEFAULTS=../../ESP32-H2/matter-presence-ld2410-learning/sdkconfig.defaults.esppresence build
+```
+
+Kết quả ở `build-esppresence/`: `matter_presence_h2_learn.bin` / `matter_presence_c3_wifi.bin`, file OTA `...-ota.bin` (đổi đuôi thành `.ota`). GitHub Actions chỉ build bản mặc định.
+
+**Phiên bản, OTA và quay về bản mặc định:**
+- Home Assistant hiện firmware `1.0.<số commit>-esppresence` và Model `Presence LD2410 ESP engine`. Số dùng cho OTA vẫn là số commit, nên OTA được từ bản mặc định và từ `-espfilter` có số commit nhỏ hơn, và vẫn giữ ghép nối.
+- VID/PID giữ nguyên (ESP32-H2 `0xFFF1`/`0x8000`, ESP32-C3 `0xFFF1`/`0x8001`), cùng endpoint, cluster và device type; định dạng dữ liệu đã lưu của bản ổn định không đổi.
+- Hold time được đặt về 60 s **một lần** khi bo lần đầu chạy biến thể này (key `app/hold-init2` trong NVS của Matter); giá trị đặt sau đó trên Home Assistant được giữ.
+- Các dòng firmware cùng VID/PID nên Matter Server không phân biệt được: chỉ cập nhật bo nào muốn chạy bộ xử lý bằng file `-esppresence`.
+- **Quay về bản mặc định:**
+  - OTA bản mặc định có số commit lớn hơn bản `-esppresence` đang chạy, hoặc nạp USB bằng `idf.py flash` từ bản build mặc định (ghi cả `otadata`): giữ ghép nối; file merged ghi đè vùng NVS: phải ghép nối lại;
+  - ngưỡng trong radar giữ nguyên, bản mặc định dùng tiếp; engineering mode mất khi radar khởi động lại hoặc mất điện; nhiễu trong NVS (`esp_presence/noise`) không được dùng;
+  - Hold time giữ giá trị 60 s, chỉnh lại trên Home Assistant nếu muốn;
+  - ESP32-H2: console trở lại UART0.
+
+**Mức độ kiểm chứng:**
+- **Host test** (máy tính, radar và phòng giả lập; không phải dữ liệu radar thật):
+  - các test của nhánh C3-WROOM 1.0.159 chạy trên mã của bản này: bộ xử lý (23 trường hợp, bản sao nguyên văn nên kết quả như bản WROOM), task `presence_eng` với driver radar và `radar_settings` của bản này (11 trường hợp của bản WROOM, và 2 trường hợp thêm cho bản này: radar im lặng thì không đòi bật engineering mode; khung sai footer hay độ dài không thể có được đếm là khung hỏng), học phòng trống của bản này (`quiet_learn.cpp`) với phần ghi nhiễu (6 trường hợp của bộ xử lý: ghi 30 s rồi tắt engineering mode trước 0x000B, huỷ, thiếu báo cáo, radar đo thất bại, radar firmware cũ, và học trên ESP32). Một kiểm tra của bản WROOM không qua vì câu log có sẵn của bản này ngắn hơn (`Gate 3 reads back 30/40 instead of 30/70`, bản WROOM thêm `, the radar may hold a mix of old and new thresholds`): câu log của bản ổn định được giữ nguyên;
+  - task `radar_cfg` (`radar_control.cpp` của bản này) với bộ xử lý giả, 14 tình huống: cấu hình đưa ngưỡng và Range cho bộ xử lý, cờ bận quanh mỗi phiên; bật lại engineering mode tối đa 10 s một lần (cả khi radar không nhận lệnh); radar im lặng: xả UART và thoát chế độ cấu hình sau 5 s, khởi động lại sau 15 s rồi 30 s; radar từ chối khởi động lại; phiên cấu hình dài không bị coi là lỗi; radar kẹt ở chế độ cấu hình; học từ Home Assistant (ghi nhiễu, radar tự đo, đọc lại ngưỡng, bật lại engineering mode); huỷ bằng Home Assistant, bằng `LEARN_CANCEL` lúc đang ghi nhiễu, lúc radar đang đo và trước khi bắt đầu; Factory thresholds từ Home Assistant và 4 lần bấm; radar firmware cũ; thiếu báo cáo lúc ghi nhiễu;
+  - 12 bộ test cũ (bản mặc định, `espfilter`, driver, cấu hình radar, học phòng trống, LED, nút, tên thiết bị) vẫn qua.
+- **Thử làm hỏng 36 chỗ** trong phần khôi phục radar, cờ bận, engineering mode, học và huỷ (`radar_control.cpp`), ghi nhiễu (`quiet_learn.cpp`), đếm khung hỏng và xả UART (driver), và hai chỗ trong bản sao bộ xử lý, mỗi lần một chỗ: lúc đầu test bắt được 34; 2 chỗ lọt (khung sai footer không được đếm; radar im lặng mà vẫn đòi bật engineering mode) đã có test, giờ bắt được cả 36.
+- Chỉ kiểm tra bằng build và đọc mã, không có host test: task `presence` với bộ xử lý (đọc Hold time mỗi giây, báo cluster), console (REPL trên ESP32-C3, lệnh trong console Matter trên ESP32-H2), log `mem`, việc xả UART trong task đọc radar.
+- **Chưa thử trên bo thật:**
+  - năng lượng của radar thật qua bộ xử lý; ngưỡng radar tự đo trong phòng thật; radar tự đo ngay sau khi ESP32 tắt engineering mode;
+  - console trên cổng USB gốc của ESP32-H2 SuperMini và ESP32-C3 SuperMini; Hold time từ Home Assistant; các bước khôi phục radar; RAM và stack lúc chạy (log `mem`); OTA lên biến thể này;
+  - các tham số mặc định là giá trị ban đầu, **cần chỉnh theo log trên bo thật** (mục **Hiệu chỉnh thực tế**). Chưa có dữ liệu thử nghiệm nào cho biết bộ xử lý nhận diện tốt hơn hay kém hơn bản ổn định.
+
+**Khác bản C3-WROOM 1.0.159** (thuật toán, ngưỡng, thời gian và trạng thái cảm biến giống hệt; `presence_engine.cpp` và `.h` là bản sao nguyên văn):
+- task cấu hình radar là `radar_control.cpp` của bản này (select trên Home Assistant như bản ổn định), cùng các bước bận, engineering mode, khôi phục radar và ghi nhiễu như `radar_worker.cpp` của bản WROOM;
+- driver radar của bản này: lệnh khởi động lại có thể không được trả lời vì radar khởi động lại trước; chỉ khi radar *từ chối* thì ESP32 mới gửi lệnh thoát chế độ cấu hình (như cách bản này dừng radar tự đo);
+- ESP32-H2: lệnh của bộ xử lý nằm chung console Matter (bản WROOM không có console Matter); dấu nhắc `>` thay cho `presence>`;
+- không có key `profile` cũ (bản 1.0.153–1.0.156 của nhánh WROOM).
+
 ## Phần cứng
 
 - **ESP32-H2 SuperMini** (như trong sơ đồ), hoặc board ESP32-H2 khác có flash 4 MB: ESP32-H2-Zero, ESP32-H2-DevKitM-1...
@@ -397,7 +620,7 @@ esptool.py --chip esp32h2 -p /dev/ttyUSB0 write_flash 0x0 matter_presence_h2_lea
 
 Vào tab **Actions** → lần chạy mới nhất → **Artifacts**.
 
-Biến thể `espfilter` (bộ lọc năng lượng trên ESP32) không có trong Actions: lệnh build ở mục **Bộ lọc năng lượng trên ESP32**.
+Biến thể `espfilter` (bộ lọc năng lượng trên ESP32) và `esppresence` (bộ xử lý hiện diện trên ESP32) không có trong Actions: lệnh build ở mục **Bộ lọc năng lượng trên ESP32** và **Bộ xử lý hiện diện trên ESP32**.
 
 > File merged ghi đè cả vùng NVS (`0x10000`), tức là **xoá thông tin ghép nối**: sau khi nạp phải thêm lại thiết bị. Nếu thiết bị đã từng được thêm vào Home với firmware khác, hãy xoá phụ kiện, `erase-flash`, nạp lại rồi thêm lại.
 >
@@ -466,6 +689,8 @@ I app_main: Pins: LD2410 RX GPIO11 (radar TX), TX GPIO12 (radar RX), button GPIO
 | Let the radar measure the room itself when it can | bật | Radar có lệnh đo nhiễu nền (0x000B) thì để radar tự đo và tự đặt ngưỡng; tắt = luôn học trên ESP32 |
 
 *ESP32 Energy Filter (experimental)*: `PRESENCE_ENERGY_FILTER` (tắt), `_STRONG` (15), `_FRAMES` (3), xem mục **Bộ lọc năng lượng trên ESP32**.
+
+*ESP32 Presence Engine (experimental)*: `PRESENCE_ESP_ENGINE` (tắt) và các tuỳ chọn `PRESENCE_ENGINE_*`, xem mục **Bộ xử lý hiện diện trên ESP32**. Không dùng cùng bộ lọc năng lượng.
 
 *Thread Diagnostics*: `THREAD_DIAG_LOG` (bật mặc định) in khối chẩn đoán Thread ra log mỗi 10 s cho tới khi ghép nối xong.
 
@@ -563,10 +788,14 @@ matter-presence-ld2410-learning/
 ├── sdkconfig.defaults.unique_setup  # Mã ghép nối riêng từng bo (tùy chọn)
 ├── sdkconfig.defaults.factory       # Factory data riêng từng bo (tùy chọn)
 ├── sdkconfig.defaults.espfilter     # Bộ lọc năng lượng trên ESP32, Model riêng (thử nghiệm)
+├── sdkconfig.defaults.esppresence   # Bộ xử lý hiện diện trên ESP32 (H2 và C3), Model riêng, Hold time 60 s, console USB (thử nghiệm)
 └── main/
     ├── app_main.cpp            # Matter node, endpoint Occupancy Sensor, OpenThread (H2) / Wi-Fi (C3), task presence
     ├── presence.h              # Có người theo báo cáo của radar (và khoảng cách tối đa)
     ├── energy_filter.cpp/.h    # Bộ lọc năng lượng trên ESP32 (biến thể espfilter, mặc định tắt)
+    ├── presence_engine.cpp/.h  # Bộ xử lý hiện diện (biến thể esppresence): ngưỡng, nhiễu, hai ngưỡng, lỗi cảm biến; bản sao của bản C3-WROOM 1.0.159
+    ├── esp_presence.cpp/.h     # Task presence_eng: nhận báo cáo radar, nhiễu trong NVS, log, lệnh
+    ├── esp_presence_console.cpp  # Lệnh console của bộ xử lý (LEARN_EMPTY, STATUS, DIAG...)
     ├── board.h                 # Chọn board_esp32h2.h / board_esp32c3.h theo chip: tên board, mạng, chân cấm
     ├── radar_control.cpp       # Mode Select "Learn empty room" / "Range" / "Radar resolution" / "Radar Bluetooth", task cấu hình radar, Bluetooth, học phòng trống (Home Assistant hoặc nút bấm)
     ├── radar_settings.cpp      # Danh sách lựa chọn, đọc/ghi thông số LD2410 (khởi động lại radar khi đổi độ phân giải, Bluetooth)
