@@ -1,0 +1,9 @@
+# ESP32-C3-WROOM-02-N4 board with a WS2812 RGB status LED on GPIO8 (as on the ESP32-C3-DevKitC-02), the radar wired
+# by hand: radar TX -> GPIO3, radar RX -> GPIO4; BOOT button GPIO9; logs on the USB port (USB-Serial-JTAG).
+# Firmware 1.0.144-1.0.175 named it "wroom_n4" (and esppresence / esplearn).
+CONFIG_BOARD_NAME="ESP32-C3-WROOM-02-N4"
+CONFIG_LD2410_UART_RX_PIN=3
+CONFIG_LD2410_UART_TX_PIN=4
+CONFIG_STATUS_LED_TYPE_WS2812=y
+CONFIG_STATUS_LED_GPIO=8
+CONFIG_RESET_BUTTON_GPIO=9

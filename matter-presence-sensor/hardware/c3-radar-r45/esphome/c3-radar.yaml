@@ -1,0 +1,60 @@
+# ESPHome config for the c3-radar r30 board (ESP32-C3-WROOM-02-N4 + HLK-LD2410C)
+# Radar wiring on this PCB: LD2410C TX -> GPIO10, GPIO3 -> LD2410C RX, LD2410C OUT -> GPIO1
+esphome:
+  name: c3-radar
+  friendly_name: C3 Radar
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+  # USB-C on this board is power-only. Logs go over Wi-Fi; to read them on the
+  # RX0/TX0 pads with a 3.3 V USB-UART, uncomment the next line.
+  # hardware_uart: UART0
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+uart:
+  id: radar_uart
+  rx_pin: GPIO10   # <- LD2410C TX
+  tx_pin: GPIO3    # -> LD2410C RX
+  baud_rate: 256000
+  parity: NONE
+  stop_bits: 1
+
+ld2410:
+  uart_id: radar_uart
+
+binary_sensor:
+  - platform: ld2410
+    has_target:
+      name: "Presence"
+    has_moving_target:
+      name: "Moving target"
+    has_still_target:
+      name: "Still target"
+  - platform: gpio
+    pin: GPIO1
+    name: "Radar OUT"
+    device_class: occupancy
+
+sensor:
+  - platform: ld2410
+    moving_distance:
+      name: "Moving distance"
+    still_distance:
+      name: "Still distance"
+    detection_distance:
+      name: "Detection distance"

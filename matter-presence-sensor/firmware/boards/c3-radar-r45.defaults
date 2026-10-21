@@ -1,0 +1,10 @@
+# c3-radar r45 (hardware/c3-radar-r45): ESP32-C3-WROOM-02-N4 + HLK-LD2410C on a round 45 mm PCB.
+# Radar TX -> IO10, IO3 -> radar RX (UART1); radar OUT on IO1 (not used); no status LED; no BOOT button, only the IO9
+# pad (short it to GND for a click, hold it 5 s for a factory reset). The USB-C port only powers the board: logs and
+# flashing on the RX0 / TX0 pads (UART0, GPIO20 / GPIO21) with a 3.3 V USB-UART adapter.
+CONFIG_BOARD_NAME="c3-radar r45"
+CONFIG_LD2410_UART_RX_PIN=10
+CONFIG_LD2410_UART_TX_PIN=3
+CONFIG_STATUS_LED_TYPE_NONE=y
+CONFIG_RESET_BUTTON_GPIO=9
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
