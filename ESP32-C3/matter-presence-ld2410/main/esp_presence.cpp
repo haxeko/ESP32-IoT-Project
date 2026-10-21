@@ -284,7 +284,8 @@ static void print_status(uint32_t now)
     } else if (pe_sensor_fault(&e)) {
         snprintf(presence, sizeof(presence), "present, countdown paused (sensor fault)");
     } else if (e.evidence) {
-        snprintf(presence, sizeof(presence), "present, hold signal at gate %u", e.evidence_gate);
+        snprintf(presence, sizeof(presence), "present, hold signal at gate %u%s", e.evidence_gate,
+                 e.evidence_near ? " (the person's gates)" : "");
     } else {
         const uint32_t left = pe_remaining_ms(&e, now);
         snprintf(presence, sizeof(presence), "present, empty in %" PRIu32 " s unless a hold signal comes back",
@@ -378,7 +379,7 @@ static bool handle_events()
         if (e.presence == PE_PRESENCE_PRESENT && !e.evidence) {
             ESP_LOGD(TAG, "No hold signal: empty in %" PRIu32 " s unless it comes back", e.absence_ms / 1000);
         } else if (e.evidence) {
-            ESP_LOGD(TAG, "Hold signal at gate %u", e.evidence_gate);
+            ESP_LOGD(TAG, "Hold signal at gate %u%s", e.evidence_gate, e.evidence_near ? " (the person's gates)" : "");
         }
     }
     if (ev & PE_EV_ABSENT) {
@@ -515,6 +516,8 @@ static void params_from_config(pe_params_t *p)
     p->fast_margin = CONFIG_PRESENCE_ENGINE_FAST_MARGIN;
     p->hold_frames = CONFIG_PRESENCE_ENGINE_HOLD_REPORTS;
     p->hold_window = CONFIG_PRESENCE_ENGINE_HOLD_WINDOW;
+    p->near_frames = CONFIG_PRESENCE_ENGINE_NEAR_HOLD_REPORTS;
+    p->near_gates = CONFIG_PRESENCE_ENGINE_NEAR_GATES;
     p->data_timeout_ms = CONFIG_PRESENCE_ENGINE_DATA_TIMEOUT_MS;
     p->hold_drop_percent = CONFIG_PRESENCE_ENGINE_HOLD_DROP_PERCENT;
     p->hold_drop_max = CONFIG_PRESENCE_ENGINE_HOLD_DROP_MAX;
@@ -543,6 +546,10 @@ esp_err_t esp_presence_start(void)
                   "%u) in %u of %u reports to start, hold signal in %u of %u reports to stay, data timeout %" PRIu32
                   " ms", margin, s_params.trigger_noise_margin, s_params.trigger_frames, s_params.trigger_window,
              s_params.hold_frames, s_params.hold_window, s_params.data_timeout_ms);
+    if (s_params.near_frames > 0) {
+        ESP_LOGI(TAG, "Person's gate +- %u: hold signal in %u of the last %u reports there", s_params.near_gates,
+                 s_params.near_frames, s_params.hold_window);
+    }
     if (s_params.fast_frames > 0) {
         ESP_LOGI(TAG, "Fast start: moving energy at the strong level + %u in %u reports in a row", s_params.fast_margin,
                  s_params.fast_frames);

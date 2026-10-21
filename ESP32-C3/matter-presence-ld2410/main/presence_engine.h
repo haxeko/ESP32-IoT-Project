@@ -41,10 +41,13 @@
 //     around); by default 6 of 8, about 0.7 s, so that bursts of noise up to about 0.5 s are left out. Fast start:
 //     a filtered moving energy at the trigger + `fast_margin` (20) in `fast_frames` (3) reports in a row, about
 //     0.4 s, starts presence at once (someone walking in). Isolated or two-report bursts never start it.
-//   - PRESENT: a gate holds presence when one of its filtered energies reaches its hold threshold in `hold_frames`
-//     of the last `hold_window` reports (breathing, small movements). Each report with that evidence restarts the
-//     absence countdown; after `absence_ms` without it (the Occupancy Sensing HoldTime, 60 s by default) the room is
-//     empty again and only a strong signal can start presence.
+//   - PRESENT: a gate holds presence when one of its filtered energies reaches its hold threshold (breathing, small
+//     movements): at the person's gate and its `near_gates` neighbours in `near_frames` (1) of the last
+//     `hold_window` reports, at any other gate in `hold_frames` (3) of them. The person's gate is where presence
+//     started, then where a strong signal is confirmed again (as for a start: someone moving); noise that reaches a
+//     hold threshold here and there does not move it. Each report with that evidence restarts the absence countdown;
+//     after `absence_ms` without it (the Occupancy Sensing HoldTime, 60 s by default) the room is empty again and
+//     only a strong signal can start presence.
 //   - A radar that sends nothing valid (or no energies) is a sensor fault, never an empty room: the countdown is
 //     paused and starts again from the full time once data is back.
 //
@@ -147,6 +150,8 @@ typedef struct {
     uint8_t fast_margin;
     uint8_t hold_frames;    // reports reaching hold in a gate needed...
     uint8_t hold_window;    // ...among this many last reports (at most PE_WINDOW_MAX)
+    uint8_t near_frames;    // at the person's gate and near_gates on each side: reports reaching hold needed among
+    uint8_t near_gates;     // the last hold_window (0: off, hold_frames there too)
     uint32_t data_timeout_ms; // nothing valid (or no energies) for this long: sensor fault
     // Trigger = radar threshold + 1 + trigger_margin, at least the recorded noise + trigger_noise_margin (at least 1)
     uint8_t trigger_margin;
@@ -232,6 +237,8 @@ typedef struct {
     uint8_t trigger_strong;
     bool trigger_fast; // started by a very strong moving energy (trigger_strong: its fast level)
     uint8_t evidence_gate; // gate of the latest hold evidence
+    bool evidence_near;    // found at the person's gates (near_frames)
+    uint8_t person_gate;   // where presence started or a strong signal was confirmed again
 
     // Latest energies and the last reports of every channel (filter, diagnostics)
     pe_frame_t last;

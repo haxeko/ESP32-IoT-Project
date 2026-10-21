@@ -210,13 +210,14 @@ int main(int argc, char **argv)
         run_engine(3000);
         CHECK(s_engine.th.from_radar && !s_engine.th.noise && pe_hold_threshold(&s_engine, PE_STILL, 7) == 20);
         CHECK(sim_log_contains("Thresholds from the radar (75 cm gates): strong from radar + 1 and at least the empty "
-                               "room noise + 5; hold at radar - 40 % (at most 10), at least the noise + 2"));
+                               "room noise + 5; hold at radar - 20 % (at most 5), at least the noise + 2"));
         CHECK(sim_log_contains("  gate 8 6-6.75 m    moving: radar 15 strong 16 hold 15 | still: radar 20 strong 21 "
                                "hold 20"));
         CHECK(sim_log_contains("  gate 0 0-0.75 m    moving: radar 50 strong 51 hold 50 | still: no radar threshold"));
         CHECK(sim_log_contains("ESP32 presence engine: strong signal (from radar threshold + 1, at least the empty "
                                "room noise + 5) in 6 of 8 reports to start, hold signal in 3 of 10 reports to stay"));
         CHECK(sim_log_contains("Fast start: moving energy at the strong level + 20 in 3 reports in a row"));
+        CHECK(sim_log_contains("Person's gate +- 1: hold signal in 1 of the last 10 reports there"));
         CHECK(sim_log_contains("The radar holds its factory thresholds: learn the empty room"));
         CHECK(sim_log_contains("No noise of the empty room recorded: hold = radar threshold until the empty room is "
                                "learned"));
@@ -244,10 +245,10 @@ int main(int argc, char **argv)
         CHECK(sim_log_contains("  gate 0 0-0.75 m    moving: avg 28 max ") && sim_log_contains("| still: not settable"));
         pe_noise_t n;
         CHECK(stored_noise(&n) && pe_noise_valid(&n) && n.frames == 300 && n.gate_cm == 75);
-        CHECK(s_engine.th.noise && pe_hold_threshold(&s_engine, PE_STILL, 7) == 12);
-        CHECK(pe_trigger_threshold(&s_engine, PE_MOVING, 4) == 26 && pe_hold_threshold(&s_engine, PE_MOVING, 4) == 15);
+        CHECK(s_engine.th.noise && pe_hold_threshold(&s_engine, PE_STILL, 7) == 16);
+        CHECK(pe_trigger_threshold(&s_engine, PE_MOVING, 4) == 26 && pe_hold_threshold(&s_engine, PE_MOVING, 4) == 20);
         CHECK(sim_log_contains("Noise of the empty room recorded (300 reports) and saved"));
-        CHECK(sim_log_contains("  gate 4 3-3.75 m    moving: radar 25 strong 26 hold 15 (noise "));
+        CHECK(sim_log_contains("  gate 4 3-3.75 m    moving: radar 25 strong 26 hold 20 (noise "));
         CHECK(sim_log_count("Thresholds from the radar") == 2); // boot, then once for both changes
         CHECK(sim_log_count("The radar holds its factory thresholds") == 1); // only at boot
 
@@ -255,7 +256,7 @@ int main(int argc, char **argv)
         boot(again, false);
         CHECK(sim_log_contains("Noise of the empty room loaded (300 reports, 75 cm gates)"));
         run_engine(3000);
-        CHECK(s_engine.th.noise && pe_hold_threshold(&s_engine, PE_STILL, 7) == 12);
+        CHECK(s_engine.th.noise && pe_hold_threshold(&s_engine, PE_STILL, 7) == 16);
     }
 
     test_begin("damaged noise in NVS: hold = radar threshold, the blob is left as it is");
@@ -463,8 +464,10 @@ int main(int argc, char **argv)
             g_person_moving = 0;
             g_person_still = (uint8_t)(pe_hold_threshold(&s_engine, PE_STILL, 4) + 4);
         });
+        sim_at(299000, []() { esp_presence_command(ESP_PRESENCE_PRINT_STATUS); });
         run_engine(300000);
         CHECK(esp_presence_occupied() && pe_hold_threshold(&s_engine, PE_STILL, 4) + 4 <= 30);
+        CHECK(sim_log_contains("STATUS presence: present, hold signal at gate 4 (the person's gates)"));
         sim_at(300000, []() { g_person_gate = -1; });
         run_engine(355000);
         CHECK(!esp_presence_occupied() && s_engine.presence == PE_PRESENCE_PRESENT); // counting down

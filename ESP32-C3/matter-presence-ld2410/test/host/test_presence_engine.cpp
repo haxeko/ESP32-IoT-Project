@@ -269,20 +269,92 @@ struct Bench {
 };
 
 // Thresholds a channel should get with the default parameters: strong above T and from noise + 5 (above 100: never);
-// hold T - min(10, 40 % of T), at least noise + 2 (above 100: never), below the trigger, at least 1
+// hold T - min(5, 20 % of T), at least noise + 2 (above 100: never), below the trigger, at least 1
 static int expected_trigger(int t, int level)
 {
     return std::min(std::max(t + 1, level + 5), PE_OFF);
 }
 static int expected_hold(int t, int level)
 {
-    const int drop = std::min(10, (t * 40 + 50) / 100);
+    const int drop = std::min(5, (t * 20 + 50) / 100);
     const int hold = std::max(t - drop, level + 2);
     if (hold > PE_MAX_ENERGY) {
         return PE_OFF;
     }
     return std::max(1, std::min(hold, expected_trigger(t, level) - 1));
 }
+
+// A quiet room (every energy 0) driven report by report: presence started by someone walking in (moving energy 80 at
+// a gate for 1 s), then reports with pulses of the still energy of one gate
+struct Pulses {
+    pe_engine_t e;
+    pe_params_t p;
+    uint32_t now = 1000;
+    int absents = 0;
+
+    explicit Pulses(uint8_t near_frames = 1)
+    {
+        pe_default_params(&p);
+        p.near_frames = near_frames;
+        pe_init(&e, &p, now);
+        pe_radar_thresholds_t radar;
+        pe_factory_thresholds(&radar);
+        const pe_range_t range = { 75, 8, 8 };
+        pe_configure(&e, &radar, &range, now);
+        pe_noise_t noise = {};
+        noise.magic = PE_NOISE_MAGIC;
+        noise.version = PE_NOISE_VERSION;
+        noise.size = sizeof(noise);
+        memset(noise.level, 2, sizeof(noise.level));
+        noise.frames = 300;
+        noise.gate_cm = 75;
+        noise.crc32 = pe_noise_crc(&noise);
+        CHECK(pe_set_noise(&e, &noise, now));
+    }
+
+    void report(int moving_gate, uint8_t moving, int still_gate, uint8_t still)
+    {
+        pe_frame_t f = {};
+        f.engineering = true;
+        f.moving_gates = PE_GATES;
+        f.still_gates = PE_GATES;
+        if (moving_gate >= 0) {
+            f.moving[moving_gate] = moving;
+        }
+        if (still_gate >= 0) {
+            f.still[still_gate] = still;
+        }
+        now += 100;
+        pe_step(&e, &f, now);
+        pe_tick(&e, now);
+        absents += (pe_take_events(&e) & PE_EV_ABSENT) ? 1 : 0;
+    }
+
+    void walk(int gate, uint32_t ms = 1000)
+    {
+        for (uint32_t t = 0; t < ms; t += 100) {
+            report(gate, 80, -1, 0);
+        }
+    }
+
+    // For ms: every period_ms, `reports` reports in a row with the still energy of `gate` at `energy`
+    void pulses(uint32_t ms, int gate, uint8_t energy, int reports, uint32_t period_ms = 5000)
+    {
+        for (uint32_t t = 0; t < ms; t += 100) {
+            const bool on = (int)((t % period_ms) / 100) < reports;
+            report(-1, 0, gate, on ? energy : 0);
+        }
+    }
+
+    // For ms: every period_ms the still energy of `gate` at energy, energy - 1, energy: one filtered report at energy
+    void single(uint32_t ms, int gate, uint8_t energy, uint32_t period_ms = 5000)
+    {
+        for (uint32_t t = 0; t < ms; t += 100) {
+            const int i = (int)((t % period_ms) / 100);
+            report(-1, 0, gate, i == 0 || i == 2 ? energy : i == 1 ? (uint8_t)(energy - 1) : 0);
+        }
+    }
+};
 
 int main(int argc, char **argv)
 {
@@ -326,7 +398,7 @@ int main(int argc, char **argv)
         CHECK(th.factory);
     }
 
-    test_begin("hold thresholds with the noise: radar - 40 % (at most 10), above the noise + 2, below the trigger");
+    test_begin("hold thresholds with the noise: radar - 20 % (at most 5), above the noise + 2, below the trigger");
     {
         pe_params_t p;
         pe_default_params(&p);
@@ -343,7 +415,7 @@ int main(int argc, char **argv)
         pe_compute_thresholds(&p, &radar, &noise, &th);
         CHECK(th.noise);
         // Gates 5 and 6: the noise reaches the radar threshold, strong from noise + 5, hold just below
-        const int want[PE_GATES] = { 40, 47, 12, 9, 6, 5, 62, 89, 30 };
+        const int want[PE_GATES] = { 45, 47, 16, 12, 8, 5, 62, 94, 30 };
         const int trigger[PE_GATES] = { 51, 51, 21, 16, 11, 8, 65, 100, 31 };
         for (int g = 0; g < PE_GATES; g++) {
             const pe_channel_t &ch = th.ch[PE_MOVING][g];
@@ -391,11 +463,11 @@ int main(int argc, char **argv)
         CHECK(s4.trigger == 32 && s4.hold == 29 && s4.flags == (PE_CH_NOISE_TRIGGER | PE_CH_NOISE_HOLD));
         CHECK(th.ch[PE_MOVING][8].trigger == PE_OFF && th.ch[PE_MOVING][8].hold == 98);
         CHECK(th.ch[PE_MOVING][7].trigger == PE_OFF && th.ch[PE_MOVING][7].hold == PE_OFF);
-        CHECK(th.ch[PE_MOVING][0].trigger == 51 && th.ch[PE_MOVING][0].hold == 40 && th.ch[PE_MOVING][0].flags == 0);
+        CHECK(th.ch[PE_MOVING][0].trigger == 51 && th.ch[PE_MOVING][0].hold == 45 && th.ch[PE_MOVING][0].flags == 0);
         // Extra margin on every gate; the hold does not move
         p.trigger_margin = 4;
         pe_compute_thresholds(&p, &radar, &noise, &th);
-        CHECK(th.ch[PE_MOVING][0].trigger == 55 && th.ch[PE_MOVING][0].hold == 40 && th.ch[PE_MOVING][0].flags == 0);
+        CHECK(th.ch[PE_MOVING][0].trigger == 55 && th.ch[PE_MOVING][0].hold == 45 && th.ch[PE_MOVING][0].flags == 0);
         CHECK(th.ch[PE_STILL][3].trigger == 45 && th.ch[PE_STILL][3].hold == 38);
         CHECK(th.ch[PE_STILL][2].trigger == 69 && th.ch[PE_STILL][2].hold == 66);
         pe_compute_thresholds(&p, &radar, nullptr, &th);
@@ -840,7 +912,7 @@ int main(int argc, char **argv)
     {
         Bench b;
         b.learn_noise();
-        b.person = { 6, 0, 18, 0 }; // still gate 6: radar 20, hold 12
+        b.person = { 6, 0, 18, 0 }; // still gate 6: radar 20, hold 16
         b.run(10 * 60 * 1000);
         CHECK(b.triggers.empty());
         b.person = { 6, 0, 20, 0 }; // at the threshold, not above it
@@ -851,12 +923,12 @@ int main(int argc, char **argv)
         CHECK(b.triggers.size() == 1);
     }
 
-    test_begin("someone sitting still far away (still energy 14, radar 20, hold 12) stays present; empty 60 s after "
-               "leaving");
+    test_begin("someone sitting still far away (still energy 14 +- 4, radar 20, hold 16: now and then, enough at the "
+               "person's gate) stays present; empty 60 s after leaving");
     {
         Bench b;
         b.learn_noise();
-        CHECK(pe_hold_threshold(&b.e, PE_STILL, 7) == 12);
+        CHECK(pe_hold_threshold(&b.e, PE_STILL, 7) == 16);
         b.run(5000);
         b.person = { 7, 60, 30, 0 }; // walks in
         b.run(3000);
@@ -871,16 +943,126 @@ int main(int argc, char **argv)
         CHECK(!pe_occupied_report(&b.e));
     }
 
-    test_begin("without a noise recording the hold is the radar threshold: the same person is lost");
+    test_begin("a weaker still person (still energy 12 +- 3, hold 16): held by one report at the person's gate; lost "
+               "with that rule off (3 of 10 at every gate), and without a noise recording (hold = radar threshold 20)");
     {
-        Bench b;
-        CHECK(pe_hold_threshold(&b.e, PE_STILL, 7) == 20);
-        b.run(5000);
-        b.person = { 7, 60, 30, 0 };
-        b.run(3000);
-        b.person = { 7, 3, 14, 4 };
-        b.run(5 * 60 * 1000);
-        CHECK(!b.absents.empty()); // reported empty while still there (at times present again)
+        for (const int near : { 0, 1 }) {
+            for (const bool noise : { true, false }) {
+                Bench b;
+                b.p.near_frames = (uint8_t)near;
+                pe_init(&b.e, &b.p, b.now);
+                b.configure();
+                if (noise) {
+                    b.learn_noise();
+                }
+                CHECK(pe_hold_threshold(&b.e, PE_STILL, 7) == (noise ? 16 : 20));
+                b.run(5000);
+                b.person = { 7, 60, 30, 0 };
+                b.run(3000);
+                CHECK(b.triggers.size() == 1);
+                b.person = { 7, 3, 12, 3 };
+                b.run(10 * 60 * 1000);
+                // Lost: reported empty while still there (at times present again)
+                CHECK(b.absents.empty() == (near == 1 && noise));
+            }
+        }
+    }
+
+    test_begin("the person's gate +- 1: one filtered report at the hold threshold keeps presence (two reports in a "
+               "row, every 5 s); another gate needs 3 of 10; a lone report never counts");
+    {
+        // Factory thresholds, noise 2: hold still gate 4 = 30 - 5 = 25, still gate 6 = 20 - 4 = 16
+        Pulses a;
+        a.walk(3);
+        CHECK(a.e.presence == PE_PRESENCE_PRESENT && a.e.person_gate == 3);
+        CHECK(pe_hold_threshold(&a.e, PE_STILL, 4) == 25 && pe_hold_threshold(&a.e, PE_STILL, 6) == 16);
+        a.pulses(10 * 60 * 1000, 4, 25, 2);
+        CHECK(a.absents == 0 && a.e.evidence_near && a.e.evidence_gate == 4);
+        a.pulses(10 * 60 * 1000, 4, 24, 2); // below the hold threshold: empty
+        CHECK(a.absents == 1);
+
+        Pulses b; // the same pulses two gates further: empty a hold time later
+        b.walk(3);
+        b.pulses(2 * 60 * 1000, 6, 16, 2);
+        CHECK(b.absents == 1 && b.e.presence == PE_PRESENCE_WAITING);
+
+        Pulses c; // three reports in a row there: 3 of 10, held
+        c.walk(3);
+        c.pulses(10 * 60 * 1000, 6, 16, 3);
+        CHECK(c.absents == 0 && !c.e.evidence_near && c.e.evidence_gate == 6);
+
+        Pulses d; // a lone report at the person's gate: filtered out
+        d.walk(3);
+        d.pulses(2 * 60 * 1000, 3, 100, 1);
+        CHECK(d.absents == 1);
+
+        Pulses off(0); // the rule off: 3 of 10 at the person's gate too
+        off.walk(3);
+        off.pulses(2 * 60 * 1000, 4, 25, 2);
+        CHECK(off.absents == 1);
+
+        Pulses one; // exactly one filtered report every 5 s (25, 24, 25): enough
+        one.walk(3);
+        one.single(10 * 60 * 1000, 4, 25);
+        CHECK(one.absents == 0);
+        Pulses two(2); // ...not when two are asked for
+        two.walk(3);
+        two.single(2 * 60 * 1000, 4, 25);
+        CHECK(two.absents == 1);
+
+        Pulses next; // gate 5 is two gates from the person's: 3 of 10 there
+        next.walk(3);
+        CHECK(pe_hold_threshold(&next.e, PE_STILL, 5) == 25);
+        next.pulses(2 * 60 * 1000, 5, 25, 2);
+        CHECK(next.absents == 1);
+
+        Pulses both; // hold signals at the person's gate and next to it: the person's gate is named
+        both.walk(3);
+        for (int i = 0; i < 30; i++) {
+            both.report(4, (uint8_t)pe_hold_threshold(&both.e, PE_MOVING, 4), 3,
+                        (uint8_t)pe_hold_threshold(&both.e, PE_STILL, 3));
+        }
+        CHECK(both.e.evidence && both.e.evidence_near && both.e.evidence_gate == 3);
+
+        // Defaults: one report at the person's gate +- 1, hold 20 % (at most 5) below the radar threshold. Options out
+        // of range: at most the hold window, at most 8 gates on each side
+        pe_params_t p;
+        pe_default_params(&p);
+        CHECK(p.near_frames == 1 && p.near_gates == 1 && p.hold_drop_percent == 20 && p.hold_drop_max == 5);
+        CHECK(p.hold_frames == 3 && p.hold_window == 10);
+        p.near_frames = 16;
+        p.near_gates = 12;
+        pe_engine_t e;
+        pe_init(&e, &p, 0);
+        CHECK(e.p.near_frames == e.p.hold_window && e.p.near_gates == PE_GATES - 1);
+    }
+
+    test_begin("the person's gate follows a strong signal confirmed again (someone walking over), not noise at the "
+               "hold threshold or a short strong burst elsewhere");
+    {
+        Pulses a;
+        a.walk(6); // an earlier presence at gate 6, empty again
+        a.pulses(2 * 60 * 1000, -1, 0, 0);
+        CHECK(a.absents == 1 && a.e.person_gate == 6);
+        while (a.e.presence != PE_PRESENCE_PRESENT) { // set the moment presence starts
+            a.report(3, 80, -1, 0);
+        }
+        CHECK(a.e.person_gate == 3);
+        a.absents = 0;
+        a.walk(3);
+        a.pulses(20 * 1000, 7, 20, 2);      // hold-level pulses at gate 7: the person's gate stays 3
+        CHECK(a.e.person_gate == 3);
+        for (int i = 0; i < 2; i++) {       // a strong burst of 2 reports at gate 7: not confirmed
+            a.report(7, 80, -1, 0);
+        }
+        a.pulses(1000, -1, 0, 0);
+        CHECK(a.e.person_gate == 3);
+        a.walk(7);                          // walks over to gate 7
+        CHECK(a.e.person_gate == 7);
+        a.pulses(10 * 60 * 1000, 6, 16, 2); // now gate 6 is next to the person
+        CHECK(a.absents == 0);
+        a.pulses(2 * 60 * 1000, 4, 25, 2);  // and gate 4 no longer
+        CHECK(a.absents == 1);
     }
 
     test_begin("countdown starts again when the hold signal comes back");
@@ -1035,13 +1217,13 @@ int main(int argc, char **argv)
     {
         Bench b;
         b.learn_noise();
-        CHECK(b.e.th.noise && pe_hold_threshold(&b.e, PE_STILL, 7) == 12);
+        CHECK(b.e.th.noise && pe_hold_threshold(&b.e, PE_STILL, 7) == 16);
         b.range.gate_cm = 20;
         b.configure();
         CHECK(!b.e.th.noise && pe_hold_threshold(&b.e, PE_STILL, 7) == 20);
         b.range.gate_cm = 75;
         b.configure();
-        CHECK(b.e.th.noise && pe_hold_threshold(&b.e, PE_STILL, 7) == 12);
+        CHECK(b.e.th.noise && pe_hold_threshold(&b.e, PE_STILL, 7) == 16);
     }
 
     test_begin("new thresholds from the radar while present: presence stays, the countdown goes on");

@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <initializer_list>
 
 #include "presence_engine.h"
 
@@ -268,11 +269,13 @@ void pe_default_params(pe_params_t *p)
     p->fast_margin = 20;
     p->hold_frames = 3;
     p->hold_window = 10;
+    p->near_frames = 1;
+    p->near_gates = 1;
     p->data_timeout_ms = 2000;
     p->trigger_margin = 0;
     p->trigger_noise_margin = 5;
-    p->hold_drop_percent = 40;
-    p->hold_drop_max = 10;
+    p->hold_drop_percent = 20;
+    p->hold_drop_max = 5;
     p->hold_noise_margin = 2;
 }
 
@@ -283,6 +286,8 @@ static void sanitize_params(pe_params_t *p)
     p->fast_frames = std::min<uint8_t>(p->fast_frames, PE_WINDOW_MAX);
     p->hold_window = std::clamp<uint8_t>(p->hold_window, 1, PE_WINDOW_MAX);
     p->hold_frames = std::clamp<uint8_t>(p->hold_frames, 1, p->hold_window);
+    p->near_frames = std::min<uint8_t>(p->near_frames, p->hold_window);
+    p->near_gates = std::min<uint8_t>(p->near_gates, PE_GATES - 1);
     p->data_timeout_ms = std::max<uint32_t>(p->data_timeout_ms, 300);
     p->hold_drop_percent = std::min<uint8_t>(p->hold_drop_percent, 90);
     p->trigger_noise_margin = std::max<uint8_t>(p->trigger_noise_margin, 1);
@@ -479,10 +484,41 @@ static int confirmed_gate(const pe_engine_t *e, const uint16_t *bits, int window
     return -1;
 }
 
-// Gate with hold evidence (hold_frames reports reaching hold among the last hold_window), -1 if none. Counted per
-// gate: noise reaches hold here and there, a person keeps doing it at the same place.
-static int evidence_gate(const pe_engine_t *e)
+// The person's gate and near_gates on each side
+static uint16_t person_mask(const pe_engine_t *e)
 {
+    uint16_t mask = 0;
+    const int lo = std::max(0, e->person_gate - e->p.near_gates);
+    const int hi = std::min(PE_GATES - 1, e->person_gate + e->p.near_gates);
+    for (int g = lo; g <= hi; g++) {
+        mask |= (uint16_t)(1u << g);
+    }
+    return mask;
+}
+
+// Gate with hold evidence, -1 if none: at the person's gates near_frames reports reaching hold among the last
+// hold_window (*near; the gate of the newest one, the closest to the person's), elsewhere hold_frames of them,
+// counted per gate (noise reaches hold here and there, a person keeps doing it at the same place).
+static int evidence_gate(const pe_engine_t *e, bool *near)
+{
+    *near = false;
+    if (e->p.near_frames > 0) {
+        const uint16_t mask = person_mask(e);
+        if (count_reports(e, e->hold_bits, e->p.hold_window, mask) >= e->p.near_frames) {
+            *near = true;
+            const int n = std::min<int>(e->p.hold_window, e->window_count);
+            for (int i = 0; i < n; i++) {
+                const uint16_t bits = e->hold_bits[(e->window_pos + PE_WINDOW_MAX - i) % PE_WINDOW_MAX] & mask;
+                for (int d = 0; bits != 0 && d <= e->p.near_gates; d++) {
+                    for (const int g : { e->person_gate - d, e->person_gate + d }) {
+                        if (g >= 0 && g < PE_GATES && (bits & (1u << g))) {
+                            return g;
+                        }
+                    }
+                }
+            }
+        }
+    }
     for (int g = 0; g < PE_GATES; g++) {
         if (count_reports(e, e->hold_bits, e->p.hold_window, (uint16_t)(1u << g)) >= e->p.hold_frames) {
             return g;
@@ -638,16 +674,26 @@ static void evaluate(pe_engine_t *e, const pe_frame_t *f, uint32_t now_ms)
                 e->trigger_threshold = best_threshold;
                 e->trigger_strong = best_strong;
             }
+            e->person_gate = e->trigger_gate;
+            e->evidence_near = true;
             e->events |= PE_EV_TRIGGERED | PE_EV_EVIDENCE;
         }
         return;
     }
 
-    const int g = evidence_gate(e);
+    // A strong signal confirmed as for a start (someone moving): the person is at its strongest gate now
+    if (best_excess >= 0 && ((e->p.fast_frames > 0 && confirmed_gate(e, e->fast_bits, e->p.fast_frames,
+                                                                     e->p.fast_frames) >= 0) ||
+                             confirmed_gate(e, e->trig_bits, e->p.trigger_window, e->p.trigger_frames) >= 0)) {
+        e->person_gate = fast_excess >= 0 ? fast_gate : best_gate;
+    }
+    bool near = false;
+    const int g = evidence_gate(e, &near);
     const bool evidence = g >= 0;
     if (evidence) {
         e->last_evidence_ms = now_ms;
         e->evidence_gate = (uint8_t)g;
+        e->evidence_near = near;
     }
     if (evidence != e->evidence) {
         e->evidence = evidence;

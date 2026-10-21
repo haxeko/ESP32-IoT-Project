@@ -317,7 +317,9 @@ menu "ESP32 Presence Engine (experimental)"
         default 3
         help
             While present, a gate must reach its hold threshold in this many
-            of the last "hold window" reports to restart the countdown.
+            of the last "hold window" reports to restart the countdown (the
+            person's gates: "Reports with a hold signal at the person's
+            gates").
 
     config PRESENCE_ENGINE_HOLD_WINDOW
         int "Report window of the hold signal"
@@ -325,11 +327,30 @@ menu "ESP32 Presence Engine (experimental)"
         range 1 16
         default 10
 
+    config PRESENCE_ENGINE_NEAR_HOLD_REPORTS
+        int "Reports with a hold signal at the person's gates"
+        depends on PRESENCE_ESP_ENGINE
+        range 0 16
+        default 1
+        help
+            The person's gate is where presence started, then where a strong
+            signal is confirmed again (someone moving). There and at "the
+            person's gates on each side" around it, this many reports at the
+            hold threshold among the last "hold window" keep presence (a
+            breath of someone sitting still); any other gate needs "Reports
+            with a hold signal". 0: off (every gate as the others).
+
+    config PRESENCE_ENGINE_NEAR_GATES
+        int "The person's gates on each side"
+        depends on PRESENCE_ESP_ENGINE
+        range 0 3
+        default 1
+
     config PRESENCE_ENGINE_HOLD_DROP_PERCENT
         int "Hold threshold: this share (%) below the radar threshold"
         depends on PRESENCE_ESP_ENGINE
         range 0 90
-        default 40
+        default 20
         help
             Hold threshold of a gate = its radar threshold minus this share of
             it, at most "largest drop" below it, and never below the noise of
@@ -340,7 +361,7 @@ menu "ESP32 Presence Engine (experimental)"
         int "Hold threshold: largest drop below the radar threshold"
         depends on PRESENCE_ESP_ENGINE
         range 0 50
-        default 10
+        default 5
 
     config PRESENCE_ENGINE_LEARN_FLOOR_PERCENT
         int "Learning: thresholds at least this share of the factory ones (%)"
