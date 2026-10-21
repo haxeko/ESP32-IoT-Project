@@ -438,7 +438,8 @@ idf.py -B build-esppresence -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.esppres
   - ba bộ ngưỡng radar: xuất xưởng, kiểu radar tự đo (sát nhiễu: phân vị 99 + 5), kiểu ESP32 học của bản ổn định;
   - **có số đo nhiễu:** 0 lần báo nhầm có người. Người ở 10 s rồi ra: trống sau 61 s. Người ngồi yên ở 3,75–6,75 m (năng lượng tĩnh khoảng 14–18 ± 5) được giữ suốt 20 phút với cả ba bộ ngưỡng;
   - **chưa có số đo nhiễu** (ngưỡng duy trì = ngưỡng radar): với ngưỡng xuất xưởng, người ngồi yên đó chỉ được giữ khoảng 74 % thời gian, bị báo trống khoảng một lần mỗi 20 phút;
-  - **xung nhiễu nhiều gấp 3 lần lúc học:** ngưỡng xuất xưởng và ngưỡng ESP32 học không báo nhầm. Ngưỡng sát nhiễu báo nhầm 30 lần trong 100 giờ với 1.0.159, 19 lần với 1.0.162 (ngưỡng kích hoạt trên nhiễu), do ngưỡng radar chứ không do ngưỡng duy trì: học lại.
+  - **xung nhiễu nhiều gấp 3 lần lúc học:** ngưỡng xuất xưởng và ngưỡng ESP32 học không báo nhầm. Ngưỡng sát nhiễu báo nhầm 30 lần trong 100 giờ với 1.0.159, 19 lần với 1.0.162 (ngưỡng kích hoạt trên nhiễu), 0 lần với 1.0.166 (6 trong 8 báo cáo; người đi vào vẫn được nhận ở cả 100 lần), do ngưỡng radar chứ không do ngưỡng duy trì: học lại.
+- Build biến thể `esppresence` 1.0.166: **0 lỗi, 0 cảnh báo**, 1 579 847 B (trống 20 %), RAM tĩnh 154 503 B, header OTA phiên bản 166 / `1.0.166-esppresence`, cùng VID/PID. Mã của bản mặc định và `espfilter` không đổi so với 1.0.162.
 - Build biến thể `esppresence` 1.0.162 (cùng bản mặc định và `espfilter` để chắc mã học phòng trống dùng chung không đổi hành vi của chúng): **0 lỗi, 0 cảnh báo**.
   - `sdkconfig` chỉ khác `wroom_n4` ở Model, Hold time ban đầu (60 thay 30) và 13 tuỳ chọn của bộ xử lý: cùng VID/PID, cluster, endpoint, Wi-Fi, BLE.
   - Header file OTA: VID `0xFFF1`, PID `0x8001`, phiên bản 162 / `1.0.162-esppresence`.
