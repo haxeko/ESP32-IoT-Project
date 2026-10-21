@@ -189,7 +189,8 @@ Riêng bản ESP32-C3 SuperMini:
 - **LED một màu** khi học phòng trống: sáng 20 s (rời phòng), nháy chậm khoảng 100 s (ESP32 ghi nhiễu 30 s, rồi radar tự đo), rồi sáng 10 s cả khi xong lẫn khi thất bại: xem kết quả trong log `quiet_learn`.
 - Firmware `1.0.<số commit>-esppresence`, Model `Presence LD2410 ESP engine`; VID/PID giữ `0xFFF1`/`0x8001`, chân radar GPIO3/GPIO4 như bản mặc định.
 - **RAM khi chạy:** biến thể này thêm task `presence_eng` (stack 4 KB) và `console_repl` (stack 3,5 KB), cùng hàng đợi báo cáo radar và bộ đệm console, nên heap còn ít hơn bản mặc định khoảng 10–11 KB (ước tính từ kích thước stack và bộ đệm, **chưa đo trên bo**). Heap thấp nhất của bản C3 đo được lúc ghép nối là 40,0 KB (1.0.131, mục **RAM và flash**); kiểm tra lại bằng log `mem` với biến thể này, nhất là lúc ghép nối (BLE và Wi-Fi cùng chạy).
-- **Kiểm chứng:** host test như bản H2 (chung mã nguồn); build cho ESP32-C3 ghi ở dưới. **Chưa thử trên bo thật**: console `presence>` trên cổng USB-C, bộ xử lý với radar thật, RAM khi chạy, OTA lên biến thể này.
+- **Kiểm chứng:** host test như bản H2 (chung mã nguồn). Build 1.0.136 (Docker `release-v1.6.1_idf_v6.0.2`): **0 lỗi, 0 cảnh báo**; firmware 1 550 352 B (phân vùng app còn trống 21 %), RAM tĩnh 151 531 B, hơn bản mặc định cùng mã 35 600 B flash và 958 B RAM tĩnh; `sdkconfig` chỉ khác bản mặc định ở Model, Hold time ban đầu (60) và 11 tuỳ chọn của bộ xử lý; header OTA VID `0xFFF1`, PID `0x8001`, phiên bản 136 / `1.0.136-esppresence`. Bản mặc định C3 vẫn build 0 lỗi, 0 cảnh báo, `sdkconfig` chỉ thêm dòng tuỳ chọn bộ xử lý (tắt).
+- **Chưa thử trên bo thật:** console `presence>` trên cổng USB-C, bộ xử lý với radar thật, RAM khi chạy, OTA lên biến thể này.
 
 ## Wi-Fi và BLE
 

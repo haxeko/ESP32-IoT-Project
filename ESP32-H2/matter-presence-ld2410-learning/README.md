@@ -327,7 +327,7 @@ Lệnh chỉ xếp hàng yêu cầu, câu trả lời in ra log; gõ `help` đ�
 2. `idf.py -p /dev/ttyACM0 monitor` (macOS `/dev/cu.usbmodem*`, Windows `COMx`); thoát bằng `Ctrl+]`. Không có ESP-IDF: phần mềm terminal nối tiếp bất kỳ (PuTTY, *Serial Monitor* của Arduino IDE), tốc độ baud không quan trọng với USB-Serial-JTAG (chọn 115200).
 3. Bấm Enter để thấy dấu nhắc, gõ lệnh (ví dụ `DIAG_STREAM on`) rồi Enter. Log khác vẫn in xen giữa, lệnh vẫn được nhận.
 
-Không cắm máy tính (ví dụ cấp nguồn bằng sạc USB): log bị bỏ, không làm chậm task khác. Không cần console thì tắt `PRESENCE_ENGINE_CONSOLE`; học phòng trống vẫn chạy được từ Home Assistant hoặc nút BOOT.
+Không cắm máy tính (ví dụ cấp nguồn bằng sạc USB): log bị bỏ; theo mã ESP-IDF 6.0.2, lần đầu bộ đệm đầy thì task đang in log chờ tối đa 50 ms, sau đó bỏ ngay, không chờ nữa. Không cần console thì tắt `PRESENCE_ENGINE_CONSOLE`; học phòng trống vẫn chạy được từ Home Assistant hoặc nút BOOT.
 
 **Bảng `DIAG`**, mỗi vùng một dòng, cho năng lượng chuyển động (*moving*) và tĩnh (*still*):
 
@@ -430,6 +430,12 @@ Kết quả ở `build-esppresence/`: `matter_presence_h2_learn.bin` / `matter_p
   - ESP32-H2: console trở lại UART0.
 
 **Mức độ kiểm chứng:**
+- **Build 1.0.136** (Docker `release-v1.6.1_idf_v6.0.2`): **0 lỗi, 0 cảnh báo** cho cả hai bo.
+  - ESP32-H2 `esppresence`: firmware 1 821 856 B (phân vùng app còn trống 7 %), RAM tĩnh 175 886 B; hơn bản mặc định cùng mã 12 000 B flash và 668 B RAM tĩnh (bản H2 vốn có console ESP-IDF của console Matter). Khi chạy còn thêm task `presence_eng` (stack 4 KB) và hàng đợi báo cáo (khoảng 0,5 KB), chưa đo trên bo.
+  - ESP32-C3 `esppresence`: firmware 1 550 352 B (còn trống 21 %), RAM tĩnh 151 531 B; hơn bản mặc định cùng mã 35 600 B flash (REPL của ESP-IDF) và 958 B RAM tĩnh.
+  - `sdkconfig` chỉ khác bản mặc định ở Model, Hold time ban đầu (60 thay 30), 11 tuỳ chọn của bộ xử lý, và trên ESP32-H2 ở console (USB-Serial-JTAG thay UART0; kiểu console của OpenThread đổi theo, không dùng vì không có host OpenThread). Cùng VID/PID, cluster, endpoint, Thread / Wi-Fi, BLE.
+  - Header file OTA: VID `0xFFF1`, PID `0x8000` (H2) / `0x8001` (C3), phiên bản 136 / `1.0.136-esppresence`.
+  - Bản mặc định H2, C3 và biến thể `espfilter` (build cùng mã, trước commit) vẫn **0 lỗi, 0 cảnh báo**; `sdkconfig` của ba bản này chỉ thêm dòng tuỳ chọn bộ xử lý (tắt). Lớn hơn 1.0.134 khoảng 1,5–1,6 KB flash và 8 B RAM tĩnh: driver đếm khung hỏng và xả UART, mã ghi nhiễu trong `quiet_learn` có nhưng không chạy.
 - **Host test** (máy tính, radar và phòng giả lập; không phải dữ liệu radar thật):
   - các test của nhánh C3-WROOM 1.0.159 chạy trên mã của bản này: bộ xử lý (23 trường hợp, bản sao nguyên văn nên kết quả như bản WROOM), task `presence_eng` với driver radar và `radar_settings` của bản này (11 trường hợp của bản WROOM, và 2 trường hợp thêm cho bản này: radar im lặng thì không đòi bật engineering mode; khung sai footer hay độ dài không thể có được đếm là khung hỏng), học phòng trống của bản này (`quiet_learn.cpp`) với phần ghi nhiễu (6 trường hợp của bộ xử lý: ghi 30 s rồi tắt engineering mode trước 0x000B, huỷ, thiếu báo cáo, radar đo thất bại, radar firmware cũ, và học trên ESP32). Một kiểm tra của bản WROOM không qua vì câu log có sẵn của bản này ngắn hơn (`Gate 3 reads back 30/40 instead of 30/70`, bản WROOM thêm `, the radar may hold a mix of old and new thresholds`): câu log của bản ổn định được giữ nguyên;
   - task `radar_cfg` (`radar_control.cpp` của bản này) với bộ xử lý giả, 14 tình huống: cấu hình đưa ngưỡng và Range cho bộ xử lý, cờ bận quanh mỗi phiên; bật lại engineering mode tối đa 10 s một lần (cả khi radar không nhận lệnh); radar im lặng: xả UART và thoát chế độ cấu hình sau 5 s, khởi động lại sau 15 s rồi 30 s; radar từ chối khởi động lại; phiên cấu hình dài không bị coi là lỗi; radar kẹt ở chế độ cấu hình; học từ Home Assistant (ghi nhiễu, radar tự đo, đọc lại ngưỡng, bật lại engineering mode); huỷ bằng Home Assistant, bằng `LEARN_CANCEL` lúc đang ghi nhiễu, lúc radar đang đo và trước khi bắt đầu; Factory thresholds từ Home Assistant và 4 lần bấm; radar firmware cũ; thiếu báo cáo lúc ghi nhiễu;
