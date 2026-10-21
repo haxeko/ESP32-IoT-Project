@@ -102,6 +102,12 @@ bool ld2410_get_target(ld2410_target_t *out);
 // Sets the report hook (nullptr: none).
 void ld2410_set_report_hook(ld2410_report_hook_t hook);
 
+// Frames that failed their checks since start (wrong tail, report too short or of an unknown type): line noise or a
+// loose wire. Counted, never handed over.
+uint32_t ld2410_frame_errors(void);
+// Recovery after a silence: the reader task drops what is waiting in the UART and restarts the frame parser.
+void ld2410_resync(void);
+
 // Configuration commands. Each one waits up to 1 s for the radar's ACK, so call them from a normal task, never
 // from the Matter task or an esp_timer callback. The other commands are only accepted between config_begin and
 // config_end (each tried 3 times: a radar left in configuration mode sends no reports).

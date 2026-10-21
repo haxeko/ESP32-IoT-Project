@@ -9,3 +9,5 @@ build-wroom/
 sdkconfig.wroom
 build-espfilter/
 sdkconfig.espfilter
+build-esppresence/
+sdkconfig.esppresence

@@ -34,11 +34,19 @@ FILTER="-DCONFIG_PRESENCE_ENERGY_FILTER=1 -DCONFIG_PRESENCE_ENERGY_FILTER_STRONG
 $CXX $FLAGS $FILTER -o "$OUT/energy_filter" test_energy_filter.cpp radar_sim.cpp sim.cpp
 $CXX $FLAGS $FILTER -o "$OUT/worker_filter" test_worker_filter.cpp $MAIN/presence.cpp $MAIN/quiet_learn.cpp \
     $MAIN/radar_settings.cpp $RADAR
+ENGINE="-DCONFIG_PRESENCE_ESP_ENGINE=1 -DCONFIG_PRESENCE_ENGINE_TRIGGER_REPORTS=3 -DCONFIG_PRESENCE_ENGINE_TRIGGER_WINDOW=4 \
+    -DCONFIG_PRESENCE_ENGINE_HOLD_REPORTS=3 -DCONFIG_PRESENCE_ENGINE_HOLD_WINDOW=10 -DCONFIG_PRESENCE_ENGINE_DATA_TIMEOUT_MS=2000 \
+    -DCONFIG_PRESENCE_ENGINE_HOLD_SPREADS_X10=30 -DCONFIG_PRESENCE_ENGINE_TRIGGER_SPREADS_X10=60 \
+    -DCONFIG_PRESENCE_ENGINE_TRIGGER_MARGIN=5 -DCONFIG_PRESENCE_ENGINE_MAX_NOISY_PERCENT=50 -DCONFIG_PRESENCE_ENGINE_ADAPT=1 \
+    -DCONFIG_PRESENCE_ENGINE_ADAPT_MAX_UP=6 -DCONFIG_PRESENCE_ENGINE_STATUS_LOG_SEC=300"
+$CXX $FLAGS $ENGINE -O1 -o "$OUT/presence_engine" test_presence_engine.cpp $MAIN/presence_engine.cpp sim.cpp
+$CXX $FLAGS $ENGINE -o "$OUT/esp_presence" test_esp_presence.cpp $MAIN/presence_engine.cpp $MAIN/radar_settings.cpp $RADAR
+$CXX $FLAGS $ENGINE -o "$OUT/worker_engine" test_worker_engine.cpp $MAIN/quiet_learn.cpp $MAIN/radar_settings.cpp $RADAR
 
 status=0
 for t in ld2410 settings learn_esp32 learn_radar worker presence presence_distance button led led_active_high led_ws2812 \
     identity diag_report net_watchdog c3_temperature energy_filter \
-    worker_filter; do
+    worker_filter presence_engine esp_presence worker_engine; do
     "$OUT/$t" || status=1
 done
 [ $status -eq 0 ] && echo "All host tests passed" || echo "Host tests FAILED"

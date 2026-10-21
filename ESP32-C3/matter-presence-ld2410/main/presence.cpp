@@ -17,6 +17,9 @@
 #if CONFIG_PRESENCE_ENERGY_FILTER
 #include "energy_filter.h"
 #endif
+#if CONFIG_PRESENCE_ESP_ENGINE
+#include "esp_presence.h"
+#endif
 
 static const char *TAG = "presence";
 
@@ -67,6 +70,41 @@ static void log_filter_event()
 }
 #endif
 
+#if CONFIG_PRESENCE_ESP_ENGINE
+// The ESP32 presence engine decides (esp_presence.cpp, which logs why); this task hands its occupancy to the
+// cluster and its HoldTime to the engine (the absence countdown of both). A silent radar is a sensor fault for the
+// engine, not "no one": the occupancy then stays as it is.
+static constexpr uint32_t kHoldTimeReadPolls = 10; // HoldTime read every second
+
+static presence_hold_time_cb_t s_hold_time;
+
+void presence_set_hold_time_source(presence_hold_time_cb_t read_hold_time)
+{
+    s_hold_time = read_hold_time;
+}
+
+static void presence_task(void *arg)
+{
+    bool reported = false;
+    bool reported_present = false;
+    uint32_t polls = 0;
+    ESP_LOGI(TAG, "Occupancy from the ESP32 presence engine");
+    TickType_t last_wake = xTaskGetTickCount();
+    while (true) {
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(kPollMs));
+        uint16_t hold_s = 0;
+        if (polls++ % kHoldTimeReadPolls == 0 && s_hold_time && s_hold_time(&hold_s)) {
+            esp_presence_set_hold_time(hold_s);
+        }
+        // Occupied, or present but counting down (false: the cluster counts HoldTime from then on, as the engine)
+        const bool present = esp_presence_occupied();
+        if ((!reported || present != reported_present) && s_report(present)) {
+            reported = true;
+            reported_present = present;
+        }
+    }
+}
+#else
 // Runs in its own task rather than an esp_timer callback: it logs and may wait for the Matter stack lock (in the
 // report callback), which must not stall the esp_timer task.
 static void presence_task(void *arg)
@@ -122,6 +160,7 @@ static void presence_task(void *arg)
         }
     }
 }
+#endif
 
 esp_err_t presence_start(presence_report_cb_t report)
 {

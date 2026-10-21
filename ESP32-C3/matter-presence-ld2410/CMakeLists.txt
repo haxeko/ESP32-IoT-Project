@@ -30,9 +30,14 @@ else()
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${git_dir}/logs/HEAD")
     endif()
 endif()
-# Branch claude/c3-wroom-esp-filter (experimental ESP32 energy filter): the version string ends in "-espfilter" so
-# that this firmware is never mistaken for the stable 1.0.x one. The number compared by OTA stays the commit count.
-set(FIRMWARE_VERSION_LABEL "-espfilter")
+# Branch claude/c3-wroom-esp-presence (experimental): the version string ends in "-esppresence" (ESP32 presence
+# engine), or "-espfilter" for the energy filter variant built with sdkconfig.defaults.espfilter, so that this
+# firmware is never mistaken for the stable 1.0.x one. The number compared by OTA stays the commit count.
+if(SDKCONFIG_DEFAULTS MATCHES "sdkconfig\\.defaults\\.espfilter")
+    set(FIRMWARE_VERSION_LABEL "-espfilter")
+else()
+    set(FIRMWARE_VERSION_LABEL "-esppresence")
+endif()
 set(PROJECT_VER "${FIRMWARE_VERSION_BASE}.${FIRMWARE_BUILD_NUMBER}${FIRMWARE_VERSION_LABEL}")
 set(PROJECT_VER_NUMBER ${FIRMWARE_BUILD_NUMBER})
 message(STATUS "Firmware version ${PROJECT_VER} (${PROJECT_VER_NUMBER})")

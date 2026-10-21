@@ -1,0 +1,9 @@
+# Experimental ESP32 presence engine (branch claude/c3-wroom-esp-presence, README "Bộ xử lý hiện diện trên ESP32"),
+# for the ESP32-C3-WROOM-02-N4 board. Applied after sdkconfig.defaults and sdkconfig.defaults.wroom_n4:
+#   idf.py -B build-esppresence -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.esppresence \
+#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.wroom_n4;sdkconfig.defaults.esppresence" build
+# Model in Home Assistant (ProductName), so this firmware is not mistaken for the stable one.
+CONFIG_DEVICE_PRODUCT_NAME="Presence LD2410 ESP engine"
+CONFIG_PRESENCE_ESP_ENGINE=y
+# Hold time = the absence countdown of the engine: empty after 60 s without a hold signal
+CONFIG_PRESENCE_HOLD_TIME_SEC=60

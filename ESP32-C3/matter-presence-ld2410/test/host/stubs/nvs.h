@@ -39,5 +39,10 @@ static inline esp_err_t nvs_set_blob(nvs_handle_t h, const char *key, const void
     g_sim.nvs[s_nvs_open[h - 1]][key] = std::vector<uint8_t>(p, p + len);
     return ESP_OK;
 }
+static inline esp_err_t nvs_erase_key(nvs_handle_t h, const char *key)
+{
+    auto &ns = g_sim.nvs[s_nvs_open[h - 1]];
+    return ns.erase(key) ? ESP_OK : ESP_ERR_NVS_NOT_FOUND;
+}
 static inline esp_err_t nvs_commit(nvs_handle_t) { return ESP_OK; }
 static inline void nvs_close(nvs_handle_t) {}
