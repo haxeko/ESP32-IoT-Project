@@ -1,12 +1,12 @@
 # Firmware Matter Presence Sensor (HLK-LD2410C)
 
-Firmware chung cho mọi bo của `matter-presence-sensor`: cùng mã, cùng thuật toán; mỗi bo chỉ khác file cấu hình `boards/<bo>.defaults` (chân radar, LED, nút, cổng log). Hiện có các bo **ESP32-C3, Matter over Wi-Fi**: `c3-supermini`, `c3-wroom-devkit`, `c3-radar-r45` (mục **Các bo**). Bo ESP32-H2 (Thread) sẽ thêm sau.
+Firmware chung cho mọi bo của `matter-presence-sensor`: cùng mã, cùng thuật toán; mỗi bo chỉ khác file cấu hình `boards/<bo>.defaults` (chân radar, LED, nút, cổng log). Hiện có các bo **ESP32-C3, Matter over Wi-Fi**: `c3-supermini`, `c3-wroom-devkit`, `c3-radar-r45`, và bo **ESP32-H2, Matter over Thread**: `h2-mini` (mục **Các bo**).
 
-Cảm biến hiện diện chuẩn Matter (device type **Occupancy Sensor 0x0107**) với radar 24 GHz **HLK-LD2410C**. Thêm trực tiếp vào Apple Home, Google Home, Home Assistant, SmartThings, Alexa... qua Wi-Fi nhà, không cần Thread Border Router. Radar LD2410 phát hiện được cả người ngồi yên (thở, cử động nhẹ), khác cảm biến PIR chỉ thấy chuyển động. **Có người hay không do radar quyết định** từ ngưỡng của nó; ESP32 chỉ học phòng trống và đặt ngưỡng cho radar khi được yêu cầu (mục **Học phòng trống**).
+Cảm biến hiện diện chuẩn Matter (device type **Occupancy Sensor 0x0107**) với radar 24 GHz **HLK-LD2410C**. Thêm trực tiếp vào Apple Home, Google Home, Home Assistant, SmartThings, Alexa...: bo ESP32-C3 qua Wi-Fi nhà, không cần Thread Border Router; bo ESP32-H2 qua mạng Thread (cần Thread Border Router). Radar LD2410 phát hiện được cả người ngồi yên (thở, cử động nhẹ), khác cảm biến PIR chỉ thấy chuyển động. **Có người hay không do radar quyết định** từ ngưỡng của nó; ESP32 chỉ học phòng trống và đặt ngưỡng cho radar khi được yêu cầu (mục **Học phòng trống**).
 
-Mã nguồn là bản ổn định `ESP32-C3/matter-presence-ld2410` (viết lại từ đầu firmware 1.0.132 `ESP32-C3/matter-wifi-presence`) cộng cách học phòng trống của biến thể `esplearn` 1.0.175. Endpoint 1–4, cluster, khoá lưu trữ, bảng phân vùng, VID/PID giữ nguyên như 1.0.132, nên **cập nhật OTA từ các bản trước lên bản này giữ nguyên ghép nối và các entity Home Assistant** (mục **Nâng cấp từ các bản trước**; mới kiểm chứng bằng so sánh cấu hình và build, chưa thử trên bo).
+Mã nguồn là bản ổn định `ESP32-C3/matter-presence-ld2410` (viết lại từ đầu firmware 1.0.132 `ESP32-C3/matter-wifi-presence`) cộng cách học phòng trống của biến thể `esplearn` 1.0.175; phần Thread lấy từ bản ESP32-H2 `ESP32-H2/matter-presence-ld2410-learning` (mục **Bo ESP32-H2 mini**). Endpoint 1–4, cluster, khoá lưu trữ, bảng phân vùng, VID/PID giữ nguyên như các bản trước của từng chip, nên **cập nhật OTA từ các bản trước lên bản này giữ nguyên ghép nối và các entity Home Assistant** (mục **Nâng cấp từ các bản trước**; mới kiểm chứng bằng so sánh cấu hình và build, chưa thử trên bo).
 
-Trong Home Assistant có thêm 5 điều khiển (Apple Home không hiện): **Hold time**, **Learn empty room** (học phòng trống, hoặc bấm nút 3 lần; *Factory thresholds* hoặc bấm 4 lần để ghi lại ngưỡng mặc định), **Radar Bluetooth**, **Radar resolution**, **Range**. Tên thiết bị là **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C4**. Các entity chẩn đoán **Reboot count**, **Uptime**, **Wi-Fi RSSI** bị Home Assistant tắt sẵn: bật chúng trong Home Assistant (xem **Entity chẩn đoán**); firmware gửi lại Uptime và Wi-Fi RSSI để giá trị không bị đứng. Entity **nhiệt độ chip ESP32-C3** (endpoint 5) chỉ có khi build với `PRESENCE_CHIP_TEMPERATURE` (mặc định tắt, xem **Nhiệt độ chip**).
+Trong Home Assistant có thêm 5 điều khiển (Apple Home không hiện): **Hold time**, **Learn empty room** (học phòng trống, hoặc bấm nút 3 lần; *Factory thresholds*, hoặc bấm 4 lần trên bo ESP32-C3, để ghi lại ngưỡng mặc định), **Radar Bluetooth**, **Radar resolution**, **Range**. Tên thiết bị là **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C4**. Các entity chẩn đoán **Reboot count**, **Uptime**, **Wi-Fi RSSI** bị Home Assistant tắt sẵn: bật chúng trong Home Assistant (xem **Entity chẩn đoán**); trên bo ESP32-C3 firmware gửi lại Uptime và Wi-Fi RSSI để giá trị không bị đứng. Entity **nhiệt độ chip ESP32-C3** (endpoint 5) chỉ có khi build với `PRESENCE_CHIP_TEMPERATURE` (mặc định tắt, xem **Nhiệt độ chip**).
 
 ## Khác biệt so với bản cũ (`ESP32-C3/matter-wifi-presence`, 1.0.132)
 
@@ -44,8 +44,9 @@ Mỗi bo là một file `boards/<bo>.defaults`, đặt sau `sdkconfig.defaults` 
 | `c3-supermini` | ESP32-C3 SuperMini | GPIO3, GPIO4 | GPIO8 một màu, sáng khi mức thấp | GPIO9 (BOOT) | USB-C (USB-Serial-JTAG) |
 | `c3-wroom-devkit` | ESP32-C3-WROOM-02-N4, kiểu DevKitC-02 | GPIO3, GPIO4 | WS2812 GPIO8, độ sáng 20/255 | GPIO9 (BOOT) | USB (USB-Serial-JTAG) |
 | `c3-radar-r45` | ESP32-C3-WROOM-02-N4 trên mạch `../hardware/c3-radar-r45` | IO10, IO3 | không có | pad IO9 | pad RX0 / TX0 (UART0) |
+| `h2-mini` | ESP32-H2 mini (ESP32-H2 SuperMini), **Thread** | GPIO11, GPIO12 | WS2812 GPIO8, độ sáng 20/255 | GPIO9 (BOOT) | UART0 (GPIO23/24) và USB-C (USB-Serial-JTAG) |
 
-Bo ESP32-C3 khác: chép một file trong `boards/`, đổi tên (bắt đầu bằng `c3-`) và chân. `main/board.h` báo lỗi lúc build nếu chân trùng nhau hoặc là chân flash, USB.
+Chip lấy từ tên bo: `c3-…` build cho ESP32-C3 (Matter over Wi-Fi, PID `0x8001`), `h2-…` cho ESP32-H2 (Matter over Thread, PID `0x8000`). Cấu hình riêng của từng chip nằm trong `sdkconfig.defaults.esp32c3` và `sdkconfig.defaults.esp32h2` (ESP-IDF tự nạp sau `sdkconfig.defaults`). Bo khác cùng chip: chép một file trong `boards/`, đổi tên (giữ tiền tố `c3-` hoặc `h2-`) và chân. `main/board.h` báo lỗi lúc build nếu chân trùng nhau hoặc là chân flash (và USB trên ESP32-C3).
 
 - **Flash 4 MB** cho mọi bo (bảng phân vùng chung).
 - Radar **HLK-LD2410C** (LD2410, LD2410B cũng được, kể cả firmware cũ không có lệnh 0x000B, 0x00AB, 0x00A5; nối theo chữ in trên mạch radar).
@@ -135,6 +136,37 @@ Mạch in trong `../hardware/c3-radar-r45` (KiCad): ESP32-C3-WROOM-02-N4 và LD2
 - **USB-C chỉ cấp nguồn.** Log và nạp qua pad RX0 / TX0 với mạch USB-UART 3,3 V (Linux `/dev/ttyUSB0`). Vào chế độ nạp: giữ IO9 nối GND rồi bấm RESET. Sau lần nạp đầu, cập nhật bằng OTA.
 - IO9 lúc khởi động phải ở mức cao (kéo lên 10 kΩ trên mạch): không chập IO9 khi cắm điện hay bấm RESET, trừ khi muốn vào chế độ nạp.
 - **Chưa thử trên bo.** Chân lấy từ README và sơ đồ của mạch; build kiểm chứng được cấu hình, chưa kiểm chứng được mạch thật.
+
+## Bo ESP32-H2 mini (`h2-mini`, Matter over Thread)
+
+Bo **ESP32-H2 mini** (ESP32-H2 SuperMini, flash 4 MB) của bản ESP32-H2 trước đây (`ESP32-H2/matter-presence-ld2410-learning`): cùng chân, cùng PID `0x8000`, cùng cấu hình Thread, cùng bảng phân vùng và khoá lưu trữ, nên **OTA từ bản H2 cũ lên bản này giữ ghép nối** (mục **Nâng cấp từ các bản trước**; mới kiểm chứng bằng so sánh cấu hình và build, chưa thử trên bo).
+
+![Sơ đồ đấu dây: ESP32-H2 SuperMini và radar HLK-LD2410C (VCC 5V, GND, TX → GPIO11, RX ← GPIO12), LED RGB GPIO8 và nút BOOT GPIO9 có sẵn trên board](docs/h2-mini-wiring.png)
+
+| LD2410C | ESP32-H2 mini |
+|---|---|
+| TX | **GPIO11** (UART1 RX) |
+| RX | **GPIO12** (UART1 TX) |
+| VCC | **5V** |
+| GND | GND |
+
+- Trên SuperMini, 5V, GND, GPIO12 và GPIO11 nằm cùng một hàng chân bên phải. Chân 8 và 9 đã nối sẵn LED RGB WS2812 và nút BOOT trên bo: không nối gì thêm vào.
+- Tránh các chân strapping (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25), chân flash GPIO15–GPIO21 (build báo lỗi), và UART0 GPIO23/24 (log, console).
+- **Log và console:** log ra UART0 (GPIO23/24) và cổng USB-C (USB-Serial-JTAG), như bản H2 cũ. Console Matter (`matter esp ...`) và lệnh OpenThread (`matter esp ot_cli state`, `ipaddr`, `srp client service`...) gõ qua UART0, 115200 baud, bằng mạch USB-UART nối GPIO23/24; cổng USB-C chỉ xuất log, không nhận lệnh (theo README bản H2 cũ).
+- **Mạng:** Thread, cần Thread Border Router (mục **Yêu cầu mạng**); thiết bị là Full Thread Device, làm router được để mở rộng mạng Thread.
+
+**Giống mã chung (như ba bo C3):** radar quyết định có người; học phòng trống 120 s từ mức cao nhất (mục **Học phòng trống**, thay cho cách radar tự đo 60 s của bản H2 cũ); Hold time mặc định 30 s, bo đang chạy giữ Hold time đã lưu (cùng khoá `app/hold-init`); Range, Radar resolution, Radar Bluetooth, *Factory thresholds* từ Home Assistant; tên thiết bị, số serial, Model, phiên bản `1.0.<số commit>`.
+
+**Nút và đèn giữ như bản H2 cũ** (`PRESENCE_BUTTON_LED_H2`, bật sẵn cho bo ESP32-H2):
+
+| | Bo ESP32-C3 | `h2-mini` (như bản H2 cũ) |
+|---|---|---|
+| Bấm 4 lần | ghi ngưỡng xuất xưởng | **không làm gì** (log `4 clicks, ignored`) |
+| Đèn sau khi ghi ngưỡng xuất xưởng | tím nháy nhanh 10 s | **xanh lá 10 s**, như học xong |
+
+Các thao tác và màu còn lại giống hệt nhau: bấm đúp mở ghép nối, bấm 3 lần học phòng trống, giữ 5 s factory reset (xoá mạng Thread và ghép nối Matter); xanh dương nháy chờ ghép nối, trắng nháy *Identify*, cyan khi học (nháy chậm trong 120 s ghi), xanh lá học xong, đỏ thất bại.
+
+**Khác bản H2 cũ** (ngoài cách học): mã viết lại của bản C3 (log tag `presence`, `radar_ctl`, ... đổi chỗ), tên bo trong log là `ESP32-H2 mini`, cảnh báo heap thấp chỉ in một lần cho mỗi mức thấp mới, `Learn empty room` từ chối mode ngoài 0/1/2. Endpoint, cluster, entity và khoá NVS không đổi.
 
 ## Học phòng trống
 
@@ -252,7 +284,7 @@ Firmware **không bao giờ tự ghi ngưỡng** vào radar khi không ai yêu c
 
 ### Nâng cấp từ các bản trước
 
-Mọi bản dưới đây cùng VID/PID `0xFFF1`/`0x8001`, endpoint 1–4, bảng phân vùng và khoá lưu trữ, nên OTA lên bản này giữ ghép nối, Hold time, lựa chọn Radar Bluetooth và các entity (chưa thử trên bo). Chọn file của đúng bo (mục **Cập nhật qua mạng**).
+Mọi bản dưới đây cùng VID `0xFFF1` và PID của chip (`0x8001` ESP32-C3, `0x8000` ESP32-H2), endpoint 1–4, bảng phân vùng và khoá lưu trữ, nên OTA lên bản này giữ ghép nối, Hold time, lựa chọn Radar Bluetooth và các entity (chưa thử trên bo). Chọn file của đúng bo (mục **Cập nhật qua mạng**).
 
 | Đang chạy | Bo, file | Khác biệt sau khi cập nhật |
 |---|---|---|
@@ -261,6 +293,7 @@ Mọi bản dưới đây cùng VID/PID `0xFFF1`/`0x8001`, endpoint 1–4, bản
 | biến thể `esplearn` (1.0.175) | WROOM: `c3-wroom-devkit` | không khác gì (cùng mã và cấu hình; chỉ khác tên file, số phiên bản) |
 | biến thể `esppresence` (1.0.153–1.0.172) | WROOM: `c3-wroom-devkit` | như từ `esplearn` lên; thêm các điểm dưới đây |
 | `matter-wifi-presence` (1.0.132) | SuperMini: `c3-supermini` | như bản mặc định ở trên, cộng các khác biệt ở đầu README |
+| bản ESP32-H2 `matter-presence-ld2410-learning` (`matter_presence_h2_learn.ota`, PID `0x8000`) | H2 mini: `h2-mini` | cách học phòng trống (ESP32 ghi 120 s, thay cho radar tự đo 60 s); ngưỡng đang có trong radar được giữ và dùng tiếp. Nút, đèn, Thread, endpoint, entity giữ nguyên (mục **Bo ESP32-H2 mini**) |
 
 Từ `esppresence` (bộ xử lý hiện diện trên ESP32, đã bỏ từ 1.0.175):
 - **có người / không** lại do radar quyết định: thời gian về trống = *no-one duration* của radar + Hold time;
@@ -304,7 +337,7 @@ chip-tool modeselect change-to-mode 0 0x7283 4    # Radar Bluetooth Off
 chip-tool modeselect change-to-mode 1 0x7283 1    # Learn empty room: Learning
 ```
 
-## Entity chẩn đoán: Reboot count, Uptime, Wi-Fi RSSI
+## Entity chẩn đoán: Reboot count, Uptime, Wi-Fi RSSI (gửi lại: ESP32-C3)
 
 Home Assistant tự tạo ba entity này (mục *Diagnostic* trên trang thiết bị) cho **mọi** thiết bị Matter có các cluster chẩn đoán chuẩn, nhưng **tắt sẵn**: integration Matter của Home Assistant khai báo chúng với `entity_registry_enabled_default=False`. Thiết bị không bật thay được, phải bật trong Home Assistant:
 
@@ -371,36 +404,42 @@ Từ 1.0.147 entity nhiệt độ mặc định tắt. Muốn đo tiếp (ví d�
 
 ## Yêu cầu mạng
 
+**ESP32-H2 (Thread):** cần một **Thread Border Router** trong nhà, ví dụ Apple HomePod mini / HomePod 2 / Apple TV 4K (bản có Ethernet hoặc 2022), Google Nest Hub (2nd gen) / Nest Hub Max / Nest Wifi Pro, Amazon Echo 4th gen, Home Assistant SkyConnect / ZBT-1 + OpenThread Border Router add-on. Điện thoại gửi thông tin mạng Thread cho thiết bị qua BLE lúc ghép nối. Điện thoại và Border Router cùng mạng LAN, router bật IPv6 và không chặn mDNS/multicast.
+
+**ESP32-C3 (Wi-Fi):**
+
 - Wi-Fi **2,4 GHz** (ESP32-C3 không có 5 GHz), WPA/WPA2/WPA3 Personal (không có Enterprise, OWE).
 - Điện thoại, controller (HomePod, Home Assistant, Nest...) và thiết bị **cùng một mạng LAN**; không dùng mạng khách.
 - Router bật **IPv6** (ít nhất link-local), không chặn **mDNS/multicast**, tắt "AP/client isolation".
 
 ## Ghép nối (commissioning)
 
-Firmware dùng chứng chỉ test của esp-matter (VID `0xFFF1`, PID `0x8001`; SDK có DAC, PAI và Certification Declaration test cho PID này), mã ghép nối mặc định của SDK:
+Firmware dùng chứng chỉ test của esp-matter (VID `0xFFF1`, PID `0x8001` cho ESP32-C3, `0x8000` cho ESP32-H2; SDK có DAC, PAI và Certification Declaration test cho hai PID này), mã ghép nối mặc định của SDK:
 
 - Mã nhập tay: **`3497-011-2332`**
-- QR: `MT:-24J042C00KA0648G00` ([hiện QR](https://project-chip.github.io/connectedhomeip/qrcode.html?data=MT:-24J042C00KA0648G00))
+- QR bo ESP32-C3: `MT:-24J042C00KA0648G00` ([hiện QR](https://project-chip.github.io/connectedhomeip/qrcode.html?data=MT:-24J042C00KA0648G00))
+- QR bo ESP32-H2: `MT:Y.K9042C00KA0648G00` ([hiện QR](https://project-chip.github.io/connectedhomeip/qrcode.html?data=MT:Y.K9042C00KA0648G00))
 - Passcode 20202021, discriminator 3840
 
 Khi chưa ghép nối, log in QR, link ảnh QR và mã nhập tay của chính firmware (`setup_code: Setup code of this board (BLE), SDK TEST CODE shared by every board`). Mã cũng được in khi bấm đúp và khi cửa sổ mở lại sau khi xoá thiết bị khỏi mọi ứng dụng, không in khi cửa sổ do controller mở (Multi-Admin). Đây là công cụ phát triển: sản phẩm thật thì tắt `CONFIG_PRINT_ONBOARDING_CODES` vì QR chứa passcode.
 
-**Apple Home / Google Home / Home Assistant:** thêm thiết bị Matter, quét QR; ứng dụng gửi SSID và mật khẩu Wi-Fi cho thiết bị qua BLE. Apple Home báo *Uncertified Accessory*: chọn **Vẫn thêm**.
+**Apple Home / Google Home / Home Assistant:** thêm thiết bị Matter, quét QR; ứng dụng gửi SSID và mật khẩu Wi-Fi (bo ESP32-C3) hoặc thông tin mạng Thread (bo ESP32-H2) cho thiết bị qua BLE. Apple Home báo *Uncertified Accessory*: chọn **Vẫn thêm**.
 
 ```bash
-chip-tool pairing ble-wifi 0x7283 <SSID> <MẬT_KHẨU> 20202021 3840   # mỗi bo một Node ID
+chip-tool pairing ble-wifi 0x7283 <SSID> <MẬT_KHẨU> 20202021 3840          # ESP32-C3, mỗi bo một Node ID
+chip-tool pairing ble-thread 0x7284 hex:<ACTIVE_DATASET> 20202021 3840     # ESP32-H2 (dataset: ot-ctl dataset active -x)
 chip-tool occupancysensing read occupancy 0x7283 1
 ```
 
 - Khởi động mà chưa ghép nối: cửa sổ ghép nối mở 15 phút; BLE quảng bá nhanh 30 s rồi chuyển sang chậm (500 ms). Hết giờ thì **bấm đúp** để mở lại.
 - Trong gói quảng bá trước khi ghép nối (DNS-SD), tên là `Presence Sensor` cho mọi bo, device type 263 (Occupancy Sensor). Tên Bluetooth (GAP) là tên thiết bị `Presence-XXXX`, chỉ thấy sau khi kết nối BLE.
 - Sau khi ghép nối, BLE được tắt để trả RAM (`BLE deinitialized and memory reclaimed`). Bấm đúp khi đó mở cửa sổ chỉ qua mạng (DNS-SD), nên ứng dụng thứ hai phải ở cùng LAN.
-- Xoá thiết bị khỏi mọi ứng dụng: cửa sổ ghép nối tự mở lại 5 phút, giữ thông tin Wi-Fi để ghép lại qua mạng.
+- Xoá thiết bị khỏi mọi ứng dụng: cửa sổ ghép nối tự mở lại 5 phút, giữ thông tin Wi-Fi hoặc mạng Thread để ghép lại qua mạng.
 - Tên thiết bị `Presence-XXXX` được ghi vào **NodeLabel** lúc khởi động nếu chưa có nhãn nào (bo mới, sau factory reset); nhãn đặt từ ứng dụng được giữ. Home Assistant đặt tên thiết bị theo NodeLabel.
 
 **Nhiều bo cùng firmware:** bản mặc định cho mọi bo chung mã test. Ghép từng bo một (các bo chưa ghép khác tắt nguồn, không bấm đúp hai bo cùng lúc), rồi kiểm tra đúng bo bằng **Identify** hoặc so **Serial** trong ứng dụng với dòng `id_diag: dev serial=`. Thêm vào hệ thứ hai: ưu tiên chức năng chia sẻ của hệ đang quản lý (mã do ứng dụng tạo ngẫu nhiên).
 
-### Mã ghép nối riêng cho từng bo (tuỳ chọn, chưa thử trên ESP32-C3)
+### Mã ghép nối riêng cho từng bo (tuỳ chọn, chưa thử với firmware này)
 
 Tính năng `features/unique_setup.defaults` (`tools/build.sh <bo> unique_setup`): mỗi bo tự sinh passcode, discriminator, salt và verifier SPAKE2+ ở lần dùng đầu (ngẫu nhiên từ DRBG của CHIP băm cùng MAC eFuse; không bao giờ sinh discriminator 3840 của mã test), lưu ở phân vùng `fctry` (namespace `setup-code`). Mã giữ qua khởi động lại, OTA, factory reset và nạp file merged; chỉ `erase-flash` mới sinh mã mới.
 
@@ -427,7 +466,9 @@ cd matter-presence-sensor/firmware
 tools/build.sh c3-supermini           # một bo: boards/<bo>.defaults
 tools/build.sh c3-wroom-devkit
 tools/build.sh c3-radar-r45
+tools/build.sh h2-mini                # ESP32-H2, Matter over Thread
 tools/build.sh c3-radar-r45 unique_setup   # thêm tính năng: features/<tính năng>.defaults
+tools/build.sh h2-mini factory        # dữ liệu nhà máy (DAC riêng từng bo), chỉ bo ESP32-H2
 ```
 
 `tools/build.sh` chọn target theo tên bo (`c3-` → `esp32c3`, `h2-` → `esp32h2`), build trong `build/<bo>[-<tính năng>]` với `SDKCONFIG_DEFAULTS="sdkconfig.defaults;boards/<bo>.defaults;features/<tính năng>.defaults"` (file sau ghi đè file trước), rồi chép vào `dist/`:
@@ -450,7 +491,8 @@ docker run --rm -v $PWD:/project espressif/esp-matter:release-v1.6.1_idf_v6.0.2 
 - Phiên bản firmware `1.0.<git rev-list --count HEAD>` (SoftwareVersionString), số commit là SoftwareVersion dùng cho OTA; CMake chạy lại sau mỗi commit. Không phải git checkout thì số là 0 (có cảnh báo).
 - Mỗi bo có `sdkconfig` riêng trong `build/<bo>/sdkconfig`. File này giữ giá trị cũ: sau khi đổi `sdkconfig.defaults` hoặc file bo, xoá `build/<bo>` rồi build lại.
 - `idf.py menuconfig` cho một bo: `idf.py -B build/<bo> -D SDKCONFIG=build/<bo>/sdkconfig menuconfig`.
-- Chỉ build cho `esp32c3`; target khác thì CMake báo lỗi (bo H2 thêm sau).
+- Chỉ build cho `esp32c3` và `esp32h2`; target khác thì CMake báo lỗi.
+- Tính năng `factory` (từ `sdkconfig.defaults.factory` của bản H2 cũ): DAC, PAI, Certification Declaration và mã ghép nối lấy từ phân vùng `fctry` riêng từng bo, làm bằng `ESP32-H2/tools/matter-mfg`. Chỉ cho bo ESP32-H2: PAI test của SDK chỉ cấp DAC cho PID `0x8000`. Nạp phân vùng `fctry` của bo **trước** firmware này, nếu không bo vẫn chạy với các controller đang có nhưng không ghép nối lại được.
 - CI (`.github/workflows/matter-presence-sensor.yml`) chạy host test rồi build mọi bo mỗi khi thư mục `firmware/` hoặc file workflow thay đổi; Artifacts `presence-<bo>` chứa các file trong `dist/`.
 
 ### Nạp firmware và xem log
@@ -462,6 +504,8 @@ idf.py -B build/c3-supermini -p /dev/ttyACM0 erase-flash flash monitor
 ```
 
 `c3-radar-r45`: mạch USB-UART 3,3 V nối pad RX0 / TX0 / GND (Linux `/dev/ttyUSB0`); giữ IO9 nối GND rồi bấm RESET để vào chế độ nạp, nạp xong bấm RESET (không chập IO9) để chạy.
+
+`h2-mini`: cổng USB-C (Linux `/dev/ttyACM0`), log ra cả cổng này lẫn UART0; dùng `--chip esp32h2` với `esptool.py`.
 
 File merged (`dist/` hoặc Artifacts của CI), nạp một lần ở địa chỉ `0x0`. File này ghi đè vùng NVS (`0x10000`), tức là **xoá ghép nối**:
 
@@ -480,13 +524,13 @@ Không vào được chế độ nạp: giữ **BOOT** (pad IO9 với GND trên 
 
 ### Cập nhật qua mạng (OTA)
 
-File **`presence-<bo>-<phiên bản>.ota`** (`dist/` hoặc Artifacts của CI): app kèm header Matter OTA với VID/PID `0xFFF1`/`0x8001` và phiên bản `1.0.<số commit>`.
+File **`presence-<bo>-<phiên bản>.ota`** (`dist/` hoặc Artifacts của CI): app kèm header Matter OTA với VID `0xFFF1`, PID của chip (`0x8001` ESP32-C3, `0x8000` ESP32-H2) và phiên bản `1.0.<số commit>`.
 
 1. Home Assistant → Settings → Add-ons → **Matter Server** → **Open Web UI**.
 2. Chọn thiết bị → **Upload Firmware** → chọn file `.ota` **của đúng bo** → **Start Update**.
-3. Thiết bị tải qua Wi-Fi, tự khởi động lại vào bản mới và giữ ghép nối.
+3. Thiết bị tải qua Wi-Fi hoặc Thread (khoảng 1,8 MB qua Thread, có thể mất vài chục phút), tự khởi động lại vào bản mới và giữ ghép nối.
 
-- **Mọi bo C3 cùng VID/PID và cùng số phiên bản**: Matter Server không phân biệt được. Nạp nhầm file của bo khác thì chân radar, LED, nút, cổng log sai (chưa thử trên bo); nạp lại đúng file qua USB / pad nạp.
+- **Mọi bo C3 cùng VID/PID và cùng số phiên bản**: Matter Server không phân biệt được. Bo H2 có PID riêng (`0x8000`), nên file `.ota` của C3 và của H2 không lẫn được với nhau. Nạp nhầm file của bo khác thì chân radar, LED, nút, cổng log sai (chưa thử trên bo); nạp lại đúng file qua USB / pad nạp.
 - Phiên bản trong file phải **lớn hơn** bản đang chạy. Nhánh của thư mục này chứa đủ lịch sử các bản 1.0.132–1.0.175 nên số commit lớn hơn. Khi merge vào `main`, dùng **merge commit**, không squash: squash làm số commit trên `main` nhỏ hơn bản đang chạy trên bo và bo sẽ từ chối bản OTA đó.
 - Sau khi đã cập nhật OTA, thiết bị chạy từ phân vùng `ota_1`: nạp USB thì dùng file merged hoặc ghi cả `ota_data_initial` (như trên), không ghi riêng `0x20000`.
 
@@ -508,7 +552,8 @@ Tên các tuỳ chọn giữ như bản 1.0.132; menu *Connection Watchdog* và 
 | | `BOARD_NAME` (chỉ để in trong log) | theo file bo | |
 | | `STATUS_LED_TYPE` (LED GPIO một màu / WS2812 / không có LED) | theo file bo (Kconfig: LED GPIO) | |
 | | `STATUS_LED_GPIO` (không có khi không có LED) / `STATUS_LED_ACTIVE_HIGH` (chỉ LED GPIO) / `STATUS_LED_BRIGHTNESS` (chỉ WS2812) | 8 / tắt / 20 | 0–21 / – / 1–255 |
-| | `RESET_BUTTON_GPIO` | 9 | −1 (không có nút) – 21 |
+| | `RESET_BUTTON_GPIO` | 9 | −1 (không có nút) – 21 (27 trên ESP32-H2) |
+| | `PRESENCE_BUTTON_LED_H2` (nút và đèn như bản H2 cũ: bấm 4 lần không làm gì, ngưỡng xuất xưởng xanh lá 10 s) | bật cho ESP32-H2, tắt cho ESP32-C3 | |
 | | `PRESENCE_CHIP_TEMPERATURE` (endpoint 5: nhiệt độ chip, mới; bật thì cần `ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=6`) | tắt (bật ở 1.0.143–1.0.146) | |
 | | `PRESENCE_WIFI_STAY_AWAKE` (tắt modem sleep sau khi BLE tắt; 1.0.132 bật) | tắt | |
 | Empty Room Learning | `LD2410_LEARN_DELAY_SEC` / `LD2410_LEARN_DURATION_SEC` | 20 / 120 s (Kconfig: 60) | 0–120 / 10–300 |
@@ -516,18 +561,19 @@ Tên các tuỳ chọn giữ như bản 1.0.132; menu *Connection Watchdog* và 
 | | `LD2410_LEARN_FLOOR_PERCENT` / `_MIN_MARGIN` (chỉ với `LD2410_LEARN_PEAK`) | 75 / 8 | 0–100 / 1–50 |
 | | `LD2410_LEARN_RADAR_AUTO` (không có khi bật `LD2410_LEARN_PEAK`) | bật | |
 | | `LD2410_LEARN_PERCENTILE` / `_MARGIN` (không có khi bật `LD2410_LEARN_PEAK`) / `_MAX_RAISE` | 95 / 10 / 30 | 50–100 / 0–50 / 0–100 |
+| Thread Diagnostics (chỉ ESP32-H2) | `THREAD_DIAG_LOG` (khối `thread_diag` mỗi 10 s cho tới khi ghép nối xong) | bật | |
 | Identity Diagnostics and Setup Code | `IDENTITY_DIAG_PERIOD_SEC` | 300 | 0 (tắt) – 86400 |
 | | `IDENTITY_DIAG_SUBSCRIPTION_LOG` / `PRINT_ONBOARDING_CODES` | bật / bật | |
 | | `UNIQUE_SETUP_CODE`, `UNIQUE_SETUP_CODE_PARTITION` | bật với tính năng `unique_setup`, `fctry` | |
-| Connection Watchdog (mới) | `NET_WATCHDOG_RECONNECT_MIN` (nối lại Wi-Fi mỗi, khi không có subscription) | 10 phút | 0 (không) – 1440 |
+| Connection Watchdog (chỉ ESP32-C3) | `NET_WATCHDOG_RECONNECT_MIN` (nối lại Wi-Fi mỗi, khi không có subscription) | 10 phút | 0 (không) – 1440 |
 | | `NET_WATCHDOG_RESTART_MIN` (khởi động lại sau, khi không có subscription; 0 cũng tắt việc khởi động lại khi task Matter treo) | 30 phút | 0 (không) – 1440 |
-| Wi-Fi RSSI and Uptime Reports (mới) | `DIAG_REPORT_RSSI_STEP_DB` (gửi lại Wi-Fi RSSI khi đổi từng này dB) | 3 | 0 (chỉ theo chu kỳ) – 30 |
+| Wi-Fi RSSI and Uptime Reports (chỉ ESP32-C3) | `DIAG_REPORT_RSSI_STEP_DB` (gửi lại Wi-Fi RSSI khi đổi từng này dB) | 3 | 0 (chỉ theo chu kỳ) – 30 |
 | | `DIAG_REPORT_REFRESH_MIN` (gửi lại Wi-Fi RSSI và uptime mỗi) | 10 phút | 0 (không) – 1440 |
 | Memory Monitor | `MEM_MONITOR_PERIOD_SEC` | 600 | 0 (chỉ khi khởi động) – 86400 |
 
 Console Matter (gõ lệnh trong monitor) tắt để có thêm khoảng 10 KB RAM: bật lại bằng *Component config* → *CHIP Core* → *General Options* → *Use the CHIP shell library* (`CONFIG_ENABLE_CHIP_SHELL`). Khi đó có lệnh của esp-matter (diagnostics, factoryreset, attribute) và `matter wifi ...` của Matter SDK; mật khẩu gõ vào lệnh `matter wifi connect` hiện trên màn hình và nằm trong lịch sử lệnh.
 
-## Wi-Fi và BLE
+## Wi-Fi và BLE (ESP32-C3)
 
 - **Wi-Fi station** (không SoftAP). Thông tin Wi-Fi đến từ lúc ghép nối; kết nối và kết nối lại do Matter SDK lo, firmware không tự gọi `esp_wifi_connect`.
 - **Lúc ghép nối**, BLE và Wi-Fi dùng chung anten 2,4 GHz (*coexistence* của ESP-IDF); firmware giữ mặc định của ESP-IDF (Wi-Fi có modem sleep `min_modem`).
@@ -588,6 +634,9 @@ Watchdog kiểm tra 30 s một lần. Khi thiết bị **đã ghép nối** mà 
 | `matter-presence-sensor` 1.0.180, `c3-supermini` | | 1 512 285 B (trống 23 %), RAM tĩnh 150 543 B, heap 170 753 B (RAM tĩnh bằng bản mặc định 1.0.147) |
 | `matter-presence-sensor` 1.0.180, `c3-wroom-devkit` | | 1 530 527 B (trống 22 %), RAM tĩnh 152 987 B, heap 168 309 B (RAM tĩnh bằng `esplearn` 1.0.175) |
 | `matter-presence-sensor` 1.0.180, `c3-radar-r45` | | 1 512 297 B (trống 23 %), RAM tĩnh 150 465 B, heap 170 831 B (không có LED) |
+| `matter-presence-sensor` 1.0.185, `h2-mini` (ESP32-H2, Thread) | | 1 805 480 B (phân vùng app trống 8 %), DIRAM tĩnh 175 186 B, còn 82 814 B cho heap |
+| Bản ESP32-H2 cũ `matter-presence-ld2410-learning` build từ `main` 1.0.184 (cùng image, để so sánh) | | 1 806 880 B (trống 8 %), DIRAM tĩnh 175 178 B, còn 82 822 B |
+| `matter-presence-sensor` 1.0.185, ba bo ESP32-C3 | | `c3-supermini` 1 512 313 B, `c3-wroom-devkit` 1 530 547 B, `c3-radar-r45` 1 512 317 B (lớn hơn 1.0.180 từ 20 tới 28 byte), RAM tĩnh không đổi |
 | Lúc học phòng trống (mọi bo) | | mượn thêm 3,6 KB heap trong 120 s |
 
 Task và stack (byte; số "còn trống" đo trên bo với bản 1.0.128–1.0.131, mã các task này không đổi):
@@ -651,6 +700,18 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 
 ## Xử lý sự cố
 
+**Bo ESP32-H2 (Thread), điện thoại không tìm thấy thiết bị:** ghép nối Matter over Thread có 2 giai đoạn. Qua BLE, điện thoại gửi thông tin mạng Thread (log `Role detached -> child`, `advertising srp service: ...._matter._tcp`); rồi qua mạng IP, điện thoại tìm dịch vụ `_matter._tcp` của thiết bị qua Border Router (log `Commissioning complete`). Giai đoạn 1 xong mà ứng dụng báo không thấy thiết bị thường là do mạng nhà: điện thoại và Border Router cùng LAN (không dùng mạng khách, tắt VPN), router bật IPv6 và không chặn mDNS/multicast, Border Router là của hệ đang dùng. Khi chưa ghép nối, cứ 10 s firmware in khối `thread_diag`:
+
+```
+I thread_diag: Role: router, RLOC16: 0x7c00
+I thread_diag: Address: fd12:3456:789a:1:abcd:...  [OMR (reachable from Wi-Fi/LAN)]
+I thread_diag: Summary: OMR address YES, on-mesh prefixes 1, SRP host Registered, SRP service Registered
+```
+
+`OMR address NO` hoặc SRP không `Registered`: lỗi phía Border Router hoặc mạng LAN. Khối `id_diag` của bo H2 có thêm các dòng `ot`, `mle`, `br`, `srp` (vai trò Thread, mạng, Border Router, đăng ký SRP); giữa các bo, `ext_panid` và `partition` phải giống nhau, `ext_addr`, `ml_eid`, `srp host` phải khác nhau.
+
+**Bo ESP32-C3 (Wi-Fi):**
+
 - **Không thấy log:** chọn đúng cổng USB của SuperMini; một số cáp USB-C chỉ có dây nguồn. `c3-radar-r45`: log chỉ có ở pad TX0 (115200 baud), cổng USB-C không có dây dữ liệu.
 - **Ghép nối dừng ở bước Wi-Fi**, log lặp lại `wifi:state: auth -> init`, `Connecting -> Connecting_Failed`: router không trả lời bước xác thực. Mỗi lần thử có một dòng `W id_diag: EV wifi failed or left: reason ...`:
   - **reason 2**: router không trả lời bước xác thực (hoặc báo xác thực không còn hiệu lực);
@@ -684,6 +745,13 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
 - Header file OTA của cả ba bo: VID `0xFFF1`, PID `0x8001`, phiên bản 180 / `1.0.180`. File app của mỗi bo chứa đúng tên bo của nó.
 - Kích thước: bảng **RAM và flash**.
 - Host test (`test/host/run.sh`, 17 chương trình, đều qua): parser và lệnh radar, phiên thông số, học trên ESP32 (từ mức cao nhất và phân vị 95 %) và radar tự đo, điều phối (mọi thứ tự Learning/Off/Factory, kể cả lúc radar đang đo), presence, nút, LED (một màu, WS2812, không có LED: không ghi chân nào, trạng thái vẫn chạy), tên thiết bị, lúc nào gửi lại Wi-Fi RSSI và Uptime, watchdog kết nối, nhiệt độ chip.
+
+- Build 1.0.185 (commit `1bcacd6`) cả bốn bo (`h2-mini` và ba bo C3) bằng `tools/build.sh` từ một bản clone sạch, Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**.
+- `sdkconfig` của `h2-mini` so với bản ESP32-H2 cũ (`ESP32-H2/matter-presence-ld2410-learning`, build từ `main` 1.0.184 trong cùng image) chỉ khác: `BOARD_NAME` và `PRESENCE_BUTTON_LED_H2` (tuỳ chọn mới), và các tuỳ chọn học (`LD2410_LEARN_PEAK`, ghi 120 s, `_FLOOR_PERCENT` 75, `_MIN_MARGIN` 8 thay cho `_RADAR_AUTO`, `_PERCENTILE`, `_MARGIN`, ghi 60 s). OpenThread (FTD, SRP, CLI), console Matter, BLE, PID `0x8000`, danh sách cluster, bảng phân vùng, chân radar, LED WS2812 GPIO8, nút GPIO9 giống hệt.
+- `sdkconfig` của ba bo C3 1.0.185 giống hệt 1.0.180: việc tách `sdkconfig.defaults` theo chip không đổi gì cho C3.
+- Header file OTA `h2-mini`: VID `0xFFF1`, PID `0x8000`, phiên bản 185 / `1.0.185`, cùng dạng file `matter_presence_h2_learn-ota.bin` của bản H2 cũ. Chuỗi Hardware `ESP32H2-LD2410` như cũ.
+- Mã Thread (cấu hình OpenThread, `thread_diag`, phần OpenThread của `id_diag`, OpenThread CLI) chép từ bản H2 cũ; số serial trên ESP32-H2 tính như cũ (EUI-64 bỏ hai byte FF FE).
+- Host test 18 chương trình đều qua, thêm: bấm 4 lần khi không có hành động (bo H2) thì log `4 clicks, ignored` và không làm gì; đèn WS2812 sau khi ghi ngưỡng xuất xưởng với `PRESENCE_BUTTON_LED_H2` là xanh lá 10 s.
 
 **Đã kiểm chứng ở các bản trước của cùng mã** (`ESP32-C3/matter-presence-ld2410`, nhánh `claude/c3-wroom-esp-presence`):
 - Build `esp32c3` trong Docker `release-v1.6.1_idf_v6.0.2`: **0 lỗi, 0 cảnh báo**, cả bản mặc định, biến thể `unique_setup` và bản bật `PRESENCE_CHIP_TEMPERATURE` (giới hạn endpoint 6) ở 1.0.147; bản mặc định và biến thể `wroom_n4` ở 1.0.149; bản mặc định và biến thể `esplearn` ở 1.0.175.
@@ -756,6 +824,15 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
     - học lại ngay trong cùng phòng: ngưỡng gần như giữ nguyên, hoặc `The radar holds these thresholds already, nothing written`;
     - phòng trống vài giờ: không báo nhầm có người; ngồi yên ở xa: vẫn có người; ra khỏi phòng: hết người sau no-one duration + Hold time.
 
+20. Bo `h2-mini` (ESP32-H2 mini), cắm USB xem log:
+    - OTA từ bản H2 cũ (`matter_presence_h2_learn`, PID `0x8000`) lên `presence-h2-mini-<phiên bản>.ota`: giữ ghép nối, Hold time, lựa chọn Radar Bluetooth, các entity; số serial và tên thiết bị như cũ;
+    - log `Target esp32h2, board ESP32-H2 mini, Matter over Thread` và `Pins: LD2410 RX GPIO11 (radar TX), TX GPIO12 (radar RX), button GPIO9, LED GPIO8 (WS2812)`;
+    - mạng Thread: `id_diag` dòng `ot role=child/router`, `srp ... Registered`; chưa ghép nối thì có khối `thread_diag` mỗi 10 s, ghép xong thì hết;
+    - bấm 4 lần: log `4 clicks, ignored`, không làm gì; *Factory thresholds* từ Home Assistant: đèn xanh lá 10 s;
+    - học phòng trống (bấm 3 lần): cyan 20 s, cyan nháy 120 s, xanh lá 10 s; ngưỡng mới đúng như log `quiet_learn`;
+    - console: `matter esp ot_cli state` qua UART0 (GPIO23/24);
+    - log `mem`: heap thấp nhất lúc ghép nối không thấp hơn bản H2 cũ.
+
 Cũng chưa kiểm chứng: trả lời của lệnh 0x001B trên radar thật, nhận biết Bluetooth tắt qua địa chỉ giả, Apple Home không hiện Mode Select, biến thể `unique_setup` trên ESP32-C3.
 
 ## Host test
@@ -770,14 +847,19 @@ API ESP-IDF/FreeRTOS được thay bằng stub (`test/host/stubs/`); thời gian
 
 ```
 firmware/
-├── CMakeLists.txt                  # phiên bản theo số commit, component esp-matter, chỉ esp32c3 (H2 thêm sau)
-├── sdkconfig.defaults              # chung: Wi-Fi, BLE thu gọn, log USB, PID 0x8001, 21 cluster, học từ mức cao nhất
+├── CMakeLists.txt                  # phiên bản theo số commit, component esp-matter, esp32c3 hoặc esp32h2
+├── sdkconfig.defaults              # chung mọi bo: phân vùng, BLE, Matter, học từ mức cao nhất, cluster bỏ đi
+├── sdkconfig.defaults.esp32c3      # ESP32-C3: Wi-Fi, BLE thu gọn, log USB, PID 0x8001, thêm cluster bỏ đi
+├── sdkconfig.defaults.esp32h2      # ESP32-H2: OpenThread FTD, CLI, console Matter, PID 0x8000
 ├── boards/                         # một file mỗi bo: tên, chân radar, LED, nút, cổng log
 │   ├── c3-supermini.defaults
 │   ├── c3-wroom-devkit.defaults
-│   └── c3-radar-r45.defaults
+│   ├── c3-radar-r45.defaults
+│   └── h2-mini.defaults
 ├── features/
-│   └── unique_setup.defaults       # mã ghép nối riêng từng bo (tuỳ chọn)
+│   ├── unique_setup.defaults       # mã ghép nối riêng từng bo (tuỳ chọn)
+│   └── factory.defaults            # dữ liệu nhà máy từng bo (tuỳ chọn, chỉ ESP32-H2)
+├── docs/h2-mini-wiring.png         # sơ đồ nối dây bo ESP32-H2 mini
 ├── tools/build.sh                  # build một bo (+ tính năng), chép file vào dist/
 ├── partitions.csv                  # 4 MB, 2 phân vùng OTA (giống hệt 1.0.132)
 ├── README.md
@@ -793,15 +875,16 @@ firmware/
 │   ├── quiet_learn.cpp             # học phòng trống (ESP32 mức cao nhất / radar tự đo / ESP32 phân vị), ngưỡng mặc định
 │   ├── device_info.cpp, device_name.cpp  # Basic Information, serial, tên thiết bị, NodeLabel, tên BLE
 │   ├── setup_code.cpp              # in mã QR; mã ghép nối riêng từng bo (unique_setup)
-│   ├── identity_diag.cpp           # log id_diag: danh tính, Wi-Fi, IP, fabric, subscription
-│   ├── diag_report.cpp             # gửi lại Wi-Fi RSSI và Uptime (entity chẩn đoán của Home Assistant)
-│   ├── net_watchdog.cpp            # watchdog kết nối: DNS-SD, nối lại Wi-Fi, khởi động lại
+│   ├── identity_diag.cpp           # log id_diag: danh tính, Wi-Fi hoặc Thread, IP, fabric, subscription
+│   ├── thread_diag.cpp             # log thread_diag mỗi 10 s cho tới khi ghép nối (chỉ ESP32-H2)
+│   ├── diag_report.cpp             # gửi lại Wi-Fi RSSI và Uptime (chỉ ESP32-C3)
+│   ├── net_watchdog.cpp            # watchdog kết nối: DNS-SD, nối lại Wi-Fi, khởi động lại (chỉ ESP32-C3)
 │   ├── mem_monitor.cpp             # log heap / stack
 │   ├── chip_project_config.h       # tên DNS-SD trước khi ghép nối
 │   ├── Kconfig.projbuild
 │   └── drivers/
 │       ├── ld2410.cpp              # radar LD2410 (UART1, 256000 baud): báo cáo, lệnh cấu hình
 │       ├── status_led.cpp          # LED GPIO một màu, WS2812 hoặc không có LED
-│       └── user_button.cpp         # nút BOOT: bấm 2/3/4 lần, giữ lâu
+│       └── user_button.cpp         # nút BOOT: bấm 2/3/4 lần (4 lần: không làm gì trên ESP32-H2), giữ lâu
 └── test/host/                      # host test (run.sh), giả lập thời gian và radar, stub ESP-IDF
 ```

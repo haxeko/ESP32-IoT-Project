@@ -15,24 +15,26 @@ Cảm biến hiện diện chuẩn Matter (device type **Occupancy Sensor 0x0107
 | `c3-supermini` | ESP32-C3 SuperMini, Wi-Fi | GPIO3, GPIO4 | GPIO8 một màu, sáng khi mức thấp | GPIO9 (BOOT) | USB-C (USB-Serial-JTAG) | build được; firmware cũ cùng chân đã chạy trên bo |
 | `c3-wroom-devkit` | ESP32-C3-WROOM-02-N4 (kiểu DevKitC-02), Wi-Fi | GPIO3, GPIO4 | WS2812 GPIO8 | GPIO9 (BOOT) | USB (USB-Serial-JTAG) | build được; cùng cấu hình biến thể `esplearn` 1.0.175 (trước đó `wroom_n4`) |
 | `c3-radar-r45` | mạch [`hardware/c3-radar-r45`](hardware/c3-radar-r45), ESP32-C3-WROOM-02-N4, Wi-Fi | IO10, IO3 | không có | pad IO9 (chập xuống GND) | pad RX0 / TX0 (UART0), USB-C chỉ cấp nguồn | build được; **chưa chạy trên bo** |
-| `h2-*` (ESP32-H2 WROOM, H2 mini) | ESP32-H2, Thread | — | — | — | — | **chưa có**: bước sau, cần sơ đồ chân của hai bo |
+| `h2-mini` | ESP32-H2 mini (ESP32-H2 SuperMini), **Thread** | GPIO11, GPIO12 | WS2812 GPIO8 | GPIO9 (BOOT) | UART0 (GPIO23/24) và USB-C | build được; chân, cấu hình Thread, PID như bản H2 cũ; **chưa chạy trên bo** |
+| `h2-wroom` (ESP32-H2 WROOM) | ESP32-H2, Thread | — | — | — | — | **chưa có**: cần sơ đồ chân |
 
-Bản ESP32-H2 hiện tại vẫn ở `ESP32-H2/matter-presence-ld2410-learning` (chưa đổi). Khi chuyển vào đây, bản H2 sẽ dùng mã chung này.
+Bản ESP32-H2 trước đây vẫn ở `ESP32-H2/matter-presence-ld2410-learning` (không đổi). Bo `h2-mini` là bản đó chuyển sang mã chung: OTA từ bản cũ lên `h2-mini` giữ ghép nối (cùng PID `0x8000`, bảng phân vùng, khoá lưu trữ).
 
 ## Quy định chung
 
 - **Firmware mặc định giống nhau cho mọi bo:** radar quyết định có người hay không; ESP32 học phòng trống 120 s và đặt ngưỡng cho radar từ mức cao nhất (`LD2410_LEARN_PEAK`, xem `firmware/README.md`). Hold time mặc định 30 s.
+- **Nút và đèn:** bấm đúp mở ghép nối, bấm 3 lần học phòng trống, giữ 5 s factory reset; cùng màu đèn. Riêng bo ESP32-H2 giữ nút và đèn như bản H2 cũ (`PRESENCE_BUTTON_LED_H2`): bấm 4 lần không làm gì (bo C3: ghi ngưỡng xuất xưởng), ghi ngưỡng xuất xưởng xong thì đèn xanh lá 10 s (bo C3: tím nháy).
 - **Tên, phiên bản:** Manufacturer `Haxeko`, Model `Presence LD2410`, tên thiết bị `Presence-` + 4 ký tự cuối số serial, số serial = MAC trong eFuse, phiên bản `1.0.<số commit>`.
 - **Matter:** VID `0xFFF1` (test). PID **`0x8001` cho ESP32-C3 (Wi-Fi)**, **`0x8000` cho ESP32-H2 (Thread)**: giữ như các bản đã ghép nối, không đổi. Endpoint 1 Occupancy Sensor (cùng Hold time, Learn empty room), 2 Range, 3 Radar resolution, 4 Radar Bluetooth.
 - **Phiên bản và OTA:** SoftwareVersion là số commit của cả repo (`git rev-list --count HEAD`), nên phải lớn hơn bản đang chạy trên bo. Khi đưa nhánh vào `main`, dùng **merge commit, không squash**: squash làm số commit nhỏ đi và bo sẽ từ chối bản OTA.
-- **OTA giữa các bo:** mọi bo C3 cùng VID/PID và cùng số phiên bản, Matter Server không phân biệt được. Chỉ cập nhật một bo bằng file có tên bo đó (`presence-<bo>-<phiên bản>.ota`). Nạp nhầm file của bo khác thì chân radar, LED, nút và cổng log sai (chưa thử trên bo): nạp lại đúng file qua USB / pad nạp.
+- **OTA giữa các bo:** mọi bo C3 cùng VID/PID và cùng số phiên bản, Matter Server không phân biệt được (bo H2 có PID riêng, không lẫn với C3). Chỉ cập nhật một bo bằng file có tên bo đó (`presence-<bo>-<phiên bản>.ota`). Nạp nhầm file của bo khác thì chân radar, LED, nút và cổng log sai (chưa thử trên bo): nạp lại đúng file qua USB / pad nạp.
 - **Không đổi khi chưa thống nhất:** chân, giao thức radar, VID/PID, device type, endpoint, cluster, khoá NVS, bảng phân vùng, khoá và chứng chỉ.
 
 ## Build nhanh
 
 ```bash
 cd matter-presence-sensor/firmware
-tools/build.sh c3-wroom-devkit          # hoặc c3-supermini, c3-radar-r45
+tools/build.sh c3-wroom-devkit          # hoặc c3-supermini, c3-radar-r45, h2-mini
 tools/build.sh c3-radar-r45 unique_setup  # thêm tính năng: features/<tên>.defaults
 ```
 
