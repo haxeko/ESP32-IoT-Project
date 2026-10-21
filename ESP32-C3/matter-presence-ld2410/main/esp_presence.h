@@ -16,8 +16,9 @@
 //
 // The empty room is learned by the radar as with the stable firmware (radar_worker.cpp, quiet_learn.cpp): the radar
 // measures and stores its thresholds; the radar_cfg task reads them after each learning and hands them here. While
-// learning, the ESP32 also records the energies of the empty room (esp_presence_learned_noise()), which keep the
-// hold thresholds above the noise.
+// learning, the ESP32 also records the energies of the empty room (esp_presence_learned_noise()): the trigger and
+// hold thresholds stay above that noise, and the radar thresholds the noise reaches are raised in the radar once
+// (written by quiet_learn.cpp), at most to the factory threshold + CONFIG_LD2410_LEARN_MAX_RAISE.
 //
 // NVS: namespace "esp_presence", key "noise" (blob pe_noise_t with a CRC), written only when a learning succeeded.
 // The key "profile" of firmware 1.0.153-1.0.156 is left as it is and no longer used.
@@ -59,8 +60,10 @@ bool esp_presence_needs_engineering(void);
 // radar_cfg task: time since the last valid report (since boot before the first one), 0 while reports arrive.
 uint32_t esp_presence_silent_ms(void);
 // radar_cfg task, from quiet_learn_run() once a learning succeeded: the engineering reports of the empty room
-// (gate length while recording). The noise of every channel is stored in NVS, then used.
-void esp_presence_learned_noise(const ld2410_capture_t *capture, uint16_t gate_cm);
+// (gate length while recording). The noise of every channel is stored in NVS, then used. thresholds: what the radar
+// holds after the learning; those the noise reaches are raised above it (nothing changed when the noise could not
+// be saved).
+void esp_presence_learned_noise(const ld2410_capture_t *capture, uint16_t gate_cm, ld2410_thresholds_t *thresholds);
 
 // Console on the configured ESP-IDF console (USB-Serial-JTAG or UART): LEARN_EMPTY, LEARN_CANCEL,
 // FACTORY_THRESHOLDS, STATUS, DIAG, DIAG_STREAM, THRESHOLDS, help (CONFIG_PRESENCE_ENGINE_CONSOLE).

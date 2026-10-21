@@ -35,6 +35,9 @@ static inline esp_err_t nvs_get_blob(nvs_handle_t h, const char *key, void *out,
 }
 static inline esp_err_t nvs_set_blob(nvs_handle_t h, const char *key, const void *data, size_t len)
 {
+    if (g_sim.nvs_full) {
+        return ESP_ERR_NVS_NOT_ENOUGH_SPACE;
+    }
     const uint8_t *p = (const uint8_t *)data;
     g_sim.nvs[s_nvs_open[h - 1]][key] = std::vector<uint8_t>(p, p + len);
     return ESP_OK;

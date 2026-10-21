@@ -50,6 +50,8 @@ static constexpr const char *kNvsNoiseKey = "noise";
 
 // Engine task only, after esp_presence_start()
 static pe_engine_t s_engine;
+// Its parameters (as the engine checked them): set before the task starts, only read afterwards (radar_cfg task)
+static pe_params_t s_params;
 static QueueHandle_t s_frames;   // pe_frame_t, from the LD2410 reader task
 static QueueHandle_t s_commands; // uint8_t (esp_presence_command_t)
 static std::atomic<uint32_t> s_dropped{0};
@@ -126,8 +128,9 @@ static void load_noise(uint32_t now)
         nvs_close(nvs);
     }
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "No noise of the empty room recorded yet: hold thresholds = radar thresholds. Learn the empty "
-                      "room (\"Learning\" in Home Assistant, 3 clicks or LEARN_EMPTY) for the lower hold thresholds");
+        ESP_LOGW(TAG, "No noise of the empty room recorded yet: hold thresholds = radar thresholds, strong above "
+                      "them without checking the noise. Learn the empty room (\"Learning\" in Home Assistant, 3 "
+                      "clicks or LEARN_EMPTY)");
         return;
     }
     if (len != sizeof(noise) || !pe_set_noise(&s_engine, &noise, now)) {
@@ -161,37 +164,64 @@ static void format_gate(int gate, uint16_t gate_cm, char *buf, size_t len)
     snprintf(buf, len, "%s-%s", from, to);
 }
 
-// "radar 30 hold 20 (noise 8)", "radar 45 hold 45 (noise 44, hold raised above it)", "radar 100 (ignored)"
+// "45", "never" (PE_OFF)
+static void format_level(uint8_t level, char *buf, size_t len)
+{
+    if (level > PE_MAX_ENERGY) {
+        snprintf(buf, len, "never");
+    } else {
+        snprintf(buf, len, "%u", level);
+    }
+}
+
+// "radar 30 strong 31 hold 20 (noise 8)", "radar 40 strong 69 hold 66 (noise 64, strong and hold raised)",
+// "radar 100 (gate ignored)"
 static void format_channel(const pe_engine_t &e, int kind, int g, char *buf, size_t len)
 {
     const pe_channel_t &ch = e.th.ch[kind][g];
     if (ch.flags & PE_CH_NOT_SET) {
         snprintf(buf, len, "no radar threshold");
-    } else if (ch.flags & PE_CH_IGNORED) {
-        snprintf(buf, len, "radar %u (gate ignored)", ch.radar);
-    } else if (ch.flags & PE_CH_NO_NOISE) {
-        snprintf(buf, len, "radar %u hold %u", ch.radar, ch.hold);
-    } else {
-        snprintf(buf, len, "radar %u hold %u (noise %u%s)", ch.radar, ch.hold, e.noise.level[kind][g],
-                 ch.flags & PE_CH_NOISE_HOLD ? ", hold raised above it" : "");
+        return;
     }
+    if (ch.flags & PE_CH_IGNORED) {
+        snprintf(buf, len, "radar %u (gate ignored)", ch.radar);
+        return;
+    }
+    char strong[8];
+    char hold[8];
+    format_level(ch.trigger, strong, sizeof(strong));
+    format_level(ch.hold, hold, sizeof(hold));
+    if (ch.flags & PE_CH_NO_NOISE) {
+        snprintf(buf, len, "radar %u strong %s hold %s", ch.radar, strong, hold);
+        return;
+    }
+    const char *raised = (ch.flags & PE_CH_NOISE_TRIGGER) ? ", strong and hold raised"
+                         : (ch.flags & PE_CH_NOISE_HOLD)  ? ", hold raised"
+                                                          : "";
+    snprintf(buf, len, "radar %u strong %s hold %s (noise %u%s)", ch.radar, strong, hold, e.noise.level[kind][g],
+             raised);
 }
 
 static void log_thresholds()
 {
     const pe_engine_t &e = s_engine;
     if (e.th.from_radar) {
-        ESP_LOGI(TAG, "Thresholds from the radar (%u cm gates): strong above the radar threshold, hold at radar - %u %% "
-                      "(at most %u), at least the empty room noise + %u",
-                 e.range.gate_cm, e.p.hold_drop_percent, e.p.hold_drop_max, e.p.hold_noise_margin);
+        char margin[8] = "";
+        if (e.p.trigger_margin > 0) {
+            snprintf(margin, sizeof(margin), " + %u", e.p.trigger_margin);
+        }
+        ESP_LOGI(TAG, "Thresholds from the radar (%u cm gates): strong from radar + 1%s and at least the empty room "
+                      "noise + %u; hold at radar - %u %% (at most %u), at least the noise + %u",
+                 e.range.gate_cm, margin, e.p.trigger_noise_margin, e.p.hold_drop_percent, e.p.hold_drop_max,
+                 e.p.hold_noise_margin);
     } else {
         ESP_LOGI(TAG, "Thresholds: LD2410 factory ones until the radar's are read");
     }
     for (int g = 0; g < PE_GATES; g++) {
         char where[24];
         format_gate(g, e.range.gate_cm, where, sizeof(where));
-        char moving[64];
-        char still[64];
+        char moving[80];
+        char still[80];
         format_channel(e, PE_MOVING, g, moving, sizeof(moving));
         format_channel(e, PE_STILL, g, still, sizeof(still));
         ESP_LOGI(TAG, "  gate %d %-11s moving: %s | still: %s", g, where, moving, still);
@@ -209,14 +239,31 @@ static void log_thresholds()
         }
         return;
     }
+    pe_radar_thresholds_t factory;
+    pe_factory_thresholds(&factory);
     for (int kind = 0; kind < PE_KINDS; kind++) {
         for (int g = 0; g < PE_GATES; g++) {
             const pe_channel_t &ch = e.th.ch[kind][g];
+            if (!pe_channel_counted(&e, kind, g) || !(ch.flags & PE_CH_NOISE_TRIGGER)) {
+                continue;
+            }
+            const char *name = kind == PE_MOVING ? "moving" : "still";
             const uint8_t level = e.noise.level[kind][g];
-            if (pe_channel_counted(&e, kind, g) && level != PE_NOISE_UNKNOWN && level >= ch.trigger) {
-                ESP_LOGW(TAG, "Gate %d %s: the empty room noise %u is above the radar threshold %u, presence may start "
-                              "without anyone: raise that threshold (HLKRadarTool) or learn the empty room again",
-                         g, kind == PE_MOVING ? "moving" : "still", level, ch.radar);
+            const int limit =
+                (kind == PE_MOVING ? factory.moving[g] : factory.still[g]) + CONFIG_LD2410_LEARN_MAX_RAISE;
+            if (ch.trigger > PE_MAX_ENERGY) {
+                ESP_LOGW(TAG, "Gate %d %s: the empty room noise %u is close to 100, it cannot start presence there. If "
+                              "something kept moving there while learning, learn the empty room again without it",
+                         g, name, level);
+            } else if (ch.radar >= limit) {
+                ESP_LOGW(TAG, "Gate %d %s: the empty room noise %u reaches the radar threshold %u (a learning raises "
+                              "it at most to factory + %d), strong there only from %u",
+                         g, name, level, ch.radar, CONFIG_LD2410_LEARN_MAX_RAISE, ch.trigger);
+            } else {
+                ESP_LOGW(TAG, "Gate %d %s: the empty room noise %u reaches the radar threshold %u, strong there only "
+                              "from %u. Learn the empty room again (the radar threshold is then raised above the "
+                              "noise) or raise it with HLKRadarTool",
+                         g, name, level, ch.radar, ch.trigger);
             }
         }
     }
@@ -271,19 +318,26 @@ static void print_diag(uint32_t now)
     ESP_LOGI(TAG, "DIAG %s%s%s, sensor %s", e.presence == PE_PRESENCE_PRESENT ? "present" : "empty",
              e.presence == PE_PRESENCE_PRESENT && e.evidence ? " (hold signal)" : "", countdown,
              pe_sensor_name(e.sensor));
-    ESP_LOGI(TAG, "DIAG gate distance    | moving now filt peak hold radar | still now filt peak hold radar");
+    ESP_LOGI(TAG, "DIAG gate distance   | moving now filt peak hold strong radar | still now filt peak hold strong "
+                  "radar");
     for (int g = 0; g < PE_GATES; g++) {
         char where[24];
         format_gate(g, e.range.gate_cm, where, sizeof(where));
-        char cols[PE_KINDS][40];
+        char cols[PE_KINDS][48];
         for (int kind = 0; kind < PE_KINDS; kind++) {
+            // The first column ends under "now" of " moving now" or " still now"
+            const int now_width = kind == PE_MOVING ? 11 : 10;
             if (!pe_channel_counted(&e, kind, g)) {
-                snprintf(cols[kind], sizeof(cols[kind]), "%-29s", "  (not counted)");
+                snprintf(cols[kind], sizeof(cols[kind]), "%-*s", now_width + 28, "  (not counted)");
                 continue;
             }
             const uint8_t now_energy = kind == PE_MOVING ? e.last.moving[g] : e.last.still[g];
-            snprintf(cols[kind], sizeof(cols[kind]), "%10u %4u %4u %4u %5u", now_energy,
-                     pe_filtered_energy(&e, kind, g), pe_recent_peak(&e, kind, g), pe_hold_threshold(&e, kind, g),
+            char strong[8];
+            char hold[8];
+            format_level(pe_trigger_threshold(&e, kind, g), strong, sizeof(strong));
+            format_level(pe_hold_threshold(&e, kind, g), hold, sizeof(hold));
+            snprintf(cols[kind], sizeof(cols[kind]), "%*u %4u %4u %4s %6s %5u", now_width, now_energy,
+                     pe_filtered_energy(&e, kind, g), pe_recent_peak(&e, kind, g), hold, strong,
                      e.th.ch[kind][g].radar);
         }
         ESP_LOGI(TAG, "DIAG %4d %-10s |%s |%s", g, where, cols[PE_MOVING], cols[PE_STILL]);
@@ -304,9 +358,9 @@ static bool handle_events()
         }
     }
     if (ev & PE_EV_TRIGGERED) {
-        ESP_LOGI(TAG, "Present: %s gate %u energy %u above the radar threshold %u (%u of the last %u reports strong)",
-                 e.trigger_kind == PE_MOVING ? "moving" : "still", e.trigger_gate, e.trigger_energy,
-                 e.trigger_threshold, e.p.trigger_frames, e.p.trigger_window);
+        ESP_LOGI(TAG, "Present: %s gate %u energy %u, strong from %u (radar threshold %u), %u of the last %u reports "
+                      "strong", e.trigger_kind == PE_MOVING ? "moving" : "still", e.trigger_gate, e.trigger_energy,
+                 e.trigger_strong, e.trigger_threshold, e.p.trigger_frames, e.p.trigger_window);
     }
     if (ev & PE_EV_EVIDENCE) {
         if (e.presence == PE_PRESENCE_PRESENT && !e.evidence) {
@@ -450,6 +504,8 @@ static void params_from_config(pe_params_t *p)
     p->data_timeout_ms = CONFIG_PRESENCE_ENGINE_DATA_TIMEOUT_MS;
     p->hold_drop_percent = CONFIG_PRESENCE_ENGINE_HOLD_DROP_PERCENT;
     p->hold_drop_max = CONFIG_PRESENCE_ENGINE_HOLD_DROP_MAX;
+    p->trigger_margin = CONFIG_PRESENCE_ENGINE_TRIGGER_MARGIN;
+    p->trigger_noise_margin = CONFIG_PRESENCE_ENGINE_TRIGGER_NOISE_MARGIN;
 }
 
 esp_err_t esp_presence_start(void)
@@ -463,11 +519,16 @@ esp_err_t esp_presence_start(void)
     params_from_config(&params);
     const uint32_t now = now_ms();
     pe_init(&s_engine, &params, now);
+    s_params = s_engine.p;
     pe_set_absence_time(&s_engine, (uint32_t)CONFIG_PRESENCE_HOLD_TIME_SEC * 1000);
-    ESP_LOGI(TAG, "ESP32 presence engine: strong signal (above the radar threshold) in %u of %u reports to start, "
-                  "hold signal in %u of %u reports to stay, data timeout %" PRIu32 " ms",
-             s_engine.p.trigger_frames, s_engine.p.trigger_window, s_engine.p.hold_frames, s_engine.p.hold_window,
-             s_engine.p.data_timeout_ms);
+    char margin[8] = "";
+    if (s_params.trigger_margin > 0) {
+        snprintf(margin, sizeof(margin), " + %u", s_params.trigger_margin);
+    }
+    ESP_LOGI(TAG, "ESP32 presence engine: strong signal (from radar threshold + 1%s, at least the empty room noise + "
+                  "%u) in %u of %u reports to start, hold signal in %u of %u reports to stay, data timeout %" PRIu32
+                  " ms", margin, s_params.trigger_noise_margin, s_params.trigger_frames, s_params.trigger_window,
+             s_params.hold_frames, s_params.hold_window, s_params.data_timeout_ms);
     load_noise(now);
     (void)pe_take_events(&s_engine); // the thresholds are logged once read from the radar
     if (xTaskCreate(engine_task, "presence_eng", kTaskStack, nullptr, kTaskPriority, nullptr) != pdPASS) {
@@ -540,19 +601,64 @@ uint32_t esp_presence_silent_ms(void)
     return s_silent_ms;
 }
 
-void esp_presence_learned_noise(const ld2410_capture_t *capture, uint16_t gate_cm)
+// Radar thresholds the noise reaches, raised above it (noise + trigger margin - 1), at most to the factory threshold
+// + CONFIG_LD2410_LEARN_MAX_RAISE (a gate where something moved while recording does not go deaf in the radar).
+static void raise_radar_thresholds(const pe_noise_t *noise, ld2410_thresholds_t *thresholds)
+{
+    pe_radar_thresholds_t before;
+    memcpy(before.moving, thresholds->moving, sizeof(before.moving));
+    memcpy(before.still, thresholds->still, sizeof(before.still));
+    pe_radar_thresholds_t factory;
+    pe_factory_thresholds(&factory);
+    pe_radar_thresholds_t ceiling;
+    for (int g = 0; g < PE_GATES; g++) {
+        ceiling.moving[g] = (uint8_t)std::min(factory.moving[g] + CONFIG_LD2410_LEARN_MAX_RAISE, PE_MAX_ENERGY - 1);
+        ceiling.still[g] = (uint8_t)std::min(factory.still[g] + CONFIG_LD2410_LEARN_MAX_RAISE, PE_MAX_ENERGY - 1);
+    }
+    pe_radar_thresholds_t after = before;
+    const int raised = pe_raise_above_noise(&s_params, noise, &ceiling, &after);
+    for (int kind = 0; kind < PE_KINDS; kind++) {
+        for (int g = kind == PE_STILL ? PE_FIRST_STILL_GATE : 0; g < PE_GATES; g++) {
+            const uint8_t level = noise->level[kind][g];
+            const uint8_t was = kind == PE_MOVING ? before.moving[g] : before.still[g];
+            const uint8_t now = kind == PE_MOVING ? after.moving[g] : after.still[g];
+            if (level == PE_NOISE_UNKNOWN || was >= PE_MAX_ENERGY) {
+                continue;
+            }
+            const char *name = kind == PE_MOVING ? "moving" : "still";
+            if (now != was) {
+                ESP_LOGI(TAG, "Gate %d %s: empty room noise %u, radar threshold %u -> %u", g, name, level, was, now);
+            }
+            const int strong = std::max(now + 1 + s_params.trigger_margin, level + s_params.trigger_noise_margin);
+            if (level + s_params.trigger_noise_margin - 1 > now) {
+                ESP_LOGW(TAG, "Gate %d %s: empty room noise %u, radar threshold %u (raised at most to factory %u + "
+                              "%d): the ESP32 starts presence there only from %d%s. If something kept moving there "
+                              "while learning (fan, curtain, someone), learn again without it",
+                         g, name, level, now, kind == PE_MOVING ? factory.moving[g] : factory.still[g],
+                         CONFIG_LD2410_LEARN_MAX_RAISE, strong, strong > PE_MAX_ENERGY ? " (never)" : "");
+            }
+        }
+    }
+    if (raised > 0) {
+        memcpy(thresholds->moving, after.moving, sizeof(after.moving));
+        memcpy(thresholds->still, after.still, sizeof(after.still));
+    }
+}
+
+void esp_presence_learned_noise(const ld2410_capture_t *capture, uint16_t gate_cm, ld2410_thresholds_t *thresholds)
 {
     pe_noise_t noise;
     pe_noise_from_histograms(capture->moving, capture->still, capture->frames, gate_cm, &noise);
     if (!save_noise(&noise)) {
         return;
     }
-    ESP_LOGI(TAG, "Noise of the empty room recorded (%" PRIu32 " reports) and saved: the hold thresholds stay above "
-                  "it", noise.frames);
+    ESP_LOGI(TAG, "Noise of the empty room recorded (%" PRIu32 " reports) and saved: the thresholds stay above it",
+             noise.frames);
     taskENTER_CRITICAL(&s_input_lock);
     s_noise_in = noise;
     s_noise_pending = true;
     taskEXIT_CRITICAL(&s_input_lock);
+    raise_radar_thresholds(&noise, thresholds);
 }
 
 #endif // CONFIG_PRESENCE_ESP_ENGINE

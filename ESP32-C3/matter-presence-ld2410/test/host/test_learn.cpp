@@ -15,18 +15,34 @@ static const uint8_t kFactoryStill[9] = { 0, 0, 40, 40, 30, 30, 20, 20, 20 };
 static std::vector<std::pair<int64_t, quiet_learn_phase_t>> s_phases;
 static int64_t s_cancel_at_ms = -1;
 
-// Noise handed to the presence engine: when, the gate length, the reports, and the reports of gate 3 still energy 75
+// Noise handed to the presence engine: when, the gate length, the reports, the reports of gate 3 still energy 75,
+// and the thresholds the radar held then
 struct NoiseCall {
     int64_t ms;
     uint16_t gate_cm;
     uint32_t frames;
     uint32_t still3_at_75;
+    ld2410_thresholds_t held;
 };
 static std::vector<NoiseCall> s_noise;
+// The presence engine raising one threshold above the noise (kind 0 moving, 1 still), when the gate is set
+static int s_raise_kind;
+static int s_raise_gate = -1;
+static uint8_t s_raise_value;
 
-static void on_noise(const ld2410_capture_t *capture, uint16_t gate_cm)
+static void on_noise(const ld2410_capture_t *capture, uint16_t gate_cm, ld2410_thresholds_t *thresholds)
 {
-    s_noise.push_back({ sim_ms(), gate_cm, capture->frames, capture->still[3][75] });
+    s_noise.push_back({ sim_ms(), gate_cm, capture->frames, capture->still[3][75], *thresholds });
+    if (s_raise_gate >= 0) {
+        (s_raise_kind == 0 ? thresholds->moving : thresholds->still)[s_raise_gate] = s_raise_value;
+    }
+}
+
+static void raise_threshold(int kind, int gate, uint8_t value)
+{
+    s_raise_kind = kind;
+    s_raise_gate = gate;
+    s_raise_value = value;
 }
 
 static bool cancelled()
@@ -51,6 +67,7 @@ static void start(RadarSim &radar)
     s_phases.clear();
     s_cancel_at_ms = -1;
     s_noise.clear();
+    s_raise_gate = -1;
 }
 
 static int64_t phase_ms(quiet_learn_phase_t phase)
@@ -163,7 +180,32 @@ static void test_esp32_learning()
         CHECK(radar.still[3] == 70 && radar.count(0x000B) == 0);
         CHECK(s_noise.size() == 1 && s_noise[0].gate_cm == 75 && s_noise[0].frames >= 500);
         CHECK(s_noise[0].still3_at_75 == s_noise[0].frames);
+        CHECK(s_noise[0].held.still[3] == 70 && s_noise[0].held.moving[5] == 25); // what was just written
+        CHECK(radar.count(0x0064) == 9 && !sim_log_contains("Thresholds raised above the noise"));
         CHECK(sim_log_contains("recording starts in 20 s and lasts 60 s"));
+    }
+
+    test_begin("ESP32 learning for the presence engine: a threshold it raises above the noise written once more");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.energies = room_energies;
+        raise_threshold(0, 8, 33);
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_SAVED);
+        CHECK(radar.moving[8] == 33 && radar.still[3] == 70 && radar.count(0x0064) == 18);
+        CHECK(sim_log_contains("Thresholds raised above the noise recorded by the ESP32: moving "
+                               "50,50,40,30,20,25,15,15,33 | still -,-,40,70,30,30,20,20,20"));
+        CHECK(sim_log_contains("Raised thresholds saved in the LD2410") && !radar.config_mode);
+    }
+    {
+        RadarSim radar;
+        start(radar);
+        radar.energies = room_energies;
+        radar.stuck_gate = 8; // the first write keeps gate 8 as it is, the raised one is not kept
+        raise_threshold(0, 8, 33);
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_FAILED);
+        CHECK(s_noise.size() == 1 && radar.moving[8] == 15 && !radar.config_mode);
+        CHECK(sim_log_contains("Gate 8 reads back 15/20 instead of 33/20"));
     }
     {
         RadarSim radar;
@@ -401,15 +443,24 @@ static size_t command_index(const RadarSim &radar, uint16_t command, size_t from
 static void test_radar_auto_noise()
 {
     test_begin("presence engine: the ESP32 records the noise 30 s after the delay, then the radar measures without "
-               "the engineering mode; the noise handed over once the radar stored its thresholds");
+               "the engineering mode; the noise handed over once the radar stored its thresholds, those raised above "
+               "it written");
     {
         RadarSim radar;
         start(radar);
         radar.energies = fan_room;
         radar.engineering = true; // kept on by the engine
+        raise_threshold(1, 3, 70); // the fan: 75 recorded, raised to factory + 30
         CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_SAVED);
-        CHECK(radar.count(0x000B) == 1 && radar.auto_seconds == 60 && radar.count(0x0064) == 0);
-        CHECK(radar.moving[2] == 30 && radar.still[3] == 30 && !radar.engineering);
+        CHECK(radar.count(0x000B) == 1 && radar.auto_seconds == 60 && radar.count(0x0064) == 9);
+        CHECK(radar.moving[2] == 30 && radar.still[3] == 70 && !radar.engineering && !radar.config_mode);
+        CHECK(memcmp(s_noise.at(0).held.moving, radar.auto_moving, 9) == 0 && s_noise[0].held.still[3] == 30);
+        CHECK(command_index(radar, 0x0064) > command_index(radar, 0x000B));
+        CHECK(sim_log_contains("Thresholds set by the radar: moving 45,40,30,25,18,12,10,10,10 | still "
+                               "-,-,35,30,25,22,15,15,15"));
+        CHECK(sim_log_contains("Thresholds raised above the noise recorded by the ESP32: moving "
+                               "45,40,30,25,18,12,10,10,10 | still -,-,35,70,25,22,15,15,15"));
+        CHECK(sim_log_contains("Raised thresholds saved in the LD2410"));
         // Engineering on for the noise, then off before the radar's measurement
         const size_t on = command_index(radar, 0x0062);
         const size_t off = command_index(radar, 0x0063);
@@ -425,6 +476,29 @@ static void test_radar_auto_noise()
                                "the LD2410 measures the room itself (70 s)"));
         CHECK(sim_log_contains("Recording the noise of the empty room on the ESP32 for 30 s, then the LD2410 measures"));
         CHECK(sim_log_contains("Learning done: thresholds set by the LD2410 background noise detection"));
+    }
+
+    test_begin("presence engine: nothing raised above the noise, nothing written by the ESP32");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.engineering = true;
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_SAVED);
+        CHECK(s_noise.size() == 1 && radar.count(0x0064) == 0 && radar.still[3] == 30);
+        CHECK(!sim_log_contains("Thresholds raised above the noise"));
+    }
+
+    test_begin("presence engine: the raised thresholds are not kept by the radar, failed (the noise was handed over)");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.energies = fan_room;
+        radar.engineering = true;
+        radar.stuck_gate = 3;
+        raise_threshold(1, 3, 70);
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_FAILED);
+        CHECK(s_noise.size() == 1 && radar.still[3] == 30 && !radar.config_mode);
+        CHECK(sim_log_contains("Gate 3 reads back 25/30 instead of 25/70"));
     }
 
     test_begin("presence engine: cancelled while the noise is recorded, the radar is not asked");

@@ -14,14 +14,18 @@
 // ESP-IDF, so the host tests run it as it is; esp_presence.cpp feeds it on the ESP32.
 //
 // Channels: one per kind of energy (moving, still) and gate. From the radar threshold T of a channel:
-//   - trigger: energy above T, as the radar itself counts a target (T = 100: the radar ignores the gate, so does the
-//     engine);
+//   - trigger: energy above T (+ trigger_margin), as the radar itself counts a target (T = 100: the radar ignores the
+//     gate, so does the engine); and at least the noise of the empty room + trigger_noise_margin, so that a gate whose
+//     noise reaches its radar threshold (radar thresholds left at the factory values, or lowered with HLKRadarTool)
+//     does not start presence by itself (a noise above 100 - trigger_noise_margin: the channel cannot start it);
 //   - hold: energy at or above T - drop, drop = hold_drop_percent % of T and at most hold_drop_max, so that someone
 //     who keeps still (weaker energy than when moving in) stays detected; but never below the noise of the empty
-//     room + hold_noise_margin, else the noise would hold presence for ever. Always at most T (below the trigger).
+//     room + hold_noise_margin, else the noise would hold presence for ever. Always below the trigger.
 // The noise of every channel is recorded by the ESP32 while the empty room is learned (pe_noise_t, stored in NVS on
 // the ESP32): the radar does not report it. Without it (never learned with this firmware, or learned with another
-// gate length) the hold threshold is T: no lower than the radar's own.
+// gate length) the hold threshold is T and the trigger above T: no lower than the radar's own.
+// After a learning, the radar thresholds the noise reaches are raised in the radar too (pe_raise_above_noise(), at
+// most to the factory threshold + CONFIG_LD2410_LEARN_MAX_RAISE): the engine trigger then follows the radar's.
 // The still energy of gates 0 and 1 is not counted: the LD2410 has no still threshold there (it cannot be set).
 //
 // Noise filter: each channel is the median of its last three energies before any comparison. A report that stands
@@ -29,10 +33,11 @@
 // (100 ms) of delay. Moving and still energies are filtered separately.
 //
 // Presence (two thresholds, hysteresis):
-//   - WAITING (empty): a gate counts as "strong" in a report when one of its filtered energies is above its radar
-//     threshold. Presence starts once `trigger_frames` of the last `trigger_window` reports were strong in the same
-//     place (a gate or its neighbours: someone walking crosses gates, noise jumps around). With the filter, that is
-//     about four reports (0.4 s) of a strong signal; isolated or two-report bursts never start it.
+//   - WAITING (empty): a gate counts as "strong" in a report when one of its filtered energies reaches its trigger
+//     (above the radar threshold and the noise). Presence starts once `trigger_frames` of the last `trigger_window`
+//     reports were strong in the same place (a gate or its neighbours: someone walking crosses gates, noise jumps
+//     around). With the filter, that is about four reports (0.4 s) of a strong signal; isolated or two-report bursts
+//     never start it.
 //   - PRESENT: a gate holds presence when one of its filtered energies reaches its hold threshold in `hold_frames`
 //     of the last `hold_window` reports (breathing, small movements). Each report with that evidence restarts the
 //     absence countdown; after `absence_ms` without it (the Occupancy Sensing HoldTime, 60 s by default) the room is
@@ -62,10 +67,11 @@
 #define PE_FIRST_STILL_GATE 2
 
 // Per-channel flags
-#define PE_CH_NOT_SET 0x01    // no radar threshold (still energy of gates 0 and 1): not counted
-#define PE_CH_IGNORED 0x02    // radar threshold 100: the radar ignores the gate, so does the engine
-#define PE_CH_NOISE_HOLD 0x04 // the hold threshold was raised above the empty room noise (less drop than set)
-#define PE_CH_NO_NOISE 0x08   // no noise recorded for it: hold = radar threshold
+#define PE_CH_NOT_SET 0x01       // no radar threshold (still energy of gates 0 and 1): not counted
+#define PE_CH_IGNORED 0x02       // radar threshold 100: the radar ignores the gate, so does the engine
+#define PE_CH_NOISE_HOLD 0x04    // the hold threshold was raised above the empty room noise (less drop than set)
+#define PE_CH_NO_NOISE 0x08      // no noise recorded for it: hold = radar threshold
+#define PE_CH_NOISE_TRIGGER 0x10 // the noise reaches the radar threshold: trigger raised above the noise
 
 #define PE_NOISE_MAGIC 0x314E4550u // "PEN1"
 #define PE_NOISE_VERSION 1
@@ -74,8 +80,9 @@
 
 typedef struct {
     uint8_t radar;   // threshold stored in the radar (0-100)
-    uint8_t trigger; // filtered energy at or above it is strong (radar + 1); PE_OFF: cannot trigger
-    uint8_t hold;    // filtered energy at or above it keeps presence, below trigger; PE_OFF: not counted
+    uint8_t trigger; // filtered energy at or above it is strong (radar + 1 + margin, at least noise + margin);
+                     // PE_OFF: cannot trigger
+    uint8_t hold;    // filtered energy at or above it keeps presence, below trigger; PE_OFF: cannot hold
     uint8_t flags;   // PE_CH_*
 } pe_channel_t;
 
@@ -114,8 +121,11 @@ typedef struct {
     uint8_t hold_frames;    // reports reaching hold in a gate needed...
     uint8_t hold_window;    // ...among this many last reports (at most PE_WINDOW_MAX)
     uint32_t data_timeout_ms; // nothing valid (or no energies) for this long: sensor fault
+    // Trigger = radar threshold + 1 + trigger_margin, at least the recorded noise + trigger_noise_margin (at least 1)
+    uint8_t trigger_margin;
+    uint8_t trigger_noise_margin;
     // Hold threshold = radar threshold - min(hold_drop_max, radar threshold x hold_drop_percent / 100), at least
-    // the recorded noise + hold_noise_margin
+    // the recorded noise + hold_noise_margin (below trigger_noise_margin), below the trigger
     uint8_t hold_drop_percent;
     uint8_t hold_drop_max;
     uint8_t hold_noise_margin;
@@ -187,10 +197,11 @@ typedef struct {
     uint16_t hold_bits[PE_WINDOW_MAX];
     uint8_t window_pos;
     uint8_t window_count;
-    uint8_t trigger_gate; // last start of presence: gate, kind, energy, radar threshold
+    uint8_t trigger_gate; // last start of presence: gate, kind, energy, radar threshold, trigger of the channel
     uint8_t trigger_kind;
     uint8_t trigger_energy;
     uint8_t trigger_threshold;
+    uint8_t trigger_strong;
     uint8_t evidence_gate; // gate of the latest hold evidence
 
     // Latest energies and the last reports of every channel (filter, diagnostics)
@@ -209,7 +220,7 @@ void pe_init(pe_engine_t *e, const pe_params_t *p, uint32_t now_ms);
 // LD2410 factory thresholds (HLK-LD2410 serial protocol; still gates 0 and 1 cannot be set: 0)
 void pe_factory_thresholds(pe_radar_thresholds_t *out);
 // Thresholds in use from the radar's (trigger above them, hold below them) and the noise recorded with the same
-// gate length (nullptr: none, hold = radar threshold).
+// gate length (nullptr: none, hold = radar threshold); trigger and hold stay above that noise.
 void pe_compute_thresholds(const pe_params_t *p, const pe_radar_thresholds_t *radar, const pe_noise_t *noise,
                            pe_thresholds_t *out);
 
@@ -226,6 +237,11 @@ bool pe_noise_valid(const pe_noise_t *noise);
 void pe_configure(pe_engine_t *e, const pe_radar_thresholds_t *radar, const pe_range_t *range, uint32_t now_ms);
 // Noise recorded while learning (nullptr: none). False (nothing changed) when the record is not valid.
 bool pe_set_noise(pe_engine_t *e, const pe_noise_t *noise, uint32_t now_ms);
+// Radar thresholds the recorded noise reaches, raised so that the noise stays below the trigger (noise +
+// trigger_noise_margin - 1), at most `ceiling` (and 99); the others stay. Still gates 0 and 1 are left as they are.
+// Returns how many were raised.
+int pe_raise_above_noise(const pe_params_t *p, const pe_noise_t *noise, const pe_radar_thresholds_t *ceiling,
+                         pe_radar_thresholds_t *radar);
 // Occupancy Sensing HoldTime
 void pe_set_absence_time(pe_engine_t *e, uint32_t absence_ms);
 // A configuration session or a learning of the radar starts or ends (no reports or no energies meanwhile).

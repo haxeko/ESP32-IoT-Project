@@ -3,7 +3,7 @@
 // session, the busy flag around sessions and learnings, the engineering mode turned on when reports lack energies,
 // the recovery of a silent radar (UART resynchronised, configuration mode left, restarts at growing intervals), and
 // the learning as with the stable firmware (the radar measures and stores its thresholds), with the noise recorded
-// for the engine first and the thresholds read again afterwards.
+// for the engine first, the thresholds it raises above that noise written, and the thresholds read again afterwards.
 #include "sim.h"
 
 #include "radar_worker.cpp"
@@ -42,6 +42,8 @@ struct NoiseCall {
     bool busy;
 };
 static std::vector<NoiseCall> g_noise;
+static int g_raise_still_gate = -1; // the engine raises this still threshold to g_raise_value
+static uint8_t g_raise_value;
 
 bool esp_presence_needs_engineering(void)
 {
@@ -61,9 +63,12 @@ void esp_presence_configure(const radar_settings_t *settings)
     g_configured++;
     g_settings = *settings;
 }
-void esp_presence_learned_noise(const ld2410_capture_t *capture, uint16_t gate_cm)
+void esp_presence_learned_noise(const ld2410_capture_t *capture, uint16_t gate_cm, ld2410_thresholds_t *thresholds)
 {
     g_noise.push_back({ sim_ms(), capture->frames, gate_cm, g_busy });
+    if (g_raise_still_gate >= 0) {
+        thresholds->still[g_raise_still_gate] = g_raise_value;
+    }
 }
 
 static void boot(RadarSim &radar)
@@ -102,6 +107,7 @@ static void boot(RadarSim &radar)
     g_configured = 0;
     g_settings = {};
     g_noise.clear();
+    g_raise_still_gate = -1;
     g_led.clear();
     g_view.clear();
 }
@@ -239,6 +245,22 @@ int main(int argc, char **argv)
               g_led[1] == STATUS_LED_LEARNING_RECORDING && g_led.back() == STATUS_LED_LEARNING_DONE);
         CHECK(!g_view.empty() && g_view.back() == RADAR_LEARN_OFF);
         CHECK(sim_log_contains("Recording the noise of the empty room on the ESP32 for 30 s"));
+    }
+
+    test_begin("Learning: a threshold the engine raises above the noise is written into the radar, then read again "
+               "and handed to the engine");
+    {
+        RadarSim radar;
+        boot(radar);
+        run_worker(3000);
+        g_raise_still_gate = 2;
+        g_raise_value = 69;
+        CHECK(radar_worker_request_learning());
+        run_worker(135000);
+        CHECK(radar.count(0x000B) == 1 && radar.count(0x0064) == 9 && radar.still[2] == 69);
+        CHECK(g_noise.size() == 1 && g_settings.config.thresholds.still[2] == 69);
+        CHECK(memcmp(g_settings.config.thresholds.moving, radar.auto_moving, 9) == 0);
+        CHECK(g_led.back() == STATUS_LED_LEARNING_DONE && !g_busy);
     }
 
     test_begin("3 clicks learn too; Off cancels: nothing measured, nothing handed over, thresholds kept");

@@ -48,6 +48,7 @@ struct Sim {
     std::map<int, int> gpio_in;                                  // level read per pin (1 when not set)
     std::vector<std::string> tasks;                              // names passed to xTaskCreate
     std::map<std::string, std::map<std::string, std::vector<uint8_t>>> nvs; // namespace -> key -> blob
+    bool nvs_full = false;                                       // nvs_set_blob fails (no room left)
     std::vector<std::string> log;                                // "<ms> <level> <tag>: <message>"
 };
 

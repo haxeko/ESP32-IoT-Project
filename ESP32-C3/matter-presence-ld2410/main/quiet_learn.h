@@ -34,9 +34,11 @@ typedef enum {
                            // thresholds, or no memory for the recording
 } quiet_learn_result_t;
 
-// Engineering reports of the empty room (and the gate length while recording), handed over before quiet_learn_run()
-// returns QUIET_LEARN_SAVED: the ESP32 presence engine keeps the noise of every gate from them.
-typedef void (*quiet_learn_noise_cb_t)(const ld2410_capture_t *capture, uint16_t gate_cm);
+// Engineering reports of the empty room (and the gate length while recording), handed over once the learning
+// succeeded: the ESP32 presence engine keeps the noise of every gate from them. thresholds: what the radar holds
+// then; the callback may raise some of them (above that noise), which are then written to the radar.
+typedef void (*quiet_learn_noise_cb_t)(const ld2410_capture_t *capture, uint16_t gate_cm,
+                                       ld2410_thresholds_t *thresholds);
 
 // Runs one learning in the calling task: waits CONFIG_LD2410_LEARN_DELAY_SEC (time to leave the room), then
 // records CONFIG_LD2410_LEARN_DURATION_SEC.
@@ -45,8 +47,9 @@ typedef void (*quiet_learn_noise_cb_t)(const ld2410_capture_t *capture, uint16_t
 // the engineering reports (ld2410_capture_t, allocated meanwhile) and writes the thresholds it computes from them
 // (quiet_learn_noise(), quiet_learn_compute_thresholds()); the radar keeps them in its flash.
 // With on_noise (ESP32 presence engine): the engineering reports of the empty room are handed to it when the
-// learning succeeded. Before the radar measures itself, the ESP32 records them for noise_seconds (after the whole
-// delay), then turns the engineering mode off: the radar measures as with the stable firmware.
+// learning succeeded, with the radar's thresholds; those it raises are written to the radar (QUIET_LEARN_FAILED when
+// that fails). Before the radar measures itself, the ESP32 records them for noise_seconds (after the whole delay),
+// then turns the engineering mode off: the radar measures as with the stable firmware.
 // Sends radar commands, so no other task may configure the radar meanwhile. The callbacks are optional.
 // gate_cm: length of one gate, for the distances in the log (0: unknown).
 quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,

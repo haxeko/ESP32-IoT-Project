@@ -1,6 +1,7 @@
 // The ESP32 presence engine (presence_engine.cpp) alone, with simulated reports: per-channel thresholds from the
-// radar's (strong above them, hold below them but above the noise recorded while learning), the two-threshold
-// presence with its countdown, sensor faults, the noise record, the 32-bit clock wrapping around.
+// radar's (strong above them, hold below them, both above the noise recorded while learning), the radar thresholds
+// raised above that noise after a learning, the two-threshold presence with its countdown, sensor faults, the noise
+// record, the 32-bit clock wrapping around.
 #include "sim.h"
 
 #include <math.h>
@@ -52,6 +53,25 @@ static Room typical_room()
         r.median[PE_STILL][g] = still[g];
         r.spread[PE_MOVING][g] = 1.0 + moving[g] / 6.0;
         r.spread[PE_STILL][g] = 1.0 + still[g] / 8.0;
+    }
+    return r;
+}
+
+// The room of the HLKRadarTool screenshots in the report (radar at its factory thresholds): still energy of gate 2
+// (1.5-2.25 m) 56 on average and at most 63, above its radar threshold 40; gate 3 30 / 34 (threshold 40); moving
+// energies 25 / 35 at gate 0 down to 3 / 7 at gate 5. Spreads a little wider than (highest - average) / 3.
+static Room reported_room()
+{
+    Room r;
+    const double moving[PE_GATES] = { 25, 11, 6, 4, 4, 3, 3, 3, 2 };
+    const double moving_spread[PE_GATES] = { 3.5, 2.5, 2, 2.5, 2, 1.5, 1.5, 1.5, 1.5 };
+    const double still[PE_GATES] = { 0, 0, 56, 30, 21, 10, 2, 2, 2 };
+    const double still_spread[PE_GATES] = { 1, 1, 2.5, 1.5, 1, 1, 1, 1, 1 };
+    for (int g = 0; g < PE_GATES; g++) {
+        r.median[PE_MOVING][g] = moving[g];
+        r.spread[PE_MOVING][g] = moving_spread[g];
+        r.median[PE_STILL][g] = still[g];
+        r.spread[PE_STILL][g] = still_spread[g];
     }
     return r;
 }
@@ -201,12 +221,20 @@ struct Bench {
     }
 };
 
-// Hold threshold a channel should get: T - min(10, 40 % of T), at least noise + 2, at most T, at least 1
+// Thresholds a channel should get with the default parameters: strong above T and from noise + 5 (above 100: never);
+// hold T - min(10, 40 % of T), at least noise + 2 (above 100: never), below the trigger, at least 1
+static int expected_trigger(int t, int level)
+{
+    return std::min(std::max(t + 1, level + 5), PE_OFF);
+}
 static int expected_hold(int t, int level)
 {
     const int drop = std::min(10, (t * 40 + 50) / 100);
-    int hold = std::max(t - drop, level + 2);
-    return std::max(1, std::min(hold, t));
+    const int hold = std::max(t - drop, level + 2);
+    if (hold > PE_MAX_ENERGY) {
+        return PE_OFF;
+    }
+    return std::max(1, std::min(hold, expected_trigger(t, level) - 1));
 }
 
 int main(int argc, char **argv)
@@ -251,7 +279,7 @@ int main(int argc, char **argv)
         CHECK(th.factory);
     }
 
-    test_begin("hold thresholds with the noise: radar - 40 % (at most 10), above the noise + 2, at most the radar");
+    test_begin("hold thresholds with the noise: radar - 40 % (at most 10), above the noise + 2, below the trigger");
     {
         pe_params_t p;
         pe_default_params(&p);
@@ -267,16 +295,20 @@ int main(int argc, char **argv)
         pe_thresholds_t th;
         pe_compute_thresholds(&p, &radar, &noise, &th);
         CHECK(th.noise);
-        const int want[PE_GATES] = { 40, 47, 12, 9, 6, 3, 50, 89, 30 };
+        // Gates 5 and 6: the noise reaches the radar threshold, strong from noise + 5, hold just below
+        const int want[PE_GATES] = { 40, 47, 12, 9, 6, 5, 62, 89, 30 };
+        const int trigger[PE_GATES] = { 51, 51, 21, 16, 11, 8, 65, 100, 31 };
         for (int g = 0; g < PE_GATES; g++) {
             const pe_channel_t &ch = th.ch[PE_MOVING][g];
-            CHECK(ch.hold == want[g] && ch.trigger == t[g] + 1);
+            CHECK(ch.hold == want[g] && ch.trigger == trigger[g]);
             if (level[g] != PE_NOISE_UNKNOWN) {
-                CHECK(ch.hold == expected_hold(t[g], level[g]));
+                CHECK(ch.hold == expected_hold(t[g], level[g]) && ch.trigger == expected_trigger(t[g], level[g]));
             }
         }
         CHECK(th.ch[PE_MOVING][0].flags == 0 && th.ch[PE_MOVING][1].flags == PE_CH_NOISE_HOLD);
-        CHECK(th.ch[PE_MOVING][6].flags == PE_CH_NOISE_HOLD && th.ch[PE_MOVING][8].flags == PE_CH_NO_NOISE);
+        CHECK(th.ch[PE_MOVING][5].flags == (PE_CH_NOISE_TRIGGER | PE_CH_NOISE_HOLD));
+        CHECK(th.ch[PE_MOVING][6].flags == (PE_CH_NOISE_TRIGGER | PE_CH_NOISE_HOLD));
+        CHECK(th.ch[PE_MOVING][8].flags == PE_CH_NO_NOISE);
         // Other settings: no drop at all, or a larger one
         p.hold_drop_percent = 0;
         pe_compute_thresholds(&p, &radar, &noise, &th);
@@ -285,6 +317,144 @@ int main(int argc, char **argv)
         p.hold_drop_max = 15;
         pe_compute_thresholds(&p, &radar, &noise, &th);
         CHECK(th.ch[PE_MOVING][0].hold == 35 && th.ch[PE_MOVING][2].hold == 8);
+    }
+
+    test_begin("noise reaching the radar threshold (report: still gate 2 noise 64, radar 40): strong from noise + 5, "
+               "hold noise + 2; noise near 100: never; extra margin on every gate");
+    {
+        pe_params_t p;
+        pe_default_params(&p);
+        pe_radar_thresholds_t radar;
+        pe_factory_thresholds(&radar);
+        pe_noise_t noise = {};
+        memset(noise.level, 3, sizeof(noise.level));
+        noise.level[PE_STILL][2] = 64;  // radar 40
+        noise.level[PE_STILL][3] = 36;  // radar 40: 36 + 5 = 41, as the radar counts
+        noise.level[PE_STILL][4] = 27;  // radar 30: 27 + 5 = 32, one above
+        noise.level[PE_MOVING][8] = 96; // cannot start presence, holds from 98
+        noise.level[PE_MOVING][7] = 99; // neither
+        pe_thresholds_t th;
+        pe_compute_thresholds(&p, &radar, &noise, &th);
+        const pe_channel_t &s2 = th.ch[PE_STILL][2];
+        CHECK(s2.radar == 40 && s2.trigger == 69 && s2.hold == 66);
+        CHECK(s2.flags == (PE_CH_NOISE_TRIGGER | PE_CH_NOISE_HOLD));
+        const pe_channel_t &s3 = th.ch[PE_STILL][3];
+        CHECK(s3.trigger == 41 && s3.hold == 38 && s3.flags == PE_CH_NOISE_HOLD);
+        const pe_channel_t &s4 = th.ch[PE_STILL][4];
+        CHECK(s4.trigger == 32 && s4.hold == 29 && s4.flags == (PE_CH_NOISE_TRIGGER | PE_CH_NOISE_HOLD));
+        CHECK(th.ch[PE_MOVING][8].trigger == PE_OFF && th.ch[PE_MOVING][8].hold == 98);
+        CHECK(th.ch[PE_MOVING][7].trigger == PE_OFF && th.ch[PE_MOVING][7].hold == PE_OFF);
+        CHECK(th.ch[PE_MOVING][0].trigger == 51 && th.ch[PE_MOVING][0].hold == 40 && th.ch[PE_MOVING][0].flags == 0);
+        // Extra margin on every gate; the hold does not move
+        p.trigger_margin = 4;
+        pe_compute_thresholds(&p, &radar, &noise, &th);
+        CHECK(th.ch[PE_MOVING][0].trigger == 55 && th.ch[PE_MOVING][0].hold == 40 && th.ch[PE_MOVING][0].flags == 0);
+        CHECK(th.ch[PE_STILL][3].trigger == 45 && th.ch[PE_STILL][3].hold == 38);
+        CHECK(th.ch[PE_STILL][2].trigger == 69 && th.ch[PE_STILL][2].hold == 66);
+        pe_compute_thresholds(&p, &radar, nullptr, &th);
+        CHECK(th.ch[PE_MOVING][0].trigger == 55 && th.ch[PE_MOVING][0].hold == 50);
+        CHECK(th.ch[PE_STILL][2].trigger == 45 && th.ch[PE_STILL][2].hold == 40);
+        // Settings checked by the engine: the hold margin stays below the trigger margin
+        pe_default_params(&p);
+        p.trigger_noise_margin = 0;
+        pe_engine_t e;
+        pe_init(&e, &p, 0);
+        CHECK(e.p.trigger_noise_margin == 1 && e.p.hold_noise_margin == 0);
+        p.trigger_noise_margin = 2;
+        pe_init(&e, &p, 0);
+        CHECK(e.p.trigger_noise_margin == 2 && e.p.hold_noise_margin == 1);
+    }
+
+    test_begin("any radar threshold, noise and margins: strong above both, hold below the trigger, never 0");
+    {
+        Rng rng(5);
+        for (int i = 0; i < 20000; i++) {
+            pe_params_t p;
+            pe_default_params(&p);
+            p.trigger_margin = (uint8_t)(rng.next() % 31);
+            p.trigger_noise_margin = (uint8_t)(rng.next() % 31);
+            p.hold_drop_percent = (uint8_t)(rng.next() % 91);
+            p.hold_drop_max = (uint8_t)(rng.next() % 51);
+            pe_engine_t e;
+            pe_init(&e, &p, 0);
+            const pe_params_t &q = e.p;
+            pe_radar_thresholds_t radar;
+            pe_noise_t noise = {};
+            for (int g = 0; g < PE_GATES; g++) {
+                radar.moving[g] = (uint8_t)(rng.next() % 101);
+                radar.still[g] = (uint8_t)(rng.next() % 101);
+                noise.level[PE_MOVING][g] = rng.next() % 8 == 0 ? PE_NOISE_UNKNOWN : (uint8_t)(rng.next() % 101);
+                noise.level[PE_STILL][g] = rng.next() % 8 == 0 ? PE_NOISE_UNKNOWN : (uint8_t)(rng.next() % 101);
+            }
+            pe_thresholds_t th;
+            pe_compute_thresholds(&q, &radar, &noise, &th);
+            for (int kind = 0; kind < PE_KINDS; kind++) {
+                for (int g = kind == PE_STILL ? PE_FIRST_STILL_GATE : 0; g < PE_GATES; g++) {
+                    const pe_channel_t &ch = th.ch[kind][g];
+                    const int t = ch.radar;
+                    const int level = noise.level[kind][g];
+                    if (t >= PE_MAX_ENERGY) {
+                        CHECK(ch.trigger == PE_OFF && ch.hold == PE_OFF);
+                        continue;
+                    }
+                    const int noise_trigger = std::min(level + q.trigger_noise_margin, PE_OFF);
+                    CHECK(ch.trigger == std::min(t + 1 + q.trigger_margin, PE_OFF) ||
+                          (level != PE_NOISE_UNKNOWN && ch.trigger == noise_trigger));
+                    CHECK(ch.trigger >= std::min(t + 1 + q.trigger_margin, PE_OFF));
+                    // Below the trigger; radar threshold 0: both 1 (an energy of 0 never counts)
+                    CHECK(ch.hold >= 1 && ch.hold <= PE_OFF);
+                    CHECK(ch.hold < ch.trigger || ch.trigger == PE_OFF || (ch.trigger == 1 && ch.hold == 1));
+                    if (level != PE_NOISE_UNKNOWN) {
+                        CHECK(ch.trigger >= std::min(level + q.trigger_noise_margin, PE_OFF));
+                        CHECK(ch.hold >= std::min(level + q.hold_noise_margin, PE_OFF));
+                    } else {
+                        CHECK(ch.hold == t || (t == 0 && ch.hold == 1));
+                    }
+                }
+            }
+        }
+    }
+
+    test_begin("radar thresholds raised above the noise after a learning: noise + 4, at most the ceiling, never "
+               "lowered");
+    {
+        pe_params_t p;
+        pe_default_params(&p);
+        pe_radar_thresholds_t radar;
+        pe_factory_thresholds(&radar);
+        pe_radar_thresholds_t ceiling; // factory + 30
+        pe_factory_thresholds(&ceiling);
+        for (int g = 0; g < PE_GATES; g++) {
+            ceiling.moving[g] += 30;
+            ceiling.still[g] += 30;
+        }
+        pe_noise_t noise = {};
+        memset(noise.level, 3, sizeof(noise.level));
+        noise.level[PE_STILL][2] = 64;  // 40 -> 68
+        noise.level[PE_STILL][3] = 36;  // 36 + 4 = 40: stays
+        noise.level[PE_STILL][4] = 27;  // 30 -> 31
+        noise.level[PE_MOVING][0] = 80; // 50 -> 80, the ceiling
+        noise.level[PE_MOVING][1] = PE_NOISE_UNKNOWN;
+        noise.level[PE_STILL][0] = 90; // still gates 0 and 1 cannot be set
+        radar.moving[5] = 100;         // ignored, stays ignored
+        noise.level[PE_MOVING][5] = 99;
+        radar.moving[6] = 60; // above the noise + 4 already: never lowered
+        noise.level[PE_MOVING][6] = 50;
+        CHECK(pe_raise_above_noise(&p, &noise, &ceiling, &radar) == 3);
+        CHECK(radar.still[2] == 68 && radar.still[3] == 40 && radar.still[4] == 31 && radar.moving[0] == 80);
+        CHECK(radar.moving[1] == 50 && radar.still[0] == 0 && radar.moving[5] == 100 && radar.moving[6] == 60);
+        CHECK(radar.moving[2] == 40 && radar.still[8] == 20);
+        // The engine then follows the radar threshold where it could be raised enough, the noise elsewhere
+        pe_thresholds_t th;
+        pe_compute_thresholds(&p, &radar, &noise, &th);
+        CHECK(th.ch[PE_STILL][2].trigger == 69 && !(th.ch[PE_STILL][2].flags & PE_CH_NOISE_TRIGGER));
+        CHECK(th.ch[PE_MOVING][0].trigger == 85 && (th.ch[PE_MOVING][0].flags & PE_CH_NOISE_TRIGGER));
+        // Learned again with the same noise: nothing more to raise
+        CHECK(pe_raise_above_noise(&p, &noise, &ceiling, &radar) == 0);
+        // Ceiling above 99: at most 99 (100 would ignore the gate)
+        memset(&ceiling, 120, sizeof(ceiling));
+        noise.level[PE_STILL][2] = 98;
+        CHECK(pe_raise_above_noise(&p, &noise, &ceiling, &radar) >= 1 && radar.still[2] == 99);
     }
 
     test_begin("noise of a recording: 99th percentile, at least median + 3 spreads; record checked by its CRC");
@@ -359,6 +529,58 @@ int main(int argc, char **argv)
         CHECK(b.triggers.empty());
     }
 
+    test_begin("room of the report (still gate 2 noise 56 / 63, radar 40), radar thresholds as they are: without the "
+               "noise of the empty room presence starts at once; with it, 30 min never present");
+    {
+        Bench b(1000, 21);
+        b.room = reported_room();
+        b.run(10 * 1000);
+        CHECK(!b.triggers.empty() && b.e.trigger_gate == 2 && b.e.trigger_kind == PE_STILL); // the false trigger
+        Bench n(1000, 22);
+        n.room = reported_room();
+        n.learn_noise();
+        CHECK(pe_trigger_threshold(&n.e, PE_STILL, 2) >= 66 && pe_trigger_threshold(&n.e, PE_STILL, 2) <= 70);
+        CHECK(pe_trigger_threshold(&n.e, PE_STILL, 3) == 41 && pe_trigger_threshold(&n.e, PE_MOVING, 0) == 51);
+        n.run(30 * 60 * 1000);
+        CHECK(n.triggers.empty() && n.e.presence == PE_PRESENCE_WAITING);
+    }
+
+    test_begin("room of the report, radar thresholds raised after the learning: 30 min never present; someone "
+               "sitting at gate 2 or walking at gate 3 is present, empty 60 s after leaving");
+    {
+        for (int seed = 0; seed < 5; seed++) {
+            Bench b(1000, 30 + seed);
+            b.room = reported_room();
+            const pe_noise_t noise = b.record_noise();
+            CHECK(pe_set_noise(&b.e, &noise, b.now));
+            pe_radar_thresholds_t ceiling;
+            pe_factory_thresholds(&ceiling);
+            for (int g = 0; g < PE_GATES; g++) {
+                ceiling.moving[g] += 30;
+                ceiling.still[g] += 30;
+            }
+            CHECK(pe_raise_above_noise(&b.p, &noise, &ceiling, &b.radar) >= 1);
+            CHECK(b.radar.still[2] >= 65 && b.radar.still[2] <= 70 && b.radar.still[3] == 40);
+            b.configure();
+            CHECK(!(b.e.th.ch[PE_STILL][2].flags & PE_CH_NOISE_TRIGGER));
+            b.run(30 * 60 * 1000);
+            CHECK(b.triggers.empty());
+            b.person = { 2, 10, 85, 3 }; // sits down at 1.5-2.25 m
+            b.run(3000);
+            CHECK(b.triggers.size() == 1);
+            b.person = { 2, 4, 72, 3 }; // keeps still: weaker, above the hold (noise + 2)
+            b.run(10 * 60 * 1000);
+            CHECK(b.absents.empty());
+            b.person = {};
+            const uint32_t gone = b.now;
+            b.run(70 * 1000);
+            CHECK(b.absents.size() == 1 && b.absents[0] - gone >= 60000 && b.absents[0] - gone <= 61500);
+            b.person = { 3, 60, 35, 5 }; // walks in at 2.25-3 m
+            b.run(3000);
+            CHECK(b.triggers.size() == 2);
+        }
+    }
+
     test_begin("single and double strong reports (noise bursts) never start presence");
     {
         Bench b;
@@ -384,6 +606,7 @@ int main(int argc, char **argv)
         // The first report is filtered away, the next three are strong: present at the fourth
         CHECK(b.triggers.size() == 1 && b.triggers[0] - in == 400);
         CHECK(b.e.trigger_gate == 4 && b.e.trigger_kind == PE_MOVING && b.e.trigger_threshold == 20);
+        CHECK(b.e.trigger_strong == 21);
         CHECK(pe_occupied_report(&b.e));
     }
 

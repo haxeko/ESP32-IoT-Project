@@ -243,8 +243,9 @@ menu "ESP32 Presence Engine (experimental)"
             confirmed over several reports; once present, a lower hold
             threshold keeps it (people sitting still, small movements), and
             the room is empty after Hold time (Occupancy Sensing HoldTime)
-            without it. The hold threshold stays above the noise of the empty
-            room, recorded by the ESP32 while learning (stored in NVS). A
+            without it. Both stay above the noise of the empty room, recorded
+            by the ESP32 while learning (stored in NVS); the radar thresholds
+            that noise reaches are raised in the radar after the learning. A
             silent radar is a sensor fault, never an empty room.
             Console commands and per-gate diagnostics on the ESP-IDF console.
             README: "Bộ xử lý hiện diện trên ESP32".
@@ -255,15 +256,43 @@ menu "ESP32 Presence Engine (experimental)"
         range 1 16
         default 3
         help
-            A gate (or its neighbours) must be above its radar threshold in
-            this many of the last "report window" reports (filtered energy,
-            about 100 ms each) for an empty room to become present.
+            A gate (or its neighbours) must be strong (filtered energy above
+            its radar threshold and the noise of the empty room) in this many
+            of the last "report window" reports (about 100 ms each) for an
+            empty room to become present. More reports only help against short
+            bursts: a noise that stays above the radar threshold is handled by
+            the noise of the empty room (see "Strong signal above the noise").
 
     config PRESENCE_ENGINE_TRIGGER_WINDOW
         int "Report window of the strong signal"
         depends on PRESENCE_ESP_ENGINE
         range 1 16
         default 4
+
+    config PRESENCE_ENGINE_TRIGGER_NOISE_MARGIN
+        int "Strong signal above the noise of the empty room (energy 0-100)"
+        depends on PRESENCE_ESP_ENGINE
+        range 3 30
+        default 5
+        help
+            A gate is strong only from the noise recorded while learning +
+            this value, even where the radar threshold is lower (a gate whose
+            noise reaches its radar threshold would start presence without
+            anyone). After a learning, the radar thresholds the noise reaches
+            are raised to noise + this value - 1 in the radar (at most to the
+            factory threshold + "Highest raise above the factory threshold").
+            The hold threshold stays at least at noise + 2.
+
+    config PRESENCE_ENGINE_TRIGGER_MARGIN
+        int "Extra margin of the strong signal on every gate (energy 0-100)"
+        depends on PRESENCE_ESP_ENGINE
+        range 0 30
+        default 0
+        help
+            Strong from radar threshold + 1 + this value on every gate: less
+            sensitive everywhere, also where the noise is far below the radar
+            threshold. 0: as the radar counts a target. The hold threshold
+            does not change.
 
     config PRESENCE_ENGINE_HOLD_REPORTS
         int "Reports with a hold signal that keep presence"
@@ -305,9 +334,9 @@ menu "ESP32 Presence Engine (experimental)"
         help
             Before the radar measures the empty room itself, the ESP32 records
             the energies of every gate for this long (the room must stay
-            empty), so that the hold thresholds stay above the noise. A radar
-            without its own measurement is recorded by the ESP32 for the
-            learning time instead, which gives the noise too.
+            empty), so that the strong and hold thresholds stay above the
+            noise. A radar without its own measurement is recorded by the
+            ESP32 for the learning time instead, which gives the noise too.
 
     config PRESENCE_ENGINE_DATA_TIMEOUT_MS
         int "Sensor fault after (ms) without a valid report with energies"
