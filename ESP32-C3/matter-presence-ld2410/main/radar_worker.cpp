@@ -129,12 +129,19 @@ static void set_bt_choice(bool on)
 static radar_settings_t s_settings; // last settings read from the radar (s_synced)
 static esp_err_t s_session_err;     // result of the last session
 
+#if CONFIG_PRESENCE_ESP_ENGINE
+static int64_t s_config_end_ms; // end of the last configuration session (the radar reports nothing during one)
+#endif
+
 // A configuration session starts or ends: the ESP32 presence engine labels the silence of the radar meanwhile as a
 // configuration, not as a fault of its own.
 static void radar_busy(bool busy)
 {
 #if CONFIG_PRESENCE_ESP_ENGINE
     esp_presence_set_radar_busy(busy);
+    if (!busy) {
+        s_config_end_ms = esp_timer_get_time() / 1000;
+    }
 #else
     (void)busy;
 #endif
@@ -214,6 +221,11 @@ static void recover_radar()
     }
     const int64_t now_ms = esp_timer_get_time() / 1000;
     if (s_recover_step == 0) {
+        // A session keeps the radar silent (longer with a restart in it or commands timing out): no fault before
+        // the radar had kRecoverAfterMs after the last one to report again
+        if (now_ms - s_config_end_ms < kRecoverAfterMs) {
+            return;
+        }
         ESP_LOGW(TAG, "No valid report from the LD2410 for %" PRIu32 " s: resynchronising the UART and leaving the "
                       "configuration mode in case the radar was left in it",
                  silent / 1000);

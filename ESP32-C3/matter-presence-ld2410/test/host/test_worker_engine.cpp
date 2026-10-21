@@ -85,6 +85,7 @@ static void boot(RadarSim &radar)
     s_recover_step = 0;
     s_recover_next_ms = 0;
     s_restart_delay_ms = 0;
+    s_config_end_ms = 0;
     g_needs_engineering = false;
     g_silent_ms = 0;
     g_busy_on = 0;
@@ -141,35 +142,62 @@ int main(int argc, char **argv)
     {
         RadarSim radar;
         boot(radar);
+        bool early = true;
+        bool resynced = false;
+        int restarts_23s = -1;
+        int restarts_50s = -1;
+        int restarts_56s = -1;
         sim_at(4000, []() { g_silent_ms = 5000; });
-        run_worker(5000);
-        CHECK(sim_log_contains("No valid report from the LD2410 for 5 s: resynchronising the UART"));
-        CHECK(radar.count(0x00A3) == 0);
-        // Silence goes on: a restart 15 s later, the next 30 s after that
-        sim_at(5000, []() { g_silent_ms = 20000; });
-        run_worker(23000);
-        CHECK(radar.count(0x00A3) == 1 && radar.restarts == 1);
-        CHECK(sim_log_contains("restarting the radar (check its power and the wire from radar TX to GPIO3)"));
-        run_worker(50000);
-        CHECK(radar.count(0x00A3) == 1);
-        run_worker(56000);
-        CHECK(radar.count(0x00A3) == 2);
-        // Reports again
-        sim_at(56000, []() { g_silent_ms = 0; });
+        // Not before 5 s after the boot session either
+        sim_at(5000, [&early]() { early = sim_log_contains("No valid report"); });
+        sim_at(7000, [&]() {
+            resynced = sim_log_contains("No valid report from the LD2410 for 5 s: resynchronising the UART") &&
+                       radar.count(0x00A3) == 0;
+            g_silent_ms = 20000; // silence goes on: a restart 15 s later, the next 30 s after that
+        });
+        sim_at(23000, [&]() { restarts_23s = radar.count(0x00A3); });
+        sim_at(50000, [&]() { restarts_50s = radar.count(0x00A3); });
+        sim_at(56000, [&]() {
+            restarts_56s = radar.count(0x00A3);
+            g_silent_ms = 0; // reports again
+        });
         run_worker(60000);
+        CHECK(!early && resynced);
+        CHECK(restarts_23s == 1 && restarts_50s == 1 && restarts_56s == 2 && radar.restarts == 2);
+        CHECK(sim_log_contains("restarting the radar (check its power and the wire from radar TX to GPIO3)"));
         CHECK(sim_log_contains("The LD2410 reports again") && s_recover_step == 0);
         CHECK(!g_busy);
+    }
+
+    test_begin("long configuration session: the silence counts from its end, reports back meanwhile: no recovery");
+    {
+        RadarSim radar;
+        boot(radar);
+        // A Range change at 6 s of silence (a restart or commands timing out make a session long); reports come
+        // back 1.5 s after it
+        esp_err_t range = ESP_FAIL;
+        sim_at(3000, [&range]() {
+            g_silent_ms = 6000;
+            range = radar_worker_select(RADAR_SELECT_RANGE, 5);
+        });
+        sim_at(4500, []() { g_silent_ms = 0; });
+        run_worker(15000);
+        CHECK(range == ESP_OK && g_configured == 2 && g_settings.config.max_moving_gate == 5);
+        CHECK(!sim_log_contains("No valid report") && radar.count(0x00A3) == 0 && s_recover_step == 0);
     }
 
     test_begin("radar stuck in configuration mode (no reports): leaving it brings the reports back");
     {
         RadarSim radar;
         boot(radar);
-        run_worker(3000);
-        radar.config_mode = true; // left there, e.g. by an ESP32 restart in the middle of a session
-        sim_at(3000, []() { g_silent_ms = 6000; });
-        run_worker(8000);
-        CHECK(!radar.config_mode && radar.count(0x00FE) >= 2);
+        // Left there after the boot session (e.g. its last command lost): no reports, and no session to end it
+        sim_at(3000, [&radar]() {
+            radar.config_mode = true;
+            g_silent_ms = 6000;
+        });
+        run_worker(9000);
+        CHECK(!radar.config_mode && radar.count(0x00FE) >= 2); // the boot session's, then the recovery's
+        CHECK(sim_log_contains("resynchronising the UART and leaving the configuration mode"));
     }
 
     test_begin("Learning, Off and Factory thresholds from Home Assistant, 3 and 4 clicks: routed to the engine");
