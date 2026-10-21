@@ -230,6 +230,39 @@ int main(int argc, char **argv)
         CHECK(ch.flags == PE_CH_NO_DATA && ch.hold == PE_OFF);
     }
 
+    test_begin("channel thresholds: trigger stays above hold with unusual parameters (spreads 10 for hold, 2 for trigger)");
+    {
+        pe_params_t p;
+        pe_default_params(&p);
+        p.k_hold_x10 = 100;
+        p.k_trigger_x10 = 20;
+        uint16_t hist[PE_MAX_ENERGY + 1] = {};
+        for (int v = 10; v <= 20; v++) {
+            hist[v] = 50;
+        }
+        pe_channel_t ch;
+        pe_compute_channel(&p, hist, 550, &ch);
+        CHECK(ch.hold < PE_OFF && ch.trigger < PE_OFF && ch.trigger >= ch.hold + p.trigger_gap);
+        // Random rooms: always trigger > hold (or the channel cannot trigger)
+        Rng rng(99);
+        int checked = 0;
+        for (int i = 0; i < 2000; i++) {
+            memset(hist, 0, sizeof(hist));
+            const int median = (int)(rng.next() % 60);
+            const int spread = 1 + (int)(rng.next() % 8);
+            for (int k = 0; k < 600; k++) {
+                hist[clamp_energy(median + rng.gauss() * spread)]++;
+            }
+            pe_default_params(&p);
+            p.k_hold_x10 = (uint8_t)(10 + rng.next() % 91);
+            p.k_trigger_x10 = (uint8_t)(20 + rng.next() % 181);
+            pe_compute_channel(&p, hist, 600, &ch);
+            CHECK(ch.trigger == PE_OFF || ch.trigger > ch.hold);
+            checked += ch.trigger != PE_OFF;
+        }
+        CHECK(checked > 1000);
+    }
+
     test_begin("boot: built-in defaults, waiting for a strong signal, sensor starting then OK");
     {
         Bench b;
@@ -564,6 +597,38 @@ int main(int argc, char **argv)
         CHECK(b.e.has_candidate && b.e.learn_report.noisy > b.e.learn_report.channels / 2);
     }
 
+    test_begin("learning with a fan at gate 3: that channel is reported too noisy, the learning still succeeds");
+    {
+        Bench b(1000, 30);
+        b.room.median[PE_MOVING][3] = 80;
+        b.room.spread[PE_MOVING][3] = 15;
+        CHECK(b.learn() == PE_LEARN_OK && b.saves == 1);
+        const pe_channel_t &fan = b.saved.ch[PE_MOVING][3];
+        CHECK((fan.flags & PE_CH_NOISY) && fan.trigger == PE_OFF);
+        CHECK(b.e.learn_report.noisy == 1 && b.e.learn_report.channels == 18);
+        CHECK(b.saved.ch[PE_STILL][3].trigger < PE_OFF && b.saved.ch[PE_MOVING][4].trigger < PE_OFF);
+        // With the learned thresholds the fan alone never starts presence (the built-in ones did while learning)
+        b.run(2 * 60 * 1000);
+        b.triggers.clear();
+        b.run(10 * 60 * 1000);
+        CHECK(b.triggers.empty());
+    }
+
+    test_begin("someone moving over gates 0-5 while recording: too noisy, the learning fails");
+    {
+        Bench b(1000, 31);
+        CHECK(pe_learn_start(&b.e, b.now));
+        b.run(b.p.learn_delay_ms + 200);
+        for (uint32_t t = 0; t < b.p.learn_duration_ms; t += 2000) {
+            b.person = { (int)((t / 2000) % 6), 99, 99 };
+            b.run(2000);
+        }
+        b.person = {};
+        b.run(500);
+        CHECK(b.e.learn_report.result == PE_LEARN_TOO_NOISY && b.saves == 0);
+        CHECK(b.e.learn_report.noisy == 12 && b.e.learn_report.channels == 18);
+    }
+
     test_begin("learning failures: radar silent, too few reports, settings changed, cancel, save failed");
     {
         Bench b(1000, 22);
@@ -636,6 +701,19 @@ int main(int argc, char **argv)
         b.person = {};
         b.run(30 * 60 * 1000);
         CHECK(b.e.offset[PE_MOVING][g] <= 1 && pe_hold_threshold(&b.e, PE_MOVING, g) >= hold);
+    }
+
+    test_begin("adaptation: a room quieter than when learning does not slow down the next rise");
+    {
+        Bench b(1000, 32);
+        CHECK(b.learn() == PE_LEARN_OK);
+        const int g = 4;
+        b.room.median[PE_STILL][g] = std::max(0.0, b.room.median[PE_STILL][g] - 3);
+        b.run(30 * 60 * 1000);
+        CHECK(b.e.quiet && b.e.offset[PE_STILL][g] == 0);
+        b.room.median[PE_STILL][g] += 3 + 4; // 4 above the learned floor
+        b.run(270 * 1000);
+        CHECK(b.e.offset[PE_STILL][g] >= 3);
     }
 
     test_begin("adaptation: at most adapt_max_up");
