@@ -1,6 +1,6 @@
 # Matter Presence Sensor + học phòng trống (ESP32-H2 + HLK-LD2410, Thread)
 
-> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt); thời gian chờ chỉnh bằng **Hold time**. Học phòng trống cũng bắt đầu được bằng cách **bấm nút BOOT 3 lần**, LED báo từng bước; **bấm 4 lần** ghi lại ngưỡng mặc định của radar (LED nháy tím). Tên thiết bị: **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C3** (mỗi mạch một tên). Phần cứng và ghép nối giống bản gốc; từ firmware 1.0.140 radar nối **TX → GPIO12, RX ← GPIO13** (bản gốc: GPIO11/12, mục **Sơ đồ nối dây**); LED và nút bấm thêm phần học phòng trống. Biến thể thử nghiệm **`espfilter`**: ESP tự xác nhận các phát hiện yếu của radar trước khi báo có người (mục **Bộ lọc năng lượng trên ESP32**). Biến thể thử nghiệm **`esppresence`**: ESP tự quyết định có người từ năng lượng từng vùng của radar, cùng bộ xử lý với bản ESP32-C3-WROOM 1.0.166, cho ESP32-H2 SuperMini và ESP32-C3 SuperMini (mục **Bộ xử lý hiện diện trên ESP32**).
+> Bản fork của [`matter-presence-occupancy`](../matter-thread/matter-presence-occupancy) (bản đang chạy ổn định, giữ nguyên). Khác biệt: thêm 4 điều khiển LD2410 trong **Home Assistant** (không hiện trong Apple Home): **học phòng trống** giúp radar bớt báo nhầm có người, **Range** và **Radar resolution** chỉnh khoảng cách phát hiện và độ phân giải của radar, **Radar Bluetooth** bật/tắt Bluetooth của radar (mặc định tắt); thời gian chờ chỉnh bằng **Hold time**. Học phòng trống cũng bắt đầu được bằng cách **bấm nút BOOT 3 lần**, LED báo từng bước; **bấm 4 lần** ghi lại ngưỡng mặc định của radar (LED nháy tím). Tên thiết bị: **Presence-** + 4 ký tự cuối của số serial, ví dụ **Presence-B2C3** (mỗi mạch một tên). Phần cứng, chân nối, ghép nối giống hệt bản gốc; LED và nút bấm thêm phần học phòng trống. Biến thể thử nghiệm **`espfilter`**: ESP tự xác nhận các phát hiện yếu của radar trước khi báo có người (mục **Bộ lọc năng lượng trên ESP32**). Biến thể thử nghiệm **`esppresence`**: ESP tự quyết định có người từ năng lượng từng vùng của radar, cùng bộ xử lý với bản ESP32-C3-WROOM 1.0.166, cho ESP32-H2 SuperMini và ESP32-C3 SuperMini (mục **Bộ xử lý hiện diện trên ESP32**).
 
 Cảm biến hiện diện chuẩn **Matter over Thread** chạy trên **ESP32-H2** với radar 24 GHz **HLK-LD2410**. Đây là bản chuyển từ Zigbee (`ESP32-H2/zigbee-presence-occupancy`) sang Matter: cùng chip ESP32-H2, cùng radio 802.15.4, nhưng thay Zigbee bằng Thread + Matter. Thêm trực tiếp vào **Apple Home**, Google Home, Home Assistant, SmartThings, Alexa... mà không cần Zigbee coordinator / Zigbee2MQTT.
 
@@ -95,7 +95,7 @@ I quiet_learn: Learning done: new thresholds saved in the LD2410 (600 reports)
 Các trường hợp khác:
 - Chọn **Off** trong lúc đang học: huỷ, không ghi gì vào radar. LED trở lại bình thường ngay (không xanh, không đỏ).
 - Bấm 3 lần khi đang học: không có tác dụng (log `Empty room learning already requested or running`).
-- Radar không trả lời lệnh: học thất bại, không ghi gì; LED có thể chậm vài giây mới chuyển cyan, cyan khoảng 13 s rồi **đỏ 10 s**, log báo kiểm tra dây **GPIO13 → chân RX của LD2410** (bản gốc chỉ đọc radar nên có thể chưa nối dây này).
+- Radar không trả lời lệnh: học thất bại, không ghi gì; LED có thể chậm vài giây mới chuyển cyan, cyan khoảng 13 s rồi **đỏ 10 s**, log báo kiểm tra dây **GPIO12 → chân RX của LD2410** (bản gốc chỉ đọc radar nên có thể chưa nối dây này).
 - Cũng là học thất bại (LED đỏ 10 s): radar không gửi báo cáo engineering trong lúc ghi, không nhận ngưỡng mới hoặc đọc lại không khớp (khi đó radar có thể giữ lẫn ngưỡng cũ và mới: học lại; log `quiet_learn` ghi rõ lý do), không đủ bộ nhớ cho bản ghi (khoảng 3,6 KB, chỉ cấp trong lúc học), hoặc bấm nút 3 lần khi task radar không chạy được.
 - Thời gian chờ, thời gian ghi, mức 95 %, mức +10 và giới hạn +30 chỉnh được trong `menuconfig` → *Empty Room Learning*; LED cyan và cyan nháy theo đúng hai thời gian, màu xanh lá hoặc đỏ luôn 10 s.
 - Build tại máy với file `sdkconfig` có sẵn từ bản trước: thời gian chờ và thời gian ghi vẫn là 10 s và 30 s. Chạy `idf.py set-target esp32h2` (tạo lại `sdkconfig` từ mặc định) hoặc đổi trong `menuconfig`. Firmware do GitHub Actions build luôn dùng mặc định mới.
@@ -115,7 +115,7 @@ Trong mục *Cấu hình* của thiết bị trên Home Assistant, các entity x
 - Radar resolution và Range được ghi vào **bộ nhớ của LD2410** (giữ khi mất điện, khi nạp lại firmware ESP32-H2) rồi đọc lại để kiểm tra; Home Assistant hiển thị giá trị radar thực sự đang giữ. Radar mới xuất xưởng là `0.75 m` và `6 m`; firmware không ghi đè giá trị radar đang giữ (kể cả giá trị chỉnh bằng app HLKRadarTool). Lúc khởi động firmware đọc thông số của radar (log `radar_ctl: LD2410 settings: ...`).
 - Radar đang giữ gate xa nhất khác nhau cho chuyển động và đứng yên (đặt bằng HLKRadarTool) thì Range có thêm đúng giá trị đó, ví dụ `Moving 4.5 m, still 3 m`.
 - **Range** do radar xử lý: mục tiêu xa hơn bị bỏ qua hoàn toàn (ví dụ không bắt người ở phòng bên qua vách mỏng). Tuỳ chọn *Only count targets closer than* trong menuconfig thì lọc trong firmware, sau khi radar đã báo.
-- Radar chưa trả lời lệnh (chưa nối dây **GPIO13 → chân RX của LD2410**): thay đổi trong Home Assistant bị bỏ qua, entity giữ giá trị cũ; firmware thử đọc lại radar sau 15 s, 30 s, 1 min... (tối đa 5 min một lần).
+- Radar chưa trả lời lệnh (chưa nối dây **GPIO12 → chân RX của LD2410**): thay đổi trong Home Assistant bị bỏ qua, entity giữ giá trị cũ; firmware thử đọc lại radar sau 15 s, 30 s, 1 min... (tối đa 5 min một lần).
 - **Radar resolution**: radar có 9 gate (0–8) nên gate 0,2 m chỉ phủ tới khoảng 1,6 m, hợp với chỗ ngồi gần như bàn làm việc, đầu giường. Đổi độ phân giải thì firmware ghi vào LD2410 rồi **khởi động lại radar** (mất tín hiệu khoảng 1–3 s) và đọc lại; các lựa chọn của Range tự đổi theo (ví dụ `6 m` thành `1.6 m`). Ngưỡng từng gate đã học là cho độ dài gate cũ, nên **học lại phòng trống** sau khi đổi. Radar không trả lời lệnh độ phân giải (LD2410 đời đầu, firmware cũ) thì entity chỉ có `0.75 m`.
 - Đang học phòng trống thì thay đổi Range/Radar resolution/Radar Bluetooth được áp dụng ngay sau khi học xong.
 - Mỗi endpoint Matter chỉ có một cluster *Mode Select*, nên Range, Radar resolution và Radar Bluetooth nằm trên 3 endpoint riêng (2, 3 và 4) kiểu thiết bị *Mode Select* (0x0027). Apple Home không hỗ trợ kiểu thiết bị này nên vẫn chỉ hiện cảm biến chiếm chỗ (dự kiến theo tài liệu, chưa thử trên thiết bị Apple thật).
@@ -373,7 +373,7 @@ Cùng phòng đó trước khi học lại (vùng 2 còn ngưỡng radar 40): `s
 
 ### Phạm vi, chân và khôi phục radar
 
-- **Chân UART của radar:** như bản mặc định (ESP32-H2: radar TX → GPIO12, RX ← GPIO13; ESP32-C3: TX → GPIO3, RX ← GPIO4), không đổi trong biến thể này.
+- **Chân UART của radar:** như bản ổn định (ESP32-H2: radar TX → GPIO11, RX ← GPIO12; ESP32-C3: TX → GPIO3, RX ← GPIO4), không đổi trong biến thể này.
 - **Phạm vi:** select **Range** trên Home Assistant (vùng xa nhất, ghi vào radar khi chọn) và `PRESENCE_MAX_DISTANCE_CM` (bỏ các vùng bắt đầu xa hơn khoảng cách đó, tính ở ESP32). Vùng ngoài phạm vi không được tính. Nhiễu được đo ở mọi vùng, nên mở rộng Range sau đó không cần học lại.
 - **Báo cáo không có năng lượng:** task `radar_cfg` bật lại engineering mode, kiểm tra mỗi 2 s, gửi lệnh tối đa 10 s một lần.
 - **Radar im lặng 5 s**, và đã 5 s sau phiên cấu hình gần nhất (trong phiên, radar không gửi báo cáo):
@@ -501,24 +501,22 @@ Kết quả ở `build-esppresence/`: `matter_presence_h2_learn.bin` / `matter_p
 
 ### Sơ đồ nối dây
 
-![Sơ đồ đấu dây: ESP32-H2 SuperMini và radar HLK-LD2410C (VCC 5V, GND, TX → GPIO12, RX ← GPIO13), LED RGB GPIO8 và nút BOOT GPIO9 có sẵn trên board](docs/wiring.png)
+![Sơ đồ đấu dây: ESP32-H2 SuperMini và radar HLK-LD2410C (VCC 5V, GND, TX → GPIO11, RX ← GPIO12), LED RGB GPIO8 và nút BOOT GPIO9 có sẵn trên board](docs/wiring.png)
 
-Hình vẽ lại theo sơ đồ chân của ESP32-H2 SuperMini và HLK-LD2410C, không theo tỉ lệ. Trên SuperMini, 5V, GND, GPIO13 và GPIO12 nằm cùng một hàng chân bên phải. Chân 8 và 9 đã nối sẵn LED RGB và nút BOOT trên board: không nối gì thêm vào. Board ESP32-H2 khác thì nối theo số GPIO in trên mạch; LD2410 và LD2410B xếp chân khác LD2410C: nối theo chữ in trên mạch radar.
+Hình vẽ lại theo sơ đồ chân của ESP32-H2 SuperMini và HLK-LD2410C, không theo tỉ lệ. Trên SuperMini, 5V, GND, GPIO12 và GPIO11 nằm cùng một hàng chân bên phải. Chân 8 và 9 đã nối sẵn LED RGB và nút BOOT trên board: không nối gì thêm vào. Board ESP32-H2 khác thì nối theo số GPIO in trên mạch; LD2410 và LD2410B xếp chân khác LD2410C: nối theo chữ in trên mạch radar.
 
 | LD2410 | ESP32-H2 |
 |---|---|
-| TX | **GPIO12** |
-| RX | **GPIO13** |
+| TX | **GPIO11** |
+| RX | **GPIO12** |
 | VCC | **5V** |
 | GND | GND |
 
-LD2410 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng vào ESP32-H2 được. Radar dùng **UART1** ở 256000 baud; UART0 (GPIO23/24) để dành cho log và console. Đổi chân trong `menuconfig` → *Presence Sensor Configuration* nếu cần, tránh các chân strapping (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25) và chân flash (GPIO15–GPIO21). GPIO13 dùng được vì firmware lấy xung RTC từ bộ dao động RC bên trong; nếu bật thạch anh 32 kHz ngoài (GPIO13/14) thì build báo lỗi khi radar dùng hai chân đó.
-
-**Đổi chân từ firmware 1.0.140:** bản trước dùng radar TX → GPIO11, RX ← GPIO12 (như bản gốc `matter-presence-occupancy`, bản đó không đổi). Bo đang nối kiểu cũ phải **chuyển dây trước khi cập nhật**: TX của radar từ GPIO11 sang GPIO12, RX của radar từ GPIO12 sang GPIO13. Không chuyển dây thì sau khi cập nhật ESP không đọc được radar (log `No data from the LD2410`), và GPIO12 của ESP với TX của radar cùng xuất tín hiệu trên một dây. Muốn giữ dây cũ: build với `CONFIG_LD2410_UART_RX_PIN=11` và `CONFIG_LD2410_UART_TX_PIN=12` trong `menuconfig` → *Presence Sensor Configuration*. Tự build trong thư mục đã có `sdkconfig` cũ (hay `sdkconfig.esppresence`, `sdkconfig.espfilter`) thì chân cũ vẫn được giữ: xoá các file đó trước khi build. Firmware ghi chân đang dùng trong log khởi động (`Pins: LD2410 RX GPIO12 ...`).
+LD2410 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng vào ESP32-H2 được. Radar dùng **UART1** ở 256000 baud; UART0 (GPIO23/24) để dành cho log và console. Đổi chân trong `menuconfig` → *Presence Sensor Configuration* nếu cần, tránh các chân strapping (GPIO2, GPIO3, GPIO8, GPIO9, GPIO25) và chân flash (GPIO15–GPIO21).
 
 | Chức năng | Chân |
 |---|---|
-| Radar LD2410 (UART1) | RX = GPIO12 (TX của radar), TX = GPIO13 (RX của radar) |
+| Radar LD2410 (UART1) | RX = GPIO11, TX = GPIO12 |
 | LED RGB WS2812 trên board | GPIO8 |
 | Nút BOOT: bấm đúp = chế độ ghép nối, bấm 3 lần = học phòng trống, bấm 4 lần = ngưỡng mặc định, giữ 5 s = factory reset | GPIO9 |
 
@@ -711,7 +709,7 @@ Lúc khởi động, log in chip, board và chân đang dùng:
 
 ```
 I app_main: Target esp32h2, board ESP32-H2 SuperMini / DevKitM-1, Matter over Thread
-I app_main: Pins: LD2410 RX GPIO12 (radar TX), TX GPIO13 (radar RX), button GPIO9, LED GPIO8 (WS2812)
+I app_main: Pins: LD2410 RX GPIO11 (radar TX), TX GPIO12 (radar RX), button GPIO9, LED GPIO8 (WS2812)
 ```
 
 *Device Information*:
