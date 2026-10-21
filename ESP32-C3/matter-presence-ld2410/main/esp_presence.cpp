@@ -25,11 +25,11 @@
 #include <atomic>
 
 #include <drivers/ld2410.h>
-#include <drivers/status_led.h>
 
 #include "esp_presence.h"
 #include "presence_engine.h"
-#include "radar_worker.h"
+
+static_assert(PE_GATES == LD2410_GATE_COUNT && PE_MAX_ENERGY == LD2410_MAX_ENERGY, "same gates and energies");
 
 static const char *TAG = "esp_presence";
 
@@ -42,9 +42,11 @@ static constexpr uint32_t kLoopMs = 100;
 static constexpr uint32_t kDiagStreamMs = 1000;
 // Reports without energies for this long: the engineering mode must be turned on (also right after boot)
 static constexpr uint32_t kEngineeringCheckMs = 2000;
+// New thresholds are logged once they stopped changing for this long (a learning gives the noise, then the radar's)
+static constexpr uint32_t kThresholdLogDelayMs = 1500;
 
 static constexpr const char *kNvsNamespace = "esp_presence";
-static constexpr const char *kNvsProfileKey = "profile";
+static constexpr const char *kNvsNoiseKey = "noise";
 
 // Engine task only, after esp_presence_start()
 static pe_engine_t s_engine;
@@ -55,10 +57,12 @@ static std::atomic<uint32_t> s_dropped{0};
 // Inputs from the other tasks
 static std::atomic<uint16_t> s_hold_time_s{0}; // 0: not read yet
 static std::atomic<bool> s_busy{false};
-static portMUX_TYPE s_range_lock = portMUX_INITIALIZER_UNLOCKED;
-static pe_range_t s_range_in;  // s_range_lock
-static bool s_range_pending;   // s_range_lock
-static std::atomic<void (*)(uint8_t)> s_show_learn_mode{nullptr};
+static portMUX_TYPE s_input_lock = portMUX_INITIALIZER_UNLOCKED;
+static pe_radar_thresholds_t s_radar_in; // s_input_lock
+static pe_range_t s_range_in;            // s_input_lock
+static bool s_config_pending;            // s_input_lock
+static pe_noise_t s_noise_in;            // s_input_lock
+static bool s_noise_pending;             // s_input_lock
 
 // Outputs to the other tasks
 static std::atomic<bool> s_started{false};
@@ -90,73 +94,49 @@ static void on_report(const ld2410_report_t *report)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Profile in NVS
+// Noise in NVS
 
-static bool save_profile(const pe_profile_t *profile, void *ctx)
+static bool save_noise(const pe_noise_t *noise)
 {
     nvs_handle_t nvs;
     esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
     if (err == ESP_OK) {
         // One blob: NVS keeps the old one until the new one is complete, so a power cut leaves either of them.
-        err = nvs_set_blob(nvs, kNvsProfileKey, profile, sizeof(*profile));
+        err = nvs_set_blob(nvs, kNvsNoiseKey, noise, sizeof(*noise));
         if (err == ESP_OK) {
             err = nvs_commit(nvs);
         }
         nvs_close(nvs);
     }
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Could not save the learned thresholds in NVS (err:%d): the old ones stay", err);
+        ESP_LOGE(TAG, "Could not save the noise of the empty room in NVS (err:%d): the old one stays", err);
         return false;
     }
-    ESP_LOGI(TAG, "Learned thresholds #%" PRIu32 " saved in NVS", profile->sequence);
     return true;
 }
 
-static bool erase_profile()
+static void load_noise(uint32_t now)
 {
+    pe_noise_t noise = {};
+    size_t len = sizeof(noise);
     nvs_handle_t nvs;
-    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READONLY, &nvs);
     if (err == ESP_OK) {
-        err = nvs_erase_key(nvs, kNvsProfileKey);
-        if (err == ESP_ERR_NVS_NOT_FOUND) {
-            err = ESP_OK; // nothing stored
-        } else if (err == ESP_OK) {
-            err = nvs_commit(nvs);
-        }
+        err = nvs_get_blob(nvs, kNvsNoiseKey, &noise, &len);
         nvs_close(nvs);
     }
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Could not erase the learned thresholds in NVS (err:%d)", err);
-        return false;
-    }
-    return true;
-}
-
-static void load_profile(uint32_t now)
-{
-    nvs_handle_t nvs;
-    if (nvs_open(kNvsNamespace, NVS_READONLY, &nvs) != ESP_OK) {
-        ESP_LOGW(TAG, "No learned thresholds yet: built-in per-gate thresholds in use. Learn the empty room: "
-                      "LEARN_EMPTY on the console, \"Learning\" in Home Assistant or 3 clicks");
+        ESP_LOGW(TAG, "No noise of the empty room recorded yet: hold thresholds = radar thresholds. Learn the empty "
+                      "room (\"Learning\" in Home Assistant, 3 clicks or LEARN_EMPTY) for the lower hold thresholds");
         return;
     }
-    pe_profile_t profile = {};
-    size_t len = sizeof(profile);
-    const esp_err_t err = nvs_get_blob(nvs, kNvsProfileKey, &profile, &len);
-    nvs_close(nvs);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "No learned thresholds yet: built-in per-gate thresholds in use. Learn the empty room: "
-                      "LEARN_EMPTY on the console, \"Learning\" in Home Assistant or 3 clicks");
+    if (len != sizeof(noise) || !pe_set_noise(&s_engine, &noise, now)) {
+        // Left as it is in NVS: only a successful learning replaces it
+        ESP_LOGE(TAG, "Stored noise damaged or of another version (%u bytes): hold thresholds = radar thresholds, "
+                      "learn the empty room again", (unsigned)len);
         return;
     }
-    if (len != sizeof(profile) || !pe_set_profile(&s_engine, &profile, now)) {
-        // Left as it is in NVS: only a successful learning or PROFILE_RESET replaces it
-        ESP_LOGE(TAG, "Stored thresholds damaged or of another version (%u bytes): built-in thresholds in use, learn "
-                      "the empty room again", (unsigned)len);
-        return;
-    }
-    ESP_LOGI(TAG, "Learned thresholds #%" PRIu32 " loaded (%u cm gates, %" PRIu32 " reports in %" PRIu32 " s)",
-             profile.sequence, profile.gate_cm, profile.frames, profile.duration_s);
+    ESP_LOGI(TAG, "Noise of the empty room loaded (%" PRIu32 " reports, %u cm gates)", noise.frames, noise.gate_cm);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -181,59 +161,64 @@ static void format_gate(int gate, uint16_t gate_cm, char *buf, size_t len)
     snprintf(buf, len, "%s-%s", from, to);
 }
 
-// "hold 15 trigger 21", "hold 60 trigger off", "off"
-static void format_thresholds(uint8_t hold, uint8_t trigger, char *buf, size_t len)
+// "radar 30 hold 20 (noise 8)", "radar 45 hold 45 (noise 44, hold raised above it)", "radar 100 (ignored)"
+static void format_channel(const pe_engine_t &e, int kind, int g, char *buf, size_t len)
 {
-    if (hold >= PE_OFF) {
-        snprintf(buf, len, "not used");
-    } else if (trigger >= PE_OFF) {
-        snprintf(buf, len, "hold %u, cannot trigger", hold);
+    const pe_channel_t &ch = e.th.ch[kind][g];
+    if (ch.flags & PE_CH_NOT_SET) {
+        snprintf(buf, len, "no radar threshold");
+    } else if (ch.flags & PE_CH_IGNORED) {
+        snprintf(buf, len, "radar %u (gate ignored)", ch.radar);
+    } else if (ch.flags & PE_CH_NO_NOISE) {
+        snprintf(buf, len, "radar %u hold %u", ch.radar, ch.hold);
     } else {
-        snprintf(buf, len, "hold %u trigger %u", hold, trigger);
+        snprintf(buf, len, "radar %u hold %u (noise %u%s)", ch.radar, ch.hold, e.noise.level[kind][g],
+                 ch.flags & PE_CH_NOISE_HOLD ? ", hold raised above it" : "");
     }
 }
 
-static void format_flags(uint8_t flags, char *buf, size_t len)
-{
-    snprintf(buf, len, "%s%s%s%s", flags & PE_CH_NO_DATA ? " no data" : "", flags & PE_CH_NOISY ? " TOO NOISY" : "",
-             flags & PE_CH_HOLD_HIGH ? " hold high" : "", flags & PE_CH_DEFAULT ? " built-in" : "");
-}
-
-// Per gate: noise statistics and thresholds of a profile
-static void log_profile_table(const pe_profile_t &p)
-{
-    for (int g = 0; g < PE_GATES; g++) {
-        char where[24];
-        format_gate(g, p.gate_cm, where, sizeof(where));
-        char text[PE_KINDS][160];
-        for (int kind = 0; kind < PE_KINDS; kind++) {
-            const pe_channel_t &ch = p.ch[kind][g];
-            char thresholds[40];
-            char flags[48];
-            format_thresholds(ch.hold, ch.trigger, thresholds, sizeof(thresholds));
-            format_flags(ch.flags, flags, sizeof(flags));
-            if (ch.flags & (PE_CH_NO_DATA | PE_CH_DEFAULT)) {
-                snprintf(text[kind], sizeof(text[kind]), "%s%s", thresholds, flags);
-            } else {
-                snprintf(text[kind], sizeof(text[kind]), "noise %u+-%u.%u p99 %u max %u -> %s%s", ch.median,
-                         ch.spread_x10 / 10, ch.spread_x10 % 10, ch.p99, ch.max, thresholds, flags);
-            }
-        }
-        ESP_LOGI(TAG, "  gate %d %-11s moving: %s | still: %s", g, where, text[PE_MOVING], text[PE_STILL]);
-    }
-}
-
-static void log_profile_in_use()
+static void log_thresholds()
 {
     const pe_engine_t &e = s_engine;
-    if (pe_profile_learned(&e)) {
-        ESP_LOGI(TAG, "Thresholds in use: learned #%" PRIu32 " (%u cm gates)", e.active->sequence, e.active->gate_cm);
-    } else if (e.stored.learned) {
-        ESP_LOGW(TAG, "Thresholds in use: built-in. The learned ones (#%" PRIu32 ") are for %u cm gates and the radar "
-                      "now uses %u cm gates: learn the empty room again",
-                 e.stored.sequence, e.stored.gate_cm, e.range.gate_cm);
+    if (e.th.from_radar) {
+        ESP_LOGI(TAG, "Thresholds from the radar (%u cm gates): strong above the radar threshold, hold at radar - %u %% "
+                      "(at most %u), at least the empty room noise + %u",
+                 e.range.gate_cm, e.p.hold_drop_percent, e.p.hold_drop_max, e.p.hold_noise_margin);
     } else {
-        ESP_LOGW(TAG, "Thresholds in use: built-in per-gate defaults. Learn the empty room (LEARN_EMPTY)");
+        ESP_LOGI(TAG, "Thresholds: LD2410 factory ones until the radar's are read");
+    }
+    for (int g = 0; g < PE_GATES; g++) {
+        char where[24];
+        format_gate(g, e.range.gate_cm, where, sizeof(where));
+        char moving[64];
+        char still[64];
+        format_channel(e, PE_MOVING, g, moving, sizeof(moving));
+        format_channel(e, PE_STILL, g, still, sizeof(still));
+        ESP_LOGI(TAG, "  gate %d %-11s moving: %s | still: %s", g, where, moving, still);
+    }
+    if (e.th.from_radar && e.th.factory) {
+        ESP_LOGW(TAG, "The radar holds its factory thresholds: learn the empty room (\"Learning\" in Home Assistant, "
+                      "3 clicks or LEARN_EMPTY)");
+    }
+    if (!e.th.noise) {
+        if (e.has_noise) {
+            ESP_LOGW(TAG, "The noise was recorded with %u cm gates and the radar uses %u cm gates: hold = radar "
+                          "threshold until the empty room is learned again", e.noise.gate_cm, e.range.gate_cm);
+        } else {
+            ESP_LOGW(TAG, "No noise of the empty room recorded: hold = radar threshold until the empty room is learned");
+        }
+        return;
+    }
+    for (int kind = 0; kind < PE_KINDS; kind++) {
+        for (int g = 0; g < PE_GATES; g++) {
+            const pe_channel_t &ch = e.th.ch[kind][g];
+            const uint8_t level = e.noise.level[kind][g];
+            if (pe_channel_counted(&e, kind, g) && level != PE_NOISE_UNKNOWN && level >= ch.trigger) {
+                ESP_LOGW(TAG, "Gate %d %s: the empty room noise %u is above the radar threshold %u, presence may start "
+                              "without anyone: raise that threshold (HLKRadarTool) or learn the empty room again",
+                         g, kind == PE_MOVING ? "moving" : "still", level, ch.radar);
+            }
+        }
     }
 }
 
@@ -258,27 +243,21 @@ static void print_status(uint32_t now)
     ESP_LOGI(TAG, "STATUS sensor: %s; last report %" PRIu32 " ms ago; reports: %" PRIu32 " with energies, %" PRIu32
                   " without, %" PRIu32 " damaged, %" PRIu32 " dropped",
              pe_sensor_name(e.sensor), age, e.frames_ok, e.frames_no_energy, e.frames_bad, s_dropped.load());
-    if (e.learn_state == PE_LEARN_IDLE) {
-        ESP_LOGI(TAG, "STATUS learning: idle; last: %s", pe_learn_result_name(e.learn_report.result));
+    char noise[64];
+    if (e.th.noise) {
+        snprintf(noise, sizeof(noise), "noise recorded (%" PRIu32 " reports)", e.noise.frames);
     } else {
-        ESP_LOGI(TAG, "STATUS learning: %s, %" PRIu32 " s left", pe_learn_state_name(e.learn_state),
-                 (pe_learn_remaining_ms(&e, now) + 999) / 1000);
+        snprintf(noise, sizeof(noise), "%s", e.has_noise ? "noise of another gate length" : "no noise recorded");
     }
+    ESP_LOGI(TAG, "STATUS thresholds: %s%s; %s", e.th.from_radar ? "from the radar" : "LD2410 factory, radar not read",
+             e.th.from_radar && e.th.factory ? " (its factory thresholds: learn the empty room)" : "", noise);
     char moving[12];
     char still[12];
     radar_format_distance((uint32_t)(e.range.max_moving_gate + 1) * e.range.gate_cm, moving, sizeof(moving));
     radar_format_distance((uint32_t)(e.range.max_still_gate + 1) * e.range.gate_cm, still, sizeof(still));
-    uint8_t raise = 0;
-    for (int kind = 0; kind < PE_KINDS; kind++) {
-        for (int g = 0; g < PE_GATES; g++) {
-            raise = std::max(raise, e.offset[kind][g]);
-        }
-    }
-    ESP_LOGI(TAG, "STATUS range: moving gates 0-%u (to %s), still gates 0-%u (to %s); adaptation %s%s, highest raise "
-                  "%u",
-             e.range.max_moving_gate, e.range.gate_cm ? moving : "?", e.range.max_still_gate,
-             e.range.gate_cm ? still : "?", e.p.adapt ? "on" : "off", e.quiet ? " (quiet)" : "", raise);
-    log_profile_in_use();
+    ESP_LOGI(TAG, "STATUS range: moving gates 0-%u (to %s), still gates %d-%u (to %s)", e.range.max_moving_gate,
+             e.range.gate_cm ? moving : "?", PE_FIRST_STILL_GATE, e.range.max_still_gate,
+             e.range.gate_cm ? still : "?");
 }
 
 static void print_diag(uint32_t now)
@@ -292,81 +271,27 @@ static void print_diag(uint32_t now)
     ESP_LOGI(TAG, "DIAG %s%s%s, sensor %s", e.presence == PE_PRESENCE_PRESENT ? "present" : "empty",
              e.presence == PE_PRESENCE_PRESENT && e.evidence ? " (hold signal)" : "", countdown,
              pe_sensor_name(e.sensor));
-    ESP_LOGI(TAG, "DIAG gate distance    | moving now filt peak hold trig | still now filt peak hold trig");
+    ESP_LOGI(TAG, "DIAG gate distance    | moving now filt peak hold radar | still now filt peak hold radar");
     for (int g = 0; g < PE_GATES; g++) {
         char where[24];
         format_gate(g, e.range.gate_cm, where, sizeof(where));
         char cols[PE_KINDS][40];
         for (int kind = 0; kind < PE_KINDS; kind++) {
             if (!pe_channel_counted(&e, kind, g)) {
-                snprintf(cols[kind], sizeof(cols[kind]), "%-28s", "  (not counted)");
+                snprintf(cols[kind], sizeof(cols[kind]), "%-29s", "  (not counted)");
                 continue;
             }
             const uint8_t now_energy = kind == PE_MOVING ? e.last.moving[g] : e.last.still[g];
-            char hold[6];
-            char trig[6];
-            const uint8_t h = pe_hold_threshold(&e, kind, g);
-            const uint8_t t = pe_trigger_threshold(&e, kind, g);
-            snprintf(hold, sizeof(hold), h >= PE_OFF ? "off" : "%u", h);
-            snprintf(trig, sizeof(trig), t >= PE_OFF ? "off" : "%u", t);
-            snprintf(cols[kind], sizeof(cols[kind]), "%10u %4u %4u %4s %4s", now_energy,
-                     pe_filtered_energy(&e, kind, g), pe_recent_peak(&e, kind, g), hold, trig);
+            snprintf(cols[kind], sizeof(cols[kind]), "%10u %4u %4u %4u %5u", now_energy,
+                     pe_filtered_energy(&e, kind, g), pe_recent_peak(&e, kind, g), pe_hold_threshold(&e, kind, g),
+                     e.th.ch[kind][g].radar);
         }
         ESP_LOGI(TAG, "DIAG %4d %-10s |%s |%s", g, where, cols[PE_MOVING], cols[PE_STILL]);
     }
 }
 
-static void print_profile()
-{
-    const pe_engine_t &e = s_engine;
-    if (e.stored.learned) {
-        ESP_LOGI(TAG, "PROFILE learned #%" PRIu32 ": %u cm gates, %" PRIu32 " reports in %" PRIu32 " s",
-                 e.stored.sequence, e.stored.gate_cm, e.stored.frames, e.stored.duration_s);
-        log_profile_table(e.stored);
-    } else {
-        ESP_LOGI(TAG, "PROFILE built-in per-gate thresholds (no learning stored)");
-        log_profile_table(e.defaults);
-    }
-    if (e.has_candidate && e.learn_report.result != PE_LEARN_OK) {
-        ESP_LOGI(TAG, "PROFILE of the last learning, not used (%s):", pe_learn_result_name(e.learn_report.result));
-        log_profile_table(e.candidate);
-    }
-}
-
-static void log_learning_result()
-{
-    const pe_engine_t &e = s_engine;
-    const pe_learn_report_t &r = e.learn_report;
-    if (r.result == PE_LEARN_OK) {
-        ESP_LOGI(TAG, "Learning: %s (%" PRIu32 " reports; %u gates counted, %u too noisy to trigger, %u with a high hold "
-                      "threshold)",
-                 pe_learn_result_name(r.result), r.frames, r.channels, r.noisy, r.hold_high);
-    } else if (r.result == PE_LEARN_CANCELLED) {
-        ESP_LOGI(TAG, "Learning cancelled: the old thresholds stay");
-    } else {
-        ESP_LOGE(TAG, "Learning %s (%" PRIu32 " reports, %" PRIu32 " without energies, longest silence %" PRIu32
-                      " ms; %u gates counted, %u too noisy)",
-                 pe_learn_result_name(r.result), r.frames, r.frames_no_energy, r.max_gap_ms, r.channels, r.noisy);
-    }
-    if (e.has_candidate && r.result != PE_LEARN_CANCELLED) {
-        log_profile_table(e.candidate);
-        if (r.noisy > 0 || r.hold_high > 0) {
-            ESP_LOGW(TAG, "Gates marked TOO NOISY cannot start presence (something moves there in the empty room: fan, "
-                          "curtain, plant, reflections); \"hold high\" gates may miss people sitting still. Move the "
-                          "sensor, remove the source or reduce Range, then learn again.");
-        }
-    }
-}
-
-static void show_learn_mode(uint8_t mode)
-{
-    void (*show)(uint8_t) = s_show_learn_mode.load();
-    if (show) {
-        show(mode);
-    }
-}
-
-static void handle_events(uint32_t now)
+// True when the thresholds in use changed
+static bool handle_events()
 {
     pe_engine_t &e = s_engine;
     const uint32_t ev = pe_take_events(&e);
@@ -379,7 +304,7 @@ static void handle_events(uint32_t now)
         }
     }
     if (ev & PE_EV_TRIGGERED) {
-        ESP_LOGI(TAG, "Present: %s gate %u energy %u reached its trigger %u (%u of the last %u reports strong)",
+        ESP_LOGI(TAG, "Present: %s gate %u energy %u above the radar threshold %u (%u of the last %u reports strong)",
                  e.trigger_kind == PE_MOVING ? "moving" : "still", e.trigger_gate, e.trigger_energy,
                  e.trigger_threshold, e.p.trigger_frames, e.p.trigger_window);
     }
@@ -393,28 +318,7 @@ static void handle_events(uint32_t now)
     if (ev & PE_EV_ABSENT) {
         ESP_LOGI(TAG, "Empty: no hold signal for %" PRIu32 " s; waiting for a strong signal", e.absence_ms / 1000);
     }
-    if (ev & PE_EV_LEARN_PHASE) {
-        if (e.learn_state == PE_LEARN_WAITING) {
-            ESP_LOGI(TAG, "LEARN_EMPTY: leave the room, recording the empty room in %" PRIu32 " s for %" PRIu32 " s",
-                     e.p.learn_delay_ms / 1000, e.p.learn_duration_ms / 1000);
-            status_led_set_learning(STATUS_LED_LEARNING_WAITING);
-            show_learn_mode(RADAR_LEARN_ON);
-        } else if (e.learn_state == PE_LEARN_RECORDING) {
-            ESP_LOGI(TAG, "Recording the empty room for %" PRIu32 " s: stay out of the room", e.p.learn_duration_ms / 1000);
-            status_led_set_learning(STATUS_LED_LEARNING_RECORDING);
-        }
-    }
-    if (ev & PE_EV_LEARN_RESULT) {
-        log_learning_result();
-        const pe_learn_result_t result = e.learn_report.result;
-        status_led_set_learning(result == PE_LEARN_OK          ? STATUS_LED_LEARNING_DONE
-                                : result == PE_LEARN_CANCELLED ? STATUS_LED_LEARNING_NONE
-                                                               : STATUS_LED_LEARNING_FAILED);
-        show_learn_mode(RADAR_LEARN_OFF);
-    }
-    if (ev & PE_EV_PROFILE) {
-        log_profile_in_use();
-    }
+    return (ev & PE_EV_THRESHOLDS) != 0;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -422,42 +326,15 @@ static void handle_events(uint32_t now)
 
 static void run_command(uint8_t command, uint32_t now, bool *diag_stream)
 {
-    pe_engine_t &e = s_engine;
     switch (command) {
-    case ESP_PRESENCE_LEARN:
-        if (!pe_learn_start(&e, now)) {
-            ESP_LOGW(TAG, "LEARN_EMPTY: a learning is running already (%s)", pe_learn_state_name(e.learn_state));
-        } else if (pe_sensor_fault(&e)) {
-            ESP_LOGW(TAG, "LEARN_EMPTY started while the sensor is faulty (%s): it fails unless data comes back",
-                     pe_sensor_name(e.sensor));
-        }
-        break;
-    case ESP_PRESENCE_LEARN_CANCEL:
-        if (!pe_learn_cancel(&e, now)) {
-            ESP_LOGI(TAG, "LEARN_CANCEL: no learning running");
-            show_learn_mode(RADAR_LEARN_OFF);
-        }
-        break;
-    case ESP_PRESENCE_PROFILE_RESET:
-        (void)pe_learn_cancel(&e, now);
-        show_learn_mode(RADAR_LEARN_FACTORY);
-        if (erase_profile()) {
-            pe_reset_profile(&e, now);
-            ESP_LOGI(TAG, "PROFILE_RESET: learned thresholds erased, built-in per-gate thresholds in use");
-            status_led_set_learning(STATUS_LED_LEARNING_FACTORY);
-        } else {
-            status_led_set_learning(STATUS_LED_LEARNING_FAILED);
-        }
-        show_learn_mode(RADAR_LEARN_OFF);
-        break;
     case ESP_PRESENCE_PRINT_STATUS:
         print_status(now);
         break;
     case ESP_PRESENCE_PRINT_DIAG:
         print_diag(now);
         break;
-    case ESP_PRESENCE_PRINT_PROFILE:
-        print_profile();
+    case ESP_PRESENCE_PRINT_THRESHOLDS:
+        log_thresholds();
         break;
     case ESP_PRESENCE_DIAG_STREAM_ON:
         *diag_stream = true;
@@ -482,14 +359,23 @@ static void apply_inputs(uint32_t now)
     if (busy != e.busy) {
         pe_set_busy(&e, busy, now);
     }
+    pe_radar_thresholds_t radar;
     pe_range_t range;
-    taskENTER_CRITICAL(&s_range_lock);
-    const bool pending = s_range_pending;
+    pe_noise_t noise;
+    taskENTER_CRITICAL(&s_input_lock);
+    const bool config = s_config_pending;
+    const bool learned = s_noise_pending;
+    radar = s_radar_in;
     range = s_range_in;
-    s_range_pending = false;
-    taskEXIT_CRITICAL(&s_range_lock);
-    if (pending) {
-        pe_set_range(&e, &range, now);
+    noise = s_noise_in;
+    s_config_pending = false;
+    s_noise_pending = false;
+    taskEXIT_CRITICAL(&s_input_lock);
+    if (learned) {
+        (void)pe_set_noise(&e, &noise, now); // valid: made by esp_presence_learned_noise()
+    }
+    if (config) {
+        pe_configure(&e, &radar, &range, now);
     }
 }
 
@@ -510,6 +396,8 @@ static void engine_task(void *arg)
     bool diag_stream = false;
     uint32_t last_diag = now_ms();
     uint32_t last_status = last_diag;
+    bool thresholds_log = false;
+    uint32_t thresholds_log_at = 0;
     while (true) {
         pe_frame_t f;
         if (xQueueReceive(s_frames, &f, pdMS_TO_TICKS(kLoopMs)) == pdTRUE) {
@@ -529,7 +417,15 @@ static void engine_task(void *arg)
             run_command(command, now, &diag_stream);
         }
         pe_tick(&s_engine, now);
-        handle_events(now);
+        if (handle_events()) {
+            // Logged once they stopped changing
+            thresholds_log = true;
+            thresholds_log_at = now + kThresholdLogDelayMs;
+        }
+        if (thresholds_log && (int32_t)(now - thresholds_log_at) >= 0) {
+            thresholds_log = false;
+            log_thresholds();
+        }
         publish(now);
 
         if (diag_stream && now - last_diag >= kDiagStreamMs) {
@@ -552,18 +448,8 @@ static void params_from_config(pe_params_t *p)
     p->hold_frames = CONFIG_PRESENCE_ENGINE_HOLD_REPORTS;
     p->hold_window = CONFIG_PRESENCE_ENGINE_HOLD_WINDOW;
     p->data_timeout_ms = CONFIG_PRESENCE_ENGINE_DATA_TIMEOUT_MS;
-    p->learn_delay_ms = (uint32_t)CONFIG_LD2410_LEARN_DELAY_SEC * 1000;
-    p->learn_duration_ms = (uint32_t)CONFIG_LD2410_LEARN_DURATION_SEC * 1000;
-    p->k_hold_x10 = CONFIG_PRESENCE_ENGINE_HOLD_SPREADS_X10;
-    p->k_trigger_x10 = CONFIG_PRESENCE_ENGINE_TRIGGER_SPREADS_X10;
-    p->trigger_margin = CONFIG_PRESENCE_ENGINE_TRIGGER_MARGIN;
-    p->max_noisy_percent = CONFIG_PRESENCE_ENGINE_MAX_NOISY_PERCENT;
-#if CONFIG_PRESENCE_ENGINE_ADAPT
-    p->adapt = true;
-    p->adapt_max_up = CONFIG_PRESENCE_ENGINE_ADAPT_MAX_UP;
-#else
-    p->adapt = false;
-#endif
+    p->hold_drop_percent = CONFIG_PRESENCE_ENGINE_HOLD_DROP_PERCENT;
+    p->hold_drop_max = CONFIG_PRESENCE_ENGINE_HOLD_DROP_MAX;
 }
 
 esp_err_t esp_presence_start(void)
@@ -576,13 +462,14 @@ esp_err_t esp_presence_start(void)
     pe_params_t params;
     params_from_config(&params);
     const uint32_t now = now_ms();
-    pe_init(&s_engine, &params, save_profile, nullptr, now);
+    pe_init(&s_engine, &params, now);
     pe_set_absence_time(&s_engine, (uint32_t)CONFIG_PRESENCE_HOLD_TIME_SEC * 1000);
-    ESP_LOGI(TAG, "ESP32 presence engine: strong signal %u of %u reports to start, hold signal %u of %u reports to "
-                  "stay, data timeout %" PRIu32 " ms, adaptation %s",
+    ESP_LOGI(TAG, "ESP32 presence engine: strong signal (above the radar threshold) in %u of %u reports to start, "
+                  "hold signal in %u of %u reports to stay, data timeout %" PRIu32 " ms",
              s_engine.p.trigger_frames, s_engine.p.trigger_window, s_engine.p.hold_frames, s_engine.p.hold_window,
-             s_engine.p.data_timeout_ms, s_engine.p.adapt ? "on" : "off");
-    load_profile(now);
+             s_engine.p.data_timeout_ms);
+    load_noise(now);
+    (void)pe_take_events(&s_engine); // the thresholds are logged once read from the radar
     if (xTaskCreate(engine_task, "presence_eng", kTaskStack, nullptr, kTaskPriority, nullptr) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
@@ -617,6 +504,9 @@ void esp_presence_set_hold_time(uint16_t seconds)
 
 void esp_presence_configure(const radar_settings_t *settings)
 {
+    pe_radar_thresholds_t radar;
+    memcpy(radar.moving, settings->config.thresholds.moving, sizeof(radar.moving));
+    memcpy(radar.still, settings->config.thresholds.still, sizeof(radar.still));
     pe_range_t range = {};
     range.gate_cm = settings->gate_cm;
     range.max_moving_gate = settings->config.max_moving_gate;
@@ -628,10 +518,11 @@ void esp_presence_configure(const radar_settings_t *settings)
         range.max_moving_gate = std::min(range.max_moving_gate, limit);
         range.max_still_gate = std::min(range.max_still_gate, limit);
     }
-    taskENTER_CRITICAL(&s_range_lock);
+    taskENTER_CRITICAL(&s_input_lock);
+    s_radar_in = radar;
     s_range_in = range;
-    s_range_pending = true;
-    taskEXIT_CRITICAL(&s_range_lock);
+    s_config_pending = true;
+    taskEXIT_CRITICAL(&s_input_lock);
 }
 
 void esp_presence_set_radar_busy(bool busy)
@@ -649,9 +540,19 @@ uint32_t esp_presence_silent_ms(void)
     return s_silent_ms;
 }
 
-void esp_presence_set_learn_view(void (*show_learn_mode)(uint8_t mode))
+void esp_presence_learned_noise(const ld2410_capture_t *capture, uint16_t gate_cm)
 {
-    s_show_learn_mode = show_learn_mode;
+    pe_noise_t noise;
+    pe_noise_from_histograms(capture->moving, capture->still, capture->frames, gate_cm, &noise);
+    if (!save_noise(&noise)) {
+        return;
+    }
+    ESP_LOGI(TAG, "Noise of the empty room recorded (%" PRIu32 " reports) and saved: the hold thresholds stay above "
+                  "it", noise.frames);
+    taskENTER_CRITICAL(&s_input_lock);
+    s_noise_in = noise;
+    s_noise_pending = true;
+    taskEXIT_CRITICAL(&s_input_lock);
 }
 
 #endif // CONFIG_PRESENCE_ESP_ENGINE

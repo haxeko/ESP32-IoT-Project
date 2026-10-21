@@ -1,8 +1,9 @@
 // The radar_cfg task with the ESP32 presence engine (CONFIG_PRESENCE_ESP_ENGINE) against the simulated radar, the
-// engine replaced by a fake that records what the task hands it: the radar settings after each session, the busy
-// flag around sessions, the engineering mode turned on when reports lack energies, the recovery of a silent radar
-// (UART resynchronised, configuration mode left, restarts at growing intervals), and the learning, cancel and
-// factory requests routed to the engine instead of the radar's own thresholds.
+// engine replaced by a fake that records what the task hands it: the radar settings (thresholds, Range) after each
+// session, the busy flag around sessions and learnings, the engineering mode turned on when reports lack energies,
+// the recovery of a silent radar (UART resynchronised, configuration mode left, restarts at growing intervals), and
+// the learning as with the stable firmware (the radar measures and stores its thresholds), with the noise recorded
+// for the engine first and the thresholds read again afterwards.
 #include "sim.h"
 
 #include "radar_worker.cpp"
@@ -14,10 +15,18 @@
 #include "esp_presence.h"
 #include "radar_sim.h"
 
-void status_led_set_learning(status_led_learning_t learning) {}
+static std::vector<int> g_led;
+void status_led_set_learning(status_led_learning_t learning)
+{
+    g_led.push_back(learning);
+}
 
+static std::vector<int> g_view;
 static void view_settings(const radar_settings_t *settings) {}
-static void view_learn_mode(uint8_t mode) {}
+static void view_learn_mode(uint8_t mode)
+{
+    g_view.push_back(mode);
+}
 
 // Fake engine
 static bool g_needs_engineering;
@@ -26,8 +35,13 @@ static int g_busy_on;
 static bool g_busy;
 static int g_configured;
 static radar_settings_t g_settings;
-static std::vector<int> g_commands;
-static void (*g_learn_view)(uint8_t);
+struct NoiseCall {
+    int64_t ms;
+    uint32_t frames;
+    uint16_t gate_cm;
+    bool busy;
+};
+static std::vector<NoiseCall> g_noise;
 
 bool esp_presence_needs_engineering(void)
 {
@@ -47,14 +61,9 @@ void esp_presence_configure(const radar_settings_t *settings)
     g_configured++;
     g_settings = *settings;
 }
-bool esp_presence_command(esp_presence_command_t command)
+void esp_presence_learned_noise(const ld2410_capture_t *capture, uint16_t gate_cm)
 {
-    g_commands.push_back(command);
-    return true;
-}
-void esp_presence_set_learn_view(void (*show)(uint8_t))
-{
-    g_learn_view = show;
+    g_noise.push_back({ sim_ms(), capture->frames, gate_cm, g_busy });
 }
 
 static void boot(RadarSim &radar)
@@ -92,8 +101,9 @@ static void boot(RadarSim &radar)
     g_busy = false;
     g_configured = 0;
     g_settings = {};
-    g_commands.clear();
-    g_learn_view = nullptr;
+    g_noise.clear();
+    g_led.clear();
+    g_view.clear();
 }
 
 static void run_worker(int64_t end_ms)
@@ -112,17 +122,19 @@ int main(int argc, char **argv)
     g_verbose = argc > 1;
     printf("radar worker with the ESP32 presence engine:\n");
 
-    test_begin("boot: settings to the engine, busy while the session runs, learn view set");
+    test_begin("boot: settings and thresholds to the engine, busy while the session runs");
     {
         RadarSim radar;
         boot(radar);
         radar.max_moving_gate = 6;
         radar.max_still_gate = 5;
+        radar.moving[3] = 33;
+        radar.still[6] = 22;
         run_worker(5000);
         CHECK(g_configured == 1 && g_settings.gate_cm == 75);
         CHECK(g_settings.config.max_moving_gate == 6 && g_settings.config.max_still_gate == 5);
+        CHECK(g_settings.config.thresholds.moving[3] == 33 && g_settings.config.thresholds.still[6] == 22);
         CHECK(g_busy_on >= 1 && !g_busy);
-        CHECK(g_learn_view == view_learn_mode);
         CHECK(radar.count(0x0062) == 0); // energies arrive: nothing to turn on
     }
 
@@ -200,24 +212,65 @@ int main(int argc, char **argv)
         CHECK(sim_log_contains("resynchronising the UART and leaving the configuration mode"));
     }
 
-    test_begin("Learning, Off and Factory thresholds from Home Assistant, 3 and 4 clicks: routed to the engine");
+    test_begin("Learning from Home Assistant: the ESP32 records the noise, the radar measures and stores its "
+               "thresholds, which are read again and handed to the engine; engineering mode back on");
     {
         RadarSim radar;
         boot(radar);
         run_worker(3000);
         CHECK(radar_worker_select(RADAR_SELECT_LEARN, RADAR_LEARN_ON) == ESP_OK);
-        CHECK(radar_worker_select(RADAR_SELECT_LEARN, RADAR_LEARN_OFF) == ESP_OK);
-        CHECK(radar_worker_select(RADAR_SELECT_LEARN, RADAR_LEARN_FACTORY) == ESP_OK);
-        CHECK(radar_worker_select(RADAR_SELECT_LEARN, 7) == ESP_ERR_INVALID_ARG);
+        bool busy_while_measuring = false;
+        sim_at(90000, [&busy_while_measuring]() { busy_while_measuring = g_busy; });
+        // The radar measured without the engineering mode: reports without energies afterwards
+        sim_at(126000, []() { g_needs_engineering = true; });
+        sim_at(130000, []() { g_needs_engineering = false; });
+        run_worker(135000);
+        CHECK(radar.count(0x000B) == 1 && radar.count(0x0064) == 0);
+        CHECK(g_noise.size() == 1 && g_noise[0].frames >= 280 && g_noise[0].gate_cm == 75 && g_noise[0].busy);
+        CHECK(g_noise[0].ms >= 123000 && g_noise[0].ms < 125000);
+        CHECK(busy_while_measuring && !g_busy);
+        // Thresholds the radar stored, read again and handed over (each run_worker() starts with a session)
+        CHECK(g_configured == 3);
+        CHECK(memcmp(g_settings.config.thresholds.moving, radar.auto_moving, 9) == 0);
+        CHECK(memcmp(g_settings.config.thresholds.still + 2, radar.auto_still + 2, 7) == 0);
+        CHECK(radar.engineering && sim_log_contains("Engineering mode on: the energy of every gate for the ESP32 "
+                                                   "presence engine"));
+        CHECK(g_led.size() >= 3 && g_led[0] == STATUS_LED_LEARNING_WAITING &&
+              g_led[1] == STATUS_LED_LEARNING_RECORDING && g_led.back() == STATUS_LED_LEARNING_DONE);
+        CHECK(!g_view.empty() && g_view.back() == RADAR_LEARN_OFF);
+        CHECK(sim_log_contains("Recording the noise of the empty room on the ESP32 for 30 s"));
+    }
+
+    test_begin("3 clicks learn too; Off cancels: nothing measured, nothing handed over, thresholds kept");
+    {
+        RadarSim radar;
+        boot(radar);
+        run_worker(3000);
         CHECK(radar_worker_request_learning());
+        sim_at(30000, []() { CHECK(radar_worker_select(RADAR_SELECT_LEARN, RADAR_LEARN_OFF) == ESP_OK); });
+        run_worker(40000);
+        CHECK(radar.count(0x000B) == 0 && g_noise.empty() && g_configured == 3);
+        CHECK(g_led.back() == STATUS_LED_LEARNING_NONE && g_view.back() == RADAR_LEARN_OFF);
+        CHECK(memcmp(g_settings.config.thresholds.moving, RadarSim().moving, 9) == 0);
+    }
+
+    test_begin("Factory thresholds from Home Assistant and 4 clicks: written into the radar, read again, handed "
+               "over; the noise stays");
+    {
+        RadarSim radar;
+        boot(radar);
+        radar.moving[2] = 70;
+        run_worker(3000);
+        CHECK(g_settings.config.thresholds.moving[2] == 70);
+        CHECK(radar_worker_select(RADAR_SELECT_LEARN, RADAR_LEARN_FACTORY) == ESP_OK);
+        run_worker(8000);
+        CHECK(radar.moving[2] == 40 && radar.count(0x0064) == 9);
+        CHECK(g_settings.config.thresholds.moving[2] == 40 && g_noise.empty());
+        CHECK(g_led.back() == STATUS_LED_LEARNING_FACTORY && !g_busy);
+        radar.moving[2] = 70;
         CHECK(radar_worker_request_factory_thresholds());
-        run_worker(130000);
-        const std::vector<int> expected = { ESP_PRESENCE_LEARN, ESP_PRESENCE_LEARN_CANCEL, ESP_PRESENCE_PROFILE_RESET,
-                                            ESP_PRESENCE_LEARN, ESP_PRESENCE_PROFILE_RESET };
-        CHECK(g_commands == expected);
-        // The radar's own learning and thresholds are left alone
-        CHECK(radar.count(0x000B) == 0 && radar.count(0x0064) == 0);
-        CHECK(memcmp(radar.moving, RadarSim().moving, sizeof(radar.moving)) == 0);
+        run_worker(13000);
+        CHECK(radar.moving[2] == 40 && g_settings.config.thresholds.moving[2] == 40);
     }
 
     return test_end();

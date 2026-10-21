@@ -234,16 +234,18 @@ menu "ESP32 Presence Engine (experimental)"
         default n
         help
             Keeps the radar in engineering mode and decides presence on the
-            ESP32 from the moving and still energy of every gate, with its own
-            per-gate thresholds learned in the empty room (LEARN_EMPTY: the
-            console command, "Learning" in Home Assistant or 3 clicks; stored
-            in NVS, the radar's own thresholds are not used).
-            Two thresholds: an empty room needs a strong signal confirmed over
-            several reports; once present, a lower hold threshold keeps it
-            (people sitting still, small movements), and the room is empty
-            after Hold time (Occupancy Sensing HoldTime) without it. A silent
-            radar is a sensor fault, never an empty room.
-            "Factory thresholds" and 4 clicks erase the learned thresholds.
+            ESP32 from the moving and still energy of every gate, with two
+            thresholds per gate taken from the thresholds stored in the radar
+            (the radar measures and stores them when the empty room is
+            learned: "Learning" in Home Assistant, 3 clicks or LEARN_EMPTY,
+            as with the stable firmware; or set them with HLKRadarTool).
+            An empty room needs a strong signal (above the radar threshold)
+            confirmed over several reports; once present, a lower hold
+            threshold keeps it (people sitting still, small movements), and
+            the room is empty after Hold time (Occupancy Sensing HoldTime)
+            without it. The hold threshold stays above the noise of the empty
+            room, recorded by the ESP32 while learning (stored in NVS). A
+            silent radar is a sensor fault, never an empty room.
             Console commands and per-gate diagnostics on the ESP-IDF console.
             README: "Bộ xử lý hiện diện trên ESP32".
 
@@ -253,7 +255,7 @@ menu "ESP32 Presence Engine (experimental)"
         range 1 16
         default 3
         help
-            A gate (or its neighbours) must reach its trigger threshold in
+            A gate (or its neighbours) must be above its radar threshold in
             this many of the last "report window" reports (filtered energy,
             about 100 ms each) for an empty room to become present.
 
@@ -278,67 +280,40 @@ menu "ESP32 Presence Engine (experimental)"
         range 1 16
         default 10
 
+    config PRESENCE_ENGINE_HOLD_DROP_PERCENT
+        int "Hold threshold: this share (%) below the radar threshold"
+        depends on PRESENCE_ESP_ENGINE
+        range 0 90
+        default 40
+        help
+            Hold threshold of a gate = its radar threshold minus this share of
+            it, at most "largest drop" below it, and never below the noise of
+            the empty room recorded while learning + 2 (without a recording:
+            the radar threshold itself). 0: hold at the radar threshold.
+
+    config PRESENCE_ENGINE_HOLD_DROP_MAX
+        int "Hold threshold: largest drop below the radar threshold"
+        depends on PRESENCE_ESP_ENGINE
+        range 0 50
+        default 10
+
+    config PRESENCE_ENGINE_NOISE_RECORD_SEC
+        int "Noise of the empty room recorded by the ESP32 while learning (seconds)"
+        depends on PRESENCE_ESP_ENGINE
+        range 10 120
+        default 30
+        help
+            Before the radar measures the empty room itself, the ESP32 records
+            the energies of every gate for this long (the room must stay
+            empty), so that the hold thresholds stay above the noise. A radar
+            without its own measurement is recorded by the ESP32 for the
+            learning time instead, which gives the noise too.
+
     config PRESENCE_ENGINE_DATA_TIMEOUT_MS
         int "Sensor fault after (ms) without a valid report with energies"
         depends on PRESENCE_ESP_ENGINE
         range 300 30000
         default 2000
-
-    config PRESENCE_ENGINE_HOLD_SPREADS_X10
-        int "Hold threshold: noise floor + this many spreads (x10)"
-        depends on PRESENCE_ESP_ENGINE
-        range 10 100
-        default 30
-        help
-            Hold threshold of a gate: at least its learned noise floor
-            (median) plus this many robust spreads (1.4826 x median absolute
-            deviation), in tenths (30 = 3.0), and at least its 99th
-            percentile + 2.
-
-    config PRESENCE_ENGINE_TRIGGER_SPREADS_X10
-        int "Trigger threshold: noise floor + this many spreads (x10)"
-        depends on PRESENCE_ESP_ENGINE
-        range 20 200
-        default 60
-        help
-            Trigger threshold of a gate: at least its noise floor plus this
-            many spreads (tenths), at least the highest energy recorded in the
-            empty room + "trigger margin", and at least hold + 6.
-
-    config PRESENCE_ENGINE_TRIGGER_MARGIN
-        int "Trigger margin above the highest empty room energy"
-        depends on PRESENCE_ESP_ENGINE
-        range 1 50
-        default 5
-
-    config PRESENCE_ENGINE_MAX_NOISY_PERCENT
-        int "A learning fails when more gates than this (%) are too noisy"
-        depends on PRESENCE_ESP_ENGINE
-        range 10 100
-        default 50
-        help
-            Share of the counted channels (moving and still energy of the
-            gates in Range) whose trigger threshold would be above 100 (too
-            noisy to start presence). Above it, someone or something probably
-            moved during the recording: the learning fails and the old
-            thresholds stay.
-
-    config PRESENCE_ENGINE_ADAPT
-        bool "Follow a slowly rising noise floor while the room is empty"
-        depends on PRESENCE_ESP_ENGINE
-        default y
-        help
-            After 5 min empty with no strong signal, a slow tracker per gate
-            may raise its thresholds by at most "highest raise" when the noise
-            floor has risen since the learning. Never below the learned
-            thresholds, never while present or counting down, never stored
-            (back to the learned thresholds at each boot).
-
-    config PRESENCE_ENGINE_ADAPT_MAX_UP
-        int "Highest raise of the adaptation"
-        depends on PRESENCE_ENGINE_ADAPT
-        range 1 20
-        default 6
 
     config PRESENCE_ENGINE_STATUS_LOG_SEC
         int "Log the status every (seconds, 0 = never)"
@@ -353,7 +328,7 @@ menu "ESP32 Presence Engine (experimental)"
         help
             ESP-IDF REPL on the configured console (USB-Serial-JTAG by
             default; set the UART console in menuconfig for a board whose USB
-            port goes through a USB-UART chip). About 4 KB of RAM.
+            port goes through a USB-UART chip). About 5 KB of RAM.
 
 endmenu
 

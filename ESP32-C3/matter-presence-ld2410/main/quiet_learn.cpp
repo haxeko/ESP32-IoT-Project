@@ -313,7 +313,7 @@ static quiet_learn_result_t run_with_capture(ld2410_capture_t *capture, quiet_le
 }
 
 static quiet_learn_result_t run_on_esp32(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
-                                         uint16_t gate_cm, uint32_t wait_ms)
+                                         uint16_t gate_cm, uint32_t wait_ms, quiet_learn_noise_cb_t on_noise)
 {
     // Energy counts of every gate (about 3.6 KB), only while learning
     ld2410_capture_t *capture = static_cast<ld2410_capture_t *>(malloc(sizeof(ld2410_capture_t)));
@@ -323,6 +323,9 @@ static quiet_learn_result_t run_on_esp32(quiet_learn_cancelled_cb_t cancelled, q
         return QUIET_LEARN_FAILED;
     }
     const quiet_learn_result_t result = run_with_capture(capture, cancelled, on_phase, gate_cm, wait_ms);
+    if (result == QUIET_LEARN_SAVED && on_noise) {
+        on_noise(capture, gate_cm);
+    }
     free(capture);
     return result;
 }
@@ -339,15 +342,22 @@ static constexpr uint32_t kRadarStartMs = 15 * 1000;
 static constexpr uint32_t kRadarMarginMs = 30 * 1000;
 // The radar answers commands again about a second after a restart
 static constexpr uint32_t kRadarRestartMs = 1000;
+// The noise of the empty room for the presence engine needs more engineering reports than the thresholds
+static constexpr uint32_t kMinNoiseFramesPerSec = 5;
 
 enum RadarAutoStart { kRadarAutoStarted, kRadarAutoUnsupported, kRadarAutoNoAnswer };
 
 // Reads the radar version and thresholds, then asks the radar for its background noise detection. Unsupported: the
-// radar refused the command or did not answer it, but answers the others.
-static RadarAutoStart start_radar_auto(uint32_t duration_s, ld2410_thresholds_t *before, bool *before_ok)
+// radar refused the command or did not answer it, but answers the others. engineering_off: the engineering mode
+// is turned off first, so that the radar measures as without it (the presence engine keeps it on otherwise).
+static RadarAutoStart start_radar_auto(uint32_t duration_s, ld2410_thresholds_t *before, bool *before_ok,
+                                       bool engineering_off)
 {
     if (ld2410_config_begin() != ESP_OK) {
         return kRadarAutoNoAnswer;
+    }
+    if (engineering_off && ld2410_set_engineering_mode(false) != ESP_OK) {
+        ESP_LOGW(TAG, "Could not leave engineering mode before the radar measures");
     }
     ld2410_version_t version;
     if (ld2410_read_firmware_version(&version) == ESP_OK) {
@@ -394,6 +404,44 @@ static void log_radar_auto_result(const ld2410_thresholds_t *before, bool before
                           "while measuring?", g, after->still[g], kFactoryStill[g], CONFIG_LD2410_LEARN_MAX_RAISE);
         }
     }
+}
+
+// Engineering reports of the empty room for the presence engine, before the radar measures itself. False: nothing
+// usable, *result says why (logged).
+static bool record_noise(ld2410_capture_t *capture, uint32_t seconds, quiet_learn_cancelled_cb_t cancelled,
+                         quiet_learn_phase_cb_t on_phase, quiet_learn_result_t *result)
+{
+    *result = QUIET_LEARN_FAILED;
+    esp_err_t err = ld2410_config_begin();
+    if (err == ESP_OK) {
+        err = ld2410_set_engineering_mode(true);
+        if (ld2410_config_end() != ESP_OK && err == ESP_OK) {
+            err = ESP_FAIL;
+        }
+    }
+    if (err != ESP_OK) {
+        log_no_answer();
+        return false;
+    }
+    ESP_LOGI(TAG, "Recording the noise of the empty room on the ESP32 for %" PRIu32 " s, then the LD2410 measures",
+             seconds);
+    if (on_phase) {
+        on_phase(QUIET_LEARN_RECORDING);
+    }
+    ld2410_capture_start(capture);
+    const bool completed = wait_unless_cancelled(seconds * 1000, cancelled);
+    ld2410_capture_stop();
+    if (!completed) {
+        ESP_LOGI(TAG, "Learning cancelled, nothing changed");
+        *result = QUIET_LEARN_CANCELLED;
+        return false;
+    }
+    if (capture->frames < seconds * kMinNoiseFramesPerSec) {
+        ESP_LOGE(TAG, "Only %" PRIu32 " engineering reports in %" PRIu32 " s, nothing changed", capture->frames,
+                 seconds);
+        return false;
+    }
+    return true;
 }
 
 // Waits for the radar's background noise detection to end, then reads the thresholds it stored.
@@ -470,38 +518,77 @@ static quiet_learn_result_t run_radar_auto(quiet_learn_cancelled_cb_t cancelled,
 // ---------------------------------------------------------------------------------------------------------------------
 
 quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
-                                     uint16_t gate_cm)
+                                     uint16_t gate_cm, quiet_learn_noise_cb_t on_noise, uint32_t noise_seconds)
 {
     const uint32_t delay_s = CONFIG_LD2410_LEARN_DELAY_SEC;
     const uint32_t duration_s = CONFIG_LD2410_LEARN_DURATION_SEC;
-    ESP_LOGI(TAG, "Empty room learning: leave the room, recording starts in %" PRIu32 " s and lasts %" PRIu32 " s",
-             delay_s, duration_s);
+#if CONFIG_LD2410_LEARN_RADAR_AUTO
+    if (on_noise) {
+        ESP_LOGI(TAG, "Empty room learning: leave the room. In %" PRIu32 " s the ESP32 records the noise for %" PRIu32
+                      " s, then the LD2410 measures the room itself (%" PRIu32 " s): stay out until the LED stops "
+                      "blinking", delay_s, noise_seconds, kRadarLeaveMs / 1000 + duration_s);
+    } else
+#endif
+    {
+        ESP_LOGI(TAG, "Empty room learning: leave the room, recording starts in %" PRIu32 " s and lasts %" PRIu32
+                      " s", delay_s, duration_s);
+    }
     if (on_phase) {
         on_phase(QUIET_LEARN_WAITING);
     }
     uint32_t wait_ms = delay_s * 1000;
 #if CONFIG_LD2410_LEARN_RADAR_AUTO
-    // The radar waits kRadarLeaveMs itself: ask it that much before the end of the delay.
-    const uint32_t lead_ms = wait_ms > kRadarLeaveMs ? wait_ms - kRadarLeaveMs : 0;
-    if (!wait_unless_cancelled(lead_ms, cancelled)) {
-        ESP_LOGI(TAG, "Learning cancelled, nothing changed");
-        return QUIET_LEARN_CANCELLED;
+    // Noise of the empty room for the presence engine, recorded before the radar measures (allocated meanwhile)
+    ld2410_capture_t *noise = nullptr;
+    if (on_noise) {
+        if (!wait_unless_cancelled(wait_ms, cancelled)) {
+            ESP_LOGI(TAG, "Learning cancelled, nothing changed");
+            return QUIET_LEARN_CANCELLED;
+        }
+        wait_ms = 0;
+        noise = static_cast<ld2410_capture_t *>(malloc(sizeof(ld2410_capture_t)));
+        if (noise == nullptr) {
+            ESP_LOGE(TAG, "Not enough memory for the recording (%u bytes), nothing changed",
+                     (unsigned)sizeof(ld2410_capture_t));
+            return QUIET_LEARN_FAILED;
+        }
+        quiet_learn_result_t result;
+        if (!record_noise(noise, noise_seconds, cancelled, on_phase, &result)) {
+            free(noise);
+            return result;
+        }
+    } else {
+        // The radar waits kRadarLeaveMs itself: ask it that much before the end of the delay.
+        const uint32_t lead_ms = wait_ms > kRadarLeaveMs ? wait_ms - kRadarLeaveMs : 0;
+        if (!wait_unless_cancelled(lead_ms, cancelled)) {
+            ESP_LOGI(TAG, "Learning cancelled, nothing changed");
+            return QUIET_LEARN_CANCELLED;
+        }
+        wait_ms -= lead_ms;
     }
-    wait_ms -= lead_ms;
     ld2410_thresholds_t before;
     bool before_ok = false;
-    switch (start_radar_auto(duration_s, &before, &before_ok)) {
-    case kRadarAutoStarted:
-        return run_radar_auto(cancelled, on_phase, duration_s, &before, before_ok);
+    switch (start_radar_auto(duration_s, &before, &before_ok, noise != nullptr)) {
+    case kRadarAutoStarted: {
+        const quiet_learn_result_t result = run_radar_auto(cancelled, on_phase, duration_s, &before, before_ok);
+        if (result == QUIET_LEARN_SAVED && noise != nullptr) {
+            on_noise(noise, gate_cm);
+        }
+        free(noise);
+        return result;
+    }
     case kRadarAutoNoAnswer:
+        free(noise);
         log_no_answer();
         return QUIET_LEARN_FAILED;
     case kRadarAutoUnsupported:
+        // The ESP32 records the room again for the thresholds (and the noise from that recording)
+        free(noise);
         ESP_LOGI(TAG, "This LD2410 firmware has no background noise detection: learning on the ESP32");
         break;
     }
 #endif
-    return run_on_esp32(cancelled, on_phase, gate_cm, wait_ms);
+    return run_on_esp32(cancelled, on_phase, gate_cm, wait_ms, on_noise);
 }
 
 bool quiet_learn_restore_factory(void)

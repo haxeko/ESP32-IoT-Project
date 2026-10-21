@@ -149,13 +149,13 @@ static void radar_busy(bool busy)
 
 #if CONFIG_PRESENCE_ENERGY_FILTER || CONFIG_PRESENCE_ESP_ENGINE
 // The energy filter and the presence engine need the engineering mode, which the radar leaves at each restart
-// (Radar resolution, Radar Bluetooth, power) and the learning on the ESP32 turns off: checked every 2 s, turned on
-// again at most every 10 s.
+// (Radar resolution, Radar Bluetooth, power) and the learning turns off: checked every 2 s, turned on again at most
+// every 10 s. Both use the radar's thresholds, read again after a learning or the factory thresholds.
 static constexpr uint32_t kEngineeringCheckMs = 2000;
 static constexpr int64_t kEngineeringRetryMs = 10 * 1000;
 static int64_t s_engineering_tried_ms = -kEngineeringRetryMs;
-#if CONFIG_PRESENCE_ENERGY_FILTER
 static bool s_thresholds_changed; // a learning or the factory thresholds ran: read the thresholds again
+#if CONFIG_PRESENCE_ENERGY_FILTER
 static const char kEngineeringUser[] = "the energy filter";
 static const char kEngineeringMeanwhile[] = "the radar decides alone meanwhile";
 #else
@@ -373,8 +373,18 @@ static void run_requested_learning()
     // learning ended.
     show_learn_mode(RADAR_LEARN_ON);
     // gate_cm is 0 (unknown) before the radar settings were read
+#if CONFIG_PRESENCE_ESP_ENGINE
+    // The ESP32 records the noise of the empty room first, then the radar measures and stores its thresholds; the
+    // engine labels the radar's silence or missing energies meanwhile as the learning.
+    radar_busy(true);
+    const quiet_learn_result_t result =
+        quiet_learn_run(learning_cancelled, show_learning_phase, s_settings.gate_cm, esp_presence_learned_noise,
+                        CONFIG_PRESENCE_ENGINE_NOISE_RECORD_SEC);
+    radar_busy(false);
+#else
     const quiet_learn_result_t result = quiet_learn_run(learning_cancelled, show_learning_phase, s_settings.gate_cm);
-#if CONFIG_PRESENCE_ENERGY_FILTER
+#endif
+#if CONFIG_PRESENCE_ENERGY_FILTER || CONFIG_PRESENCE_ESP_ENGINE
     s_thresholds_changed = true;
 #endif
     // On or blinking for 10 s; back to normal at once when cancelled
@@ -404,8 +414,10 @@ static void run_requested_factory_thresholds()
     }
     // Shown already when chosen in Home Assistant; covers the button.
     show_learn_mode(RADAR_LEARN_FACTORY);
+    radar_busy(true);
     const bool restored = quiet_learn_restore_factory();
-#if CONFIG_PRESENCE_ENERGY_FILTER
+    radar_busy(false);
+#if CONFIG_PRESENCE_ENERGY_FILTER || CONFIG_PRESENCE_ESP_ENGINE
     s_thresholds_changed = true;
 #endif
     status_led_set_learning(restored ? STATUS_LED_LEARNING_FACTORY : STATUS_LED_LEARNING_FAILED);
@@ -445,7 +457,7 @@ static void radar_task(void *arg)
         }
         run_requested_factory_thresholds();
         run_requested_learning();
-#if CONFIG_PRESENCE_ENERGY_FILTER
+#if CONFIG_PRESENCE_ENERGY_FILTER || CONFIG_PRESENCE_ESP_ENGINE
         if (!stale && s_thresholds_changed) {
             s_thresholds_changed = false;
             stale = !settings_session(radar_settings_request_t{});
@@ -488,10 +500,6 @@ static void radar_task(void *arg)
 esp_err_t radar_worker_start(const radar_worker_view_t *view)
 {
     s_view = *view;
-#if CONFIG_PRESENCE_ESP_ENGINE
-    // The engine runs the learning; the select shows it (Learning, then Off)
-    esp_presence_set_learn_view(view->show_learn_mode);
-#endif
     load_bt_choice();
     TaskHandle_t task = nullptr;
     if (xTaskCreate(radar_task, "radar_cfg", kTaskStack, nullptr, kTaskPriority, &task) != pdPASS) {
@@ -508,14 +516,6 @@ esp_err_t radar_worker_select(radar_select_t select, uint8_t mode)
         if (mode != RADAR_LEARN_OFF && mode != RADAR_LEARN_ON && mode != RADAR_LEARN_FACTORY) {
             return ESP_ERR_INVALID_ARG;
         }
-#if CONFIG_PRESENCE_ESP_ENGINE
-        // The ESP32 learns the empty room itself: Learning = LEARN_EMPTY, Off = cancel, Factory thresholds = back to
-        // the built-in thresholds of the engine (the radar's own thresholds are not used).
-        const esp_presence_command_t command = mode == RADAR_LEARN_ON        ? ESP_PRESENCE_LEARN
-                                               : mode == RADAR_LEARN_FACTORY ? ESP_PRESENCE_PROFILE_RESET
-                                                                             : ESP_PRESENCE_LEARN_CANCEL;
-        return esp_presence_command(command) ? ESP_OK : ESP_ERR_INVALID_STATE;
-#endif
         if (mode != RADAR_LEARN_OFF && task == nullptr) {
             ESP_LOGE(TAG, "Cannot %s: the radar task is not running",
                      mode == RADAR_LEARN_FACTORY ? "restore the factory thresholds" : "start the empty room learning");
@@ -563,9 +563,6 @@ esp_err_t radar_worker_select(radar_select_t select, uint8_t mode)
 
 bool radar_worker_request_learning(void)
 {
-#if CONFIG_PRESENCE_ESP_ENGINE
-    return esp_presence_command(ESP_PRESENCE_LEARN);
-#endif
     TaskHandle_t task = s_task;
     if (task == nullptr) {
         ESP_LOGW(TAG, "Cannot start the empty room learning: the radar task is not running");
@@ -590,9 +587,6 @@ bool radar_worker_request_learning(void)
 
 bool radar_worker_request_factory_thresholds(void)
 {
-#if CONFIG_PRESENCE_ESP_ENGINE
-    return esp_presence_command(ESP_PRESENCE_PROFILE_RESET);
-#endif
     TaskHandle_t task = s_task;
     if (task == nullptr) {
         ESP_LOGW(TAG, "Cannot restore the factory thresholds: the radar task is not running");

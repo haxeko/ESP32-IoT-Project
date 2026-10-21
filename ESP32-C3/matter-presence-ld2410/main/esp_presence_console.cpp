@@ -7,8 +7,9 @@
 */
 
 // Console commands of the ESP32 presence engine, on the ESP-IDF REPL (esp_console) of the configured console:
-// USB-Serial-JTAG (default, as the logs) or UART. The commands only queue a request for the engine task
-// (esp_presence_command()), so the console never waits for the engine; its answers come as log lines.
+// USB-Serial-JTAG (default, as the logs) or UART. The commands only queue a request, for the radar_cfg task (the
+// learning and the factory thresholds, as "Learning" and "Factory thresholds" in Home Assistant) or for the engine
+// task (the prints), so the console never waits; the answers come as log lines.
 
 #include <sdkconfig.h>
 
@@ -21,6 +22,7 @@
 #include <strings.h>
 
 #include "esp_presence.h"
+#include "radar_worker.h"
 
 #if CONFIG_PRESENCE_ENGINE_CONSOLE
 
@@ -28,12 +30,12 @@ static const char *TAG = "esp_presence";
 
 static int cmd_learn(int argc, char **argv)
 {
-    return esp_presence_command(ESP_PRESENCE_LEARN) ? 0 : 1;
+    return radar_worker_request_learning() ? 0 : 1;
 }
 
 static int cmd_learn_cancel(int argc, char **argv)
 {
-    return esp_presence_command(ESP_PRESENCE_LEARN_CANCEL) ? 0 : 1;
+    return radar_worker_select(RADAR_SELECT_LEARN, RADAR_LEARN_OFF) == ESP_OK ? 0 : 1;
 }
 
 static int cmd_status(int argc, char **argv)
@@ -56,19 +58,20 @@ static int cmd_diag_stream(int argc, char **argv)
     return esp_presence_command(on ? ESP_PRESENCE_DIAG_STREAM_ON : ESP_PRESENCE_DIAG_STREAM_OFF) ? 0 : 1;
 }
 
-static int cmd_profile(int argc, char **argv)
+static int cmd_thresholds(int argc, char **argv)
 {
-    return esp_presence_command(ESP_PRESENCE_PRINT_PROFILE) ? 0 : 1;
+    return esp_presence_command(ESP_PRESENCE_PRINT_THRESHOLDS) ? 0 : 1;
 }
 
-static int cmd_profile_reset(int argc, char **argv)
+static int cmd_factory_thresholds(int argc, char **argv)
 {
-    // Erases the learned thresholds: asks for a confirmation word so a typo cannot do it
+    // Writes the factory thresholds into the radar: asks for a confirmation word so a typo cannot do it
     if (argc != 2 || strcmp(argv[1], "YES") != 0) {
-        printf("Erases the learned thresholds (back to the built-in ones). Type: PROFILE_RESET YES\n");
+        printf("Writes the LD2410 factory thresholds into the radar (the learned ones are lost). Type: "
+               "FACTORY_THRESHOLDS YES\n");
         return 1;
     }
-    return esp_presence_command(ESP_PRESENCE_PROFILE_RESET) ? 0 : 1;
+    return radar_worker_request_factory_thresholds() ? 0 : 1;
 }
 
 struct Command {
@@ -81,15 +84,18 @@ struct Command {
 
 static const Command kCommands[] = {
     { "LEARN_EMPTY", "learn_empty", nullptr,
-      "Learn the empty room: leave within the delay, stay out while it records; new thresholds only if it succeeds",
+      "Learn the empty room (as \"Learning\" in Home Assistant): leave the room, stay out until the LED stops "
+      "blinking; the radar measures and stores its thresholds",
       cmd_learn },
     { "LEARN_CANCEL", "learn_cancel", nullptr, "Stop the learning, the current thresholds stay", cmd_learn_cancel },
-    { "STATUS", "status", nullptr, "Presence, countdown, sensor, learning, thresholds in use", cmd_status },
+    { "STATUS", "status", nullptr, "Presence, countdown, sensor, thresholds in use, Range", cmd_status },
     { "DIAG", "diag", nullptr, "Energy and thresholds of every gate (moving and still)", cmd_diag },
     { "DIAG_STREAM", "diag_stream", "on|off", "DIAG every second (for the calibration)", cmd_diag_stream },
-    { "PROFILE", "profile", nullptr, "Learned noise statistics and thresholds of every gate", cmd_profile },
-    { "PROFILE_RESET", "profile_reset", "YES", "Erase the learned thresholds (built-in ones until the next learning)",
-      cmd_profile_reset },
+    { "THRESHOLDS", "thresholds", nullptr, "Radar threshold, hold threshold and empty room noise of every gate",
+      cmd_thresholds },
+    { "FACTORY_THRESHOLDS", "factory_thresholds", "YES",
+      "Write the LD2410 factory thresholds into the radar (as \"Factory thresholds\" in Home Assistant)",
+      cmd_factory_thresholds },
 };
 
 esp_err_t esp_presence_console_start(void)
@@ -131,7 +137,8 @@ esp_err_t esp_presence_console_start(void)
             return err;
         }
     }
-    ESP_LOGI(TAG, "Console: LEARN_EMPTY, LEARN_CANCEL, STATUS, DIAG, DIAG_STREAM on|off, PROFILE, PROFILE_RESET, help");
+    ESP_LOGI(TAG, "Console: LEARN_EMPTY, LEARN_CANCEL, STATUS, DIAG, DIAG_STREAM on|off, THRESHOLDS, "
+                  "FACTORY_THRESHOLDS, help");
     return esp_console_start_repl(repl);
 }
 

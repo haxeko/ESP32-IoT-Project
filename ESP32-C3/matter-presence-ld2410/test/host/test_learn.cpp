@@ -1,6 +1,7 @@
 // Empty room learning and factory thresholds (main/quiet_learn.cpp) against the simulated radar. Built twice: with
 // CONFIG_LD2410_LEARN_RADAR_AUTO=0 (learning on the ESP32, factory thresholds, threshold computation) and =1 (the
-// radar's own background noise detection, falling back to the ESP32).
+// radar's own background noise detection, falling back to the ESP32). Both with and without the noise of the empty
+// room handed to the ESP32 presence engine.
 #include "sim.h"
 
 #include <string.h>
@@ -13,6 +14,20 @@ static const uint8_t kFactoryStill[9] = { 0, 0, 40, 40, 30, 30, 20, 20, 20 };
 
 static std::vector<std::pair<int64_t, quiet_learn_phase_t>> s_phases;
 static int64_t s_cancel_at_ms = -1;
+
+// Noise handed to the presence engine: when, the gate length, the reports, and the reports of gate 3 still energy 75
+struct NoiseCall {
+    int64_t ms;
+    uint16_t gate_cm;
+    uint32_t frames;
+    uint32_t still3_at_75;
+};
+static std::vector<NoiseCall> s_noise;
+
+static void on_noise(const ld2410_capture_t *capture, uint16_t gate_cm)
+{
+    s_noise.push_back({ sim_ms(), gate_cm, capture->frames, capture->still[3][75] });
+}
 
 static bool cancelled()
 {
@@ -35,6 +50,7 @@ static void start(RadarSim &radar)
     radar.attach();
     s_phases.clear();
     s_cancel_at_ms = -1;
+    s_noise.clear();
 }
 
 static int64_t phase_ms(quiet_learn_phase_t phase)
@@ -135,6 +151,31 @@ static void test_esp32_learning()
         CHECK(sim_log_contains("Gate 5:  15 ( 40) ->  25 ( 15) |   5 (  5) ->  30 ( 30)"));
         CHECK(sim_log_contains("Gate 3 (2.25 m to 3 m): still noise 75, threshold limited to 70 (factory 40 + 30)"));
         CHECK(sim_log_contains("Learning done: new thresholds saved in the LD2410 ("));
+    }
+
+    test_begin("ESP32 learning for the presence engine: the same recording handed over as its noise once saved");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.energies = room_energies;
+        radar.engineering = true;
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_SAVED);
+        CHECK(radar.still[3] == 70 && radar.count(0x000B) == 0);
+        CHECK(s_noise.size() == 1 && s_noise[0].gate_cm == 75 && s_noise[0].frames >= 500);
+        CHECK(s_noise[0].still3_at_75 == s_noise[0].frames);
+        CHECK(sim_log_contains("recording starts in 20 s and lasts 60 s"));
+    }
+    {
+        RadarSim radar;
+        start(radar);
+        radar.energies = room_energies;
+        radar.stuck_gate = 3; // not saved: no noise
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_FAILED);
+        CHECK(s_noise.empty());
+        start(radar);
+        s_cancel_at_ms = 30000;
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_CANCELLED);
+        CHECK(s_noise.empty());
     }
 
     test_begin("ESP32 learning: cancelled while waiting, nothing sent");
@@ -337,6 +378,108 @@ static void test_radar_auto()
     }
 }
 
+// Every gate quiet, gate 3 still energy 75 (a fan)
+static void fan_room(int64_t ms, uint8_t *moving, uint8_t *still)
+{
+    for (int g = 0; g < 9; g++) {
+        moving[g] = 5;
+        still[g] = 5;
+    }
+    still[3] = 75;
+}
+
+static size_t command_index(const RadarSim &radar, uint16_t command, size_t from = 0)
+{
+    for (size_t i = from; i < radar.commands.size(); i++) {
+        if (radar.commands[i] == command) {
+            return i;
+        }
+    }
+    return SIZE_MAX;
+}
+
+static void test_radar_auto_noise()
+{
+    test_begin("presence engine: the ESP32 records the noise 30 s after the delay, then the radar measures without "
+               "the engineering mode; the noise handed over once the radar stored its thresholds");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.energies = fan_room;
+        radar.engineering = true; // kept on by the engine
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_SAVED);
+        CHECK(radar.count(0x000B) == 1 && radar.auto_seconds == 60 && radar.count(0x0064) == 0);
+        CHECK(radar.moving[2] == 30 && radar.still[3] == 30 && !radar.engineering);
+        // Engineering on for the noise, then off before the radar's measurement
+        const size_t on = command_index(radar, 0x0062);
+        const size_t off = command_index(radar, 0x0063);
+        const size_t measure = command_index(radar, 0x000B);
+        CHECK(on < off && off < measure && measure != SIZE_MAX);
+        const int64_t rec = phase_ms(QUIET_LEARN_RECORDING);
+        CHECK(phase_ms(QUIET_LEARN_WAITING) == 0 && rec >= 20000 && rec < 20200);
+        // 20 s to leave, 30 s of noise, the radar's 10 s and 60 s
+        CHECK(sim_ms() >= 120000 && sim_ms() < 121500);
+        CHECK(s_noise.size() == 1 && s_noise[0].ms >= 120000 && s_noise[0].gate_cm == 75);
+        CHECK(s_noise[0].frames >= 280 && s_noise[0].frames <= 300 && s_noise[0].still3_at_75 == s_noise[0].frames);
+        CHECK(sim_log_contains("Empty room learning: leave the room. In 20 s the ESP32 records the noise for 30 s, then "
+                               "the LD2410 measures the room itself (70 s)"));
+        CHECK(sim_log_contains("Recording the noise of the empty room on the ESP32 for 30 s, then the LD2410 measures"));
+        CHECK(sim_log_contains("Learning done: thresholds set by the LD2410 background noise detection"));
+    }
+
+    test_begin("presence engine: cancelled while the noise is recorded, the radar is not asked");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.engineering = true;
+        s_cancel_at_ms = 35000;
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_CANCELLED);
+        CHECK(radar.count(0x000B) == 0 && s_noise.empty() && factory_thresholds(radar));
+        CHECK(sim_ms() >= 35000 && sim_ms() < 35200);
+    }
+    {
+        RadarSim radar;
+        start(radar);
+        s_cancel_at_ms = 10000; // while waiting: nothing sent at all
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_CANCELLED);
+        CHECK(radar.commands.empty() && s_noise.empty());
+    }
+
+    test_begin("presence engine: too few reports while recording the noise, failed, the radar is not asked");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.engineering = true;
+        sim_at(25000, [&radar]() { radar.report_silent = true; });
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_FAILED);
+        CHECK(sim_log_contains("engineering reports in 30 s, nothing changed"));
+        CHECK(radar.count(0x000B) == 0 && s_noise.empty() && factory_thresholds(radar));
+    }
+
+    test_begin("presence engine: the radar's measurement fails, the noise is not handed over");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.engineering = true;
+        radar.auto_outcome = RadarSim::kAutoFailed;
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_FAILED);
+        CHECK(s_noise.empty() && factory_thresholds(radar));
+    }
+
+    test_begin("presence engine: older radar firmware, learned on the ESP32, noise from that recording");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.energies = fan_room;
+        radar.engineering = true;
+        radar.has_auto = false;
+        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_noise, 30) == QUIET_LEARN_SAVED);
+        CHECK(radar.count(0x0064) == 9 && radar.still[3] == 70);
+        CHECK(s_noise.size() == 1 && s_noise[0].frames >= 500 && s_noise[0].still3_at_75 == s_noise[0].frames);
+        CHECK(sim_ms() >= 110000 && sim_ms() < 112000); // 20 + 30 + 60 s
+    }
+}
+
 #endif
 
 int main(int argc, char **argv)
@@ -345,6 +488,7 @@ int main(int argc, char **argv)
 #if CONFIG_LD2410_LEARN_RADAR_AUTO
     printf("quiet_learn (radar learning):\n");
     test_radar_auto();
+    test_radar_auto_noise();
 #else
     printf("quiet_learn (ESP32 learning):\n");
     test_computation();

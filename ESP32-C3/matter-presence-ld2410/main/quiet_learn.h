@@ -34,16 +34,24 @@ typedef enum {
                            // thresholds, or no memory for the recording
 } quiet_learn_result_t;
 
+// Engineering reports of the empty room (and the gate length while recording), handed over before quiet_learn_run()
+// returns QUIET_LEARN_SAVED: the ESP32 presence engine keeps the noise of every gate from them.
+typedef void (*quiet_learn_noise_cb_t)(const ld2410_capture_t *capture, uint16_t gate_cm);
+
 // Runs one learning in the calling task: waits CONFIG_LD2410_LEARN_DELAY_SEC (time to leave the room), then
 // records CONFIG_LD2410_LEARN_DURATION_SEC.
 // With CONFIG_LD2410_LEARN_RADAR_AUTO, a radar with its own background noise detection (command 0x000B, newer
 // LD2410B/C firmware) measures and stores its thresholds itself over the same times. Otherwise the ESP32 records
 // the engineering reports (ld2410_capture_t, allocated meanwhile) and writes the thresholds it computes from them
 // (quiet_learn_noise(), quiet_learn_compute_thresholds()); the radar keeps them in its flash.
-// Sends radar commands, so no other task may configure the radar meanwhile. Both callbacks are optional.
+// With on_noise (ESP32 presence engine): the engineering reports of the empty room are handed to it when the
+// learning succeeded. Before the radar measures itself, the ESP32 records them for noise_seconds (after the whole
+// delay), then turns the engineering mode off: the radar measures as with the stable firmware.
+// Sends radar commands, so no other task may configure the radar meanwhile. The callbacks are optional.
 // gate_cm: length of one gate, for the distances in the log (0: unknown).
 quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
-                                     uint16_t gate_cm);
+                                     uint16_t gate_cm, quiet_learn_noise_cb_t on_noise = nullptr,
+                                     uint32_t noise_seconds = 0);
 
 // Writes the LD2410 factory thresholds to every gate and reads them back; nothing is written when the radar holds
 // them already. The farthest gates, no-one duration, resolution and Bluetooth stay as they are, the radar does not
