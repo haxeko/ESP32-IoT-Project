@@ -18,6 +18,8 @@ $CXX $FLAGS -DCONFIG_LD2410_LEARN_RADAR_AUTO=0 -o "$OUT/learn_esp32" test_learn.
     $MAIN/radar_settings.cpp $RADAR
 $CXX $FLAGS -DCONFIG_LD2410_LEARN_RADAR_AUTO=1 -o "$OUT/learn_radar" test_learn.cpp $MAIN/quiet_learn.cpp \
     $MAIN/radar_settings.cpp $RADAR
+$CXX $FLAGS -DCONFIG_LD2410_LEARN_PEAK=1 -DCONFIG_LD2410_LEARN_RADAR_AUTO=0 -DCONFIG_LD2410_LEARN_DURATION_SEC=120 \
+    -o "$OUT/learn_peak" test_learn.cpp $MAIN/quiet_learn.cpp $MAIN/radar_settings.cpp $RADAR
 $CXX $FLAGS -o "$OUT/worker" test_worker.cpp $MAIN/quiet_learn.cpp $MAIN/radar_settings.cpp $RADAR
 $CXX $FLAGS -o "$OUT/presence" test_presence.cpp radar_sim.cpp sim.cpp
 $CXX $FLAGS -DCONFIG_PRESENCE_MAX_DISTANCE_CM=200 -o "$OUT/presence_distance" test_presence.cpp radar_sim.cpp sim.cpp
@@ -34,22 +36,11 @@ FILTER="-DCONFIG_PRESENCE_ENERGY_FILTER=1 -DCONFIG_PRESENCE_ENERGY_FILTER_STRONG
 $CXX $FLAGS $FILTER -o "$OUT/energy_filter" test_energy_filter.cpp radar_sim.cpp sim.cpp
 $CXX $FLAGS $FILTER -o "$OUT/worker_filter" test_worker_filter.cpp $MAIN/presence.cpp $MAIN/quiet_learn.cpp \
     $MAIN/radar_settings.cpp $RADAR
-ENGINE="-DCONFIG_PRESENCE_ESP_ENGINE=1 -DCONFIG_PRESENCE_ENGINE_TRIGGER_REPORTS=6 -DCONFIG_PRESENCE_ENGINE_TRIGGER_WINDOW=8 \
-    -DCONFIG_PRESENCE_ENGINE_FAST_REPORTS=3 -DCONFIG_PRESENCE_ENGINE_FAST_MARGIN=20 \
-    -DCONFIG_PRESENCE_ENGINE_HOLD_REPORTS=3 -DCONFIG_PRESENCE_ENGINE_HOLD_WINDOW=10 -DCONFIG_PRESENCE_ENGINE_DATA_TIMEOUT_MS=2000 \
-    -DCONFIG_PRESENCE_ENGINE_HOLD_DROP_PERCENT=20 -DCONFIG_PRESENCE_ENGINE_HOLD_DROP_MAX=5 \
-    -DCONFIG_PRESENCE_ENGINE_NEAR_HOLD_REPORTS=1 -DCONFIG_PRESENCE_ENGINE_NEAR_GATES=1 \
-    -DCONFIG_PRESENCE_ENGINE_LEARN_FLOOR_PERCENT=75 -DCONFIG_PRESENCE_ENGINE_LEARN_MIN_MARGIN=8 \
-    -DCONFIG_LD2410_LEARN_DURATION_SEC=120 -DCONFIG_PRESENCE_ENGINE_STATUS_LOG_SEC=300 \
-    -DCONFIG_PRESENCE_ENGINE_TRIGGER_MARGIN=0 -DCONFIG_PRESENCE_ENGINE_TRIGGER_NOISE_MARGIN=5"
-$CXX $FLAGS $ENGINE -O1 -o "$OUT/presence_engine" test_presence_engine.cpp $MAIN/presence_engine.cpp sim.cpp
-$CXX $FLAGS $ENGINE -o "$OUT/esp_presence" test_esp_presence.cpp $MAIN/presence_engine.cpp $MAIN/radar_settings.cpp $RADAR
-$CXX $FLAGS $ENGINE -o "$OUT/worker_engine" test_worker_engine.cpp $MAIN/quiet_learn.cpp $MAIN/radar_settings.cpp $RADAR
 
 status=0
-for t in ld2410 settings learn_esp32 learn_radar worker presence presence_distance button led led_active_high led_ws2812 \
+for t in ld2410 settings learn_esp32 learn_radar learn_peak worker presence presence_distance button led led_active_high led_ws2812 \
     identity diag_report net_watchdog c3_temperature energy_filter \
-    worker_filter presence_engine esp_presence worker_engine; do
+    worker_filter; do
     "$OUT/$t" || status=1
 done
 [ $status -eq 0 ] && echo "All host tests passed" || echo "Host tests FAILED"

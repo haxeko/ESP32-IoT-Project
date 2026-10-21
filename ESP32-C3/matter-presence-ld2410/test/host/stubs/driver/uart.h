@@ -19,7 +19,6 @@ static inline int uart_read_bytes(int, void *, uint32_t, uint32_t ticks)
     sim_advance(ticks);
     return 0;
 }
-static inline esp_err_t uart_flush_input(int) { return ESP_OK; }
 static inline int uart_write_bytes(int, const void *buf, size_t len)
 {
     if (g_sim.on_uart_write) {

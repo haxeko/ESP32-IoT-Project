@@ -92,8 +92,6 @@ static ld2410_target_t s_target;
 static bool s_has_target;
 static ld2410_capture_t *s_capture; // engineering reports are counted here while set
 static std::atomic<ld2410_report_hook_t> s_report_hook{nullptr};
-static std::atomic<uint32_t> s_frame_errors{0};
-static std::atomic<bool> s_resync{false};
 
 static QueueHandle_t s_ack_queue;
 static SemaphoreHandle_t s_cmd_mutex;
@@ -109,35 +107,11 @@ static void count_energies(uint16_t (*counts)[LD2410_MAX_ENERGY + 1], const uint
     }
 }
 
-// Median of each gate's last three energies: the highest one of the capture.
-static void track_filtered_max(uint8_t *max, uint8_t (*last)[LD2410_GATE_COUNT], uint8_t *seen,
-                               const uint8_t *energy, size_t gates)
-{
-    for (size_t g = 0; g < gates; g++) {
-        const uint8_t x = energy[g] > LD2410_MAX_ENERGY ? LD2410_MAX_ENERGY : energy[g];
-        if (seen[g] >= 2) {
-            const uint8_t a = last[0][g];
-            const uint8_t b = last[1][g];
-            const uint8_t lo = a < b ? a : b;
-            const uint8_t hi = a < b ? b : a;
-            const uint8_t median = x < lo ? lo : (x > hi ? hi : x);
-            if (median > max[g]) {
-                max[g] = median;
-            }
-        } else {
-            seen[g]++;
-        }
-        last[1][g] = last[0][g];
-        last[0][g] = x;
-    }
-}
-
 static void handle_target_payload(const uint8_t *p, size_t len)
 {
     // TYPE (0x01 engineering / 0x02 basic), 0xAA head, the basic target data (11 bytes from TYPE), engineering
     // data if any, then the 0x55 tail and a check byte (0x00). The tail rejects frames corrupted by line noise.
     if (len < 13 || (p[0] != 0x01 && p[0] != 0x02) || p[1] != 0xAA || p[len - 2] != 0x55 || p[len - 1] != 0x00) {
-        s_frame_errors++;
         return;
     }
     const ld2410_target_t t = {
@@ -173,10 +147,6 @@ static void handle_target_payload(const uint8_t *p, size_t len)
     if (s_capture && moving_energy) {
         count_energies(s_capture->moving, moving_energy, moving_gates);
         count_energies(s_capture->still, still_energy, still_gates);
-        track_filtered_max(s_capture->moving_filtered_max, s_capture->moving_last, s_capture->moving_seen,
-                           moving_energy, moving_gates);
-        track_filtered_max(s_capture->still_filtered_max, s_capture->still_last, s_capture->still_seen, still_energy,
-                           still_gates);
         s_capture->frames++;
     }
     taskEXIT_CRITICAL(&s_lock);
@@ -240,7 +210,6 @@ static void parser_feed(ld2410_parser_t *ps, uint8_t b)
     if (ps->pos == sizeof(k_data_header) + 2) {
         const size_t payload_len = ps->buf[4] | (ps->buf[5] << 8);
         if (payload_len > LD2410_MAX_PAYLOAD) {
-            s_frame_errors++;
             ps->pos = 0;
             return;
         }
@@ -257,8 +226,6 @@ static void parser_feed(ld2410_parser_t *ps, uint8_t b)
         } else {
             handle_ack_payload(payload, payload_len);
         }
-    } else {
-        s_frame_errors++;
     }
     ps->pos = 0;
 }
@@ -274,10 +241,6 @@ static void ld2410_task(void *arg)
 {
     uint8_t rx[LD2410_READ_SIZE];
     while (true) {
-        if (s_resync.exchange(false)) {
-            uart_flush_input(LD2410_UART_NUM);
-            s_parser.pos = 0;
-        }
         const int len = uart_read_bytes(LD2410_UART_NUM, rx, sizeof(rx), pdMS_TO_TICKS(100));
         if (len > 0) {
             ld2410_feed(rx, (size_t)len);
@@ -297,16 +260,6 @@ bool ld2410_get_target(ld2410_target_t *out)
 void ld2410_set_report_hook(ld2410_report_hook_t hook)
 {
     s_report_hook = hook;
-}
-
-uint32_t ld2410_frame_errors(void)
-{
-    return s_frame_errors;
-}
-
-void ld2410_resync(void)
-{
-    s_resync = true;
 }
 
 // Sends one command and waits for its ACK. ack_out (optional) receives the return value. Caller holds

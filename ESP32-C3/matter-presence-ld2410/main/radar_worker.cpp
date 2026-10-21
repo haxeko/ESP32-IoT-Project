@@ -26,9 +26,6 @@
 #if CONFIG_PRESENCE_ENERGY_FILTER
 #include "energy_filter.h"
 #endif
-#if CONFIG_PRESENCE_ESP_ENGINE
-#include "esp_presence.h"
-#endif
 
 static const char *TAG = "radar_ctl";
 
@@ -129,57 +126,21 @@ static void set_bt_choice(bool on)
 static radar_settings_t s_settings; // last settings read from the radar (s_synced)
 static esp_err_t s_session_err;     // result of the last session
 
-#if CONFIG_PRESENCE_ESP_ENGINE
-static int64_t s_config_end_ms; // end of the last configuration session (the radar reports nothing during one)
-#endif
-
-// A configuration session starts or ends: the ESP32 presence engine labels the silence of the radar meanwhile as a
-// configuration, not as a fault of its own.
-static void radar_busy(bool busy)
-{
-#if CONFIG_PRESENCE_ESP_ENGINE
-    esp_presence_set_radar_busy(busy);
-    if (!busy) {
-        s_config_end_ms = esp_timer_get_time() / 1000;
-    }
-#else
-    (void)busy;
-#endif
-}
-
-#if CONFIG_PRESENCE_ENERGY_FILTER || CONFIG_PRESENCE_ESP_ENGINE
-// The energy filter and the presence engine need the engineering mode, which the radar leaves at each restart
-// (Radar resolution, Radar Bluetooth, power) and the learning turns off: checked every 2 s, turned on again at most
-// every 10 s. Both use the radar's thresholds, read again after a learning or the factory thresholds.
+#if CONFIG_PRESENCE_ENERGY_FILTER
+// The energy filter needs the engineering mode, which the radar leaves at each restart (Radar resolution, Radar
+// Bluetooth, power) and the learning on the ESP32 turns off: checked every 2 s, turned on again at most every 10 s.
 static constexpr uint32_t kEngineeringCheckMs = 2000;
 static constexpr int64_t kEngineeringRetryMs = 10 * 1000;
 static int64_t s_engineering_tried_ms = -kEngineeringRetryMs;
 static bool s_thresholds_changed; // a learning or the factory thresholds ran: read the thresholds again
-#if CONFIG_PRESENCE_ENERGY_FILTER
-static const char kEngineeringUser[] = "the energy filter";
-static const char kEngineeringMeanwhile[] = "the radar decides alone meanwhile";
-#else
-static const char kEngineeringUser[] = "the ESP32 presence engine";
-static const char kEngineeringMeanwhile[] = "presence stays as it is meanwhile";
-#endif
-
-static bool engineering_needed(int64_t now_ms)
-{
-#if CONFIG_PRESENCE_ENERGY_FILTER
-    return energy_filter_needs_engineering(now_ms);
-#else
-    return esp_presence_needs_engineering();
-#endif
-}
 
 static void keep_engineering_mode()
 {
     const int64_t now_ms = esp_timer_get_time() / 1000;
-    if (!engineering_needed(now_ms) || now_ms - s_engineering_tried_ms < kEngineeringRetryMs) {
+    if (!energy_filter_needs_engineering(now_ms) || now_ms - s_engineering_tried_ms < kEngineeringRetryMs) {
         return;
     }
     s_engineering_tried_ms = now_ms;
-    radar_busy(true);
     esp_err_t err = ld2410_config_begin();
     if (err == ESP_OK) {
         err = ld2410_set_engineering_mode(true);
@@ -188,72 +149,11 @@ static void keep_engineering_mode()
             err = end_err;
         }
     }
-    radar_busy(false);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Engineering mode on: the energy of every gate for %s", kEngineeringUser);
+        ESP_LOGI(TAG, "Engineering mode on: the energy of every gate for the energy filter");
     } else {
-        ESP_LOGW(TAG, "Could not turn the engineering mode on (err:%d), %s", err, kEngineeringMeanwhile);
+        ESP_LOGW(TAG, "Could not turn the engineering mode on (err:%d), the radar decides alone meanwhile", err);
     }
-}
-#endif
-
-#if CONFIG_PRESENCE_ESP_ENGINE
-// The radar sends nothing valid any more although its settings were read: the reader drops what waits in the UART
-// and the radar is asked to leave the configuration mode (a radar left in it sends no reports, e.g. after the ESP32
-// restarted in the middle of a session), then restarted (nothing is written to its flash) after 15 s, 30 s, 1 min...
-// at most every 5 min. Presence stays as it is meanwhile (a sensor fault is no empty room).
-static constexpr uint32_t kRecoverAfterMs = 5000;
-static constexpr int64_t kRestartFirstMs = 15 * 1000;
-static constexpr int64_t kRestartMaxMs = 5 * 60 * 1000;
-static int s_recover_step;          // 0: reports arrive, 1: resynchronised, 2+: restarts sent
-static int64_t s_recover_next_ms;
-static int64_t s_restart_delay_ms;
-
-static void recover_radar()
-{
-    const uint32_t silent = esp_presence_silent_ms();
-    if (silent < kRecoverAfterMs) {
-        if (s_recover_step != 0) {
-            ESP_LOGI(TAG, "The LD2410 reports again");
-        }
-        s_recover_step = 0;
-        return;
-    }
-    const int64_t now_ms = esp_timer_get_time() / 1000;
-    if (s_recover_step == 0) {
-        // A session keeps the radar silent (longer with a restart in it or commands timing out): no fault before
-        // the radar had kRecoverAfterMs after the last one to report again
-        if (now_ms - s_config_end_ms < kRecoverAfterMs) {
-            return;
-        }
-        ESP_LOGW(TAG, "No valid report from the LD2410 for %" PRIu32 " s: resynchronising the UART and leaving the "
-                      "configuration mode in case the radar was left in it",
-                 silent / 1000);
-        ld2410_resync();
-        radar_busy(true);
-        (void)ld2410_config_end();
-        radar_busy(false);
-        s_recover_step = 1;
-        s_restart_delay_ms = kRestartFirstMs;
-        s_recover_next_ms = now_ms + s_restart_delay_ms;
-        return;
-    }
-    if (now_ms < s_recover_next_ms) {
-        return;
-    }
-    ESP_LOGW(TAG, "No valid report from the LD2410 for %" PRIu32 " s: restarting the radar (check its power and the "
-                  "wire from radar TX to GPIO%d)",
-             silent / 1000, CONFIG_LD2410_UART_RX_PIN);
-    radar_busy(true);
-    if (ld2410_config_begin() == ESP_OK) {
-        if (ld2410_restart() != ESP_OK) {
-            (void)ld2410_config_end(); // refused: leave the configuration mode
-        }
-    }
-    radar_busy(false);
-    s_recover_step++;
-    s_restart_delay_ms = std::min(s_restart_delay_ms * 2, kRestartMaxMs);
-    s_recover_next_ms = now_ms + s_restart_delay_ms;
 }
 #endif
 
@@ -300,9 +200,7 @@ static bool settings_session(const radar_settings_request_t &want)
 {
     const bool change = is_change(want);
     radar_settings_t now = {};
-    radar_busy(true);
     const esp_err_t err = radar_settings_session(&want, &now);
-    radar_busy(false);
     s_session_err = err;
     if (err != ESP_OK) {
         if (change && s_synced) {
@@ -318,9 +216,6 @@ static bool settings_session(const radar_settings_request_t &want)
     s_synced = true;
 #if CONFIG_PRESENCE_ENERGY_FILTER
     energy_filter_configure(&now);
-#endif
-#if CONFIG_PRESENCE_ESP_ENGINE
-    esp_presence_configure(&now);
 #endif
     show_settings(now);
     return true;
@@ -373,17 +268,8 @@ static void run_requested_learning()
     // learning ended.
     show_learn_mode(RADAR_LEARN_ON);
     // gate_cm is 0 (unknown) before the radar settings were read
-#if CONFIG_PRESENCE_ESP_ENGINE
-    // The ESP32 records the empty room and sets every threshold itself (not the radar's own detection); the engine
-    // labels the radar's silence or missing energies meanwhile (configuration sessions) as the learning.
-    radar_busy(true);
-    const quiet_learn_result_t result =
-        quiet_learn_run(learning_cancelled, show_learning_phase, s_settings.gate_cm, esp_presence_learned_room);
-    radar_busy(false);
-#else
     const quiet_learn_result_t result = quiet_learn_run(learning_cancelled, show_learning_phase, s_settings.gate_cm);
-#endif
-#if CONFIG_PRESENCE_ENERGY_FILTER || CONFIG_PRESENCE_ESP_ENGINE
+#if CONFIG_PRESENCE_ENERGY_FILTER
     s_thresholds_changed = true;
 #endif
     // On or blinking for 10 s; back to normal at once when cancelled
@@ -413,10 +299,8 @@ static void run_requested_factory_thresholds()
     }
     // Shown already when chosen in Home Assistant; covers the button.
     show_learn_mode(RADAR_LEARN_FACTORY);
-    radar_busy(true);
     const bool restored = quiet_learn_restore_factory();
-    radar_busy(false);
-#if CONFIG_PRESENCE_ENERGY_FILTER || CONFIG_PRESENCE_ESP_ENGINE
+#if CONFIG_PRESENCE_ENERGY_FILTER
     s_thresholds_changed = true;
 #endif
     status_led_set_learning(restored ? STATUS_LED_LEARNING_FACTORY : STATUS_LED_LEARNING_FAILED);
@@ -456,18 +340,11 @@ static void radar_task(void *arg)
         }
         run_requested_factory_thresholds();
         run_requested_learning();
-#if CONFIG_PRESENCE_ENERGY_FILTER || CONFIG_PRESENCE_ESP_ENGINE
+#if CONFIG_PRESENCE_ENERGY_FILTER
         if (!stale && s_thresholds_changed) {
             s_thresholds_changed = false;
             stale = !settings_session(radar_settings_request_t{});
         }
-#endif
-#if CONFIG_PRESENCE_ESP_ENGINE
-        if (!stale) {
-            recover_radar();
-        }
-#endif
-#if CONFIG_PRESENCE_ENERGY_FILTER || CONFIG_PRESENCE_ESP_ENGINE
         if (!stale) {
             keep_engineering_mode();
         }
@@ -486,7 +363,7 @@ static void radar_task(void *arg)
             retry_ms = std::min(retry_ms * 2, kSyncRetryMaxMs);
         } else {
             retry_ms = kSyncRetryFirstMs;
-#if CONFIG_PRESENCE_ENERGY_FILTER || CONFIG_PRESENCE_ESP_ENGINE
+#if CONFIG_PRESENCE_ENERGY_FILTER
             wait = pdMS_TO_TICKS(kEngineeringCheckMs);
 #endif
         }

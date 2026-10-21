@@ -30,9 +30,9 @@ else()
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${git_dir}/logs/HEAD")
     endif()
 endif()
-# Branch claude/c3-wroom-esp-presence (experimental): the energy filter variant built with
-# sdkconfig.defaults.espfilter has a version string ending in "-espfilter"; the ESP32 presence engine (esppresence)
-# names its version as the stable firmware does (1.0.<count>). The number compared by OTA stays the commit count.
+# Branch claude/c3-wroom-esp-presence: the energy filter variant built with sdkconfig.defaults.espfilter has a version
+# string ending in "-espfilter"; the other builds name their version as the stable firmware does (1.0.<count>). The
+# number compared by OTA stays the commit count.
 if(SDKCONFIG_DEFAULTS MATCHES "sdkconfig\\.defaults\\.espfilter")
     set(FIRMWARE_VERSION_LABEL "-espfilter")
 else()

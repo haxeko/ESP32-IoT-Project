@@ -192,7 +192,6 @@ menu "ESP32 Energy Filter (experimental)"
 
     config PRESENCE_ENERGY_FILTER
         bool "Confirm weak radar detections on the ESP32"
-        depends on !PRESENCE_ESP_ENGINE
         default n
         help
             Keeps the radar in engineering mode (the energy of every gate in
@@ -227,188 +226,6 @@ menu "ESP32 Energy Filter (experimental)"
 
 endmenu
 
-menu "ESP32 Presence Engine (experimental)"
-
-    config PRESENCE_ESP_ENGINE
-        bool "The ESP32 decides presence from the energy of every gate"
-        default n
-        help
-            Keeps the radar in engineering mode and decides presence on the
-            ESP32 from the moving and still energy of every gate, with two
-            thresholds per gate taken from the thresholds stored in the radar
-            (set by the ESP32 when the empty room is learned: "Learning" in
-            Home Assistant, 3 clicks or LEARN_EMPTY; or with HLKRadarTool).
-            An empty room needs a strong signal (above the radar threshold)
-            confirmed over several reports; once present, a lower hold
-            threshold keeps it (people sitting still, small movements), and
-            the room is empty after Hold time (Occupancy Sensing HoldTime)
-            without it. Both stay above the noise of the empty room, recorded
-            by the ESP32 while learning (stored in NVS). A silent radar is a
-            sensor fault, never an empty room.
-            Console commands and per-gate diagnostics on the ESP-IDF console.
-            README: "Bộ xử lý hiện diện trên ESP32".
-
-    config PRESENCE_ENGINE_TRIGGER_REPORTS
-        int "Strong reports that start presence"
-        depends on PRESENCE_ESP_ENGINE
-        range 1 16
-        default 6
-        help
-            A gate (or its neighbours) must be strong (filtered energy above
-            its radar threshold and the noise of the empty room) in this many
-            of the last "report window" reports (about 100 ms each) for an
-            empty room to become present. 6 of 8: bursts of noise up to about
-            0.5 s are left out, presence starts after about 0.7 s (a very
-            strong moving energy starts it sooner, see "Fast start"). More
-            reports only help against bursts: a noise that stays above the
-            radar threshold is handled by the noise of the empty room (see
-            "Strong signal above the noise").
-
-    config PRESENCE_ENGINE_TRIGGER_WINDOW
-        int "Report window of the strong signal"
-        depends on PRESENCE_ESP_ENGINE
-        range 1 16
-        default 8
-
-    config PRESENCE_ENGINE_FAST_REPORTS
-        int "Fast start: reports in a row of a very strong moving energy"
-        depends on PRESENCE_ESP_ENGINE
-        range 0 8
-        default 3
-        help
-            A filtered moving energy at the strong level + "Fast start margin"
-            in this many reports in a row (at a gate or its neighbours) starts
-            presence at once: 3 reports, about 0.4 s after someone walks in.
-            Bursts of one or two reports never start it. 0: no fast start.
-
-    config PRESENCE_ENGINE_FAST_MARGIN
-        int "Fast start margin above the strong level (energy 0-100)"
-        depends on PRESENCE_ESP_ENGINE
-        range 0 100
-        default 20
-
-    config PRESENCE_ENGINE_TRIGGER_NOISE_MARGIN
-        int "Strong signal above the noise of the empty room (energy 0-100)"
-        depends on PRESENCE_ESP_ENGINE
-        range 3 30
-        default 5
-        help
-            A gate is strong only from the noise recorded while learning +
-            this value, even where the radar threshold is lower (a gate whose
-            noise reaches its radar threshold would start presence without
-            anyone). A learning sets the radar thresholds at least to noise +
-            this value - 1. The hold threshold stays at least at noise + 2.
-
-    config PRESENCE_ENGINE_TRIGGER_MARGIN
-        int "Extra margin of the strong signal on every gate (energy 0-100)"
-        depends on PRESENCE_ESP_ENGINE
-        range 0 30
-        default 0
-        help
-            Strong from radar threshold + 1 + this value on every gate: less
-            sensitive everywhere, also where the noise is far below the radar
-            threshold. 0: as the radar counts a target. The hold threshold
-            does not change.
-
-    config PRESENCE_ENGINE_HOLD_REPORTS
-        int "Reports with a hold signal that keep presence"
-        depends on PRESENCE_ESP_ENGINE
-        range 1 16
-        default 3
-        help
-            While present, a gate must reach its hold threshold in this many
-            of the last "hold window" reports to restart the countdown (the
-            person's gates: "Reports with a hold signal at the person's
-            gates").
-
-    config PRESENCE_ENGINE_HOLD_WINDOW
-        int "Report window of the hold signal"
-        depends on PRESENCE_ESP_ENGINE
-        range 1 16
-        default 10
-
-    config PRESENCE_ENGINE_NEAR_HOLD_REPORTS
-        int "Reports with a hold signal at the person's gates"
-        depends on PRESENCE_ESP_ENGINE
-        range 0 16
-        default 1
-        help
-            The person's gate is where presence started, then where a strong
-            signal is confirmed again (someone moving). There and at "the
-            person's gates on each side" around it, this many reports at the
-            hold threshold among the last "hold window" keep presence (a
-            breath of someone sitting still); any other gate needs "Reports
-            with a hold signal". 0: off (every gate as the others).
-
-    config PRESENCE_ENGINE_NEAR_GATES
-        int "The person's gates on each side"
-        depends on PRESENCE_ESP_ENGINE
-        range 0 3
-        default 1
-
-    config PRESENCE_ENGINE_HOLD_DROP_PERCENT
-        int "Hold threshold: this share (%) below the radar threshold"
-        depends on PRESENCE_ESP_ENGINE
-        range 0 90
-        default 20
-        help
-            Hold threshold of a gate = its radar threshold minus this share of
-            it, at most "largest drop" below it, and never below the noise of
-            the empty room recorded while learning + 2 (without a recording:
-            the radar threshold itself). 0: hold at the radar threshold.
-
-    config PRESENCE_ENGINE_HOLD_DROP_MAX
-        int "Hold threshold: largest drop below the radar threshold"
-        depends on PRESENCE_ESP_ENGINE
-        range 0 50
-        default 5
-
-    config PRESENCE_ENGINE_LEARN_FLOOR_PERCENT
-        int "Learning: thresholds at least this share of the factory ones (%)"
-        depends on PRESENCE_ESP_ENGINE
-        range 0 100
-        default 75
-        help
-            The ESP32 records the empty room for the learning time ("Empty
-            Room Learning" menu, 120 s in the esppresence variant; the
-            radar's own background noise detection is not used) and sets
-            every radar threshold to its highest filtered energy (median of
-            3 reports) + the larger of "Learning: smallest margin" and
-            (highest - average), at least the noise + "Strong signal above
-            the noise" - 1, at most the factory threshold + "Highest raise
-            above the factory threshold", and at least this share of the
-            factory threshold, so that a quiet room does not get thresholds
-            close to its noise. 100: never below the factory thresholds.
-
-    config PRESENCE_ENGINE_LEARN_MIN_MARGIN
-        int "Learning: smallest margin above the highest energy (energy 0-100)"
-        depends on PRESENCE_ESP_ENGINE
-        range 1 50
-        default 8
-
-    config PRESENCE_ENGINE_DATA_TIMEOUT_MS
-        int "Sensor fault after (ms) without a valid report with energies"
-        depends on PRESENCE_ESP_ENGINE
-        range 300 30000
-        default 2000
-
-    config PRESENCE_ENGINE_STATUS_LOG_SEC
-        int "Log the status every (seconds, 0 = never)"
-        depends on PRESENCE_ESP_ENGINE
-        range 0 86400
-        default 300
-
-    config PRESENCE_ENGINE_CONSOLE
-        bool "Console commands (LEARN_EMPTY, STATUS, DIAG...)"
-        depends on PRESENCE_ESP_ENGINE
-        default y
-        help
-            ESP-IDF REPL on the configured console (USB-Serial-JTAG by
-            default; set the UART console in menuconfig for a board whose USB
-            port goes through a USB-UART chip). About 5 KB of RAM.
-
-endmenu
-
 menu "Empty Room Learning"
 
     config LD2410_LEARN_DELAY_SEC
@@ -430,8 +247,41 @@ menu "Empty Room Learning"
             LED blinks slowly meanwhile). Long enough for a fan or an air
             conditioner that sweeps the room to pass a few times.
 
+    config LD2410_LEARN_PEAK
+        bool "Learn on the ESP32 from the highest energy and the average"
+        default n
+        help
+            The ESP32 always records the empty room itself (the radar's own
+            background noise detection is not used) and sets every radar
+            threshold to the highest energy recorded + the larger of
+            "Smallest margin above the highest energy" and (highest -
+            average), at least the noise + 4 (99th percentile, or median + 3
+            robust spreads), at least "Lowest share of the factory threshold"
+            of the factory default (rounded up), and at most the factory
+            default + "Highest raise above the factory threshold" (and 99).
+            The thresholds are written to the radar once; nothing is written
+            when the radar holds them already. Needs at least 5 reports per
+            second. The esplearn variant turns it on.
+
+    config LD2410_LEARN_FLOOR_PERCENT
+        int "Lowest share of the factory threshold (%)"
+        depends on LD2410_LEARN_PEAK
+        range 0 100
+        default 75
+        help
+            A quiet room does not get thresholds close to its noise: never
+            below this share of the factory default. 100: never below the
+            factory thresholds.
+
+    config LD2410_LEARN_MIN_MARGIN
+        int "Smallest margin above the highest energy (energy 0-100)"
+        depends on LD2410_LEARN_PEAK
+        range 1 50
+        default 8
+
     config LD2410_LEARN_RADAR_AUTO
         bool "Let the radar measure the room itself when it can"
+        depends on !LD2410_LEARN_PEAK
         default y
         help
             LD2410B/C radars with newer firmware measure the background noise
@@ -441,15 +291,13 @@ menu "Empty Room Learning"
             from which radar firmware on). With this option the learning asks
             the radar first: it waits 10 s, then measures for the recording
             time. Hi-Link does not document how the thresholds are computed;
-            they may be more sensitive than the factory defaults, and at least
-            one LD2410C was seen to keep its thresholds (it only measured). A
-            radar that refuses the command is learned by the ESP32 as below
-            (noise percentile, margin, highest raise). Not used by the ESP32
-            presence engine, which always records and sets the thresholds
-            itself.
+            they may be more sensitive than the factory defaults. A radar that
+            refuses the command is learned by the ESP32 as below (noise
+            percentile, margin, highest raise).
 
     config LD2410_LEARN_PERCENTILE
         int "Noise percentile (%)"
+        depends on !LD2410_LEARN_PEAK
         range 50 100
         default 95
         help
@@ -463,6 +311,7 @@ menu "Empty Room Learning"
 
     config LD2410_LEARN_MARGIN
         int "Margin above the recorded noise (energy 0-100)"
+        depends on !LD2410_LEARN_PEAK
         range 0 50
         default 10
         help

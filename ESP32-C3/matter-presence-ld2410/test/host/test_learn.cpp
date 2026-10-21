@@ -1,7 +1,7 @@
-// Empty room learning and factory thresholds (main/quiet_learn.cpp) against the simulated radar. Built twice: with
-// CONFIG_LD2410_LEARN_RADAR_AUTO=0 (learning on the ESP32, factory thresholds, threshold computation) and =1 (the
-// radar's own background noise detection, falling back to the ESP32). Both also with the ESP32 presence engine,
-// which always records the room on the ESP32 and sets every threshold itself.
+// Empty room learning and factory thresholds (main/quiet_learn.cpp) against the simulated radar. Built three times:
+// with CONFIG_LD2410_LEARN_RADAR_AUTO=0 (learning on the ESP32, factory thresholds, threshold computation), =1 (the
+// radar's own background noise detection, falling back to the ESP32), and with CONFIG_LD2410_LEARN_PEAK=1 (the
+// ESP32 learns from the highest energy and the average, 120 s).
 #include "sim.h"
 
 #include <string.h>
@@ -14,34 +14,6 @@ static const uint8_t kFactoryStill[9] = { 0, 0, 40, 40, 30, 30, 20, 20, 20 };
 
 static std::vector<std::pair<int64_t, quiet_learn_phase_t>> s_phases;
 static int64_t s_cancel_at_ms = -1;
-
-// The recordings handed to the presence engine: when, the gate length, the reports, the reports of gate 3 still
-// energy 75 and its highest filtered energy, and the thresholds the radar held then
-struct SetCall {
-    int64_t ms;
-    uint16_t gate_cm;
-    uint32_t frames;
-    uint32_t still3_at_75;
-    uint8_t still3_filtered_max;
-    ld2410_thresholds_t held;
-};
-static std::vector<SetCall> s_calls;
-// The thresholds the presence engine sets (kind 0 moving, 1 still), applied to what the radar holds
-static std::vector<std::pair<std::pair<int, int>, uint8_t>> s_sets;
-
-static void on_set(const ld2410_capture_t *capture, uint16_t gate_cm, ld2410_thresholds_t *thresholds)
-{
-    s_calls.push_back({ sim_ms(), gate_cm, capture->frames, capture->still[3][75], capture->still_filtered_max[3],
-                        *thresholds });
-    for (const auto &set : s_sets) {
-        (set.first.first == 0 ? thresholds->moving : thresholds->still)[set.first.second] = set.second;
-    }
-}
-
-static void set_threshold(int kind, int gate, uint8_t value)
-{
-    s_sets.push_back({ { kind, gate }, value });
-}
 
 static bool cancelled()
 {
@@ -64,8 +36,6 @@ static void start(RadarSim &radar)
     radar.attach();
     s_phases.clear();
     s_cancel_at_ms = -1;
-    s_calls.clear();
-    s_sets.clear();
 }
 
 static int64_t phase_ms(quiet_learn_phase_t phase)
@@ -130,6 +100,7 @@ static void test_computation()
     CHECK(out.moving[4] == 100);
 }
 
+#if !CONFIG_LD2410_LEARN_PEAK
 // Every gate 5 apart from the factory defaults, gate 3 still energy 75 (a fan), gate 5 moving 40 for 2 s (someone
 // passing by)
 static void room_energies(int64_t ms, uint8_t *moving, uint8_t *still)
@@ -198,16 +169,6 @@ static void test_esp32_learning()
         CHECK(radar.count(0x0064) == 0 && !radar.engineering);
     }
 
-    test_begin("ESP32 learning: 2 reports per second are enough (the presence engine needs 5)");
-    {
-        RadarSim radar;
-        start(radar);
-        radar.energies = room_energies;
-        sim_at(45000, [&radar]() { radar.report_silent = true; }); // 25 s of the 60 s: about 250 reports
-        CHECK(quiet_learn_run(cancelled, on_phase, 75) == QUIET_LEARN_SAVED);
-        CHECK(radar.count(0x0064) == 9 && radar.still[3] == 70);
-    }
-
     test_begin("ESP32 learning: thresholds not kept by the radar");
     {
         RadarSim radar;
@@ -237,6 +198,222 @@ static void test_esp32_learning()
         CHECK(factory_thresholds(radar));
     }
 }
+#endif
+
+#if CONFIG_LD2410_LEARN_PEAK
+static quiet_learn_room_t room_all(uint8_t avg, uint8_t peak, uint8_t noise)
+{
+    quiet_learn_room_t r = {};
+    r.frames = 1200;
+    for (int g = 0; g < 9; g++) {
+        r.avg.moving[g] = r.avg.still[g] = avg;
+        r.peak.moving[g] = r.peak.still[g] = peak;
+        r.noise.moving[g] = r.noise.still[g] = noise;
+        r.moving_valid[g] = r.still_valid[g] = true;
+    }
+    return r;
+}
+
+static ld2410_thresholds_t factory()
+{
+    ld2410_thresholds_t t;
+    memcpy(t.moving, kFactoryMoving, 9);
+    memcpy(t.still, kFactoryStill, 9);
+    return t;
+}
+
+static void test_peak_computation()
+{
+    test_begin("peak: the numbers of the HLKRadarTool screenshots (average / highest): highest + the larger of 8 and "
+               "(highest - average), at least 75 % of the factory thresholds");
+    {
+        const uint8_t moving_peak[9] = { 26, 17, 8, 9, 6, 7, 4, 7, 5 };
+        const uint8_t moving_avg[9] = { 13, 7, 2, 4, 2, 4, 2, 3, 3 };
+        const uint8_t still_peak[9] = { 0, 0, 12, 12, 6, 4, 3, 3, 3 };
+        const uint8_t still_avg[9] = { 0, 0, 3, 4, 3, 2, 2, 2, 2 };
+        quiet_learn_room_t room = room_all(0, 0, 0);
+        memcpy(room.peak.moving, moving_peak, 9);
+        memcpy(room.avg.moving, moving_avg, 9);
+        memcpy(room.peak.still, still_peak, 9);
+        memcpy(room.avg.still, still_avg, 9);
+        ld2410_thresholds_t current = factory();
+        current.still[0] = 21; // what the app shows there: not settable, kept
+        current.still[1] = 24;
+        const quiet_learn_peak_params_t params = { 75, 8, 30 };
+        ld2410_thresholds_t out;
+        quiet_learn_levels_t flags;
+        quiet_learn_peak_thresholds(&room, &current, &params, &out, &flags);
+        const uint8_t want_moving[9] = { 39, 38, 30, 23, 15, 15, 12, 15, 13 };
+        const uint8_t want_still[9] = { 21, 24, 30, 30, 23, 23, 15, 15, 15 };
+        CHECK(memcmp(out.moving, want_moving, 9) == 0 && memcmp(out.still, want_still, 9) == 0);
+        CHECK(flags.moving[0] == 0 && flags.moving[1] == QUIET_LEARN_FLOOR && flags.moving[6] == 0);
+        CHECK(flags.still[0] == QUIET_LEARN_KEPT && flags.still[2] == QUIET_LEARN_FLOOR);
+        // Floor 100 %: never below the factory thresholds (here: the factory thresholds themselves)
+        const quiet_learn_peak_params_t never_lower = { 100, 8, 30 };
+        quiet_learn_peak_thresholds(&room, &current, &never_lower, &out, nullptr);
+        CHECK(memcmp(out.moving, kFactoryMoving, 9) == 0 && out.still[2] == 40 && out.still[8] == 20);
+        // Floor 0: the room alone
+        const quiet_learn_peak_params_t room_only = { 0, 8, 30 };
+        quiet_learn_peak_thresholds(&room, &current, &room_only, &out, nullptr);
+        CHECK(out.moving[1] == 27 && out.moving[2] == 16 && out.still[2] == 21 && out.still[8] == 11);
+    }
+
+    test_begin("peak: at least the noise + 4, at most factory + 30 (and 99), kept where nothing was recorded; floor "
+               "and ceiling from the factory thresholds, learning again gives the same thresholds");
+    {
+        quiet_learn_room_t room = room_all(3, 6, 0);
+        room.peak.still[2] = 85;        // something moved there: 85 + 82 limited to 40 + 30
+        room.moving_valid[7] = false;   // no reports: kept
+        room.noise.still[4] = 30;       // the robust noise above highest + 8: 30 + 4
+        ld2410_thresholds_t current = factory();
+        current.moving[7] = 44;
+        const quiet_learn_peak_params_t params = { 75, 8, 30 };
+        ld2410_thresholds_t out;
+        quiet_learn_levels_t flags;
+        quiet_learn_peak_thresholds(&room, &current, &params, &out, &flags);
+        CHECK(out.still[2] == 70 && flags.still[2] == QUIET_LEARN_LIMIT);
+        CHECK(out.still[4] == 34 && flags.still[4] == QUIET_LEARN_NOISE);
+        CHECK(out.moving[7] == 44 && flags.moving[7] == QUIET_LEARN_KEPT);
+        CHECK(out.moving[8] == 14 && flags.moving[8] == 0); // 6 + 8, floor 12
+        CHECK(out.moving[0] == 38 && flags.moving[0] == QUIET_LEARN_FLOOR);
+        const quiet_learn_peak_params_t no_limit = { 75, 8, 100 }; // at most 99, never 100 (the gate is ignored)
+        quiet_learn_peak_thresholds(&room, &current, &no_limit, &out, &flags);
+        CHECK(out.still[2] == 99 && flags.still[2] == QUIET_LEARN_LIMIT);
+        ld2410_thresholds_t again;
+        quiet_learn_peak_thresholds(&room, &current, &params, &out, nullptr);
+        quiet_learn_peak_thresholds(&room, &out, &params, &again, nullptr);
+        CHECK(memcmp(&out, &again, sizeof(out)) == 0);
+        ld2410_thresholds_t other = current; // thresholds set with HLKRadarTool: floor and ceiling stay factory ones
+        other.moving[3] = 60;                // factory 30: floor 23
+        other.moving[5] = 5;                 // factory 15: ceiling 45
+        room.peak.moving[5] = 60;
+        quiet_learn_peak_thresholds(&room, &other, &params, &out, &flags);
+        CHECK(out.moving[3] == 23 && flags.moving[3] == QUIET_LEARN_FLOOR);
+        CHECK(out.moving[5] == 45 && flags.moving[5] == QUIET_LEARN_LIMIT);
+    }
+
+    test_begin("peak: room statistics: rounded average, highest report, noise (99th percentile, at least median + 3 "
+               "robust spreads), gates without reports");
+    {
+        static ld2410_capture_t c;
+        memset(&c, 0, sizeof(c));
+        c.frames = 300;
+        c.moving[0][10] = 9; // 9 x 10 and one 60: average 15, highest 60
+        c.moving[0][60] = 1;
+        c.moving[1][10] = 300; // constant 10: median 10, spread at least 1 -> noise 13
+        c.moving[2][10] = 100; // 10, 12, 14: median 12, MAD 2, spread 2.966 -> 21 (99th percentile 14)
+        c.moving[2][12] = 100;
+        c.moving[2][14] = 100;
+        c.moving[4][5] = 290; // 290 at 5 and 10 at 40: 99th percentile 40
+        c.moving[4][40] = 10;
+        c.still[3][4] = 1; // 4 and 5: average 4.5 -> 5
+        c.still[3][5] = 1;
+        // moving gate 3: nothing recorded
+        quiet_learn_room_t room;
+        quiet_learn_room(&c, &room);
+        CHECK(room.frames == 300 && room.moving_valid[0] && !room.moving_valid[3] && !room.still_valid[0]);
+        CHECK(room.avg.moving[0] == 15 && room.peak.moving[0] == 60 && room.noise.moving[0] == 60);
+        CHECK(room.noise.moving[1] == 13 && room.peak.moving[1] == 10 && room.noise.moving[2] == 21);
+        CHECK(room.noise.moving[4] == 40 && room.peak.moving[4] == 40 && room.avg.moving[4] == 6);
+        CHECK(room.avg.still[3] == 5 && room.peak.still[3] == 5);
+    }
+}
+
+// Every gate 3 (quiet), moving gate 3 steady at 18, still gate 3 at 75 (a fan), moving gate 6 a lone report at 15
+// every 5 s (the radar does not filter it as a median of three would)
+static void peak_room(int64_t ms, uint8_t *moving, uint8_t *still)
+{
+    for (int g = 0; g < 9; g++) {
+        moving[g] = 3;
+        still[g] = 3;
+    }
+    moving[3] = 18;
+    still[3] = 75;
+    moving[6] = ms % 5000 < 100 ? 15 : 2;
+}
+
+static void test_peak_learning()
+{
+    test_begin("peak: recorded by the ESP32 for 120 s after the delay, never the radar's own detection; thresholds "
+               "written once and read back; a lone spike counts");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.energies = peak_room;
+        CHECK(quiet_learn_run(cancelled, on_phase, 75) == QUIET_LEARN_SAVED);
+        CHECK(phase_ms(QUIET_LEARN_WAITING) == 0);
+        const int64_t rec = phase_ms(QUIET_LEARN_RECORDING);
+        CHECK(rec >= 20000 && rec < 20100);
+        CHECK(radar.count(0x000B) == 0 && radar.count(0x0064) == 9 && !radar.engineering && !radar.config_mode);
+        CHECK(radar.moving[6] == 28);                         // 15 + (15 - 2), above the lone spikes
+        CHECK(radar.moving[3] == 26);                         // 18 + 8, above the floor 23
+        CHECK(radar.still[3] == 70);                          // 75 + 8 limited to 40 + 30
+        CHECK(radar.moving[0] == 38 && radar.moving[8] == 12); // floor: 75 % of 50 and of 15
+        CHECK(radar.still[2] == 30 && radar.still[8] == 15);
+        CHECK(sim_log_contains("Empty room learning: leave the room, recording starts in 20 s and lasts 120 s"));
+        CHECK(sim_log_contains("reports. Threshold = highest + the larger of 8 and (highest - average), at least the "
+                               "noise + 4, from 75 % of the factory default to factory + 30"));
+        CHECK(sim_log_contains("Gate 6 (4.5 m to 5.25 m): moving avg 2 peak 15 noise 15 -> 28 (was 15) | still avg 3 "
+                               "peak 3 noise 6 -> 15 floor (was 20)"));
+        CHECK(sim_log_contains("Gate 0 (0 m to 0.75 m): moving avg 3 peak 3 noise 6 -> 38 floor (was 50) | still not "
+                               "settable"));
+        CHECK(sim_log_contains("Gate 3 (2.25 m to 3 m): still highest 75, average 75: threshold limited to 70 "
+                               "(factory 40 + 30). Something kept moving there"));
+        CHECK(sim_log_contains("Learning done: new thresholds saved in the LD2410 ("));
+
+        test_begin("peak: the same room again: the radar holds these thresholds already, nothing written");
+        radar.commands.clear();
+        s_phases.clear();
+        CHECK(quiet_learn_run(cancelled, on_phase, 75) == QUIET_LEARN_SAVED);
+        CHECK(radar.count(0x0064) == 0 && radar.moving[6] == 28);
+        CHECK(sim_log_contains("The radar holds these thresholds already, nothing written"));
+    }
+
+    test_begin("peak: fewer than 5 reports per second, failed, nothing written");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.energies = peak_room;
+        sim_at(75000, [&radar]() { radar.report_silent = true; }); // 55 s of the 120 s: about 550 reports
+        CHECK(quiet_learn_run(cancelled, on_phase, 75) == QUIET_LEARN_FAILED);
+        CHECK(sim_log_contains("engineering reports in 120 s, nothing changed"));
+        CHECK(radar.count(0x0064) == 0 && factory_thresholds(radar) && !radar.engineering);
+    }
+
+    test_begin("peak: cancelled while waiting or recording, nothing written");
+    {
+        RadarSim radar;
+        start(radar);
+        s_cancel_at_ms = 5000;
+        CHECK(quiet_learn_run(cancelled, on_phase, 75) == QUIET_LEARN_CANCELLED);
+        CHECK(radar.commands.empty());
+        RadarSim again;
+        start(again);
+        s_cancel_at_ms = 60000;
+        CHECK(quiet_learn_run(cancelled, on_phase, 75) == QUIET_LEARN_CANCELLED);
+        CHECK(again.count(0x0064) == 0 && factory_thresholds(again) && !again.engineering);
+    }
+
+    test_begin("peak: the radar does not keep the thresholds, failed");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.energies = peak_room;
+        radar.stuck_gate = 3;
+        CHECK(quiet_learn_run(cancelled, on_phase, 75) == QUIET_LEARN_FAILED);
+        CHECK(sim_log_contains("Gate 3 reads back 30/40 instead of 26/70, the radar may hold a mix of old and new"));
+    }
+
+    test_begin("peak: the radar does not answer, failed");
+    {
+        RadarSim radar;
+        start(radar);
+        radar.tx_wire_broken = true;
+        CHECK(quiet_learn_run(cancelled, on_phase, 75) == QUIET_LEARN_FAILED);
+        CHECK(sim_log_contains("check the wire from GPIO4 to the LD2410 RX pin"));
+    }
+}
+#endif
 
 static void test_factory_thresholds()
 {
@@ -380,112 +557,22 @@ static void test_radar_auto()
 
 #endif
 
-// Every gate quiet, gate 3 still energy 75 (a fan)
-static void fan_room(int64_t ms, uint8_t *moving, uint8_t *still)
-{
-    for (int g = 0; g < 9; g++) {
-        moving[g] = 5;
-        still[g] = 5;
-    }
-    still[3] = 75;
-}
-
-// The ESP32 presence engine: the ESP32 records the whole learning time and sets every threshold, whether the radar
-// has its own background noise detection or not
-static void test_engine_learning()
-{
-    test_begin("presence engine: recorded by the ESP32 for the whole learning time, never the radar's own detection; "
-               "the thresholds it sets written once and read back");
-    {
-        RadarSim radar;
-        start(radar);
-        radar.energies = fan_room;
-        radar.engineering = true; // kept on by the engine
-        set_threshold(1, 3, 70);
-        set_threshold(0, 5, 12);
-        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_set) == QUIET_LEARN_SAVED);
-        CHECK(radar.count(0x000B) == 0 && radar.count(0x0064) == 9 && !radar.config_mode && !radar.engineering);
-        CHECK(radar.still[3] == 70 && radar.moving[5] == 12 && radar.moving[2] == 40);
-        CHECK(s_calls.size() == 1 && s_calls[0].gate_cm == 75 && s_calls[0].frames >= 500);
-        CHECK(s_calls[0].still3_at_75 == s_calls[0].frames && s_calls[0].still3_filtered_max == 75);
-        CHECK(memcmp(s_calls[0].held.moving, kFactoryMoving, 9) == 0); // what the radar held
-        const int64_t rec = phase_ms(QUIET_LEARN_RECORDING);
-        CHECK(phase_ms(QUIET_LEARN_WAITING) == 0 && rec >= 20000 && rec < 20200);
-        CHECK(s_calls[0].ms >= 80000 && s_calls[0].ms < 81500);
-        CHECK(sim_log_contains("Empty room learning: leave the room, recording starts in 20 s and lasts 60 s"));
-        CHECK(sim_log_contains("Thresholds before: moving 50,50,40,30,20,15,15,15,15 | still -,-,40,40,30,30,20,20,20"));
-        CHECK(sim_log_contains("Thresholds set by the ESP32: moving 50,50,40,30,20,12,15,15,15 | still "
-                               "-,-,40,70,30,30,20,20,20"));
-        CHECK(sim_log_contains("Learning done: thresholds set by the ESP32 ("));
-    }
-
-    test_begin("presence engine: thresholds the radar holds already, nothing written");
-    {
-        RadarSim radar;
-        start(radar);
-        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_set) == QUIET_LEARN_SAVED);
-        CHECK(s_calls.size() == 1 && radar.count(0x0064) == 0 && radar.count(0x000B) == 0);
-        CHECK(sim_log_contains("The radar holds these thresholds already, nothing written"));
-    }
-
-    test_begin("presence engine: fewer than 5 reports per second, failed, nothing handed over or written");
-    {
-        RadarSim radar;
-        start(radar);
-        sim_at(45000, [&radar]() { radar.report_silent = true; }); // 25 s of the 60 s: about 250 reports
-        set_threshold(1, 3, 70);
-        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_set) == QUIET_LEARN_FAILED);
-        CHECK(s_calls.empty() && radar.count(0x0064) == 0 && factory_thresholds(radar));
-        CHECK(sim_log_contains("engineering reports in 60 s, nothing changed"));
-    }
-
-    test_begin("presence engine: cancelled while waiting or recording, nothing handed over or written");
-    {
-        RadarSim radar;
-        start(radar);
-        s_cancel_at_ms = 10000;
-        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_set) == QUIET_LEARN_CANCELLED);
-        CHECK(radar.commands.empty() && s_calls.empty());
-        start(radar);
-        s_cancel_at_ms = 50000;
-        set_threshold(1, 3, 70);
-        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_set) == QUIET_LEARN_CANCELLED);
-        CHECK(s_calls.empty() && radar.count(0x0064) == 0 && !radar.engineering && !radar.config_mode);
-    }
-
-    test_begin("presence engine: the radar does not keep the thresholds, failed");
-    {
-        RadarSim radar;
-        start(radar);
-        radar.stuck_gate = 3;
-        set_threshold(1, 3, 70);
-        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_set) == QUIET_LEARN_FAILED);
-        CHECK(s_calls.size() == 1 && radar.still[3] == 40 && !radar.config_mode);
-        CHECK(sim_log_contains("Gate 3 reads back 30/40 instead of 30/70"));
-    }
-
-    test_begin("presence engine: the radar does not answer, failed, nothing handed over");
-    {
-        RadarSim radar;
-        start(radar);
-        radar.tx_wire_broken = true;
-        CHECK(quiet_learn_run(cancelled, on_phase, 75, on_set) == QUIET_LEARN_FAILED);
-        CHECK(s_calls.empty() && sim_log_contains("check the wire from GPIO4 to the LD2410 RX pin"));
-    }
-}
-
 int main(int argc, char **argv)
 {
     g_verbose = argc > 1;
 #if CONFIG_LD2410_LEARN_RADAR_AUTO
     printf("quiet_learn (radar learning):\n");
     test_radar_auto();
-    test_engine_learning();
+#elif CONFIG_LD2410_LEARN_PEAK
+    printf("quiet_learn (ESP32 learning from the highest energy):\n");
+    test_computation();
+    test_peak_computation();
+    test_peak_learning();
+    test_factory_thresholds();
 #else
     printf("quiet_learn (ESP32 learning):\n");
     test_computation();
     test_esp32_learning();
-    test_engine_learning();
     test_factory_thresholds();
 #endif
     return test_end();

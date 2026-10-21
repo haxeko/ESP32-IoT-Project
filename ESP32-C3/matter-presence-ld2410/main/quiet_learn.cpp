@@ -15,6 +15,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <algorithm>
+#include <initializer_list>
+
 #include "quiet_learn.h"
 #include "radar_settings.h"
 
@@ -22,10 +25,12 @@ static const char *TAG = "quiet_learn";
 
 static constexpr uint32_t kPollMs = 100;
 // The radar sends about 10 engineering reports per second; fewer than 2 per second means the reports did not
-// come through.
+// come through. The averages and highest energies of CONFIG_LD2410_LEARN_PEAK need about every report.
+#if CONFIG_LD2410_LEARN_PEAK
+static constexpr uint32_t kMinFramesPerSec = 5;
+#else
 static constexpr uint32_t kMinFramesPerSec = 2;
-// The ESP32 presence engine sets every threshold from the averages and maxima of the recording: at least 5 per second
-static constexpr uint32_t kMinRoomFramesPerSec = 5;
+#endif
 
 // Factory defaults (HLK-LD2410 serial protocol, table 7). The still thresholds of gates 0 and 1 cannot be set.
 static const uint8_t kFactoryMoving[LD2410_GATE_COUNT] = { 50, 50, 40, 30, 20, 15, 15, 15, 15 };
@@ -81,6 +86,122 @@ void quiet_learn_compute_thresholds(const quiet_learn_levels_t *noise, const ld2
         out->moving[g] = learned_threshold(noise->moving[g], margin, max_raise, kFactoryMoving[g]);
         out->still[g] = g < kFirstStillGate ? current->still[g]
                                             : learned_threshold(noise->still[g], margin, max_raise, kFactoryStill[g]);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Thresholds from the highest energy and the average (CONFIG_LD2410_LEARN_PEAK)
+
+// A threshold at least this far above the noise of its gate
+static constexpr int kPeakNoiseMargin = 4;
+// Highest threshold written: 100 would make the radar ignore the gate
+static constexpr int kPeakHighest = 99;
+
+// Energy at rank ceil(n x percent / 100) of the n values counted in hist: the value `percent` % of them stay at
+// or below
+static uint8_t quantile(const uint32_t hist[LD2410_MAX_ENERGY + 1], uint32_t n, uint32_t percent)
+{
+    const uint64_t rank = std::max<uint64_t>(((uint64_t)n * percent + 99) / 100, 1);
+    uint64_t seen = 0;
+    for (int v = 0; v <= LD2410_MAX_ENERGY; v++) {
+        seen += hist[v];
+        if (seen >= rank) {
+            return (uint8_t)v;
+        }
+    }
+    return LD2410_MAX_ENERGY;
+}
+
+// Average, highest energy and noise of one gate; false when it has no reports. Noise: the 99th percentile, at
+// least median + 3 robust spreads (1.4826 x median absolute deviation, at least 1), which a short recording
+// estimates more steadily than the percentile.
+static bool gate_stats(const uint16_t counts[LD2410_MAX_ENERGY + 1], uint8_t *avg, uint8_t *peak, uint8_t *noise)
+{
+    uint32_t hist[LD2410_MAX_ENERGY + 1];
+    uint32_t n = 0;
+    uint64_t sum = 0;
+    for (int v = 0; v <= LD2410_MAX_ENERGY; v++) {
+        hist[v] = counts[v];
+        n += counts[v];
+        sum += (uint64_t)counts[v] * v;
+        if (counts[v] > 0) {
+            *peak = (uint8_t)v;
+        }
+    }
+    if (n == 0) {
+        *avg = 0;
+        *peak = 0;
+        *noise = 0;
+        return false;
+    }
+    *avg = (uint8_t)((sum + n / 2) / n);
+    const uint8_t median = quantile(hist, n, 50);
+    uint32_t deviations[LD2410_MAX_ENERGY + 1] = {};
+    for (int v = 0; v <= LD2410_MAX_ENERGY; v++) {
+        deviations[v > median ? v - median : median - v] += hist[v];
+    }
+    const uint32_t mad = quantile(deviations, n, 50);
+    const uint32_t spread_x1000 = std::max<uint32_t>(mad * 1483, 1000);
+    const uint32_t robust = (median * 1000 + 3 * spread_x1000 + 999) / 1000;
+    *noise = (uint8_t)std::min<uint32_t>(std::max<uint32_t>(quantile(hist, n, 99), robust), LD2410_MAX_ENERGY);
+    return true;
+}
+
+void quiet_learn_room(const ld2410_capture_t *capture, quiet_learn_room_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->frames = capture->frames;
+    for (int g = 0; g < LD2410_GATE_COUNT; g++) {
+        out->moving_valid[g] =
+            gate_stats(capture->moving[g], &out->avg.moving[g], &out->peak.moving[g], &out->noise.moving[g]);
+        out->still_valid[g] =
+            gate_stats(capture->still[g], &out->avg.still[g], &out->peak.still[g], &out->noise.still[g]);
+    }
+}
+
+static uint8_t peak_threshold(uint8_t avg, uint8_t peak, uint8_t noise, uint8_t factory,
+                              const quiet_learn_peak_params_t *params, uint8_t *flags)
+{
+    int want = peak + std::max<int>(params->min_margin, peak - avg);
+    if (noise + kPeakNoiseMargin > want) {
+        want = noise + kPeakNoiseMargin;
+        *flags |= QUIET_LEARN_NOISE;
+    }
+    const int floor = (factory * params->floor_percent + 99) / 100;
+    const int ceiling = std::min(factory + params->max_raise, kPeakHighest);
+    if (want < floor) {
+        want = floor;
+        *flags |= QUIET_LEARN_FLOOR;
+    }
+    if (want > ceiling) {
+        want = ceiling;
+        *flags |= QUIET_LEARN_LIMIT;
+    }
+    return (uint8_t)want;
+}
+
+void quiet_learn_peak_thresholds(const quiet_learn_room_t *room, const ld2410_thresholds_t *current,
+                                 const quiet_learn_peak_params_t *params, ld2410_thresholds_t *out,
+                                 quiet_learn_levels_t *flags)
+{
+    quiet_learn_levels_t f = {};
+    *out = *current;
+    for (int g = 0; g < LD2410_GATE_COUNT; g++) {
+        if (room->moving_valid[g]) {
+            out->moving[g] = peak_threshold(room->avg.moving[g], room->peak.moving[g], room->noise.moving[g],
+                                            kFactoryMoving[g], params, &f.moving[g]);
+        } else {
+            f.moving[g] = QUIET_LEARN_KEPT;
+        }
+        if (g >= kFirstStillGate && room->still_valid[g]) {
+            out->still[g] = peak_threshold(room->avg.still[g], room->peak.still[g], room->noise.still[g],
+                                           kFactoryStill[g], params, &f.still[g]);
+        } else {
+            f.still[g] = QUIET_LEARN_KEPT;
+        }
+    }
+    if (flags) {
+        *flags = f;
     }
 }
 
@@ -189,6 +310,65 @@ static bool write_thresholds(const ld2410_thresholds_t *want)
 // ---------------------------------------------------------------------------------------------------------------------
 // Learning on the ESP32
 
+#if CONFIG_LD2410_LEARN_PEAK
+// " avg 2 peak 8 noise 5 -> 30 floor (was 40)", " no reports, kept 40"
+static void format_peak_gate(const quiet_learn_room_t *room, bool still, int g, uint8_t was, uint8_t now,
+                             uint8_t flags, char *buf, size_t len)
+{
+    const bool valid = still ? room->still_valid[g] : room->moving_valid[g];
+    if (!valid) {
+        snprintf(buf, len, "no reports, kept %u", now);
+        return;
+    }
+    const quiet_learn_levels_t &avg = room->avg;
+    const quiet_learn_levels_t &peak = room->peak;
+    const quiet_learn_levels_t &noise = room->noise;
+    const char *tag = (flags & QUIET_LEARN_LIMIT)   ? " limit"
+                      : (flags & QUIET_LEARN_FLOOR) ? " floor"
+                      : (flags & QUIET_LEARN_NOISE) ? " noise"
+                                                    : "";
+    snprintf(buf, len, "avg %u peak %u noise %u -> %u%s (was %u)", still ? avg.still[g] : avg.moving[g],
+             still ? peak.still[g] : peak.moving[g], still ? noise.still[g] : noise.moving[g], now, tag, was);
+}
+
+static void log_peak_thresholds(const quiet_learn_room_t *room, const quiet_learn_levels_t *flags,
+                                const ld2410_thresholds_t *before, const ld2410_thresholds_t *after, uint16_t gate_cm)
+{
+    ESP_LOGI(TAG, "%" PRIu32 " reports. Threshold = highest + the larger of %d and (highest - average), at least the "
+                  "noise + %d, from %d %% of the factory default to factory + %d", room->frames,
+             CONFIG_LD2410_LEARN_MIN_MARGIN, kPeakNoiseMargin, CONFIG_LD2410_LEARN_FLOOR_PERCENT,
+             CONFIG_LD2410_LEARN_MAX_RAISE);
+    for (int g = 0; g < LD2410_GATE_COUNT; g++) {
+        char span[32];
+        format_gate_span(g, gate_cm, span, sizeof(span));
+        char moving[64];
+        char still[64] = "not settable";
+        format_peak_gate(room, false, g, before->moving[g], after->moving[g], flags->moving[g], moving,
+                         sizeof(moving));
+        if (g >= kFirstStillGate) {
+            format_peak_gate(room, true, g, before->still[g], after->still[g], flags->still[g], still, sizeof(still));
+        }
+        ESP_LOGI(TAG, "Gate %d%s: moving %s | still %s", g, span, moving, still);
+    }
+    for (int g = 0; g < LD2410_GATE_COUNT; g++) {
+        for (const bool is_still : { false, true }) {
+            const uint8_t f = is_still ? flags->still[g] : flags->moving[g];
+            if (!(f & QUIET_LEARN_LIMIT)) {
+                continue;
+            }
+            char span[32];
+            format_gate_span(g, gate_cm, span, sizeof(span));
+            ESP_LOGW(TAG, "Gate %d%s: %s highest %u, average %u: threshold limited to %u (factory %u + %d). "
+                          "Something kept moving there while recording (person, fan, curtain) and may be reported "
+                          "as presence: learn again without it",
+                     g, span, is_still ? "still" : "moving", is_still ? room->peak.still[g] : room->peak.moving[g],
+                     is_still ? room->avg.still[g] : room->avg.moving[g],
+                     is_still ? after->still[g] : after->moving[g],
+                     is_still ? kFactoryStill[g] : kFactoryMoving[g], CONFIG_LD2410_LEARN_MAX_RAISE);
+        }
+    }
+}
+#else
 // A threshold that could not follow the noise of its gate: limited to the factory default +
 // CONFIG_LD2410_LEARN_MAX_RAISE, or raised to 100.
 static void warn_gate(int gate, const char *kind, uint8_t noise, uint8_t threshold, uint8_t factory, uint16_t gate_cm)
@@ -238,27 +418,34 @@ static void log_thresholds(uint32_t frames, uint16_t gate_cm, const quiet_learn_
         }
     }
 }
+#endif
 
-// Inside configuration mode: computes the new thresholds (set_thresholds when given, else from the noise
-// percentile), writes them and reads them back. True when the radar holds the new values.
-static bool apply_thresholds(const ld2410_capture_t *capture, uint16_t gate_cm, quiet_learn_set_cb_t set_thresholds)
+// Inside configuration mode: computes and writes the new thresholds, then reads them back. True when the radar
+// holds the new values.
+static bool apply_thresholds(const ld2410_capture_t *capture, uint16_t gate_cm)
 {
     ld2410_thresholds_t before;
     if (ld2410_read_thresholds(&before) != ESP_OK) {
         ESP_LOGE(TAG, "Could not read the radar thresholds, nothing changed");
         return false;
     }
-    if (set_thresholds) {
-        ld2410_thresholds_t want = before;
-        set_thresholds(capture, gate_cm, &want);
-        log_threshold_list("Thresholds before", &before);
-        log_threshold_list("Thresholds set by the ESP32", &want);
-        if (same_thresholds(&want, &before)) {
-            ESP_LOGI(TAG, "The radar holds these thresholds already, nothing written");
-            return true;
-        }
-        return write_thresholds(&want);
+#if CONFIG_LD2410_LEARN_PEAK
+    static const quiet_learn_peak_params_t params = {
+        CONFIG_LD2410_LEARN_FLOOR_PERCENT, // floor_percent
+        CONFIG_LD2410_LEARN_MIN_MARGIN,    // min_margin
+        CONFIG_LD2410_LEARN_MAX_RAISE,     // max_raise
+    };
+    quiet_learn_room_t room;
+    quiet_learn_room(capture, &room);
+    ld2410_thresholds_t after;
+    quiet_learn_levels_t flags;
+    quiet_learn_peak_thresholds(&room, &before, &params, &after, &flags);
+    log_peak_thresholds(&room, &flags, &before, &after, gate_cm);
+    if (same_thresholds(&after, &before)) {
+        ESP_LOGI(TAG, "The radar holds these thresholds already, nothing written");
+        return true;
     }
+#else
     quiet_learn_levels_t noise;
     quiet_learn_levels_t peak;
     quiet_learn_noise(capture, CONFIG_LD2410_LEARN_PERCENTILE, &noise);
@@ -266,17 +453,15 @@ static bool apply_thresholds(const ld2410_capture_t *capture, uint16_t gate_cm, 
     ld2410_thresholds_t after;
     quiet_learn_compute_thresholds(&noise, &before, CONFIG_LD2410_LEARN_MARGIN, CONFIG_LD2410_LEARN_MAX_RAISE, &after);
     log_thresholds(capture->frames, gate_cm, &noise, &peak, &before, &after);
+#endif
     return write_thresholds(&after);
 }
 
 // Records the engineering reports after wait_ms more of the delay before recording, then writes the thresholds.
 static quiet_learn_result_t run_with_capture(ld2410_capture_t *capture, quiet_learn_cancelled_cb_t cancelled,
-                                             quiet_learn_phase_cb_t on_phase, uint16_t gate_cm, uint32_t wait_ms,
-                                             quiet_learn_set_cb_t set_thresholds)
+                                             quiet_learn_phase_cb_t on_phase, uint16_t gate_cm, uint32_t wait_ms)
 {
     const uint32_t duration_s = CONFIG_LD2410_LEARN_DURATION_SEC;
-    // The averages and maxima of the ESP32 presence engine need about every report (10 per second)
-    const uint32_t min_per_sec = set_thresholds ? kMinRoomFramesPerSec : kMinFramesPerSec;
     if (!wait_unless_cancelled(wait_ms, cancelled)) {
         ESP_LOGI(TAG, "Learning cancelled, nothing changed");
         return QUIET_LEARN_CANCELLED;
@@ -312,37 +497,33 @@ static quiet_learn_result_t run_with_capture(ld2410_capture_t *capture, quiet_le
     if (!completed) {
         ESP_LOGI(TAG, "Learning cancelled, nothing changed");
         result = QUIET_LEARN_CANCELLED;
-    } else if (capture->frames < duration_s * min_per_sec) {
+    } else if (capture->frames < duration_s * kMinFramesPerSec) {
         ESP_LOGE(TAG, "Only %" PRIu32 " engineering reports in %" PRIu32 " s, nothing changed", capture->frames,
                  duration_s);
-    } else if (apply_thresholds(capture, gate_cm, set_thresholds)) {
+    } else if (apply_thresholds(capture, gate_cm)) {
         result = QUIET_LEARN_SAVED;
     }
     if (ld2410_set_engineering_mode(false) != ESP_OK) {
         ESP_LOGW(TAG, "Could not leave engineering mode (it ends when the radar restarts)");
     }
     end_config();
-    if (result == QUIET_LEARN_SAVED && set_thresholds) {
-        ESP_LOGI(TAG, "Learning done: thresholds set by the ESP32 (%" PRIu32 " reports in %" PRIu32 " s)",
-                 capture->frames, duration_s);
-    } else if (result == QUIET_LEARN_SAVED) {
+    if (result == QUIET_LEARN_SAVED) {
         ESP_LOGI(TAG, "Learning done: new thresholds saved in the LD2410 (%" PRIu32 " reports)", capture->frames);
     }
     return result;
 }
 
 static quiet_learn_result_t run_on_esp32(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
-                                         uint16_t gate_cm, uint32_t wait_ms, quiet_learn_set_cb_t set_thresholds)
+                                         uint16_t gate_cm, uint32_t wait_ms)
 {
-    // Energy counts of every gate (about 3.7 KB), only while learning
+    // Energy counts of every gate (about 3.6 KB), only while learning
     ld2410_capture_t *capture = static_cast<ld2410_capture_t *>(malloc(sizeof(ld2410_capture_t)));
     if (capture == nullptr) {
         ESP_LOGE(TAG, "Not enough memory for the recording (%u bytes), nothing changed",
                  (unsigned)sizeof(ld2410_capture_t));
         return QUIET_LEARN_FAILED;
     }
-    const quiet_learn_result_t result =
-        run_with_capture(capture, cancelled, on_phase, gate_cm, wait_ms, set_thresholds);
+    const quiet_learn_result_t result = run_with_capture(capture, cancelled, on_phase, gate_cm, wait_ms);
     free(capture);
     return result;
 }
@@ -490,7 +671,7 @@ static quiet_learn_result_t run_radar_auto(quiet_learn_cancelled_cb_t cancelled,
 // ---------------------------------------------------------------------------------------------------------------------
 
 quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet_learn_phase_cb_t on_phase,
-                                     uint16_t gate_cm, quiet_learn_set_cb_t set_thresholds)
+                                     uint16_t gate_cm)
 {
     const uint32_t delay_s = CONFIG_LD2410_LEARN_DELAY_SEC;
     const uint32_t duration_s = CONFIG_LD2410_LEARN_DURATION_SEC;
@@ -500,10 +681,6 @@ quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet
         on_phase(QUIET_LEARN_WAITING);
     }
     uint32_t wait_ms = delay_s * 1000;
-    if (set_thresholds) {
-        // The ESP32 presence engine: recorded by the ESP32, never the radar's own background noise detection
-        return run_on_esp32(cancelled, on_phase, gate_cm, wait_ms, set_thresholds);
-    }
 #if CONFIG_LD2410_LEARN_RADAR_AUTO
     // The radar waits kRadarLeaveMs itself: ask it that much before the end of the delay.
     const uint32_t lead_ms = wait_ms > kRadarLeaveMs ? wait_ms - kRadarLeaveMs : 0;
@@ -525,7 +702,7 @@ quiet_learn_result_t quiet_learn_run(quiet_learn_cancelled_cb_t cancelled, quiet
         break;
     }
 #endif
-    return run_on_esp32(cancelled, on_phase, gate_cm, wait_ms, nullptr);
+    return run_on_esp32(cancelled, on_phase, gate_cm, wait_ms);
 }
 
 bool quiet_learn_restore_factory(void)

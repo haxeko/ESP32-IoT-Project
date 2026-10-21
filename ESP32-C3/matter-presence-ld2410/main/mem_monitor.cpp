@@ -19,16 +19,10 @@
 
 static const char *TAG = "mem";
 
-// Matter, Wi-Fi, the timers (LED, button, this log), the application tasks, the ESP32 presence engine and its
-// console (esp_console REPL) when they are on, and the serial console of the Matter shell when it is on
+// Matter, Wi-Fi, the timers (LED, button, this log), the application tasks, and the serial console of the Matter
+// shell when it is on
 static const char *const kTasks[] = {
     "CHIP", "wifi", "esp_timer", "presence", "ld2410", "radar_cfg", "id_diag",
-#if CONFIG_PRESENCE_ESP_ENGINE
-    "presence_eng",
-#if CONFIG_PRESENCE_ENGINE_CONSOLE
-    "console_repl",
-#endif
-#endif
 #if CONFIG_ENABLE_CHIP_SHELL
     "console",
 #endif
@@ -64,7 +58,7 @@ static void log_memory(void *arg)
     }
 
     // Unused stack in bytes (StackType_t is one byte on ESP-IDF), the lowest since the task started.
-    char line[192] = "";
+    char line[128] = "";
     size_t len = 0;
     bool low = false;
     for (const char *name : kTasks) {

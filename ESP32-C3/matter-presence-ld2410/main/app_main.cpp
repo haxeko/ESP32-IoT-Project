@@ -51,9 +51,6 @@
 #include "c3_temperature.h"
 #include "device_info.h"
 #include "diag_report.h"
-#if CONFIG_PRESENCE_ESP_ENGINE
-#include "esp_presence.h"
-#endif
 #include "identity_diag.h"
 #include "mem_monitor.h"
 #include "net_watchdog.h"
@@ -79,13 +76,10 @@ static constexpr uint16_t kHoldTimeMin = 1;
 static constexpr uint16_t kHoldTimeMax = 300;
 
 // Key in the Matter key-value store (erased by a factory reset): set once the default HoldTime from menuconfig has
-// been applied. With the ESP32 presence engine, HoldTime is its absence countdown (60 s in that variant), applied
-// once more under its own key when a board comes to this firmware; a value set afterwards in an app is kept.
-#if CONFIG_PRESENCE_ESP_ENGINE
-static const char kHoldTimeInitKey[] = "app/hold-init2";
-#else
+// been applied. Firmware 1.0.153-1.0.172 of branch claude/c3-wroom-esp-presence (ESP32 presence engine) set its own
+// key: a board coming from it keeps its HoldTime too.
 static const char kHoldTimeInitKey[] = "app/hold-init";
-#endif
+static const char kHoldTimeInitKeyEngine[] = "app/hold-init2";
 
 #if CONFIG_STATUS_LED_TYPE_WS2812
 static const char kLedText[] = "WS2812";
@@ -119,21 +113,6 @@ static bool report_occupancy(bool present)
     return true;
 }
 
-#if CONFIG_PRESENCE_ESP_ENGINE
-// Presence task, every second: the HoldTime the cluster serves (set from an app or by apply_hold_time_config()).
-static bool read_hold_time(uint16_t *out)
-{
-    if (!s_matter_started) {
-        return false;
-    }
-    esp_matter::lock::ScopedChipStackLock lock(portMAX_DELAY);
-    OccupancySensingCluster *cluster = OccupancySensing::FindClusterOnEndpoint(s_occupancy_endpoint_id);
-    VerifyOrReturnValue(cluster != nullptr && cluster->IsHoldTimeEnabled(), false);
-    *out = cluster->GetHoldTime();
-    return true;
-}
-#endif
-
 static endpoint_t *create_occupancy_sensor(node_t *node)
 {
     occupancy_sensor::config_t config;
@@ -165,7 +144,10 @@ static void apply_hold_time_config()
 
     auto &kvs = chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr();
     uint8_t applied = 0;
-    if (kvs.Get(kHoldTimeInitKey, &applied, sizeof(applied)) != CHIP_NO_ERROR || !applied) {
+    uint8_t applied_engine = 0;
+    if ((kvs.Get(kHoldTimeInitKey, &applied, sizeof(applied)) != CHIP_NO_ERROR || !applied) &&
+        (kvs.Get(kHoldTimeInitKeyEngine, &applied_engine, sizeof(applied_engine)) != CHIP_NO_ERROR ||
+         !applied_engine)) {
         (void)cluster->SetHoldTime(CONFIG_PRESENCE_HOLD_TIME_SEC);
         applied = 1;
         (void)kvs.Put(kHoldTimeInitKey, &applied, sizeof(applied));
@@ -467,30 +449,15 @@ extern "C" void app_main()
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the LD2410 driver, err:%d", err);
     }
-#if CONFIG_PRESENCE_ESP_ENGINE
-    // Before the radar_cfg task (started with Matter), which hands it the radar settings
-    if (esp_presence_start() != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start the ESP32 presence engine");
-    }
-#endif
 
     if (start_matter() != ESP_OK) {
         ESP_LOGE(TAG, "Matter is not running");
     }
 
     // Started after Matter, so its first report reaches the cluster.
-#if CONFIG_PRESENCE_ESP_ENGINE
-    presence_set_hold_time_source(read_hold_time);
-#endif
     if (presence_start(report_occupancy) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create the presence task");
     }
-#if CONFIG_PRESENCE_ESP_ENGINE
-    // After Matter, which needs the most memory while it starts
-    if (esp_presence_console_start() != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start the console of the presence engine");
-    }
-#endif
 
     if (mem_monitor_start(CONFIG_MEM_MONITOR_PERIOD_SEC) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the memory log");

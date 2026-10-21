@@ -83,21 +83,12 @@ typedef struct {
 // read, so it must be short and must not block.
 typedef void (*ld2410_report_hook_t)(const ld2410_report_t *report);
 
-// Engineering reports counted per gate and energy while capturing, about 3.7 KB: allocate it only for a capture.
+// Engineering reports counted per gate and energy while capturing, about 3.6 KB: allocate it only for a capture.
 // Energies above LD2410_MAX_ENERGY are counted as LD2410_MAX_ENERGY, a count stops at UINT16_MAX.
 typedef struct {
     uint16_t moving[LD2410_GATE_COUNT][LD2410_MAX_ENERGY + 1];
     uint16_t still[LD2410_GATE_COUNT][LD2410_MAX_ENERGY + 1];
     uint32_t frames;
-    // Highest median of three successive energies of each gate: a report that stands alone, however strong, is
-    // left out (as the ESP32 presence engine filters). 0 until a gate has three reports.
-    uint8_t moving_filtered_max[LD2410_GATE_COUNT];
-    uint8_t still_filtered_max[LD2410_GATE_COUNT];
-    // The last two energies of each gate ([0] the latest) and how many were seen (up to 2), for the median
-    uint8_t moving_last[2][LD2410_GATE_COUNT];
-    uint8_t still_last[2][LD2410_GATE_COUNT];
-    uint8_t moving_seen[LD2410_GATE_COUNT];
-    uint8_t still_seen[LD2410_GATE_COUNT];
 } ld2410_capture_t;
 
 // Starts UART1 and the reader task (priority 5).
@@ -111,12 +102,6 @@ bool ld2410_get_target(ld2410_target_t *out);
 
 // Sets the report hook (nullptr: none).
 void ld2410_set_report_hook(ld2410_report_hook_t hook);
-
-// Frames that failed their checks since start (wrong tail, report too short or of an unknown type): line noise or a
-// loose wire. Counted, never handed over.
-uint32_t ld2410_frame_errors(void);
-// Recovery after a silence: the reader task drops what is waiting in the UART and restarts the frame parser.
-void ld2410_resync(void);
 
 // Configuration commands. Each one waits up to 1 s for the radar's ACK, so call them from a normal task, never
 // from the Matter task or an esp_timer callback. The other commands are only accepted between config_begin and
