@@ -217,12 +217,12 @@ idf.py -B build-espfilter -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.espfilter
   - hạ nhưng không dưới nhiễu đã đo: phòng trống sau 61 s.
 
 **Vì sao ngưỡng kích hoạt cũng phải ở trên nhiễu (1.0.162):**
-- Báo nhầm thực tế (ảnh HLKRadarTool, radar còn ngưỡng xuất xưởng): năng lượng tĩnh vùng 2 (1,5–2,25 m) của phòng trống trung bình 56, cao nhất 63, trong khi ngưỡng radar là 40. Vùng 3: trung bình 30, cao nhất 34, ngưỡng 40.
-- Nhiễu đó nằm trên ngưỡng radar gần như liên tục, nên bản 1.0.159 coi vùng 2 là "mạnh" dù không có ai.
+- Ví dụ giả định (dùng trong test và mô phỏng, chưa đo trong phòng thật nào): radar còn ngưỡng xuất xưởng, năng lượng tĩnh vùng 2 (1,5–2,25 m) của phòng trống trung bình 56, cao nhất 63, trong khi ngưỡng radar là 40.
+- Nhiễu như vậy nằm trên ngưỡng radar gần như liên tục, nên bản 1.0.159 coi vùng 2 là "mạnh" dù không có ai.
 - **Tăng số báo cáo** (3 trong 4 → nhiều hơn) chỉ chặn được xung ngắn: nhiễu nằm trên ngưỡng liên tục thì báo cáo nào cũng mạnh.
 - **Cộng một khoảng cho mọi vùng** phải cộng ít nhất 23 mới qua 63, làm các vùng khác kém nhạy hẳn.
 - Vì vậy ngưỡng kích hoạt của **từng kênh** phải ở trên nhiễu đo được của chính kênh đó (N + 5). Kênh có nhiễu thấp hơn ngưỡng radar không đổi gì.
-- Mô phỏng Monte Carlo, phòng mô phỏng theo số trong ảnh (mô hình nhiễu tự đặt, **không phải dữ liệu radar thật**), ngưỡng xuất xưởng, 100 phòng × 1 giờ trống:
+- Mô phỏng Monte Carlo, phòng theo ví dụ trên (mô hình nhiễu tự đặt, **không phải dữ liệu radar thật**), ngưỡng xuất xưởng, 100 phòng × 1 giờ trống:
   - bộ xử lý 1.0.159: báo nhầm có người ở cả 100 phòng, và phòng không bao giờ trống lại;
   - bộ xử lý 1.0.162: 0 lần báo nhầm, cả trước và sau khi học nâng ngưỡng radar. Người đi vào vẫn được nhận ở cả 100 lần; ra khỏi phòng thì trống sau 61 s; người ngồi yên ở 3,75–6,75 m được giữ 100 % của 20 phút;
   - người ngồi yên ngay ở vùng 2 (giả định năng lượng tĩnh 75 ± 6, chưa đo thật): được giữ 100 %. Người ở vùng 2 mà năng lượng tĩnh chỉ ngang nhiễu (dưới N + 2) thì vùng 2 không giữ được, chỉ các vùng khác giữ;
@@ -238,7 +238,7 @@ idf.py -B build-espfilter -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.espfilter
 **Cách bắt đầu:** chọn **Learning** trên Home Assistant, bấm BOOT 3 lần, hoặc lệnh `LEARN_EMPTY` trên console. Việc học như bản ổn định (mục **Học phòng trống**):
 - radar tự đo và lưu ngưỡng, xem được trong app HLKRadarTool;
 - radar firmware cũ không có lệnh tự đo thì ESP32 đo và ghi ngưỡng vào radar.
-- Chưa rõ radar có thật sự đổi ngưỡng sau lệnh tự đo 0x000B không: báo lỗi cho thấy học xong ngưỡng vẫn là ngưỡng xuất xưởng (giả thuyết: radar chỉ đo nhiễu). Log `Thresholds set by the radar` sau mỗi lần học cho biết; bước nâng ngưỡng bên dưới không phụ thuộc vào việc đó.
+- Chưa rõ radar có thật sự đổi ngưỡng sau lệnh tự đo 0x000B không. Log `Thresholds set by the radar` sau mỗi lần học cho biết; bước nâng ngưỡng bên dưới không phụ thuộc vào việc đó.
 
 Biến thể này thêm hai bước: **ESP32 ghi nhiễu phòng trống 30 s trước khi radar đo**, và sau khi radar đo, **nâng ngưỡng radar ở các vùng mà nhiễu chạm tới**.
 
@@ -417,16 +417,16 @@ idf.py -B build-esppresence -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.esppres
     - ngưỡng lấy từ radar: vượt ngưỡng radar mới là mạnh; ngưỡng duy trì hạ 40 %, tối đa 10, không dưới nhiễu + 2; ngưỡng 100 bỏ vùng; năng lượng tĩnh vùng 0–1 không tính;
     - ngưỡng kích hoạt trên nhiễu + 5 ở vùng nhiễu chạm ngưỡng radar, duy trì luôn dưới kích hoạt, nhiễu gần 100, biên cộng thêm cho mọi vùng; 20 000 tổ hợp ngưỡng radar, nhiễu và tuỳ chọn ngẫu nhiên;
     - nâng ngưỡng radar trên nhiễu: nhiễu + 4, tối đa trần, không hạ, bỏ qua vùng 100 và vùng tĩnh 0–1;
-    - phòng của báo lỗi (vùng 2 tĩnh 56 / 63, ngưỡng 40): chưa có số đo nhiễu thì báo nhầm ngay; có thì 30 phút không báo nhầm; sau khi nâng ngưỡng radar, người ngồi ở vùng 2 hay đi vào vùng 3 vẫn được nhận, trống sau 60 s;
+    - phòng giả định có vùng 2 tĩnh nhiễu 56 / 63, ngưỡng 40: chưa có số đo nhiễu thì báo nhầm ngay; có thì 30 phút không báo nhầm; sau khi nâng ngưỡng radar, người ngồi ở vùng 2 hay đi vào vùng 3 vẫn được nhận, trống sau 60 s;
     - số đo nhiễu và CRC; nhiễu đo với độ phân giải khác;
     - nhiễu không kích hoạt, cả khi ngưỡng radar sát nhiễu; người bước vào được nhận ở báo cáo thứ 4; người đi qua hai vùng;
     - người ngồi yên ở xa được giữ (và bị mất khi chưa đo nhiễu); tắt đúng Hold time; đếm lại;
     - lỗi cảm biến không phải phòng trống; báo cáo hỏng; đồng hồ 32 bit quay vòng; Range;
-  - task `presence_eng`, 14 test: ngưỡng radar nhận từ task `radar_cfg`; nhiễu lưu NVS và nạp lại, blob hỏng để nguyên; phòng của báo lỗi từ đầu đến cuối (báo nhầm khi chưa học, học xong ngưỡng vùng 2 được nâng, 30 phút không báo nhầm, người ngồi đó vẫn được nhận); nhiễu trên ngưỡng xuất xưởng + 30; NVS đầy (không nâng gì); cảnh báo, lệnh, log;
+  - task `presence_eng`, 14 test: ngưỡng radar nhận từ task `radar_cfg`; nhiễu lưu NVS và nạp lại, blob hỏng để nguyên; phòng giả định đó từ đầu đến cuối (báo nhầm khi chưa học, học xong ngưỡng vùng 2 được nâng, 30 phút không báo nhầm, người ngồi đó vẫn được nhận); nhiễu trên ngưỡng xuất xưởng + 30; NVS đầy (không nâng gì); cảnh báo, lệnh, log;
   - task `radar_cfg`, 9 test: học qua radar (ESP32 ghi nhiễu, radar tự đo, ngưỡng nâng được ghi vào radar, đọc lại ngưỡng, bật lại engineering mode), huỷ, Factory thresholds, khôi phục radar;
   - học phòng trống (`quiet_learn`), 9 test cho bộ xử lý: ghi nhiễu 30 s rồi tắt engineering mode trước lệnh 0x000B, huỷ, thiếu báo cáo, radar đo thất bại, radar firmware cũ; ngưỡng nâng được ghi vào radar ở cả hai cách học, không ghi khi không có gì để nâng, radar không giữ ngưỡng nâng thì báo thất bại.
 - Làm hỏng có chủ ý 77 chỗ trong bộ xử lý, task `presence_eng`, `radar_cfg` và `quiet_learn` (mỗi lần một chỗ, 1.0.162): test bắt được 74. Ba chỗ còn lại không thể đổi kết quả nào (giới hạn ngưỡng duy trì dưới ngưỡng kích hoạt không bao giờ chạm tới với tuỳ chọn hợp lệ; vùng ngưỡng 100 không bao giờ được nâng vì mức nâng tối đa 99), nên không test nào phân biệt được.
-- **Mô phỏng Monte Carlo**, 100 phòng, mỗi phòng học rồi chạy 1 giờ (chạy với 1.0.159, chạy lại với 1.0.162 trên cùng dữ liệu giả lập: kết quả như nhau, trừ một dòng ghi bên dưới; phòng của báo lỗi: mục **Vì sao ngưỡng kích hoạt cũng phải ở trên nhiễu**):
+- **Mô phỏng Monte Carlo**, 100 phòng, mỗi phòng học rồi chạy 1 giờ (chạy với 1.0.159, chạy lại với 1.0.162 trên cùng dữ liệu giả lập: kết quả như nhau, trừ một dòng ghi bên dưới; phòng giả định có nhiễu trên ngưỡng radar: mục **Vì sao ngưỡng kích hoạt cũng phải ở trên nhiễu**):
   - mô hình nhiễu tự đặt, **không phải dữ liệu radar thật**;
   - ba bộ ngưỡng radar: xuất xưởng, kiểu radar tự đo (sát nhiễu: phân vị 99 + 5), kiểu ESP32 học của bản ổn định;
   - **có số đo nhiễu:** 0 lần báo nhầm có người. Người ở 10 s rồi ra: trống sau 61 s. Người ngồi yên ở 3,75–6,75 m (năng lượng tĩnh khoảng 14–18 ± 5) được giữ suốt 20 phút với cả ba bộ ngưỡng;
@@ -439,7 +439,7 @@ idf.py -B build-esppresence -D IDF_TARGET=esp32c3 -D SDKCONFIG=sdkconfig.esppres
   - năng lượng của radar thật qua bộ xử lý; ngưỡng radar tự đo trong phòng thật;
   - radar tự đo ngay sau khi ESP32 tắt engineering mode;
   - ghi ngưỡng đã nâng vào radar thật ngay sau khi radar tự đo, và radar có tự đổi ngưỡng sau 0x000B hay không;
-  - phòng của báo lỗi: hết báo nhầm ở vùng 2, và người ngồi yên ở vùng 2 có còn được giữ (năng lượng tĩnh thật của người ở đó chưa biết);
+  - phòng thật có vùng nhiễu chạm ngưỡng radar: hết báo nhầm ở vùng đó, và người ngồi yên ở vùng đó có còn được giữ;
   - console trên bo của bạn, Hold time từ Home Assistant, các bước khôi phục radar, RAM và stack lúc chạy.
 - Các tham số mặc định là giá trị ban đầu, **cần chỉnh theo log trên bo thật** (mục **Hiệu chỉnh thực tế**).
 
@@ -961,14 +961,14 @@ I id_diag: nvs  entries used=... free=... available=... total=... namespaces=...
       - log `Recording the noise of the empty room on the ESP32 for 30 s`, rồi `The LD2410 measures the empty room itself`;
       - LED cyan sáng 20 s, nháy khoảng 100 s, rồi xanh lá; select về Off;
       - ngưỡng mới hiện trong HLKRadarTool và trong bảng `Thresholds from the radar`; `Noise of the empty room recorded (... reports) and saved`;
-      - xem log `Thresholds set by the radar`: radar có thật sự đổi ngưỡng sau lệnh 0x000B không (ảnh báo lỗi cho thấy ngưỡng vẫn là ngưỡng xuất xưởng);
-      - vùng có nhiễu chạm ngưỡng radar (ví dụ vùng 2 tĩnh của báo lỗi): `Gate 2 still: empty room noise ..., radar threshold 40 -> ...`, `Raised thresholds saved in the LD2410`; HLKRadarTool thấy ngưỡng đã nâng; bảng ngưỡng không còn `strong and hold raised` ở vùng đó;
+      - xem log `Thresholds set by the radar`: radar có thật sự đổi ngưỡng sau lệnh 0x000B không;
+      - vùng có nhiễu chạm ngưỡng radar (nếu có): `Gate N still: empty room noise ..., radar threshold ... -> ...`, `Raised thresholds saved in the LD2410`; HLKRadarTool thấy ngưỡng đã nâng; bảng ngưỡng không còn `strong and hold raised` ở vùng đó;
       - khởi động lại thì `Noise of the empty room loaded`;
       - lệnh tự đo 0x000B đã chạy trên radar thật với bản ổn định, nhưng **chưa thử ngay sau khi ESP32 tắt engineering mode** như ở biến thể này;
     - học khi có người đi lại trong phòng: radar đặt ngưỡng cao hoặc học thất bại (log `quiet_learn`); vùng có người đi lại có nhiễu cao (`hold raised above it`);
     - phòng trống vài giờ (quạt, máy lạnh chạy như bình thường): không có `Present: ...`; nếu có, log ghi vùng, năng lượng và ngưỡng `strong from` để chỉnh (mục **Hiệu chỉnh thực tế**, bước 5);
     - đi vào: `Present: ...` trong khoảng 0,5 s, Home Assistant báo có người;
-    - ngồi yên ở vùng có nhiễu cao (ví dụ 1,5–2,25 m trong báo lỗi): `DIAG_STREAM on`, cột `filt` của năng lượng tĩnh vùng đó phải đạt `hold`, nếu không thì vùng kề hay năng lượng chuyển động phải giữ người;
+    - ngồi yên ở vùng có nhiễu cao (nếu có): `DIAG_STREAM on`, cột `filt` của năng lượng tĩnh vùng đó phải đạt `hold`, nếu không thì vùng kề hay năng lượng chuyển động phải giữ người;
     - ngồi yên 10 phút ở chỗ xa nhất cần nhận (ví dụ 4–6 m): vẫn có người, `STATUS` báo `hold signal at gate ...`;
     - ra khỏi phòng: `Empty: no hold signal for 60 s` và Home Assistant hết người cùng lúc; quay lại trong lúc đếm thì đếm lại từ đầu;
     - đổi Hold time trên Home Assistant: log `Hold time N s`, thời gian tắt đổi theo;
