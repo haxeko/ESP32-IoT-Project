@@ -244,6 +244,10 @@ Kiểm tra rò tụ bulk là bước đầu tiên của checklist: đo dòng to�
 
 ### 3.1 Sơ đồ nguyên lý
 
+![Sơ đồ nguyên lý nút CR2032](docs/schematic.png)
+
+Bản vector: [`docs/schematic.svg`](docs/schematic.svg). Ảnh được vẽ bằng `tools/schematic.py` (`pip install schemdraw matplotlib`, rồi `python3 tools/schematic.py`); sửa mạch thì sửa script và chạy lại. Cùng sơ đồ ở dạng văn bản:
+
 ```
 NGUỒN
                           Q1 DMG2305UX (P-MOSFET, SOT-23)
@@ -597,7 +601,8 @@ matter-button-cr2032/
 │   └── thread_diag.h/.cpp          log Thread/SRP khi chưa ghép nối
 ├── test/host/                      host test máy trạng thái nút (17 kịch bản, chỉ cần g++)
 ├── tools/battery_model.py          mô hình pin (bảng mục 9)
-└── docs/test-checklist.md          checklist kiểm thử
+├── tools/schematic.py              vẽ sơ đồ nguyên lý (schemdraw) → docs/schematic.svg / .png
+└── docs/                           schematic.svg / .png (sơ đồ nguyên lý), test-checklist.md
 ```
 
 ### 7.2 Mô hình dữ liệu Matter
