@@ -25,7 +25,7 @@ Firmware: ESP-IDF v6.0.2 + esp-matter release/v1.6.1 (cùng Docker image với c
 9. [Bảng tính thời lượng pin](#9-bảng-tính-thời-lượng-pin)
 10. [Rủi ro và cách khắc phục](#10-rủi-ro-và-cách-khắc-phục)
 
-Kiểm thử: [`docs/test-checklist.md`](docs/test-checklist.md).
+Kiểm thử: [`docs/test-checklist.md`](docs/test-checklist.md). PCB KiCad và file sản xuất: [`hardware/`](hardware/README.md).
 
 Ký hiệu nguồn số liệu dùng trong toàn tài liệu: **[DS]** datasheet; **[ME]** số đo công bố của Espressif (esp-matter `examples/icd_app`, ESP32-H2 DevKitC); **[AS]** giả định / ước lượng, phải đo lại trên bo thật.
 
@@ -152,7 +152,7 @@ Nếu bắt buộc CR2032 và ≥ 6 tháng: dùng LIT (chỉ với Home Assistan
 
 ### 2.2 Đường nguồn
 
-- **Q1 DMG2305UX** nối kiểu "ideal diode": D về pin, S về VBAT, G xuống GND. Lắp đúng: diode thân dẫn trước, V_GS = −V_pin → FET mở. Lắp ngược: V_GS = 0, diode thân phân cực ngược → không có dòng. Cần thiết vì đế BU2032SM có tay giữ chạm mặt trên của pin: lắp úp pin thì mặt (−) chạm tay giữ (+).
+- **Q1 DMG2305UX** nối kiểu "ideal diode": D về pin, S về VBAT, G xuống GND. Lắp đúng: diode thân dẫn trước, V_GS = −V_pin → FET mở. Lắp ngược: V_GS = 0, diode thân phân cực ngược → không có dòng. Cần thiết vì tay giữ (+) của đế Keystone 3034 chạm mặt trên của pin: lắp úp pin thì mặt (−) chạm tay giữ (+), mặt (+) chạm pad GND.
 - **TPS63900** (theo mạch điển hình 3,3 V của datasheet, Hình 8-1 / Bảng 8-5):
   - CFG1 = **36,5 kΩ** và CFG2 = **0 Ω** → VO(2) = 3,3 V, giới hạn dòng vào **không giới hạn** (Bảng 7-2). Không dùng giới hạn dòng vào: tụ bulk đặt trước bộ chuyển đổi đã gánh xung; giới hạn thấp hơn dòng cần lúc pin yếu (68 mA ở 2,0 V) sẽ làm sụt 3,3 V. Muốn thử giới hạn 100 mA thì đổi R2 (CFG2) thành 511 Ω.
   - CFG3 = **16,2 kΩ** → VO(1) = 3,3 V (chân không được để hở; SEL nối VIN nên thực tế dùng VO(2)).
@@ -231,12 +231,14 @@ Kiểm tra rò tụ bulk là bước đầu tiên của checklist: đo dòng to�
 
 ### 2.7 Bố trí PCB và anten
 
-- PCB 2 lớp FR-4, khoảng **26 × 50 mm**. Module ở mép trên, **phần anten (7 mm đầu module) chìa ra ngoài mép bo** hoặc nằm trên khoét bo; không đồng, không đường mạch, không linh kiện dưới vùng anten ở mọi lớp (datasheet WROOM-02C, mục 11; ESP32-H2 Hardware Design Guidelines, *Positioning a Module on a Base Board*).
-- **Pin CR2032 (vỏ kim loại) và đế pin ở mặt dưới, nửa dưới bo, cách vùng anten ≥ 15 mm**. Kiểm tra lại bằng RSSI/LQI của parent khi đã lắp vỏ (checklist mục C).
-- TPS63900: vòng LX1–L1–LX2 ngắn, C3/C4 sát chân, via nhiệt dưới pad, điện trở CFG sát chân.
-- C1/C2 ngay sau Q1/JP1. Mặt phẳng GND liền ở lớp dưới (trừ vùng anten).
-- SW1 ở mép bo dưới phím của vỏ; R7/C8 sát chân GPIO10. D1 cạnh SW1 (ống dẫn sáng).
-- Pad nạp/debug ở mặt dưới theo lưới 1,27 mm (kẹp pogo-pin) hoặc footprint Tag-Connect TC2030-NL.
+PCB đã thiết kế bằng KiCad 9: **[`hardware/`](hardware/README.md)** (schematic, PCB đã đi dây, Gerber, BOM, file vị trí linh kiện; ERC và DRC sạch).
+
+- PCB 2 lớp FR-4 1,6 mm, **30 × 38 mm**. Module ở mép trên, **vùng anten (6 mm đầu module) chìa ra ngoài mép bo** → cả cụm 30 × 44 mm; không đồng, không đường mạch, không linh kiện dưới vùng anten (datasheet WROOM-02C, mục 11; ESP32-H2 Hardware Design Guidelines, *Positioning a Module on a Base Board*). Mặt phẳng GND hai lớp chạy tới sát mép bo ở chân anten.
+- **Pin CR2032 (vỏ kim loại) và đế pin ở mặt dưới, tâm cách mép anten 26 mm (mép pin cách ~16 mm)**. Kiểm tra lại bằng RSSI/LQI của parent khi đã lắp vỏ (checklist mục C).
+- TPS63900: C3 (VIN) và C4 (VOUT) sát chân trên lớp trên, L1 ngay dưới LX1/LX2, điện trở CFG sát chân; pad tản nhiệt nối chân GND 8 và hai via (TI: via trong pad là tùy chọn).
+- C1/C2 ngay sau Q1/JP1. Phủ đồng GND cả hai lớp, mỗi pad GND có via riêng.
+- SW1 ở giữa nửa dưới bo; R7/C8 (lọc RC) và R6 cạnh nút, GPIO10 đi ở lớp dưới. D1 sát mép dưới module (ống dẫn sáng).
+- 10 pad nạp/debug Ø1,5 mm ở mặt dưới, 2 hàng × 5 bước 2,54 mm (jig pogo-pin).
 
 ---
 
@@ -246,13 +248,13 @@ Kiểm tra rò tụ bulk là bước đầu tiên của checklist: đo dòng to�
 
 ![Sơ đồ nguyên lý nút CR2032](docs/schematic.png)
 
-Bản vector: [`docs/schematic.svg`](docs/schematic.svg). Ảnh được vẽ bằng `tools/schematic.py` (`pip install schemdraw matplotlib`, rồi `python3 tools/schematic.py`); sửa mạch thì sửa script và chạy lại. Cùng sơ đồ ở dạng văn bản:
+Schematic KiCad (dùng cho PCB): [`hardware/docs/schematic.pdf`](hardware/docs/schematic.pdf). Bản vector của ảnh trên: [`docs/schematic.svg`](docs/schematic.svg). Ảnh được vẽ bằng `tools/schematic.py` (`pip install schemdraw matplotlib`, rồi `python3 tools/schematic.py`); sửa mạch thì sửa script và chạy lại. Cùng sơ đồ ở dạng văn bản:
 
 ```
 NGUỒN
                           Q1 DMG2305UX (P-MOSFET, SOT-23)
   BT1 CR2032 (+) ───────── D ┤├ S ──── JP1 ────┬──────────────┬──────────────┬─────────────── VBAT
-  BU2032SM-HD-G             G                  │              │              │
+  Keystone 3034             G                  │              │              │
   BT1 (−) ── GND            └── GND            C1 220µF       C2 220µF       C3 10µF (sát U2)
                                                │ 1210 X5R     │              │
                                               GND            GND            GND
@@ -363,9 +365,9 @@ PAD NẠP / ĐO
 | R6 | 1 | 470 kΩ 1 % | RC0402FR-07470KL (Yageo) | 0402 | kéo lên nút |
 | R7, R8 | 2 | 1 kΩ 1 % | RC0402FR-071KL (Yageo) | 0402 | nút, LED |
 | R9 | 1 | 1 MΩ 1 % | RC0402FR-071ML (Yageo) | 0402 | đo pin |
-| SW1 | 1 | Nút nhấn SMD 250 gf | **PTS815 SJM 250 SMTR LFS** (C&K) | 4,2 × 3,2 mm | đổi theo cơ khí vỏ |
+| SW1 | 1 | Nút nhấn SMD 250 gf | **PTS810 SJM 250 SMTR LFS** (C&K) | 4,2 × 3,2 mm | đổi theo cơ khí vỏ |
 | D1 | 1 | LED đỏ | **KP-1608SURCK** (Kingbright) | 0603 | |
-| BT1 | 1 | Đế pin CR2032 SMD | **BU2032SM-HD-G** (MPD) hoặc 3034 (Keystone) | SMD | |
+| BT1 | 1 | Đế pin CR2032 SMD | **3034** (Keystone) | SMD, mặt dưới | đế khác (BU2032SM-HD-G…) cần đổi footprint |
 | — | 1 | Pin CR2032 | Panasonic / Energizer / Murata CR2032 | | dùng hãng có tên tuổi (SWRA349: pin không tên chỉ đạt ~50 % dung lượng khi tải xung) |
 | JP1, JP2 | 2 | Cầu hàn 2 pad | — | PCB | đo dòng |
 | TP1–TP10 | 10 | Pad thử | — | PCB | |
