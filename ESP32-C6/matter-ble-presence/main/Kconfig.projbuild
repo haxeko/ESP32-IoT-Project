@@ -1,0 +1,267 @@
+menu "BLE Presence x5"
+
+    menu "Device information"
+
+        config PRESENCE_VENDOR_NAME
+            string "Manufacturer (Basic Information VendorName)"
+            default "Haxeko"
+            help
+                Max 32 characters.
+
+        config PRESENCE_PRODUCT_NAME
+            string "Model (Basic Information ProductName)"
+            default "BLE Presence x5"
+            help
+                Max 32 characters.
+
+        config PRESENCE_DISCOVERY_NAME
+            string "Name advertised before commissioning (DNS-SD DN)"
+            default "BLE Presence"
+            help
+                Max 32 characters.
+
+    endmenu
+
+    menu "BOOT button"
+
+        config PRESENCE_BOOT_GPIO
+            int "GPIO of the BOOT button (-1: no button)"
+            range -1 30
+            default 9
+            help
+                ESP32-C6-DevKitC-1 and ESP32-C6-DevKitM-1: GPIO9 (BOOT, SW1), wired
+                straight to GND with no external pull-up and no debounce capacitor
+                (C13 not fitted, schematic v1.4). GPIO9 is a strapping pin: held low
+                while the chip resets it selects the ROM download mode, so the
+                firmware only sees presses made while it is running. On the
+                DevKitC-1 the USB-UART auto-download circuit (DTR/RTS) can also pull
+                GPIO9 low when a terminal opens the UART port.
+
+        config PRESENCE_BOOT_ACTIVE_LOW
+            bool "Pressed when the pin is low"
+            default y
+
+        config PRESENCE_BOOT_PULLUP
+            bool "Enable the internal pull-up"
+            default y
+            help
+                The DevKit boards have no external pull-up on GPIO9.
+
+        config PRESENCE_BOOT_DEBOUNCE_MS
+            int "Debounce (ms)"
+            range 20 100
+            default 40
+
+        config PRESENCE_BOOT_POLL_MS
+            int "Polling period (ms)"
+            range 5 20
+            default 10
+
+        config PRESENCE_BOOT_CLICK_WINDOW_MS
+            int "Three clicks must complete within (ms)"
+            range 1000 4000
+            default 2000
+            help
+                From the first press to the third release.
+
+        config PRESENCE_BOOT_CLICK_MAX_PRESS_MS
+            int "Longest press that still counts as a click (ms)"
+            range 200 2000
+            default 800
+            help
+                A longer press is a hold: it never counts as one or more clicks
+                and it cancels the clicks counted so far.
+
+    endmenu
+
+    menu "CONFIG mode (SoftAP and web page)"
+
+        config PRESENCE_CONFIG_IDLE_TIMEOUT_MIN
+            int "Back to NORMAL after this many minutes without interaction"
+            range 2 60
+            default 10
+            help
+                Interaction: loading the page, a button or a field of the page.
+                The periodic status/scan polls of an open page do not count, so a
+                forgotten phone cannot keep the device away from Matter.
+
+        config PRESENCE_AP_SSID_PREFIX
+            string "SoftAP SSID prefix"
+            default "VN-Presence-"
+            help
+                Followed by the last 4 hex digits of the SoftAP MAC address, e.g.
+                "VN-Presence-3A7C". Max 27 characters.
+
+        config PRESENCE_AP_PASSWORD
+            string "SoftAP password (empty: random per-device password)"
+            default ""
+            help
+                WPA2 passphrase of 8-63 printable characters, the same on every
+                device built with it. Empty (default): each device creates a random
+                12 character password once, keeps it in the app_cfg partition and
+                prints it on the serial console at every boot. The SoftAP is never
+                open.
+
+        config PRESENCE_AP_CHANNEL
+            int "SoftAP Wi-Fi channel"
+            range 1 13
+            default 1
+
+        config PRESENCE_AP_MAX_CONNECTIONS
+            int "Maximum SoftAP stations"
+            range 1 4
+            default 2
+
+        config PRESENCE_CONFIG_SCAN_INTERVAL_MS
+            int "BLE scan interval in CONFIG mode (ms)"
+            range 20 10240
+            default 100
+
+        config PRESENCE_CONFIG_SCAN_WINDOW_MS
+            int "BLE scan window in CONFIG mode (ms)"
+            range 10 PRESENCE_CONFIG_SCAN_INTERVAL_MS
+            default 50
+            help
+                Wi-Fi SoftAP with a connected phone and BLE scanning share the one
+                radio (coexistence "C1" in the ESP-IDF table for the ESP32-C6): a
+                window well below the interval leaves time to the web page.
+
+        config PRESENCE_CONFIG_ACTIVE_SCAN
+            bool "Active scanning in CONFIG mode (beacon names from scan responses)"
+            default y
+            help
+                Sends scan requests so beacons that put their name in the scan
+                response show it in the list. NORMAL mode always scans passively.
+
+        config PRESENCE_SCAN_CACHE_SIZE
+            int "Beacons kept in the CONFIG mode list"
+            range 8 64
+            default 32
+            help
+                When full, the beacon heard least recently is replaced.
+
+        config PRESENCE_SCAN_CACHE_EXPIRE_SEC
+            int "Remove a beacon from the list after this many seconds unheard"
+            range 10 600
+            default 120
+
+    endmenu
+
+    menu "BLE scanning (NORMAL mode)"
+
+        config PRESENCE_SCAN_INTERVAL_MS
+            int "Default scan interval (ms)"
+            range 20 10240
+            default 160
+            help
+                Default of the value set on the configuration page. The controller
+                listens for scan window ms every scan interval ms, on one of the
+                three advertising channels in turn (HCI unit 0.625 ms; the firmware
+                converts). Chance to hear one advertising event ~ window/interval.
+
+        config PRESENCE_SCAN_WINDOW_MS
+            int "Default scan window (ms)"
+            range 10 PRESENCE_SCAN_INTERVAL_MS
+            default 40
+            help
+                40 ms of 160 ms: the radio scans 25 % of the time and Thread keeps the
+                rest. BLE scanning next to a Thread end device is "C1, supported but
+                the performance is unstable" in the ESP-IDF coexistence table for the
+                ESP32-C6, and 802.15.4 reception has the lowest priority: a larger
+                window hears beacons sooner but costs Thread frames. Never the whole
+                interval by default.
+
+        config PRESENCE_SCAN_RESUME_DELAY_SEC
+            int "Scanning resumes this long after Thread attaches or commissioning ends (s)"
+            range 0 120
+            default 10
+            help
+                Leaves the radio to Thread while the device registers its services
+                (SRP) and the controllers set up their sessions and subscriptions.
+
+        config PRESENCE_SCAN_WATCHDOG_SEC
+            int "Restart scanning when no advertisement at all arrives for (s), 0: never"
+            range 0 3600
+            default 120
+
+        config PRESENCE_REPORT_THROTTLE_MS
+            int "At most one report per slot to the presence task every (ms)"
+            range 0 2000
+            default 250
+            help
+                Every advertisement of a slot's beacon is matched, but the BLE host
+                task forwards at most one per period (with the strongest RSSI seen
+                in it), so a beacon advertising every 20 ms cannot flood the queue.
+                Far below any absence timeout.
+
+    endmenu
+
+    menu "Presence"
+
+        config PRESENCE_DEFAULT_TIMEOUT_SEC
+            int "Default absence timeout (s)"
+            range 10 3600
+            default 45
+            help
+                No valid packet for this long turns a slot off. It must cover many
+                advertising intervals of the beacon and the scan duty cycle: a
+                beacon advertising every 10 s can start at 45-60 s.
+
+        config PRESENCE_DEFAULT_RSSI_THRESHOLD
+            int "Default RSSI threshold of the optional filter (dBm)"
+            range -100 -20
+            default -80
+
+        config PRESENCE_DEFAULT_RSSI_HYSTERESIS
+            int "Default RSSI hysteresis of the optional filter (dB)"
+            range 0 20
+            default 5
+
+        config PRESENCE_ALLOW_DUPLICATE_BEACON
+            bool "Allow one beacon in several slots"
+            default n
+            help
+                Off: saving refuses a beacon (address and type) assigned to two
+                enabled slots.
+
+        config PRESENCE_CFG_PARTITION
+            string "NVS partition of the beacon configuration"
+            default "app_cfg"
+            help
+                Its own partition (partitions.csv), never the "nvs" partition of
+                the Matter fabrics and the Thread dataset.
+
+    endmenu
+
+    menu "Matter"
+
+        choice PRESENCE_OCCUPANCY_FEATURE
+            prompt "Occupancy Sensing feature"
+            default PRESENCE_OCCUPANCY_FEATURE_RF_SENSING
+            help
+                The sensing modality declared in the FeatureMap of the Occupancy
+                Sensing cluster (one is mandatory). Matter 1.6.1 defines RFSensing as
+                "sensing using analysis of radio signals, e.g.: RSSI, CSI and/or any
+                other metric from the signal", which is what receiving a beacon's
+                advertisements is. Other: "a modality not listed in the other bits".
+                PIR is not offered: the device has no infrared sensor.
+
+            config PRESENCE_OCCUPANCY_FEATURE_RF_SENSING
+                bool "RF Sensing"
+
+            config PRESENCE_OCCUPANCY_FEATURE_OTHER
+                bool "Other"
+
+        endchoice
+
+    endmenu
+
+    config PRESENCE_DIAG_PERIOD_SEC
+        int "Diagnostics log period (s), 0: off"
+        range 0 3600
+        default 60
+        help
+            Heap, scanner counters, per-slot packets and states, Thread role and
+            counters (NORMAL), SoftAP stations and list size (CONFIG).
+
+endmenu

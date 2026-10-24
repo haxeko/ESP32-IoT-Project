@@ -1,0 +1,4 @@
+dependencies:
+  # JSON requests of the configuration page (web_server.cpp). esp_matter of esp-matter v1.6.1 already depends on
+  # espressif/cjson "^1.7.19"; same constraint here so both resolve to one copy.
+  espressif/cjson: "^1.7.19"
