@@ -18,7 +18,8 @@
 //   POST /api/keepalive     the user is still on the page
 //   POST /api/format        {"confirm":"FORMAT"}: erase the app_cfg partition (only when it is unusable/unreadable)
 //
-// Request bodies are limited (4 KB for the configuration, 256 bytes otherwise) and rejected with 413 beyond.
+// Only requests to the SoftAP address are served (403 otherwise) and every POST must be application/json (415),
+// see http_guard.h. Request bodies are limited (2 KB for the configuration, 256 bytes otherwise; 413 beyond).
 // Every value is checked again here whatever the page did; text sent back is JSON-escaped (json_escape()).
 // Requests with ?auto=1 (periodic polls) do not count as interaction for the idle timeout.
 

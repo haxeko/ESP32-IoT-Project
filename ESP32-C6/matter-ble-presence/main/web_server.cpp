@@ -29,6 +29,7 @@
 #include "ble_addr.h"
 #include "ble_scanner.h"
 #include "config_store.h"
+#include "http_guard.h"
 #include "json_util.h"
 #include "presence_config.h"
 #include "scan_cache.h"
@@ -36,10 +37,18 @@
 
 static const char *TAG = "web";
 
+// cJSON recurses once per nesting level of a request body, on the stack of this server task (8 KB): the default
+// limit of 1000 lets a body of a few hundred "[" overflow it and reset the device. The API nests 3 levels deep.
+#if CONFIG_CJSON_NESTING_LIMIT > 32
+#error "Set CONFIG_CJSON_NESTING_LIMIT to 32 or less (sdkconfig.defaults: 16), then run idf.py reconfigure"
+#endif
+
 extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_end");
 
-static constexpr size_t kMaxConfigBody = 4096;
+// The page sends at most about 1.3 KB (5 slots, 48-byte labels). Each JSON value costs cJSON about 50 bytes of
+// heap while parsing: the limit also bounds that (2 KB of "[0,0,..." -> about 50 KB).
+static constexpr size_t kMaxConfigBody = 2048;
 static constexpr size_t kMaxSmallBody = 256;
 static constexpr size_t kMaxErrors = 24;
 #if CONFIG_PRESENCE_ALLOW_DUPLICATE_BEACON
@@ -49,6 +58,7 @@ static constexpr bool kAllowDuplicates = false;
 #endif
 
 static web_server_info_t s_info;
+static char s_host[WIFI_CONFIG_IP_SIZE]; // the only Host served (SoftAP address)
 // The server runs one handler at a time (one task): these buffers are shared by the handlers.
 static char *s_body;           // kMaxConfigBody + 1
 static scan_entry_t *s_beacons; // CONFIG_PRESENCE_SCAN_CACHE_SIZE
@@ -170,6 +180,31 @@ static void note_activity(httpd_req_t *req)
     app_mode_note_activity();
 }
 
+// Every handler starts here (http_guard.h): the Host must be the SoftAP address (DNS rebinding) and a POST must be
+// application/json (no request from a page of another site). A refused request gets its answer, then the
+// connection is closed (the handler returns ESP_FAIL) so an unread body is never parsed as the next request.
+static bool request_allowed(httpd_req_t *req)
+{
+    char value[64];
+    if (httpd_req_get_hdr_value_str(req, "Host", value, sizeof(value)) != ESP_OK ||
+        !http_host_allowed(value, s_host)) {
+        char message[96];
+        snprintf(message, sizeof(message), "Hãy mở trang bằng địa chỉ http://%s", s_host);
+        send_message(req, "403 Forbidden", false, message);
+        return false;
+    }
+    if (req->method == HTTP_POST) {
+        const bool json = httpd_req_get_hdr_value_str(req, "Content-Type", value, sizeof(value)) == ESP_OK &&
+                          http_content_type_is_json(value);
+        if (!json) {
+            send_message(req, "415 Unsupported Media Type", false,
+                         "Chỉ nhận dữ liệu JSON (Content-Type: application/json)");
+            return false;
+        }
+    }
+    return true;
+}
+
 // Reads the whole body into buf (NUL-terminated). Larger than max: 413 and the connection is closed (the
 // handler returns ESP_FAIL so the unread bytes are never parsed as a request).
 static esp_err_t read_body(httpd_req_t *req, char *buf, size_t max, size_t *len)
@@ -200,6 +235,9 @@ static esp_err_t read_body(httpd_req_t *req, char *buf, size_t max, size_t *len)
 
 static esp_err_t index_get(httpd_req_t *req)
 {
+    if (!request_allowed(req)) {
+        return ESP_FAIL;
+    }
     app_mode_note_activity();
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     common_headers(req);
@@ -221,6 +259,9 @@ static esp_err_t favicon_get(httpd_req_t *req)
 
 static esp_err_t status_get(httpd_req_t *req)
 {
+    if (!request_allowed(req)) {
+        return ESP_FAIL;
+    }
     note_activity(req);
     ble_scanner_stats_t scan;
     ble_scanner_get_stats(&scan);
@@ -277,6 +318,9 @@ static bool same_ibeacon_id(const ibeacon_t &a, const ibeacon_t &b)
 
 static esp_err_t scan_get(httpd_req_t *req)
 {
+    if (!request_allowed(req)) {
+        return ESP_FAIL;
+    }
     note_activity(req);
     int64_t now = 0;
     const size_t n = scan_cache_snapshot(s_beacons, CONFIG_PRESENCE_SCAN_CACHE_SIZE, &now);
@@ -312,6 +356,9 @@ static esp_err_t scan_get(httpd_req_t *req)
 
 static esp_err_t scan_post(httpd_req_t *req)
 {
+    if (!request_allowed(req)) {
+        return ESP_FAIL;
+    }
     app_mode_note_activity();
     size_t len = 0;
     if (read_body(req, s_body, kMaxSmallBody, &len) != ESP_OK) {
@@ -361,6 +408,9 @@ static void write_config(JsonOut &out, const presence_config_t &cfg)
 
 static esp_err_t config_get(httpd_req_t *req)
 {
+    if (!request_allowed(req)) {
+        return ESP_FAIL;
+    }
     note_activity(req);
     presence_config_t cfg;
     config_store_get(&cfg);
@@ -552,6 +602,9 @@ static esp_err_t send_errors(httpd_req_t *req, const Errors &errors)
 
 static esp_err_t config_post(httpd_req_t *req)
 {
+    if (!request_allowed(req)) {
+        return ESP_FAIL;
+    }
     app_mode_note_activity();
     size_t len = 0;
     if (read_body(req, s_body, kMaxConfigBody, &len) != ESP_OK) {
@@ -599,6 +652,9 @@ static esp_err_t config_post(httpd_req_t *req)
 
 static esp_err_t restart_post(httpd_req_t *req)
 {
+    if (!request_allowed(req)) {
+        return ESP_FAIL;
+    }
     size_t len = 0;
     if (read_body(req, s_body, kMaxSmallBody, &len) != ESP_OK) {
         return ESP_FAIL;
@@ -611,6 +667,9 @@ static esp_err_t restart_post(httpd_req_t *req)
 
 static esp_err_t keepalive_post(httpd_req_t *req)
 {
+    if (!request_allowed(req)) {
+        return ESP_FAIL;
+    }
     app_mode_note_activity();
     size_t len = 0;
     if (read_body(req, s_body, kMaxSmallBody, &len) != ESP_OK) {
@@ -624,6 +683,9 @@ static esp_err_t keepalive_post(httpd_req_t *req)
 
 static esp_err_t format_post(httpd_req_t *req)
 {
+    if (!request_allowed(req)) {
+        return ESP_FAIL;
+    }
     app_mode_note_activity();
     size_t len = 0;
     if (read_body(req, s_body, kMaxSmallBody, &len) != ESP_OK) {
@@ -654,6 +716,11 @@ static esp_err_t format_post(httpd_req_t *req)
 esp_err_t web_server_start(const web_server_info_t *info)
 {
     s_info = *info;
+    wifi_config_ip(s_host);
+    if (s_host[0] == '\0') {
+        ESP_LOGE(TAG, "SoftAP address unknown: web server not started");
+        return ESP_ERR_INVALID_STATE;
+    }
     s_body = static_cast<char *>(malloc(kMaxConfigBody + 1));
     s_beacons = static_cast<scan_entry_t *>(calloc(CONFIG_PRESENCE_SCAN_CACHE_SIZE, sizeof(scan_entry_t)));
     if (s_body == nullptr || s_beacons == nullptr) {
@@ -693,7 +760,7 @@ esp_err_t web_server_start(const web_server_info_t *info)
             return err;
         }
     }
-    ESP_LOGI(TAG, "Configuration page at http://192.168.4.1 (%u bytes)",
+    ESP_LOGI(TAG, "Configuration page at http://%s (%u bytes)", s_host,
              static_cast<unsigned>(index_html_end - index_html_start));
     return ESP_OK;
 }

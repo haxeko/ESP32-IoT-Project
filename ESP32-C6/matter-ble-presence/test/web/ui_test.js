@@ -53,7 +53,7 @@ const beacons = [
     if (url.pathname === '/api/scan' && req.method() === 'GET') return json({ beacons });
     if (url.pathname === '/api/config' && req.method() === 'GET') return json(config);
     if (req.method() === 'POST') {
-      posts.push({ path: url.pathname, body: req.postData() });
+      posts.push({ path: url.pathname, body: req.postData(), type: req.headers()['content-type'] || '' });
       if (url.pathname === '/api/config') return json({ ok: true, message: 'Đã lưu và đọc lại kiểm tra thành công.' });
       return json({ ok: true, message: 'ok', idle_left_s: 600 });
     }
@@ -124,6 +124,17 @@ const beacons = [
 
   // Keepalive happens on interaction (not on the periodic polls)
   check(posts.some(p => p.path === '/api/keepalive'), 'keepalive sent on user interaction');
+  // The device refuses a POST that is not application/json (blocks requests from pages of other sites)
+  check(posts.every(p => p.type.startsWith('application/json')), 'every POST is sent as application/json');
+
+  // A scan refresh while a "Gán vào…" picker is open must not rebuild the list (it closes the picker on phones)
+  const picker = (await page.$$('.beacon select'))[2];
+  await picker.focus();
+  await page.waitForTimeout(2500); // more than one scan poll (2 s)
+  check(await picker.evaluate(e => e.isConnected), 'beacon list not rebuilt while a picker has focus');
+  await page.evaluate(() => document.activeElement.blur());
+  await page.waitForTimeout(100);
+  check(!(await picker.evaluate(e => e.isConnected)), 'beacon list refreshed once the picker is left');
 
   if (out) await page.screenshot({ path: path.join(out, 'config_page_mobile.png'), fullPage: true });
 

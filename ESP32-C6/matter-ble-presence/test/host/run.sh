@@ -21,6 +21,7 @@ $CXX $FLAGS -o "$OUT/app_mode" test_app_mode.cpp $MAIN/app_mode_logic.cpp $MAIN/
 $CXX $FLAGS -o "$OUT/presence_config" test_presence_config.cpp $MAIN/presence_config.cpp $MAIN/ble_addr.cpp \
     $MAIN/json_util.cpp $MAIN/crc32.cpp
 $CXX $FLAGS -o "$OUT/json_util" test_json_util.cpp $MAIN/json_util.cpp
+$CXX $FLAGS -o "$OUT/http_guard" test_http_guard.cpp $MAIN/http_guard.cpp
 if [ -f test_config_store.cpp ]; then
     $CXX $FLAGS -o "$OUT/config_store" test_config_store.cpp fake_nvs.cpp $MAIN/config_store.cpp \
         $MAIN/presence_config.cpp $MAIN/ble_addr.cpp $MAIN/json_util.cpp $MAIN/crc32.cpp

@@ -21,6 +21,8 @@
 
 static const char *TAG = "wifi_config";
 
+static esp_netif_t *s_netif;
+
 void wifi_config_ssid(char ssid[WIFI_CONFIG_SSID_SIZE])
 {
     uint8_t mac[6] = {};
@@ -56,7 +58,8 @@ esp_err_t wifi_config_start(const char *password)
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         return err;
     }
-    if (esp_netif_create_default_wifi_ap() == nullptr) {
+    s_netif = esp_netif_create_default_wifi_ap();
+    if (s_netif == nullptr) {
         return ESP_FAIL;
     }
 
@@ -88,10 +91,20 @@ esp_err_t wifi_config_start(const char *password)
         err = esp_wifi_start();
     }
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "SoftAP \"%s\" on channel %d (WPA2), page at http://192.168.4.1", ssid,
-                 CONFIG_PRESENCE_AP_CHANNEL);
+        char ip[WIFI_CONFIG_IP_SIZE];
+        wifi_config_ip(ip);
+        ESP_LOGI(TAG, "SoftAP \"%s\" on channel %d (WPA2), page at http://%s", ssid, CONFIG_PRESENCE_AP_CHANNEL, ip);
     }
     return err;
+}
+
+void wifi_config_ip(char ip[WIFI_CONFIG_IP_SIZE])
+{
+    esp_netif_ip_info_t info = {};
+    ip[0] = '\0';
+    if (s_netif != nullptr && esp_netif_get_ip_info(s_netif, &info) == ESP_OK) {
+        snprintf(ip, WIFI_CONFIG_IP_SIZE, IPSTR, IP2STR(&info.ip));
+    }
 }
 
 int wifi_config_station_count(void)

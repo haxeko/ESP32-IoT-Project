@@ -116,7 +116,7 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px;margin-top:8px
 const SLOTS = 5;
 let cfg = null, limits = {}, defaults = {}, allowDup = false;
 let beacons = [], dirty = false, stopped = false, restarting = false;
-let idleLeft = null, lastKeepalive = 0, userStopped = false;
+let idleLeft = null, lastKeepalive = 0, userStopped = false, beaconsStale = false;
 
 const $ = id => document.getElementById(id);
 function el(tag, props, ...kids) {
@@ -228,6 +228,9 @@ async function refreshScan() {
 
 function renderBeacons() {
   const list = $("beaconList");
+  // Rebuilding the list closes a "Gán vào…" picker the user has open (phones): wait until it is left.
+  if (list.contains(document.activeElement)) { beaconsStale = true; return; }
+  beaconsStale = false;
   list.replaceChildren();
   if (beacons.length === 0) {
     list.append(el("div", {class: "small", text: userStopped ? "Đang dừng quét." : "Chưa nghe thấy iBeacon nào. Kiểm tra beacon đã bật và ở gần."}));
@@ -239,7 +242,7 @@ function renderBeacons() {
     const sel = el("select", {"aria-label": "Gán beacon vào slot"});
     sel.append(el("option", {value: "", text: assigned >= 0 ? "Đã gán: Presence " + (assigned + 1) : "Gán vào…"}));
     for (let i = 0; i < SLOTS; i++) sel.append(el("option", {value: String(i), text: "Presence " + (i + 1)}));
-    sel.addEventListener("change", () => { if (sel.value !== "") assignBeacon(Number(sel.value), b); sel.value = ""; });
+    sel.addEventListener("change", () => { if (sel.value !== "") assignBeacon(Number(sel.value), b); sel.value = ""; sel.blur(); });
     const warn = [];
     if (!b.stable) warn.push(el("div", {class: "warnt", text: "⚠ Địa chỉ ngẫu nhiên thay đổi theo thời gian: nhận diện theo MAC sẽ không bền vững."}));
     if (b.same_id_other_mac) warn.push(el("div", {class: "warnt", text: "⚠ Cùng UUID/Major/Minor xuất hiện với MAC khác: beacon có thể đổi địa chỉ."}));
@@ -507,6 +510,7 @@ function keepalive() {
 }
 
 // ---- Start -------------------------------------------------------------------------------------------------------
+$("beaconList").addEventListener("focusout", () => setTimeout(() => { if (beaconsStale) renderBeacons(); }, 0));
 $("btnSave").addEventListener("click", save);
 $("btnRestart").addEventListener("click", restart);
 $("btnScan").addEventListener("click", toggleScan);

@@ -125,8 +125,11 @@ static const char *device_type_name(ConnectivityManager::ThreadDeviceType type)
     }
 }
 
-// Matter task
-static void on_server_ready()
+// Matter task, once, right after esp_matter::start() (Server::Init done, fabrics loaded). kServerReady is not used
+// for this: on a Thread-only build it waits for DNS-SD, i.e. for an SRP server to answer, which cannot happen before
+// commissioning (no Thread network yet: the pairing codes would never be printed) and never happens while the SRP
+// server of the Border Router is unreachable (the scanner would stay paused).
+static void on_matter_started(intptr_t)
 {
     // MTD build: Minimal End Device keeps the receiver on when idle (no polling delay; the device is mains
     // powered). It is the OpenThread default for an MTD, set explicitly so a future SDK default cannot change it.
@@ -169,10 +172,6 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t)
 {
     namespace DeviceEventType = chip::DeviceLayer::DeviceEventType;
     switch (event->Type) {
-    case DeviceEventType::kServerReady:
-        on_server_ready();
-        break;
-
     case DeviceEventType::kCommissioningSessionStarted:
         ESP_LOGI(TAG, "Commissioning session started: scanner paused");
         ble_scanner_pause(SCAN_PAUSE_COMMISSIONING);
@@ -333,6 +332,9 @@ esp_err_t matter_device_start(void)
         return err;
     }
     s_started = true;
+    if (chip::DeviceLayer::PlatformMgr().ScheduleWork(on_matter_started) != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Cannot schedule the start-up work: beacon scanning stays paused");
+    }
 
 #if CONFIG_ENABLE_CHIP_SHELL
     esp_matter::console::diagnostics_register_commands();

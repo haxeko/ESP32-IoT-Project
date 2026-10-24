@@ -78,6 +78,9 @@ CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
 
 # Configuration web server: phones send long headers (cookies, Accept-Language)
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+# cJSON recurses once per nesting level, on the stack of the web server task: with the default limit (1000) a
+# body of a few hundred "[" overflows that stack and resets the device. The API nests 3 levels deep.
+CONFIG_CJSON_NESTING_LIMIT=16
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Matter

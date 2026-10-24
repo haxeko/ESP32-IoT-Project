@@ -131,12 +131,13 @@ lạ khi mở cổng, hãy tắt điều khiển DTR/RTS hoặc xem log qua cổ
 | `presence_manager.*`, `presence_logic.*` | Lọc MAC trong callback BLE → hàng đợi giới hạn → task hiện diện → báo Matter |
 | `scan_cache.*` | Danh sách iBeacon ở CONFIG (gộp trùng, giới hạn 32, loại bản ghi cũ) |
 | `presence_config.*`, `config_store.*`, `crc32.*` | Cấu hình 5 slot: mặc định, kiểm tra, blob có version + CRC, NVS phân vùng riêng |
-| `wifi_config.*`, `web_server.*`, `web/index.html` | SoftAP WPA2, HTTP server + API JSON, trang tiếng Việt nhúng |
+| `wifi_config.*`, `web_server.*`, `http_guard.*`, `web/index.html` | SoftAP WPA2, HTTP server + API JSON (chỉ nhận `Host` đúng và POST JSON), trang tiếng Việt nhúng |
 | `matter_device.*` | Node Matter, 5 endpoint, Thread MED, cổng chặn scanner theo sự kiện Matter/Thread, cập nhật Occupancy |
 | `diag.*` | Log chẩn đoán định kỳ (heap, scanner, từng slot, bộ đếm Thread) |
 
 Các module thuần logic (`click_detector`, `presence_logic`, `ibeacon_parser`, `ble_addr`, `presence_config`,
-`app_mode_logic`, `json_util`, `crc32`, `config_store` với NVS giả lập) không phụ thuộc ESP-IDF và có host test.
+`app_mode_logic`, `json_util`, `http_guard`, `crc32`, `config_store` với NVS giả lập) không phụ thuộc ESP-IDF và có
+host test.
 
 ### Mô hình dữ liệu Matter
 
@@ -277,7 +278,9 @@ Mỗi slot: `enabled`, `label`, MAC + loại địa chỉ (`public`, `random`, h
   flash**.
 * Trong callback BLE (host task NimBLE): chỉ so MAC với bảng 5 slot bất biến, giải mã khung, rồi đẩy tối đa 1 bản
   ghi/slot mỗi 250 ms (`PRESENCE_REPORT_THROTTLE_MS`, giữ RSSI mạnh nhất) vào hàng đợi 32 phần tử với timeout 0;
-  tràn thì đếm (`queue_drops`). Task hiện diện xử lý hết hàng đợi **trước** khi xét timeout.
+  tràn thì đếm (`queue_drops`). Task hiện diện xử lý hết hàng đợi **trước** khi xét timeout. Gói đầu tiên sau một
+  khoảng im lặng đi ngay; các gói trong 250 ms sau đó chỉ được gộp và gửi cùng gói kế tiếp, nên khi beacon im hẳn,
+  những gói của 250 ms cuối không được tính: OFF có thể sớm tối đa 0,25 s (không đáng kể với timeout ≥ 10 s).
 
 Chọn timeout: phải lớn hơn **nhiều** chu kỳ phát của beacon, xem bảng ở mục coexistence (ví dụ beacon 1 s → 45 s là
 dư; beacon 10 s cần cân nhắc như đã nêu).
@@ -410,9 +413,15 @@ Home hay Home Assistant trong phiên này — xem [cần thử](#đã-xác-minh-
 7. **Khởi động lại về chế độ Matter**: thiết bị trả lời HTTP trước rồi mới khởi động lại (chờ 1 s). Không bấm thì sau 10
    phút không thao tác cũng tự về.
 
-API JSON (giới hạn 4 KB cho cấu hình, 256 byte cho lệnh khác; vượt → 413): `GET /api/status`, `GET/POST /api/scan`,
+API JSON (giới hạn 2 KB cho cấu hình, 256 byte cho lệnh khác; vượt → 413): `GET /api/status`, `GET/POST /api/scan`,
 `GET/POST /api/config`, `POST /api/restart`, `POST /api/keepalive`, `POST /api/format`. Mọi chuỗi trả về được escape
-JSON (cả `<`, `>`, `&`, `'`); trang chèn dữ liệu bằng `textContent`, không `innerHTML`.
+JSON (cả `<`, `>`, `&`, `'`); trang chèn dữ liệu bằng `textContent`, không `innerHTML`. JSON lồng tối đa 16 cấp
+(`CONFIG_CJSON_NESTING_LIMIT`; mặc định 1000 của cJSON cho phép vài trăm dấu `[` làm tràn stack task web).
+
+Chống trang web khác (điện thoại nối SoftAP vẫn có thể lướt Internet bằng 4G): thiết bị chỉ trả lời request có
+`Host` đúng địa chỉ SoftAP (`192.168.4.1`, chống DNS rebinding; sai → 403) và mọi POST phải có
+`Content-Type: application/json` (sai → 415). Trình duyệt chỉ gửi kiểu đó sang trang khác sau khi hỏi bằng `OPTIONS`
+(CORS preflight), mà thiết bị không trả lời `OPTIONS`, nên trang lạ không đổi được cấu hình hay khởi động lại thiết bị.
 
 ---
 
@@ -433,6 +442,7 @@ ESP32-C6/matter-ble-presence/test/host/run.sh      # g++ ≥ 9, chạy với Add
 | `test_app_mode` | cờ RTC chỉ hợp lệ sau reset phần mềm, một lần, bị hỏng → NORMAL, 100 000 mẫu RTC ngẫu nhiên không bao giờ vào CONFIG |
 | `test_presence_config` | mặc định (cửa sổ < chu kỳ), mọi lỗi trường, trùng beacon (any/public/random, slot tắt), nhãn UTF-8, blob round-trip, **mọi bit lật bị phát hiện**, version mới hơn, magic sai |
 | `test_json_util` | escape JSON/HTML (`<script>`), UTF-8 hợp lệ/không hợp lệ, cắt không vỡ chuỗi |
+| `test_http_guard` | chỉ nhận `Host` = địa chỉ SoftAP (có/không `:80`; từ chối tên miền khác, `192.168.4.10`, `:8080`), POST phải là `application/json` (từ chối `text/plain`, form, `application/jsonp`…) |
 | `test_config_store` | NVS giả lập: lần đầu, lưu + đọc lại, **lưu lỗi (set/commit/open) giữ cấu hình cũ**, đọc lại không khớp, blob hỏng → mặc định và giữ dữ liệu, phân vùng `NO_FREE_PAGES`/`NEW_VERSION_FOUND` **không tự xóa**, định dạng theo yêu cầu, mật khẩu SoftAP; khẳng định **không bao giờ gọi `nvs_flash_erase()` và không chạm phân vùng khác** |
 
 ### Kiểm thử trang web (trình duyệt headless, API giả lập)
@@ -444,11 +454,13 @@ node ui_test.js                 # tùy chọn: node ui_test.js ../../main/web/in
 ```
 
 `ui_test.js` mở đúng file `main/web/index.html` được nhúng vào firmware trong Chromium (khung 390×844, cảm ứng),
-trả lời các API `/api/*` bằng dữ liệu giả và kiểm tra 29 điểm: tên beacon chứa `<img onerror=…>` chỉ hiện dạng chữ
+trả lời các API `/api/*` bằng dữ liệu giả và kiểm tra 32 điểm: tên beacon chứa `<img onerror=…>` chỉ hiện dạng chữ
 (không chèn phần tử, không chạy script), cảnh báo RPA, nạp cấu hình đã lưu, gán beacon từ danh sách (điền MAC + loại
 địa chỉ, bật slot), **từ chối gán một beacon cho hai slot** kèm tên slot đang dùng, MAC nhập tay sai/trùng bị chặn và
 không gửi gì lên thiết bị, timeout ngoài khoảng, cảnh báo chu kỳ quét > 50%, nội dung lệnh lưu (MAC chuẩn hóa
-`AA:BB:CC:DD:EE:FF`, số nguyên, đủ 5 slot), keepalive khi có thao tác, nút khởi động lại. Kết quả trong phiên này:
+`AA:BB:CC:DD:EE:FF`, số nguyên, đủ 5 slot), keepalive khi có thao tác, **mọi POST gửi `application/json`**,
+**danh sách beacon không bị dựng lại khi đang mở ô "Gán vào…"** (trên điện thoại việc dựng lại sẽ đóng ô chọn), nút
+khởi động lại. Kết quả trong phiên này:
 `UI checks passed` (Playwright 1.63.0, Node 22). Test này không thay cho thử trên điện thoại thật nối vào SoftAP.
 
 ### Kết quả build thực tế
@@ -457,16 +469,16 @@ Chạy trong `espressif/esp-matter:release-v1.6.1_idf_v6.0.2` (các commit ở �
 [Build](#build): `idf.py set-target esp32c6` rồi `idf.py build`.
 
 ```
-matter_ble_presence.bin binary size 0x1fa8a0 bytes. Smallest app partition is 0x3a0000 bytes. 0x1a5760 bytes (45%) free.
+matter_ble_presence.bin binary size 0x1faee0 bytes. Smallest app partition is 0x3a0000 bytes. 0x1a5120 bytes (45%) free.
 Project build complete.
 ```
 
 | Hạng mục | Giá trị |
 |---|---|
-| App `matter_ble_presence.bin` | 2 074 784 byte (0x1FA8A0) trong phân vùng `factory` 3 712 KB (0x3A0000): **còn trống 45%** |
+| App `matter_ble_presence.bin` | 2 076 384 byte (0x1FAEE0) trong phân vùng `factory` 3 712 KB (0x3A0000): **còn trống 45%** |
 | Bootloader / bảng phân vùng | 22 192 byte tại 0x0 / 3 072 byte tại 0xC000 |
-| Flash code (`idf.py size`) | 1 952 054 byte (.text 1 638 386, .rodata 312 948) |
-| DIRAM tĩnh | 216 380 / 452 112 byte (47,9%): IRAM .text 104 320, .bss 93 720, .data 18 340 → 235 732 byte cho heap lúc khởi động (heap còn lại khi Matter + Thread + BLE chạy **cần đo trên phần cứng**, log `diag` in mỗi 60 s) |
+| Flash code (`idf.py size`) | 1 953 660 byte (.text 1 639 320, .rodata 313 620) |
+| DIRAM tĩnh | 216 396 / 452 112 byte (47,9%): IRAM .text 104 320, .bss 93 736, .data 18 340 → 235 716 byte cho heap lúc khởi động (heap còn lại khi Matter + Thread + BLE chạy **cần đo trên phần cứng**, log `diag` in mỗi 60 s) |
 | LP SRAM | `.rtc_noinit` 16 byte = bản ghi yêu cầu CONFIG (`app_mode_rtc_t`), `.rtc_reserved` 24 byte |
 | Cảnh báo biên dịch từ mã dự án | 0 (cờ mặc định của ESP-IDF: `-Wall -Werror` trừ vài nhóm, `-Wextra`) |
 | Kconfig | không còn ký hiệu không tồn tại trong `sdkconfig.defaults` (chỉ còn các NOTE của chính SDK) |
@@ -482,12 +494,28 @@ app_mode             11 checks, 0 failed
 ble_addr             63 checks, 0 failed
 click_detector       19 checks, 0 failed
 config_store        108 checks, 0 failed
+http_guard           26 checks, 0 failed
 ibeacon_parser     202007 checks, 0 failed
 json_util            22 checks, 0 failed
 presence_config     398 checks, 0 failed
 presence_logic     4248 checks, 0 failed
 All host tests passed
 ```
+
+### Rà soát mã độc lập
+
+Sau khi build xong, toàn bộ mã được rà soát lại độc lập, đối chiếu với mã nguồn esp-matter/CHIP/OpenThread/NimBLE
+đúng phiên bản đã ghim. Lỗi tìm thấy và cách sửa:
+
+| Lỗi | Hậu quả | Sửa |
+|---|---|---|
+| cJSON cho lồng tới 1000 cấp, mỗi cấp một lần đệ quy trên stack 8 KB của task web | một POST 256 byte toàn dấu `[` làm tràn stack, thiết bị reset | `CONFIG_CJSON_NESTING_LIMIT=16` (`#error` nếu > 32); body cấu hình tối đa 2 KB (giới hạn luôn heap cJSON dùng khi phân tích) |
+| Phần khởi động (in QR/mã ghép, đặt MED, mở cổng scanner) chờ `kServerReady`; trên bản chỉ có Thread, sự kiện này chờ DNS-SD, tức chờ SRP server của Border Router trả lời | lần đầu (chưa ghép) không in QR/mã ghép; đã ghép mà SRP server không trả lời thì scanner không bao giờ chạy | chạy ngay sau `esp_matter::start()` (hàm này chờ `Server::Init` xong) bằng `ScheduleWork` |
+| API nhận request từ trang web khác (CSRF) và mọi `Host` (DNS rebinding) | trang lạ mở trên điện thoại đang nối SoftAP có thể ghi cấu hình, khởi động lại thiết bị | kiểm tra `Host` và `Content-Type: application/json` (`http_guard.*`, có host test) |
+| Danh sách beacon được dựng lại mỗi 2 s | ô "Gán vào…" đang mở trên điện thoại bị đóng, mất lựa chọn | không dựng lại khi ô chọn đang focus, cập nhật khi rời ô (có test trình duyệt; test này hỏng với trang cũ) |
+
+Giữ nguyên, đã ghi ở [Thuật toán hiện diện](#thuật-toán-hiện-diện): gói của 250 ms cuối trước khi beacon im hẳn
+không được tính (OFF sớm tối đa 0,25 s).
 
 ### Quy trình kiểm thử phần cứng
 
@@ -502,7 +530,7 @@ số gói/s, từng slot, bộ đếm MAC/MLE của Thread.
 | 2 | Bấm BOOT 3 lần; điện thoại vào SoftAP, mở web | log `Boot in CONFIG mode (reset: software)`; trang tải được |
 | 3 | Quét, gán đủ 5 beacon, lưu, khởi động lại | lưu báo thành công; log NORMAL in 5 slot đúng MAC |
 | 4 | Sau reboot | Matter trở lại mạng cũ không cần ghép (`Commissioned (1 fabric(s))`, `Thread attached`) |
-| 5 | Bật/tắt (hoặc mang ra xa) từng beacon | đúng endpoint đổi; đo độ trễ ON (kỳ vọng ~vài giây) và OFF (≈ timeout + ≤ 0,25 s) |
+| 5 | Bật/tắt (hoặc mang ra xa) từng beacon | đúng endpoint đổi; đo độ trễ ON (kỳ vọng ~vài giây) và OFF (≈ timeout ± 0,25 s) |
 | 6 | Rút nguồn, cấp lại | về NORMAL; cấu hình còn nguyên; mọi slot OFF tới khi nhận gói mới |
 | 7 | Đổi MAC một slot ở CONFIG | endpoint ID không đổi (parts-list giống bước 1) |
 | 8 | Tắt/bật Border Router; ghép thêm controller (multi-admin) | log `Thread detached` → scanner `paused by thread_detached` → `Thread attached` → quét lại sau 10 s; không OFF giả trong thời gian dừng |
@@ -528,9 +556,10 @@ liệu của bước 10 và xem [khuyến nghị](#khuyến-nghị-phương-án-
   TagList, `SetThreadDeviceType`, OpenThread MTD mặc định rx-on-when-idle, Kconfig bộ lọc trùng của controller C6,
   `RTC_NOINIT_ATTR` trên C6, DAC thử nghiệm cho PID 0x8002, sơ đồ nút BOOT của DevKitC-1 v1.4.
 * `idf.py set-target esp32c6` + `idf.py build` thành công (số liệu ở mục kết quả build).
-* Host test: 8 bộ, đạt (ASan/UBSan).
-* Trang web cấu hình chạy trong Chromium headless với API giả lập: 29 kiểm tra đạt (escape tên, gán/trùng beacon,
-  kiểm tra dữ liệu, nội dung lệnh lưu, khởi động lại).
+* Host test: 9 bộ, đạt (ASan/UBSan).
+* Trang web cấu hình chạy trong Chromium headless với API giả lập: 32 kiểm tra đạt (escape tên, gán/trùng beacon,
+  kiểm tra dữ liệu, nội dung lệnh lưu, kiểu nội dung POST, ô chọn không bị đóng, khởi động lại).
+* Rà soát mã độc lập (đối chiếu mã nguồn SDK): các lỗi tìm được đã sửa, xem [mục dưới](#rà-soát-mã-độc-lập).
 
 **Chưa xác minh — cần thử trên phần cứng**
 

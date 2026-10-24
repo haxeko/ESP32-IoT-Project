@@ -18,10 +18,14 @@
 #include <esp_err.h>
 
 #define WIFI_CONFIG_SSID_SIZE 33
+#define WIFI_CONFIG_IP_SIZE 16
 
 // Builds the SSID without starting anything (also printed in NORMAL mode)
 void wifi_config_ssid(char ssid[WIFI_CONFIG_SSID_SIZE]);
 
 esp_err_t wifi_config_start(const char *password);
+
+// Address of the SoftAP as text ("192.168.4.1"); empty before wifi_config_start()
+void wifi_config_ip(char ip[WIFI_CONFIG_IP_SIZE]);
 
 int wifi_config_station_count(void);
