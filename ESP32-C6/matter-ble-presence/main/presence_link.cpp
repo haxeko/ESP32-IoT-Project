@@ -10,6 +10,7 @@
 
 #include <atomic>
 
+#include <driver/gpio.h>
 #include <driver/uart.h>
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -74,15 +75,16 @@ static void send_state()
     const uint8_t present = s_present_mask;
     const uint8_t reported = s_reported_mask;
     portEXIT_CRITICAL(&s_mask_mux);
+    const int64_t now = now_ms();
     plink_state_t st = {};
     st.mode = s_config_mode ? PLINK_MODE_CONFIG : PLINK_MODE_NORMAL;
     st.flags = scan.state == BLE_SCANNER_RUNNING ? PLINK_STATE_SCANNING : 0;
     st.active_mask = s_config_mode ? 0 : s_active_mask;
     st.present_mask = s_config_mode ? 0 : present;
-    st.known_mask = s_config_mode
-        ? 0
-        : plink_known_mask(s_active_mask, reported, s_timeout_ms, PRESENCE_SLOT_COUNT, scan.scan_clock_ms);
-    st.uptime_s = static_cast<uint32_t>(now_ms() / 1000);
+    st.known_mask = s_config_mode ? 0
+                                  : plink_known_mask(s_active_mask, reported, s_timeout_ms, PRESENCE_SLOT_COUNT,
+                                                     scan.scan_clock_ms, static_cast<uint64_t>(now));
+    st.uptime_s = static_cast<uint32_t>(now / 1000);
     uint8_t frame[PLINK_MAX_FRAME];
     send_frame(frame, plink_encode_state(&st, frame, sizeof(frame)));
 }
@@ -172,7 +174,13 @@ static void link_task(void *)
     int64_t last_send = 0;
     uint8_t buf[64];
     for (;;) {
-        const int n = uart_read_bytes(kUart, buf, sizeof(buf), kReadTimeout);
+        // What is buffered now, or else the first byte to come within kReadTimeout. uart_read_bytes() only returns
+        // when it has all the bytes asked for or after kReadTimeout without any byte, so asking for sizeof(buf)
+        // would hold the loop for seconds on a trickle of noise.
+        size_t buffered = 0;
+        uart_get_buffered_data_len(kUart, &buffered);
+        const int n = buffered > 0 ? uart_read_bytes(kUart, buf, buffered < sizeof(buf) ? buffered : sizeof(buf), 0)
+                                   : uart_read_bytes(kUart, buf, 1, kReadTimeout);
         for (int i = 0; i < n; i++) {
             if (plink_parser_feed(&parser, buf[i])) {
                 on_frame(parser);
@@ -238,6 +246,10 @@ static esp_err_t start_uart()
     if (err == ESP_OK) {
         err = uart_set_pin(kUart, CONFIG_PRESENCE_LINK_TX_GPIO, CONFIG_PRESENCE_LINK_RX_GPIO, UART_PIN_NO_CHANGE,
                            UART_PIN_NO_CHANGE);
+    }
+    if (err == ESP_OK) {
+        // Idle level while the other chip's TX is released (it resets or boots, a loose wire): no floating input
+        err = gpio_pullup_en(static_cast<gpio_num_t>(CONFIG_PRESENCE_LINK_RX_GPIO));
     }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "UART%d setup failed: %s", CONFIG_PRESENCE_LINK_UART_NUM, esp_err_to_name(err));

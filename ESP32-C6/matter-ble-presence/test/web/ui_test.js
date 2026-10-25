@@ -37,8 +37,9 @@ const beacons = [
     major: 10, minor: 7, tx_power: -60, name: '', age_ms: 9000, count: 5, same_id_other_mac: true },
 ];
 
-// A page of the device with the API answered by the mock; network: 'thread' (ESP32-C6) or 'wifi' (ESP32-C3)
-async function openPage(browser, network, posts) {
+// A page of the device with the API answered by the mock; network: 'thread' (ESP32-C6) or 'wifi' (ESP32-C3).
+// opts.scanDelayMs: the device answers the beacon list that late (slow Wi-Fi); opts.stats counts the requests.
+async function openPage(browser, network, posts, opts = {}) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   page.on('pageerror', e => { failures++; console.log('FAIL page error', e.message); });
   await page.route('http://device.test/**', async route => {
@@ -48,7 +49,15 @@ async function openPage(browser, network, posts) {
     if (url.pathname === '/') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
     if (url.pathname === '/api/status') return json(Object.assign({}, status, { network },
       network === 'h2' ? { h2: { seen: true, ago_s: 1, commissioned: true, network_up: false, fabrics: 1 } } : {}));
-    if (url.pathname === '/api/scan' && req.method() === 'GET') return json({ beacons });
+    if (url.pathname === '/api/scan' && req.method() === 'GET') {
+      const st = opts.stats || {};
+      st.scanInFlight = (st.scanInFlight || 0) + 1;
+      st.scanMaxInFlight = Math.max(st.scanMaxInFlight || 0, st.scanInFlight);
+      st.scanRequests = (st.scanRequests || 0) + 1;
+      if (opts.scanDelayMs) await new Promise(r => setTimeout(r, opts.scanDelayMs));
+      st.scanInFlight--;
+      return json({ beacons });
+    }
     if (url.pathname === '/api/config' && req.method() === 'GET') return json(Object.assign({}, config, { network }));
     if (req.method() === 'POST') {
       posts.push({ path: url.pathname, body: req.postData(), type: req.headers()['content-type'] || '' });
@@ -175,6 +184,13 @@ async function openPage(browser, network, posts) {
   check((await h2.textContent('#coexNote')).includes('hai chip'), 'two-chip: scan note');
   await h2.fill('#scanWin', '120');
   check(!(await h2.textContent('#scanInfo')).includes('⚠'), 'two-chip: no warning above 50 % (own radio)');
+
+  // Slow link: the device takes 3 s per beacon list, longer than the 2 s poll period. One request at a time.
+  const slowStats = {};
+  const slow = await openPage(browser, 'wifi', [], { scanDelayMs: 3000, stats: slowStats });
+  await slow.waitForTimeout(9000);
+  check(slowStats.scanMaxInFlight === 1, `slow link: one beacon list request at a time (max ${slowStats.scanMaxInFlight})`);
+  check(slowStats.scanRequests >= 2, `slow link: polling goes on (${slowStats.scanRequests} requests)`);
 
   await browser.close();
   console.log(failures ? `${failures} FAILED` : 'UI checks passed');

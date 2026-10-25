@@ -15,6 +15,8 @@
 
 #include <esp_log.h>
 #include <esp_matter.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 #if CONFIG_ENABLE_CHIP_SHELL
 #include <esp_matter_console.h>
 #endif
@@ -226,6 +228,32 @@ static void on_matter_started(intptr_t)
     }
 }
 
+// Matter task: kBLEDeinitialized seen (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING, two-chip version)
+static bool s_ble_released;
+
+static void restart_cb(void *)
+{
+    esp_restart();
+}
+
+// Matter task. The SDK released BLE after commissioning and cannot bring it back (BLEManagerImpl keeps
+// kBleDeinitAndMemReleased): a window opened now would advertise on DNS-SD only, while the printed code says BLE.
+// With no fabric left, a restart boots the device uncommissioned with BLE and its normal commissioning window.
+// Nothing is erased: the Thread dataset and the other settings stay.
+static void restart_for_commissioning()
+{
+    static esp_timer_handle_t timer;
+    ESP_LOGW(TAG, "Last fabric removed: restarting in 2 s so the device can be commissioned over BLE again");
+    esp_timer_create_args_t args = {};
+    args.callback = restart_cb;
+    args.dispatch_method = ESP_TIMER_TASK;
+    args.name = "recommission";
+    if (timer == nullptr && esp_timer_create(&args, &timer) != ESP_OK) {
+        esp_restart();
+    }
+    esp_timer_start_once(timer, 2000 * 1000); // the answer to RemoveFabric goes out first
+}
+
 // Matter task
 static void open_commissioning_window()
 {
@@ -233,7 +261,8 @@ static void open_commissioning_window()
     if (mgr.IsCommissioningWindowOpen()) {
         return;
     }
-    // BLE is still initialised (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=n): advertise over BLE and DNS-SD
+    // BLE is still initialised (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=n, or not commissioned since boot): advertise
+    // over BLE and DNS-SD
     const CHIP_ERROR err = mgr.OpenBasicCommissioningWindow(chip::System::Clock::Seconds32(kRecommissioningWindowSec),
                                                             chip::CommissioningWindowAdvertisement::kAllSupported);
     if (err != CHIP_NO_ERROR) {
@@ -315,7 +344,11 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t)
         ESP_LOGI(TAG, "Fabric removed");
         update_commissioning_gate();
         if (!is_commissioned()) {
-            open_commissioning_window();
+            if (s_ble_released) {
+                restart_for_commissioning();
+            } else {
+                open_commissioning_window();
+            }
         }
         break;
 
@@ -360,6 +393,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t)
 #endif
 
     case DeviceEventType::kBLEDeinitialized:
+        s_ble_released = true;
 #if CONFIG_PRESENCE_ROLE_MATTER_UART
         // Two-chip version: BLE was only needed for commissioning (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING)
         ESP_LOGI(TAG, "BLE released after commissioning");

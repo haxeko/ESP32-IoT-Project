@@ -35,8 +35,14 @@ Theo cách bạn đã nối:
   nên **chèn một điện trở 470 Ω–1 kΩ** nối tiếp trên dây H2 TX → C3 GPIO21 (hoặc nối chéo lại: H2 TX → C3 GPIO20,
   H2 RX → C3 GPIO21, rồi đổi `PRESENCE_LINK_TX_GPIO=21`, `PRESENCE_LINK_RX_GPIO=20` trong
   `sdkconfig.defaults` của C3).
+  Cách chỉ bằng firmware là bật `CONFIG_BOOT_ROM_LOG_ALWAYS_OFF` cho C3 (ROM không in nữa), nhưng nó **ghi eFuse một lần,
+  không đảo ngược được**, nên không bật sẵn.
 * ROM của H2 cũng in log khởi động ra GPIO24 → C3 nhận "rác". Giao thức có byte đồng bộ, độ dài và CRC-32 nên rác bị
-  bỏ qua (chỉ tăng bộ đếm `CRC errors`).
+  bỏ qua (chỉ tăng bộ đếm `CRC errors`). Chân RX của cả hai chip bật điện trở kéo lên nội, nên khi chip kia đang
+  reset hay dây lỏng, chân RX không bị thả nổi.
+* **Chỉ nối TX, RX, GND (và nguồn).** Nếu hai board hàn úp bằng cả hàng chân, kiểm tra không có chân nào khác của C3
+  dính vào chân của H2, nhất là **GPIO9 (nút BOOT)**, GPIO8, GPIO2 (chân strapping): một chân H2 kéo GPIO9 sẽ làm nút
+  BOOT bấm giả hoặc không ăn.
 * **Chân H2:** tôi giả định chân in chữ **TX/RX** trên ESP32-H2 SuperMini là **GPIO24/GPIO23** (UART0 của H2). Nếu
   board của bạn khác, sửa `CONFIG_PRESENCE_LINK_TX_GPIO` / `CONFIG_PRESENCE_LINK_RX_GPIO` trong
   `ESP32-H2/matter-ble-presence-h2/sdkconfig.defaults`. Log H2 cũng chuyển sang USB-Serial-JTAG.
@@ -107,6 +113,10 @@ Nếu vẫn chập chờn:
 * **Anten:** xoay để anten (đầu có anten gốm/anten mạch) của C3 thò ra ngoài, không nằm đè lên board H2 hay vật kim
   loại; để điện thoại cách thiết bị 1–3 m.
 * **Kênh:** router nhà cũng ở kênh 1 thì đổi `PRESENCE_AP_CHANNEL` sang 6 hoặc 11.
+* **Thử nhanh phần cứng:** giữ H2 ở trạng thái reset (nối chân EN/RST của H2 xuống GND) rồi so độ ổn định của SoftAP.
+  Tốt hẳn lên thì nguyên nhân là H2 ở sát (anten, nguồn chung).
+* Trang web giờ chỉ gửi một request mỗi loại một lúc và bỏ request sau 10 s, nên Wi-Fi chậm không còn làm request
+  chồng lên nhau (trước đây trang hỏi đều 2–3 s/lần dù câu trả lời trước chưa về).
 * **Gửi log USB của C3** lúc bị chập chờn. Mỗi phút có `wifi_config: SoftAP channel 1, max 8.50 dBm, 1 station(s)` và
   `station xx:xx:..., RSSI -45 dBm`; mỗi lần điện thoại rớt có `Station ... left (reason N, ...)`. Nếu SSID biến mất
   hẳn vài giây rồi hiện lại, xem log có khởi động lại không (dòng `ESP-ROM` / `rst:`).
@@ -132,7 +142,10 @@ cấu hình beacon):
 
 **Ghép Matter:** mã QR và mã ghép thủ công in trên **log của H2** (`SetupQRCode: [MT:...]`, `Manual pairing code`).
 Cần Thread Border Router (Apple TV/HomePod mini, Google Nest Hub, Home Assistant + OpenThread Border Router), như bản C6.
-Gỡ ghép: lệnh `matter esp factoryreset` trên console USB của H2, hoặc xóa thiết bị khỏi controller.
+Gỡ ghép: lệnh `matter esp factoryreset` trên console USB của H2, hoặc xóa thiết bị khỏi controller. Sau khi ghép, H2
+giải phóng BLE (tiết kiệm RAM) và không bật lại được nếu không khởi động lại: vì vậy khi controller cuối cùng xóa
+thiết bị, **H2 tự khởi động lại sau 2 s** (log `Last fabric removed: restarting...`) rồi phát BLE để ghép lại bằng mã QR
+cũ. Không xóa gì: Thread, cấu hình giữ nguyên.
 
 ## Đọc log
 
@@ -143,11 +156,30 @@ Gỡ ghép: lệnh `matter esp factoryreset` trên console USB của H2, hoặc 
   Presence 1; slot chưa có trong `known` thì H2 đang giữ trạng thái cũ), các dòng `link: Presence N: ON/OFF` khi trạng
   thái đổi, và dòng Thread của Matter.
 
+## Rà soát độc lập lần 2 (bản hai chip)
+
+Toàn bộ mã hai chip được rà soát lại độc lập, đối chiếu mã nguồn ESP-IDF v6.0.2 / esp-matter v1.6.1 / CHIP:
+
+| Lỗi | Hậu quả | Sửa |
+|---|---|---|
+| C3 khởi động lại thì khung đầu tiên (≈1 s) báo "không ai", H2 áp ngay | mỗi lần thoát chế độ cấu hình, mở serial monitor (reset C3), C3 reset: cảm biến đang ON tắt rồi bật lại, tự động hóa "khi vắng người" chạy nhầm | trường `known_mask`: slot chưa biết thì H2 giữ trạng thái; C3 không quét được (BLE lỗi) thì slot vẫn được coi là đã biết (vắng) sau thời gian vắng mặt + 5 phút, không kẹt ON mãi (host test) |
+| H2 (`USE_BLE_ONLY_FOR_COMMISSIONING=y`) giải phóng BLE sau khi ghép; khi controller cuối cùng xóa thiết bị, cửa sổ ghép mở lại chỉ qua DNS-SD | xóa khỏi Apple/Google Home rồi thêm lại bằng mã QR: điện thoại tìm BLE không thấy, phải rút điện | H2 tự khởi động lại 2 s sau khi fabric cuối cùng bị xóa (chỉ khi BLE đã bị giải phóng) |
+| `uart_read_bytes(…, 64 byte, 100 ms)` chỉ trả về khi đủ 64 byte hoặc 100 ms im lặng; chân RX không có kéo lên | nhiễu lác đác trên chân RX thả nổi giữ vòng lặp UART tới vài giây (chậm gửi trạng thái, chậm áp trạng thái, lệch timeout) | đọc phần đã có trong bộ đệm hoặc chờ 1 byte tối đa 100 ms; bật kéo lên trên chân RX cả hai chip |
+| C3 scanner: 4 bộ đệm RX tĩnh < cửa sổ Block Ack 6; SoftAP 40 MHz; quét BLE 50% chủ động cả khi chưa có điện thoại | SoftAP chập chờn | xem [Wi-Fi cấu hình chập chờn](#wi-fi-cấu-hình-chập-chờn) |
+| Trang web hỏi đều 2–3 s/lần, không chờ câu trả lời trước | Wi-Fi chậm: request chồng nhau, bị đóng, trang báo lỗi | một request mỗi loại một lúc, bỏ sau 10 s (test trình duyệt) |
+
+Đã kiểm và thấy đúng: định dạng khung và bộ phân tích, đồng bộ giữa các task, thứ tự khởi động Matter, stack các task,
+chân UART và console (cả hai chip log qua USB-Serial-JTAG), cấu hình theo vai trò trong Kconfig/CMake. Chưa kiểm được
+ở đây: chân TX/RX in trên board ESP32-H2 SuperMini có đúng GPIO24/23 không.
+
 ## Kiểm thử
 
 * Host test (10 bộ, ASan/UBSan), gồm bộ `presence_link`: khung đúng, **mọi bit lật bị loại**, mọi kiểu cắt cụt, bắt
-  lại nhịp sau rác giống log ROM, 200 000 byte nhiễu ngẫu nhiên không tạo ra khung giả.
-* Test trang web (Playwright): 43 kiểm tra, gồm trang của bản hai chip (dòng tình trạng H2, không cảnh báo quét > 50%).
+  lại nhịp sau rác giống log ROM, 200 000 byte nhiễu ngẫu nhiên không tạo ra khung giả, khung của giao thức cũ bị loại,
+  **slot "chưa biết" sau khi C3 khởi động lại** (đến khi nghe thấy beacon, quét đủ thời gian vắng mặt, hoặc quá 5 phút
+  khi không quét được); bộ `click_detector`: bấm thong thả, nghỉ quá 2 s thì đếm lại, giữ lâu.
+* Test trang web (Playwright): 46 kiểm tra, gồm trang của bản hai chip (dòng tình trạng H2, không cảnh báo quét > 50%,
+  "Sắp quét" trong 5 s đầu) và Wi-Fi chậm (thiết bị trả lời sau 3 s: chỉ một request mỗi loại một lúc).
 * Build (`espressif/esp-matter:release-v1.6.1_idf_v6.0.2`, `set-target` rồi `build`), 0 cảnh báo:
 
 | Firmware | App (phân vùng 3,6 MB) | RAM tĩnh → heap lúc khởi động |

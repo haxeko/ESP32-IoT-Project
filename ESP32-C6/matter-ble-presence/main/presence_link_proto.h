@@ -61,9 +61,12 @@ typedef struct {
 // Scanner: the known_mask of its STATE frames. A slot's state is known once it was reported (it turned on, or off
 // after being on: reported_mask) or once the scanner listened for the slot's whole absence timeout (scan clock, ms)
 // without hearing its beacon; inactive slots are known (off). Until then the Matter node keeps the state it has, so
-// a restart of the scanner (end of the CONFIG mode, a reset) never turns a sensor off by itself.
+// a restart of the scanner (end of the CONFIG mode, a reset) never turns a sensor off by itself. A scanner that
+// cannot scan at all (BLE failure: the scan clock stands still) still declares the slot known, as absent, once its
+// uptime passes the timeout by PLINK_UNKNOWN_GRACE_MS: a stale "occupied" does not last forever.
+#define PLINK_UNKNOWN_GRACE_MS (5u * 60u * 1000u)
 uint8_t plink_known_mask(uint8_t active_mask, uint8_t reported_mask, const uint32_t *timeout_ms, int slots,
-                         uint64_t scan_clock_ms);
+                         uint64_t scan_clock_ms, uint64_t uptime_ms);
 
 // Frame into out; returns its length, 0 if it does not fit or the payload is too long
 size_t plink_encode(uint8_t type, const uint8_t *payload, size_t len, uint8_t *out, size_t out_size);

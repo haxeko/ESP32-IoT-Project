@@ -96,16 +96,19 @@ static void known_mask_after_restart()
 {
     const uint32_t timeouts[5] = { 45000, 60000, 45000, 10000, 3600000 };
     // Slots 0 and 1 assigned, nothing heard yet, scanning just started: only the unassigned slots are known (off)
-    CHECK(plink_known_mask(0x03, 0x00, timeouts, 5, 0) == 0xFC);
-    CHECK(plink_known_mask(0x03, 0x00, timeouts, 5, 44999) == 0xFC);
+    CHECK(plink_known_mask(0x03, 0x00, timeouts, 5, 0, 1000) == 0xFC);
+    CHECK(plink_known_mask(0x03, 0x00, timeouts, 5, 44999, 46000) == 0xFC);
     // Slot 0's 45 s of scanning without its beacon: known absent; slot 1 waits for its own 60 s
-    CHECK(plink_known_mask(0x03, 0x00, timeouts, 5, 45000) == 0xFD);
-    CHECK(plink_known_mask(0x03, 0x00, timeouts, 5, 60000) == 0xFF);
+    CHECK(plink_known_mask(0x03, 0x00, timeouts, 5, 45000, 46000) == 0xFD);
+    CHECK(plink_known_mask(0x03, 0x00, timeouts, 5, 60000, 61000) == 0xFF);
     // Slot 1 reported (its beacon was heard): known at once
-    CHECK(plink_known_mask(0x03, 0x02, timeouts, 5, 0) == 0xFE);
+    CHECK(plink_known_mask(0x03, 0x02, timeouts, 5, 0, 1000) == 0xFE);
     // Every slot assigned, slot 4 with a one hour timeout, slot 3 heard
-    CHECK(plink_known_mask(0x1F, 0x08, timeouts, 5, 50000) == 0xED);
-    CHECK(plink_known_mask(0x1F, 0x08, timeouts, 5, 3600000) == 0xFF);
+    CHECK(plink_known_mask(0x1F, 0x08, timeouts, 5, 50000, 51000) == 0xED);
+    CHECK(plink_known_mask(0x1F, 0x08, timeouts, 5, 3600000, 3601000) == 0xFF);
+    // No scanning at all (BLE failure, the scan clock stands still): known, as absent, 5 min after the timeout
+    CHECK(plink_known_mask(0x01, 0x00, timeouts, 5, 0, 45000 + PLINK_UNKNOWN_GRACE_MS - 1) == 0xFE);
+    CHECK(plink_known_mask(0x01, 0x00, timeouts, 5, 0, 45000 + PLINK_UNKNOWN_GRACE_MS) == 0xFF);
 }
 
 static void every_corruption_rejected()

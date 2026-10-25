@@ -33,11 +33,12 @@ static uint32_t get_u32(const uint8_t *p)
 }
 
 uint8_t plink_known_mask(uint8_t active_mask, uint8_t reported_mask, const uint32_t *timeout_ms, int slots,
-                         uint64_t scan_clock_ms)
+                         uint64_t scan_clock_ms, uint64_t uptime_ms)
 {
     uint8_t known = static_cast<uint8_t>(~active_mask) | reported_mask;
     for (int i = 0; i < slots && i < 8; i++) {
-        if (scan_clock_ms >= timeout_ms[i]) {
+        const uint64_t timeout = timeout_ms[i];
+        if (scan_clock_ms >= timeout || uptime_ms >= timeout + PLINK_UNKNOWN_GRACE_MS) {
             known |= static_cast<uint8_t>(1u << i);
         }
     }

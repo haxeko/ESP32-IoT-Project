@@ -475,14 +475,16 @@ node ui_test.js                 # tùy chọn: node ui_test.js ../../main/web/in
 ```
 
 `ui_test.js` mở đúng file `main/web/index.html` được nhúng vào firmware trong Chromium (khung 390×844, cảm ứng),
-trả lời các API `/api/*` bằng dữ liệu giả và kiểm tra 39 điểm: tên beacon chứa `<img onerror=…>` chỉ hiện dạng chữ
+trả lời các API `/api/*` bằng dữ liệu giả và kiểm tra 46 điểm: tên beacon chứa `<img onerror=…>` chỉ hiện dạng chữ
 (không chèn phần tử, không chạy script), cảnh báo RPA, nạp cấu hình đã lưu, gán beacon từ danh sách (điền MAC + loại
 địa chỉ, bật slot), **từ chối gán một beacon cho hai slot** kèm tên slot đang dùng, MAC nhập tay sai/trùng bị chặn và
 không gửi gì lên thiết bị, timeout ngoài khoảng, cảnh báo chu kỳ quét > 50%, nội dung lệnh lưu (MAC chuẩn hóa
 `AA:BB:CC:DD:EE:FF`, số nguyên, đủ 5 slot), keepalive khi có thao tác, **mọi POST gửi `application/json`**,
 **danh sách beacon không bị dựng lại khi đang mở ô "Gán vào…"** (trên điện thoại việc dựng lại sẽ đóng ô chọn), nút
-khởi động lại, và chữ hiển thị theo mạng của thiết bị (`"network"` trong API: "Thread" + mức coexistence C1 cho bản
-C6, "Wi-Fi" + mức Y cho bản C3). Kết quả trong phiên này:
+khởi động lại, chữ hiển thị theo mạng của thiết bị (`"network"` trong API: "Thread" + mức coexistence C1 cho bản
+C6, "Wi-Fi" + mức Y cho bản C3, dòng tình trạng ESP32-H2 cho bản hai chip), trạng thái quét "Sắp quét", và **Wi-Fi
+chậm** (thiết bị trả lời danh sách beacon sau 3 s, lâu hơn chu kỳ hỏi 2 s: không bao giờ có hai request cùng loại
+đang chờ). Kết quả trong phiên này:
 `UI checks passed` (Playwright 1.63.0, Node 22). Test này không thay cho thử trên điện thoại thật nối vào SoftAP.
 
 ### Kết quả build thực tế
@@ -536,6 +538,7 @@ Sau khi build xong, toàn bộ mã được rà soát lại độc lập, đối
 | Phần khởi động (in QR/mã ghép, đặt MED, mở cổng scanner) chờ `kServerReady`; trên bản chỉ có Thread, sự kiện này chờ DNS-SD, tức chờ SRP server của Border Router trả lời | lần đầu (chưa ghép) không in QR/mã ghép; đã ghép mà SRP server không trả lời thì scanner không bao giờ chạy | chạy ngay sau `esp_matter::start()` (hàm này chờ `Server::Init` xong) bằng `ScheduleWork` |
 | API nhận request từ trang web khác (CSRF) và mọi `Host` (DNS rebinding) | trang lạ mở trên điện thoại đang nối SoftAP có thể ghi cấu hình, khởi động lại thiết bị | kiểm tra `Host` và `Content-Type: application/json` (`http_guard.*`, có host test) |
 | Danh sách beacon được dựng lại mỗi 2 s | ô "Gán vào…" đang mở trên điện thoại bị đóng, mất lựa chọn | không dựng lại khi ô chọn đang focus, cập nhật khi rời ô (có test trình duyệt; test này hỏng với trang cũ) |
+| Trang hỏi trạng thái/danh sách bằng `setInterval` 3 s/2 s, không chờ câu trả lời trước, không giới hạn thời gian (rà soát lần 2) | Wi-Fi chậm (SoftAP + quét BLE là C1): request chồng lên nhau trong khi thiết bị phục vụ từng request một, socket cũ bị đóng → trang báo lỗi, càng chậm thêm | mỗi loại request chỉ một cái đang chờ, lần sau bắt đầu sau khi lần trước xong, bỏ request sau 10 s (test trình duyệt "slow link": thiết bị trả lời chậm 3 s; test hỏng với trang cũ) |
 
 Giữ nguyên, đã ghi ở [Thuật toán hiện diện](#thuật-toán-hiện-diện): gói của 250 ms cuối trước khi beacon im hẳn
 không được tính (OFF sớm tối đa 0,25 s).
@@ -580,9 +583,9 @@ liệu của bước 10 và xem [khuyến nghị](#khuyến-nghị-phương-án-
   `RTC_NOINIT_ATTR` trên C6, DAC thử nghiệm cho PID 0x8002, sơ đồ nút BOOT của DevKitC-1 v1.4.
 * `idf.py set-target esp32c6` + `idf.py build` thành công (số liệu ở mục kết quả build).
 * Host test: 10 bộ, đạt (ASan/UBSan).
-* Trang web cấu hình chạy trong Chromium headless với API giả lập: 39 kiểm tra đạt (escape tên, gán/trùng beacon,
+* Trang web cấu hình chạy trong Chromium headless với API giả lập: 46 kiểm tra đạt (escape tên, gán/trùng beacon,
   kiểm tra dữ liệu, nội dung lệnh lưu, kiểu nội dung POST, ô chọn không bị đóng, khởi động lại, chữ theo mạng
-  Thread/Wi-Fi).
+  Thread/Wi-Fi/hai chip, trạng thái "Sắp quét", Wi-Fi chậm: không request chồng nhau).
 * Rà soát mã độc lập (đối chiếu mã nguồn SDK): các lỗi tìm được đã sửa, xem [mục dưới](#rà-soát-mã-độc-lập).
 
 **Chưa xác minh — cần thử trên phần cứng**
