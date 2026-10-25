@@ -9,10 +9,13 @@
 // UART link of the two-chip version (frames: presence_link_proto.h), one task on each chip:
 //
 //   scanner (ESP32-C3)      sends a STATE frame every second and within 100 ms of a presence change; in the CONFIG
-//                           mode it keeps sending (mode CONFIG) so the Matter node knows it is alive.
-//   Matter node (ESP32-H2)  applies the states of the STATE frames to the five Occupancy Sensors (only changes, and
-//                           again until Matter accepts them), sends a STATUS frame every second, and turns every
-//                           sensor off when the scanner stays silent for CONFIG_PRESENCE_LINK_TIMEOUT_SEC.
+//                           mode it keeps sending (mode CONFIG) so the Matter node knows it is alive. After a
+//                           restart a slot is "unknown" until its beacon is heard or a whole absence timeout of
+//                           scanning has passed (plink_known_mask()).
+//   Matter node (ESP32-H2)  applies the known states of the STATE frames to the five Occupancy Sensors (only
+//                           changes, and again until Matter accepts them) and keeps the others, sends a STATUS frame
+//                           every second, and turns every sensor off when the scanner stays silent for
+//                           CONFIG_PRESENCE_LINK_TIMEOUT_SEC.
 //
 // Pins, UART and baud rate: Kconfig "Two-chip UART link". The console of both chips must not use those pins
 // (sdkconfig.defaults of the two projects: console on USB-Serial-JTAG only).
@@ -24,6 +27,7 @@
 
 #include <esp_err.h>
 
+#include "presence_config.h"
 #include "presence_link_proto.h"
 
 typedef struct {
@@ -39,8 +43,8 @@ typedef struct {
     uint32_t link_losses;       // Matter node: times the scanner was declared gone
 } presence_link_stats_t;
 
-// Scanner side. active_mask: slots with a beacon (presence_slot_is_active()).
-esp_err_t presence_link_start_scanner(bool config_mode, uint8_t active_mask);
+// Scanner side. cfg: the configuration presence_manager runs with (NORMAL mode), nullptr in CONFIG mode.
+esp_err_t presence_link_start_scanner(bool config_mode, const presence_config_t *cfg);
 // presence_report_fn_t of the scanner: records the state, the link task sends it. Never blocks, always delivered.
 bool presence_link_report(int slot, bool present);
 

@@ -92,6 +92,7 @@ static void diag_task(void *)
                      static_cast<unsigned>(cache.count), static_cast<unsigned>(cache.capacity),
                      static_cast<unsigned>(cache.queue_drops), static_cast<unsigned>(cache.evictions),
                      wifi_config_station_count(), static_cast<unsigned>(app_mode_idle_remaining_s()));
+            wifi_config_log_diagnostics();
 #if CONFIG_PRESENCE_ROLE_SCANNER
             presence_link_log_diagnostics();
 #endif

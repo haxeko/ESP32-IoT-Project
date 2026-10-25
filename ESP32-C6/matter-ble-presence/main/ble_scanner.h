@@ -62,6 +62,7 @@ typedef void (*ble_scanner_sink_t)(const ble_adv_report_t *report);
 #define SCAN_PAUSE_BLE_CONNECTION (1u << 3)   // a controller is connected over BLE (CHIPoBLE)
 #define SCAN_PAUSE_NETWORK_DOWN (1u << 4)     // Thread detached / Wi-Fi disconnected: the network comes first
 #define SCAN_PAUSE_USER (1u << 5)             // "stop scanning" on the configuration page
+#define SCAN_PAUSE_NO_STATION (1u << 6)       // CONFIG mode: no phone on the SoftAP, Wi-Fi gets the radio alone
 
 typedef struct {
     bool own_host; // true: this module initialises NimBLE (CONFIG mode)

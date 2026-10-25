@@ -15,7 +15,7 @@
 static constexpr uint8_t kMagic0 = 0xA5;
 static constexpr uint8_t kMagic1 = 0x5A;
 static constexpr size_t kHeader = 5; // magic, magic, version, type, length
-static constexpr size_t kStateLen = 8;
+static constexpr size_t kStateLen = 9;
 static constexpr size_t kStatusLen = 6;
 
 static void put_u32(uint8_t *p, uint32_t v)
@@ -30,6 +30,18 @@ static uint32_t get_u32(const uint8_t *p)
 {
     return static_cast<uint32_t>(p[0]) | static_cast<uint32_t>(p[1]) << 8 | static_cast<uint32_t>(p[2]) << 16 |
            static_cast<uint32_t>(p[3]) << 24;
+}
+
+uint8_t plink_known_mask(uint8_t active_mask, uint8_t reported_mask, const uint32_t *timeout_ms, int slots,
+                         uint64_t scan_clock_ms)
+{
+    uint8_t known = static_cast<uint8_t>(~active_mask) | reported_mask;
+    for (int i = 0; i < slots && i < 8; i++) {
+        if (scan_clock_ms >= timeout_ms[i]) {
+            known |= static_cast<uint8_t>(1u << i);
+        }
+    }
+    return known;
 }
 
 size_t plink_encode(uint8_t type, const uint8_t *payload, size_t len, uint8_t *out, size_t out_size)
@@ -57,7 +69,8 @@ size_t plink_encode_state(const plink_state_t *state, uint8_t *out, size_t out_s
     p[1] = state->flags;
     p[2] = state->active_mask;
     p[3] = state->present_mask & state->active_mask;
-    put_u32(&p[4], state->uptime_s);
+    p[4] = state->known_mask;
+    put_u32(&p[5], state->uptime_s);
     return plink_encode(PLINK_TYPE_STATE, p, sizeof(p), out, out_size);
 }
 
@@ -79,7 +92,8 @@ bool plink_decode_state(const uint8_t *payload, size_t len, plink_state_t *state
     state->flags = payload[1];
     state->active_mask = payload[2];
     state->present_mask = payload[3] & payload[2];
-    state->uptime_s = get_u32(&payload[4]);
+    state->known_mask = payload[4] | static_cast<uint8_t>(~payload[2]);
+    state->uptime_s = get_u32(&payload[5]);
     return true;
 }
 

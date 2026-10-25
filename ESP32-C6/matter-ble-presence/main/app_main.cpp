@@ -82,7 +82,7 @@ static void run_normal(esp_err_t)
     // Presence first: its queue exists before the scanner can deliver anything. The link always runs, so the
     // Matter node knows this chip is alive even with no beacon assigned.
     check(presence_manager_start(&cfg, presence_link_report), "Presence task");
-    check(presence_link_start_scanner(false, mask), "UART link");
+    check(presence_link_start_scanner(false, &cfg), "UART link");
     if (mask == 0) {
         ESP_LOGW(TAG, "No beacon assigned: BLE scanner not started");
         return;
@@ -141,6 +141,21 @@ static void run_normal(esp_err_t nvs_err)
 
 #endif
 
+// SoftAP next to BLE scanning is "C1, supported but the performance is unstable" in the ESP-IDF coexistence table
+// once a station connects. So BLE scans only while a phone is on the SoftAP, and starts a few seconds after it
+// joined: probe requests and connection attempts get the radio alone, then the phone its DHCP and first page.
+static void on_ap_stations(int count, bool joined)
+{
+    if (joined) {
+        ble_scanner_hold_off(CONFIG_PRESENCE_CONFIG_SCAN_HOLD_OFF_SEC * 1000); // before the resume below
+    }
+    if (count > 0) {
+        ble_scanner_resume(SCAN_PAUSE_NO_STATION);
+    } else {
+        ble_scanner_pause(SCAN_PAUSE_NO_STATION);
+    }
+}
+
 static void run_config(const char *ap_password, esp_err_t nvs_err)
 {
     check(scan_cache_start(), "Beacon list");
@@ -151,16 +166,16 @@ static void run_config(const char *ap_password, esp_err_t nvs_err)
     scan.interval_ms = CONFIG_PRESENCE_CONFIG_SCAN_INTERVAL_MS;
     scan.window_ms = CONFIG_PRESENCE_CONFIG_SCAN_WINDOW_MS;
     scan.parse_names = true;
-    scan.initial_pause = 0;
+    scan.initial_pause = SCAN_PAUSE_NO_STATION;
     scan.watchdog_s = CONFIG_PRESENCE_SCAN_WATCHDOG_SEC;
     scan.filter = nullptr;
     scan.sink = scan_cache_sink;
     check(ble_scanner_start(&scan), "BLE scanner");
 
 #if CONFIG_PRESENCE_ROLE_SCANNER
-    check(presence_link_start_scanner(true, 0), "UART link"); // tells the Matter node to keep its states
+    check(presence_link_start_scanner(true, nullptr), "UART link"); // tells the Matter node to keep its states
 #endif
-    check(wifi_config_start(ap_password), "SoftAP");
+    check(wifi_config_start(ap_password, on_ap_stations), "SoftAP");
     const web_server_info_t info = { s_ssid, nvs_err };
     check(web_server_start(&info), "Web server");
 }

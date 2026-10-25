@@ -48,16 +48,68 @@ Theo cách bạn đã nối:
 
 * **C3, chế độ thường:** quét thụ động (Wi-Fi tắt), tính hiện diện như bản một chip (thời gian vắng mặt trên "đồng hồ
   quét", không ghi gì xuống flash), gửi khung **STATE** mỗi giây và ngay khi có thay đổi (≤ 100 ms).
-* **C3, chế độ cấu hình** (bấm BOOT **của C3** 3 lần): SoftAP **`VN-Presence-XXXX`**, **mật khẩu cố định `69696969`**,
-  trang `http://192.168.4.1` như bản một chip (có thêm dòng tình trạng của ESP32-H2: đã ghép chưa, Thread lên chưa).
-  C3 vẫn gửi khung STATE với cờ CONFIG: **H2 giữ nguyên trạng thái** các cảm biến trong lúc cấu hình. "Khởi động lại về
-  chế độ Matter" đưa C3 về chế độ thường (H2 không khởi động lại).
+* **C3, chế độ cấu hình** (bấm BOOT **của C3** 3 lần, xem [Nút BOOT](#nút-boot)): SoftAP **`VN-Presence-XXXX`**,
+  **mật khẩu cố định `69696969`**, trang `http://192.168.4.1` như bản một chip (có thêm dòng tình trạng của ESP32-H2: đã
+  ghép chưa, Thread lên chưa). Quét BLE chỉ chạy khi có điện thoại nối SoftAP, bắt đầu 5 s sau khi điện thoại vào (xem
+  [Wi-Fi cấu hình chập chờn](#wi-fi-cấu-hình-chập-chờn)). C3 vẫn gửi khung STATE với cờ CONFIG: **H2 giữ nguyên trạng
+  thái** các cảm biến trong lúc cấu hình. "Khởi động lại về chế độ Matter" đưa C3 về chế độ thường (H2 không khởi động
+  lại).
 * **H2:** áp trạng thái nhận được vào 5 endpoint (chỉ khi đổi; Matter chưa sẵn sàng thì thử lại mỗi 100 ms), gửi khung
   **STATUS** (Matter đã chạy, đã ghép, Thread lên, số fabric) về C3 mỗi giây. **Không nhận được khung nào từ C3 trong
   120 s** (`PRESENCE_LINK_TIMEOUT_SEC`) → mọi cảm biến về "không hiện diện" (không để kẹt ON), C3 nối lại thì áp trạng
   thái mới.
+* **C3 khởi động lại** (thoát chế độ cấu hình, reset): mỗi slot là **"chưa biết"** cho tới khi C3 nghe thấy beacon của
+  slot đó hoặc đã quét đủ thời gian vắng mặt của slot (ví dụ 45 s) mà không nghe thấy. Trong lúc đó **H2 giữ nguyên
+  trạng thái** cảm biến: không còn cảnh cảm biến tắt rồi bật lại mỗi lần C3 khởi động lại. (Trước bản này, khung đầu
+  tiên sau khi C3 khởi động báo "không ai" và H2 tắt ngay mọi cảm biến.)
+* **Hai chip phải cùng phiên bản giao thức UART** (bản này: 2, thêm trường "đã biết"): khi cập nhật, **nạp lại cả C3 và
+  H2**. Lệch phiên bản thì khung của chip kia bị loại (log `bad frames` tăng), và sau 120 s H2 tắt mọi cảm biến.
 * Mật khẩu cố định giống nhau trên mọi thiết bị: ai biết mật khẩu và ở gần đều vào được SoftAP **trong lúc thiết bị ở
   chế độ cấu hình** (tối đa 10 phút không thao tác). Trang vẫn chỉ nhận request đúng địa chỉ 192.168.4.1 và POST JSON.
+
+## Nút BOOT
+
+Bấm-nhả BOOT **của C3** 3 lần khi firmware đang chạy, **thong thả cũng được**: lần bấm sau chỉ cần bắt đầu trong vòng
+**2 s** kể từ lần nhả trước (`PRESENCE_BOOT_CLICK_GAP_MS`, tối đa 5 s), mỗi lần bấm giữ tối đa **1,5 s**
+(`PRESENCE_BOOT_CLICK_MAX_PRESS_MS`). Nghỉ lâu hơn thì đếm lại từ đầu; giữ lâu hơn không tính và hủy các lần đã đếm.
+Log USB của C3 in từng lần được đếm:
+
+```
+I (...) button: BOOT click 1 of 3 (next press within 2000 ms)
+I (...) button: BOOT click 2 of 3 (next press within 2000 ms)
+I (...) button: Triple click on BOOT
+```
+
+Không thấy dòng `BOOT click` khi bấm → lần bấm không tới firmware (nút, hoặc đang giữ BOOT lúc reset: ROM vào chế độ nạp).
+
+## Wi-Fi cấu hình chập chờn
+
+SoftAP và quét BLE dùng chung một radio trên C3. Bảng coexistence của ESP-IDF xếp **SoftAP có điện thoại đang
+kết nối/đã kết nối + quét BLE** ở mức **C1** (*hỗ trợ nhưng hiệu năng không ổn định*). Firmware hiện:
+
+* **chỉ quét BLE khi có điện thoại nối SoftAP**, bắt đầu **5 s** sau khi điện thoại vào
+  (`PRESENCE_CONFIG_SCAN_HOLD_OFF_SEC`), và chỉ **40 ms mỗi 160 ms** (`PRESENCE_CONFIG_SCAN_*`, trước là 50 ms mỗi
+  100 ms, quét cả lúc không có ai). Lúc điện thoại dò mạng, bắt tay WPA2, xin địa chỉ và tải trang đầu, radio chỉ phục
+  vụ Wi-Fi. Danh sách beacon trống vài giây đầu (trạng thái "Sắp quét");
+* phát SoftAP ở **8,5 dBm** (`PRESENCE_AP_LIMIT_TX_POWER`, `PRESENCE_AP_MAX_TX_POWER=34`) thay vì 20 dBm: rất nhiều
+  người dùng board ESP32-C3 SuperMini báo Wi-Fi rớt hoặc không nối được ở công suất tối đa (thiết kế anten/nguồn của
+  board) và 8,5 dBm là cách chữa thường dùng; anten C3 đặt sát board H2 còn bị lệch cộng hưởng. Công suất thấp cũng giảm
+  dòng đỉnh khi phát. Điện thoại ở gần lúc cấu hình nên công suất thấp không thiệt;
+* dùng kênh **20 MHz** (mặc định của driver là 40 MHz, Espressif khuyên dùng 20 MHz khi xung quanh nhiều Wi-Fi);
+* dùng bộ đệm Wi-Fi mặc định của driver (10/32/32) và đặt mã Wi-Fi trong IRAM (trước đây cắt còn 4/8/8 như các bản có
+  Matter; C3 scanner không chạy Matter nên thừa RAM).
+
+Nếu vẫn chập chờn:
+
+* **Điện thoại:** SoftAP không có Internet. Khi điện thoại báo "Không có Internet", chọn **giữ kết nối**; trên Android tắt
+  "Tự động chuyển sang dữ liệu di động"/"Wi-Fi thông minh" (hoặc tắt dữ liệu di động trong lúc cấu hình), nếu không máy
+  có thể tự rời SoftAP.
+* **Anten:** xoay để anten (đầu có anten gốm/anten mạch) của C3 thò ra ngoài, không nằm đè lên board H2 hay vật kim
+  loại; để điện thoại cách thiết bị 1–3 m.
+* **Kênh:** router nhà cũng ở kênh 1 thì đổi `PRESENCE_AP_CHANNEL` sang 6 hoặc 11.
+* **Gửi log USB của C3** lúc bị chập chờn. Mỗi phút có `wifi_config: SoftAP channel 1, max 8.50 dBm, 1 station(s)` và
+  `station xx:xx:..., RSSI -45 dBm`; mỗi lần điện thoại rớt có `Station ... left (reason N, ...)`. Nếu SSID biến mất
+  hẳn vài giây rồi hiện lại, xem log có khởi động lại không (dòng `ESP-ROM` / `rst:`).
 
 ## Build và nạp
 
@@ -87,8 +139,9 @@ Gỡ ghép: lệnh `matter esp factoryreset` trên console USB của H2, hoặc 
 * C3, mỗi 60 s: `diag: Scanner running, ... adv/s`, từng `Presence N: ON/OFF, RSSI, matched ...`, và
   `link: Matter node 0 s ago: commissioned 1, Thread up 1, ...`. Dòng `Matter node never heard ... (check the wiring)`
   nghĩa là C3 chưa nhận được gì từ H2: kiểm tra dây, chân H2, GND chung.
-* H2, mỗi 60 s: `link: Scanner 0 s ago: NORMAL, scanning 1, assigned 0x03, present 0x01, ...` (bit 0 = Presence 1),
-  các dòng `link: Presence N: ON/OFF` khi trạng thái đổi, và dòng Thread của Matter.
+* H2, mỗi 60 s: `link: Scanner 0 s ago: NORMAL, scanning 1, assigned 0x03, present 0x01, known 0x03, ...` (bit 0 =
+  Presence 1; slot chưa có trong `known` thì H2 đang giữ trạng thái cũ), các dòng `link: Presence N: ON/OFF` khi trạng
+  thái đổi, và dòng Thread của Matter.
 
 ## Kiểm thử
 

@@ -20,11 +20,6 @@ void click_detector_init(click_detector_t *cd, const click_detector_config_t *cf
     cd->armed = !pressed_now;
 }
 
-static void reset_sequence(click_detector_t *cd)
-{
-    cd->clicks = 0;
-}
-
 bool click_detector_update(click_detector_t *cd, bool pressed, uint32_t now_ms)
 {
     // Debounce
@@ -32,55 +27,34 @@ bool click_detector_update(click_detector_t *cd, bool pressed, uint32_t now_ms)
         cd->raw = pressed;
         cd->raw_since_ms = now_ms;
     }
-    bool press_edge = false;
-    bool release_edge = false;
-    if (cd->raw != cd->pressed && now_ms - cd->raw_since_ms >= cd->cfg.debounce_ms) {
-        cd->pressed = cd->raw;
-        press_edge = cd->pressed;
-        release_edge = !cd->pressed;
-    }
-
-    // A sequence that ran out of time is over, whatever comes next. A press still down at that moment belonged to
-    // it, so its release is not the first click of a new one.
-    if (cd->clicks > 0 && now_ms - cd->sequence_start_ms > cd->cfg.window_ms) {
-        reset_sequence(cd);
-        if (cd->pressed && !press_edge) {
-            cd->hold = true;
-        }
-    }
-
-    if (press_edge) {
-        cd->hold = false;
-        cd->press_start_ms = now_ms;
-        if (cd->armed && cd->clicks == 0) {
-            cd->sequence_start_ms = now_ms;
-        }
+    if (cd->raw == cd->pressed || now_ms - cd->raw_since_ms < cd->cfg.debounce_ms) {
         return false;
     }
+    cd->pressed = cd->raw;
+    const uint32_t edge_ms = cd->raw_since_ms; // when the level changed, not when the debounce confirmed it
 
     if (cd->pressed) {
-        if (!cd->hold && now_ms - cd->press_start_ms > cd->cfg.max_press_ms) {
-            cd->hold = true; // a hold: neither a click nor part of a sequence
-            reset_sequence(cd);
+        // A pause longer than gap_ms ended the previous sequence: this press starts a new one
+        if (cd->clicks > 0 && edge_ms - cd->release_ms > cd->cfg.gap_ms) {
+            cd->clicks = 0;
         }
+        cd->press_start_ms = edge_ms;
         return false;
     }
 
-    if (!release_edge) {
-        return false;
-    }
     if (!cd->armed) {
-        cd->armed = true; // first release after start-up or after a completed sequence
+        cd->armed = true; // first release after start-up: the press began before the detector
         return false;
     }
-    if (cd->hold) {
+    if (edge_ms - cd->press_start_ms > cd->cfg.max_press_ms) {
+        cd->clicks = 0; // a hold: neither a click nor part of a sequence
         return false;
     }
     cd->clicks++;
+    cd->release_ms = edge_ms;
     if (cd->clicks < cd->cfg.clicks_needed) {
         return false;
     }
-    const bool in_window = now_ms - cd->sequence_start_ms <= cd->cfg.window_ms;
-    reset_sequence(cd);
-    return in_window;
+    cd->clicks = 0;
+    return true;
 }

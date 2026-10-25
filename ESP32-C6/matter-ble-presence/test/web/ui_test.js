@@ -22,7 +22,7 @@ const config = {
 const status = {
   mode: 'config', network: 'thread', firmware: '1.0.181', idf: 'v6.0.2', uptime_s: 75, idle_left_s: 587, idle_timeout_s: 600,
   heap: { free: 123456, min: 100000, largest: 80000 }, ap: { ssid: 'VN-Presence-3A7C', stations: 1, channel: 1 },
-  scan: { state: 'running', paused_by: '', active: true, interval_ms: 100, window_ms: 50, adv_reports: 1234,
+  scan: { state: 'running', paused_by: '', active: true, interval_ms: 160, window_ms: 40, adv_reports: 1234,
           ibeacon_reports: 210, starts: 1, start_failures: 0, unexpected_stops: 0, watchdog_restarts: 0, last_error: 0,
           list: 3, capacity: 32, queue_drops: 0, evictions: 0 },
   storage: { status: 'ok', detail: '', nvs_main: 'ESP_OK' },
@@ -164,9 +164,12 @@ async function openPage(browser, network, posts) {
   await wifi.fill('#scanWin', '120');
   check((await wifi.textContent('#scanInfo')).includes('Wi-Fi'), 'Wi-Fi version: duty warning names Wi-Fi');
 
-  // Two-chip version: the ESP32-C3 scanner's page (Matter on the ESP32-H2)
+  // Two-chip version: the ESP32-C3 scanner's page (Matter on the ESP32-H2), opened in the seconds after the phone
+  // joined, while BLE scanning is still held off
+  status.scan = Object.assign({}, status.scan, { state: 'hold_off' });
   const h2 = await openPage(browser, 'h2', []);
   await h2.waitForTimeout(300);
+  check((await h2.textContent('#scanChip')) === 'Sắp quét', 'scanning held off after the phone joined: "Sắp quét"');
   check((await h2.textContent('#statusGrid')).includes('Matter/Thread (ESP32-H2)'), 'two-chip: mode names the ESP32-H2');
   check((await h2.textContent('#statusGrid')).includes('đã ghép (1 fabric) · Thread chưa kết nối'), 'two-chip: H2 status shown');
   check((await h2.textContent('#coexNote')).includes('hai chip'), 'two-chip: scan note');

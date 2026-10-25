@@ -50,7 +50,7 @@ PID riêng giúp controller không nhầm hai loại firmware.
 | Chân | **GPIO9**, mức tích cực **thấp** (`CONFIG_PRESENCE_BOOT_GPIO=9`, `PRESENCE_BOOT_ACTIVE_LOW=y`) |
 | Kéo lên | **pull-up nội** của GPIO9 bật trong firmware (`PRESENCE_BOOT_PULLUP=y`) |
 | Chống dội | phần mềm 40 ms, đọc mỗi 10 ms bằng `esp_timer` (không ngắt) |
-| 3 lần bấm | 3 lần bấm-nhả hoàn chỉnh trong 2 s, giữ quá 0,8 s không tính; **không phải factory reset** |
+| 3 lần bấm | 3 lần bấm-nhả, **bấm chậm được**: lần sau chỉ cần bắt đầu trong 2 s kể từ lần nhả trước (`PRESENCE_BOOT_CLICK_GAP_MS`), mỗi lần bấm ≤ 1,5 s (giữ lâu hơn không tính); log `BOOT click 1 of 3`… cho từng lần; **không phải factory reset** |
 
 Đã đối chiếu **sơ đồ nguyên lý chính thức ESP32-C3-DevKitM-1 V1** (`SCH_ESP32-C3-DEVKITM-1_V1_20200915A.pdf` của
 Espressif): nút Boot **SW1 nối GPIO9 xuống GND**, **không có điện trở kéo lên ngoài** trên nút, tụ chống dội C13
@@ -187,14 +187,18 @@ Riêng bản C3:
 * Ở CONFIG, Wi-Fi chỉ chạy SoftAP: thiết bị **rời mạng Wi-Fi nhà**, controller báo "không phản hồi" cho tới khi thiết bị
   về NORMAL. Dữ liệu ghép và SSID/mật khẩu Wi-Fi nhà **không bị đụng tới**: SoftAP khởi tạo driver Wi-Fi với
   `nvs_enable = 0` (cấu hình chỉ ở RAM), nên không ghi gì vào `nvs`.
-* SoftAP + điện thoại đang nối + quét BLE là mức **C1**: danh sách beacon có thể cập nhật chậm hơn lúc trang đang mở.
+* SoftAP + điện thoại đang nối + quét BLE là mức **C1**: firmware chỉ quét BLE khi có điện thoại nối SoftAP, bắt đầu
+  5 s sau khi điện thoại vào, 40 ms mỗi 160 ms (chung với bản C6). Danh sách beacon trống vài giây đầu.
+* SoftAP phát ở **8,5 dBm** (`PRESENCE_AP_LIMIT_TX_POWER`, mặc định bật trên ESP32-C3): board ESP32-C3 SuperMini hay
+  rớt/không nối được Wi-Fi ở công suất tối đa 20 dBm; điện thoại ở gần lúc cấu hình nên công suất thấp hơn không ảnh
+  hưởng. Chỉ SoftAP của CONFIG; Wi-Fi station của Matter (NORMAL) vẫn dùng mặc định của driver. Kênh 20 MHz.
 * Kênh SoftAP cố định (mặc định 1, `PRESENCE_AP_CHANNEL`), không phụ thuộc kênh Wi-Fi nhà.
 
 ---
 
 ## Kiểm thử
 
-**Host test** (9 bộ, ASan/UBSan) và **test trang web** (Playwright, 39 kiểm tra, gồm phần chữ "Wi-Fi"/mức Y của bản
+**Host test** (10 bộ, ASan/UBSan) và **test trang web** (Playwright, 43 kiểm tra, gồm phần chữ "Wi-Fi"/mức Y của bản
 C3): chung với bản C6, xem mục *Kiểm thử* trong README bản C6. Kết quả trong phiên này: tất cả đạt.
 
 ### Kết quả build thực tế

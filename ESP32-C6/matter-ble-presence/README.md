@@ -135,13 +135,13 @@ lạ khi mở cổng, hãy tắt điều khiển DTR/RTS hoặc xem log qua cổ
 |---|---|
 | `app_main.cpp` | Khởi tạo NVS (không xóa), nạp cấu hình, chọn chế độ, khởi động đúng tập dịch vụ |
 | `app_mode.*`, `app_mode_logic.*` | Cờ RTC một lần, khởi động lại có kiểm soát, đếm thời gian rảnh ở CONFIG |
-| `button_handler.*`, `click_detector.*` | Đọc GPIO9 mỗi 10 ms bằng `esp_timer` (không ISR), chống dội, nhận diện 3 lần bấm-nhả trong 2 s |
+| `button_handler.*`, `click_detector.*` | Đọc GPIO9 mỗi 10 ms bằng `esp_timer` (không ISR), chống dội, nhận diện 3 lần bấm-nhả (bấm chậm được: nghỉ giữa hai lần tối đa 2 s) |
 | `ble_scanner.*` | Vòng đời quét GAP (observer) trên **host NimBLE duy nhất**, backoff, watchdog, "đồng hồ quét" |
 | `ibeacon_parser.*`, `ble_addr.*`, `json_util.*` | Giải mã khung iBeacon/tên an toàn độ dài, MAC và thứ tự byte, UTF-8/JSON escape |
 | `presence_manager.*`, `presence_logic.*` | Lọc MAC trong callback BLE → hàng đợi giới hạn → task hiện diện → báo Matter |
 | `scan_cache.*` | Danh sách iBeacon ở CONFIG (gộp trùng, giới hạn 32, loại bản ghi cũ) |
 | `presence_config.*`, `config_store.*`, `crc32.*` | Cấu hình 5 slot: mặc định, kiểm tra, blob có version + CRC, NVS phân vùng riêng |
-| `wifi_config.*`, `web_server.*`, `http_guard.*`, `web/index.html` | SoftAP WPA2, HTTP server + API JSON (chỉ nhận `Host` đúng và POST JSON), trang tiếng Việt nhúng |
+| `wifi_config.*`, `web_server.*`, `http_guard.*`, `web/index.html` | SoftAP WPA2 kênh 20 MHz (giới hạn công suất phát trên ESP32-C3), HTTP server + API JSON (chỉ nhận `Host` đúng và POST JSON), trang tiếng Việt nhúng |
 | `matter_device.*` | Node Matter, 5 endpoint, Thread MED (bản C6) hoặc Wi-Fi station (bản C3), cổng chặn scanner theo sự kiện Matter/mạng, cập nhật Occupancy |
 | `diag.*` | Log chẩn đoán định kỳ (heap, scanner, từng slot, bộ đếm Thread) |
 
@@ -214,6 +214,10 @@ Scenario for ESP32-C6* trong hướng dẫn coexistence của **ESP-IDF v6.0.2**
 |---|---|
 | TX Beacon (chưa có điện thoại) | Y |
 | Connecting / Connected (có điện thoại) | **C1** |
+
+Vì vậy ở CONFIG firmware **chỉ quét BLE khi có điện thoại nối SoftAP**, bắt đầu 5 s sau khi điện thoại vào
+(`PRESENCE_CONFIG_SCAN_HOLD_OFF_SEC`) và chỉ 40 ms mỗi 160 ms: lúc điện thoại dò mạng và kết nối (bắt tay WPA2, xin
+DHCP, tải trang đầu), radio chỉ phục vụ Wi-Fi.
 
 Tài liệu cũng nêu: *"Normal receive operations [of 802.15.4] are assigned the lowest priority, meaning Wi-Fi and BLE
 will take over the RF whenever needed"*. Hệ quả và các lựa chọn của firmware:
@@ -408,8 +412,10 @@ Home hay Home Assistant trong phiên này — xem [cần thử](#đã-xác-minh-
 
 ## Cấu hình beacon (chế độ CONFIG)
 
-1. Khi firmware đang chạy, **bấm-nhả BOOT 3 lần trong khoảng 2 giây** (mỗi lần bấm ngắn hơn 0,8 s; giữ lâu không bao
-   giờ được tính là nhiều lần bấm). Thiết bị log `Triple click on BOOT`, khởi động lại vào CONFIG. Matter tạm thời
+1. Khi firmware đang chạy, **bấm-nhả BOOT 3 lần**, thong thả cũng được: lần bấm sau chỉ cần bắt đầu trong vòng
+   **2 giây** kể từ lần nhả trước (`PRESENCE_BOOT_CLICK_GAP_MS`), mỗi lần bấm ngắn hơn 1,5 s; nghỉ lâu hơn thì đếm lại từ
+   đầu, giữ lâu không bao giờ được tính là nhiều lần bấm. Mỗi lần bấm được đếm, log in `BOOT click 1 of 3`,
+   `BOOT click 2 of 3`; đủ 3 lần, log `Triple click on BOOT` và thiết bị khởi động lại vào CONFIG. Matter tạm thời
    offline với controller; dữ liệu ghép không bị đụng tới.
 2. Điện thoại kết nối Wi-Fi **`VN-Presence-XXXX`** (4 số hex cuối của MAC SoftAP), mật khẩu in ở console khi khởi
    động (mật khẩu ngẫu nhiên riêng của thiết bị, 12 ký tự; hoặc đặt chung qua Kconfig `PRESENCE_AP_PASSWORD`). Không
@@ -417,7 +423,8 @@ Home hay Home Assistant trong phiên này — xem [cần thử](#đã-xác-minh-
 3. Mở **http://192.168.4.1** (không cần Internet, không captive portal).
 4. Mục *iBeacon xung quanh*: MAC, loại địa chỉ (cảnh báo địa chỉ đổi), RSSI, UUID, Major, Minor, thời điểm nhận gần
    nhất, tên quảng bá (nếu có, lấy cả từ scan response — CONFIG quét chủ động). Danh sách gộp trùng, tối đa 32 beacon,
-   bỏ beacon không nghe thấy sau 120 s. Có nút dừng/tiếp tục quét và xóa danh sách.
+   bỏ beacon không nghe thấy sau 120 s. Có nút dừng/tiếp tục quét và xóa danh sách. Quét bắt đầu khoảng 5 s sau khi
+   điện thoại nối SoftAP (trạng thái "Sắp quét"), nên danh sách trống trong vài giây đầu.
 5. Chọn **"Gán vào → Presence N"** trên một beacon, hoặc nhập MAC tay (chấp nhận `AA:BB:CC:DD:EE:FF`,
    `aa-bb-cc-dd-ee-ff`, `aabbccddeeff`, chuẩn hóa thành `AA:BB:CC:DD:EE:FF`; loại địa chỉ `Tự động` khi không rõ).
    Đặt tên, bật/tắt, thời gian vắng mặt, lọc RSSI (nâng cao). Một beacon không được gán cho 2 slot đang bật (báo lỗi
@@ -452,7 +459,7 @@ ESP32-C6/matter-ble-presence/test/host/run.sh      # g++ ≥ 9, chạy với Add
 | `test_ibeacon` | khung hợp lệ (có/không Flags, sau tên), không phải iBeacon (hãng khác, sai type/độ dài, Eddystone), **mọi độ dài cắt cụt**, độ dài vượt cuối, cấu trúc độ dài 0, 2 cấu trúc manufacturer, tên (complete/shortened, UTF-8, ký tự điều khiển, cắt đúng ranh giới), **fuzz 200 000 mẫu** dưới ASan |
 | `test_ble_addr` | các dạng MAC hợp lệ/không hợp lệ, chuẩn hóa, **thứ tự byte NimBLE ↔ hiển thị**, loại địa chỉ (public/static/RPA/NRPA), khớp loại |
 | `test_presence_logic` | ON tức thì, OFF đúng tại timeout, **1 giờ quảng bá cùng payload vẫn ON**, **tạm dừng scanner 10 phút không gây OFF**, slot độc lập, slot tắt, RSSI có trễ |
-| `test_click_detector` | 3 lần bấm, 2 lần, chậm quá 2 s, dội phím, nhiễu ngắn, **giữ lâu không thành nhiều lần bấm**, nút đang giữ lúc khởi động, 4 lần, hết cửa sổ khi đang bấm, tràn bộ đếm ms |
+| `test_click_detector` | 3 lần bấm, 2 lần, **bấm thong thả** (nghỉ đúng 2 s, bấm 1,5 s), nghỉ quá 2 s thì đếm lại, dội phím (cả khi bấm chậm), nhiễu ngắn, **giữ lâu không thành nhiều lần bấm**, nút đang giữ lúc khởi động, 4 lần, tràn bộ đếm ms |
 | `test_app_mode` | cờ RTC chỉ hợp lệ sau reset phần mềm, một lần, bị hỏng → NORMAL, 100 000 mẫu RTC ngẫu nhiên không bao giờ vào CONFIG |
 | `test_presence_config` | mặc định (cửa sổ < chu kỳ), mọi lỗi trường, trùng beacon (any/public/random, slot tắt), nhãn UTF-8, blob round-trip, **mọi bit lật bị phát hiện**, version mới hơn, magic sai |
 | `test_json_util` | escape JSON/HTML (`<script>`), UTF-8 hợp lệ/không hợp lệ, cắt không vỡ chuỗi |
@@ -507,12 +514,13 @@ Host test (`test/host/run.sh`, g++ 13.3, ASan + UBSan):
 ```
 app_mode             11 checks, 0 failed
 ble_addr             63 checks, 0 failed
-click_detector       19 checks, 0 failed
+click_detector       34 checks, 0 failed
 config_store        108 checks, 0 failed
 http_guard           26 checks, 0 failed
 ibeacon_parser     202007 checks, 0 failed
 json_util            22 checks, 0 failed
 presence_config     398 checks, 0 failed
+presence_link       322 checks, 0 failed
 presence_logic     4248 checks, 0 failed
 All host tests passed
 ```
@@ -571,7 +579,7 @@ liệu của bước 10 và xem [khuyến nghị](#khuyến-nghị-phương-án-
   TagList, `SetThreadDeviceType`, OpenThread MTD mặc định rx-on-when-idle, Kconfig bộ lọc trùng của controller C6,
   `RTC_NOINIT_ATTR` trên C6, DAC thử nghiệm cho PID 0x8002, sơ đồ nút BOOT của DevKitC-1 v1.4.
 * `idf.py set-target esp32c6` + `idf.py build` thành công (số liệu ở mục kết quả build).
-* Host test: 9 bộ, đạt (ASan/UBSan).
+* Host test: 10 bộ, đạt (ASan/UBSan).
 * Trang web cấu hình chạy trong Chromium headless với API giả lập: 39 kiểm tra đạt (escape tên, gán/trùng beacon,
   kiểm tra dữ liệu, nội dung lệnh lưu, kiểu nội dung POST, ô chọn không bị đóng, khởi động lại, chữ theo mạng
   Thread/Wi-Fi).

@@ -30,6 +30,7 @@ static constexpr bool kPullUp = false;
 #endif
 
 static click_detector_t s_detector;
+static uint8_t s_clicks_logged;
 static void (*s_on_triple_click)(void);
 static esp_timer_handle_t s_timer;
 
@@ -47,7 +48,15 @@ static uint32_t now_ms()
 // esp_timer task: sample, debounce, count. Only hands the triple click over.
 static void poll_cb(void *)
 {
-    if (click_detector_update(&s_detector, read_pressed(), now_ms())) {
+    const bool fired = click_detector_update(&s_detector, read_pressed(), now_ms());
+    if (s_detector.clicks != s_clicks_logged) {
+        s_clicks_logged = s_detector.clicks;
+        if (s_clicks_logged > 0) {
+            ESP_LOGI(TAG, "BOOT click %u of %u (next press within %d ms)", static_cast<unsigned>(s_clicks_logged),
+                     static_cast<unsigned>(s_detector.cfg.clicks_needed), CONFIG_PRESENCE_BOOT_CLICK_GAP_MS);
+        }
+    }
+    if (fired) {
         ESP_LOGI(TAG, "Triple click on BOOT");
         if (s_on_triple_click) {
             s_on_triple_click();
@@ -81,7 +90,7 @@ esp_err_t button_handler_start(void (*on_triple_click)(void))
 
     const click_detector_config_t cfg = {
         .debounce_ms = CONFIG_PRESENCE_BOOT_DEBOUNCE_MS,
-        .window_ms = CONFIG_PRESENCE_BOOT_CLICK_WINDOW_MS,
+        .gap_ms = CONFIG_PRESENCE_BOOT_CLICK_GAP_MS,
         .max_press_ms = CONFIG_PRESENCE_BOOT_CLICK_MAX_PRESS_MS,
         .clicks_needed = 3,
     };

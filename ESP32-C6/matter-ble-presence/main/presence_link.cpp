@@ -30,11 +30,15 @@ static constexpr int64_t kSendPeriodMs = 1000;
 static constexpr TickType_t kReadTimeout = pdMS_TO_TICKS(100);
 
 static bool s_scanner;
-// Scanner
+#if CONFIG_PRESENCE_ROLE_SCANNER
 static bool s_config_mode;
 static uint8_t s_active_mask;
-static std::atomic<uint8_t> s_present_mask{ 0 };
+static uint32_t s_timeout_ms[PRESENCE_SLOT_COUNT];
+static portMUX_TYPE s_mask_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint8_t s_present_mask;  // s_mask_mux
+static uint8_t s_reported_mask; // s_mask_mux: slots reported since boot, present and known updated together
 static std::atomic<bool> s_dirty{ false };
+#endif
 // Matter node
 static presence_link_apply_fn_t s_apply;
 static presence_link_status_fn_t s_status;
@@ -66,11 +70,18 @@ static void send_state()
 {
     ble_scanner_stats_t scan;
     ble_scanner_get_stats(&scan);
+    portENTER_CRITICAL(&s_mask_mux);
+    const uint8_t present = s_present_mask;
+    const uint8_t reported = s_reported_mask;
+    portEXIT_CRITICAL(&s_mask_mux);
     plink_state_t st = {};
     st.mode = s_config_mode ? PLINK_MODE_CONFIG : PLINK_MODE_NORMAL;
     st.flags = scan.state == BLE_SCANNER_RUNNING ? PLINK_STATE_SCANNING : 0;
     st.active_mask = s_config_mode ? 0 : s_active_mask;
-    st.present_mask = s_config_mode ? 0 : s_present_mask.load();
+    st.present_mask = s_config_mode ? 0 : present;
+    st.known_mask = s_config_mode
+        ? 0
+        : plink_known_mask(s_active_mask, reported, s_timeout_ms, PRESENCE_SLOT_COUNT, scan.scan_clock_ms);
     st.uptime_s = static_cast<uint32_t>(now_ms() / 1000);
     uint8_t frame[PLINK_MAX_FRAME];
     send_frame(frame, plink_encode_state(&st, frame, sizeof(frame)));
@@ -90,12 +101,13 @@ static void send_status()
 }
 #endif
 
-// Matter node: brings the sensors to the wanted states, only the ones that differ (or were never applied)
-static void apply_states(uint8_t want_mask)
+// Matter node: brings the sensors of known_mask to the wanted states, only the ones that differ (or were never
+// applied). The others keep their state: the scanner does not know yet (it just restarted).
+static void apply_states(uint8_t want_mask, uint8_t known_mask)
 {
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
         const bool want = (want_mask >> i) & 1;
-        if (s_applied_valid[i] && s_applied[i] == want) {
+        if (((known_mask >> i) & 1) == 0 || (s_applied_valid[i] && s_applied[i] == want)) {
             continue;
         }
         if (s_apply(i, want)) {
@@ -138,8 +150,9 @@ static void on_frame(const plink_parser_t &p)
     s_stats.last_rx_ms = now_ms();
     portEXIT_CRITICAL(&s_stats_mux);
     if (first || s_gone) {
-        ESP_LOGI(TAG, "Scanner %s (mode %s, %u slot(s) assigned)", first ? "seen" : "back",
-                 st.mode == PLINK_MODE_CONFIG ? "CONFIG" : "NORMAL", static_cast<unsigned>(__builtin_popcount(st.active_mask)));
+        ESP_LOGI(TAG, "Scanner %s (mode %s, %u slot(s) assigned, known 0x%02x)", first ? "seen" : "back",
+                 st.mode == PLINK_MODE_CONFIG ? "CONFIG" : "NORMAL", static_cast<unsigned>(__builtin_popcount(st.active_mask)),
+                 st.known_mask & 0x1F);
         s_gone = false;
     }
     if (st.mode == PLINK_MODE_CONFIG) {
@@ -149,7 +162,7 @@ static void on_frame(const plink_parser_t &p)
         }
         return;
     }
-    apply_states(st.present_mask & st.active_mask);
+    apply_states(st.present_mask & st.active_mask, st.known_mask);
 }
 
 static void link_task(void *)
@@ -186,7 +199,7 @@ static void link_task(void *)
         presence_link_stats_t snap;
         presence_link_get_stats(&snap);
         if (snap.have_peer_state && snap.peer_state.mode == PLINK_MODE_NORMAL && !s_gone) {
-            apply_states(snap.peer_state.present_mask & snap.peer_state.active_mask);
+            apply_states(snap.peer_state.present_mask & snap.peer_state.active_mask, snap.peer_state.known_mask);
         }
 #if CONFIG_PRESENCE_LINK_TIMEOUT_SEC > 0
         const int64_t since = snap.last_rx_ms > 0 ? now - snap.last_rx_ms : now;
@@ -202,7 +215,7 @@ static void link_task(void *)
             }
         }
         if (s_gone) {
-            apply_states(0);
+            apply_states(0, 0xFF);
         }
 #endif
 #endif
@@ -235,11 +248,17 @@ static esp_err_t start_uart()
     return xTaskCreate(link_task, "link", 3072, nullptr, 5, nullptr) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
-esp_err_t presence_link_start_scanner(bool config_mode, uint8_t active_mask)
+#if CONFIG_PRESENCE_ROLE_SCANNER
+esp_err_t presence_link_start_scanner(bool config_mode, const presence_config_t *cfg)
 {
     s_scanner = true;
     s_config_mode = config_mode;
-    s_active_mask = active_mask;
+    for (int i = 0; cfg != nullptr && i < PRESENCE_SLOT_COUNT; i++) {
+        if (presence_slot_is_active(&cfg->slots[i])) {
+            s_active_mask |= static_cast<uint8_t>(1u << i);
+        }
+        s_timeout_ms[i] = static_cast<uint32_t>(cfg->slots[i].timeout_s) * 1000;
+    }
     return start_uart();
 }
 
@@ -249,14 +268,18 @@ bool presence_link_report(int slot, bool present)
         return true;
     }
     const uint8_t bit = static_cast<uint8_t>(1u << slot);
+    portENTER_CRITICAL(&s_mask_mux);
     if (present) {
-        s_present_mask.fetch_or(bit);
+        s_present_mask |= bit;
     } else {
-        s_present_mask.fetch_and(static_cast<uint8_t>(~bit));
+        s_present_mask &= static_cast<uint8_t>(~bit);
     }
+    s_reported_mask |= bit;
+    portEXIT_CRITICAL(&s_mask_mux);
     s_dirty = true;
     return true;
 }
+#endif
 
 esp_err_t presence_link_start_matter(presence_link_apply_fn_t apply, presence_link_status_fn_t status)
 {
@@ -280,7 +303,8 @@ void presence_link_log_diagnostics(void)
     const unsigned ago = st.last_rx_ms > 0 ? static_cast<unsigned>((now_ms() - st.last_rx_ms) / 1000) : 0;
     if (s_scanner) {
         if (!st.have_peer_status) {
-            ESP_LOGW(TAG, "Matter node never heard: tx %u, rx %u, CRC errors %u, bad frames %u (check the wiring)",
+            ESP_LOGW(TAG, "Matter node never heard: tx %u, rx %u, CRC errors %u, bad frames %u (check the wiring; "
+                          "bad frames: flash both chips with the same firmware version)",
                      static_cast<unsigned>(st.tx_frames), static_cast<unsigned>(st.rx_frames),
                      static_cast<unsigned>(st.crc_errors), static_cast<unsigned>(st.bad_frames));
             return;
@@ -296,16 +320,18 @@ void presence_link_log_diagnostics(void)
         return;
     }
     if (!st.have_peer_state) {
-        ESP_LOGW(TAG, "Scanner never heard: tx %u, rx %u, CRC errors %u, bad frames %u (check the wiring)",
+        ESP_LOGW(TAG, "Scanner never heard: tx %u, rx %u, CRC errors %u, bad frames %u (check the wiring; bad frames: "
+                      "flash both chips with the same firmware version)",
                  static_cast<unsigned>(st.tx_frames), static_cast<unsigned>(st.rx_frames),
                  static_cast<unsigned>(st.crc_errors), static_cast<unsigned>(st.bad_frames));
         return;
     }
     ESP_LOGI(TAG,
-             "Scanner %u s ago: %s, scanning %d, assigned 0x%02x, present 0x%02x, up %u s; tx %u, rx %u, CRC errors %u, "
-             "bad frames %u, losses %u",
+             "Scanner %u s ago: %s, scanning %d, assigned 0x%02x, present 0x%02x, known 0x%02x, up %u s; tx %u, rx %u, "
+             "CRC errors %u, bad frames %u, losses %u",
              ago, st.peer_state.mode == PLINK_MODE_CONFIG ? "CONFIG" : "NORMAL",
              (st.peer_state.flags & PLINK_STATE_SCANNING) != 0, st.peer_state.active_mask, st.peer_state.present_mask,
+             st.peer_state.known_mask & 0x1F,
              static_cast<unsigned>(st.peer_state.uptime_s), static_cast<unsigned>(st.tx_frames),
              static_cast<unsigned>(st.rx_frames), static_cast<unsigned>(st.crc_errors),
              static_cast<unsigned>(st.bad_frames), static_cast<unsigned>(st.link_losses));

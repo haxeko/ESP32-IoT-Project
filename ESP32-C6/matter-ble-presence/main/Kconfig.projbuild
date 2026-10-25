@@ -119,17 +119,20 @@ menu "BLE Presence x5"
             range 5 20
             default 10
 
-        config PRESENCE_BOOT_CLICK_WINDOW_MS
-            int "Three clicks must complete within (ms)"
-            range 1000 4000
+        config PRESENCE_BOOT_CLICK_GAP_MS
+            int "Longest pause between two clicks (ms)"
+            range 500 5000
             default 2000
             help
-                From the first press to the third release.
+                From a release to the next press. The three clicks may be as slow
+                as wanted as long as no pause is longer than this; a longer pause
+                starts the count again with the next press. Each counted click is
+                logged ("BOOT click 1 of 3").
 
         config PRESENCE_BOOT_CLICK_MAX_PRESS_MS
             int "Longest press that still counts as a click (ms)"
-            range 200 2000
-            default 800
+            range 300 3000
+            default 1500
             help
                 A longer press is a hold: it never counts as one or more clicks
                 and it cancels the clicks counted so far.
@@ -174,19 +177,55 @@ menu "BLE Presence x5"
             range 1 4
             default 2
 
+        config PRESENCE_AP_LIMIT_TX_POWER
+            bool "Limit the SoftAP transmit power"
+            default y if IDF_TARGET_ESP32C3
+            help
+                ESP32-C3 SuperMini boards are widely reported to drop or refuse
+                Wi-Fi connections at the full 20 dBm (antenna and supply of the
+                board); 8.5 dBm is the usual cure, and it also eases an antenna
+                detuned by a board soldered next to it (two-chip version). The phone is near
+                the device while configuring it, so the lower power costs little.
+                CONFIG mode SoftAP only: the Matter Wi-Fi station of the ESP32-C3
+                Wi-Fi version keeps the driver default.
+
+        config PRESENCE_AP_MAX_TX_POWER
+            int "SoftAP maximum transmit power (0.25 dBm units)"
+            depends on PRESENCE_AP_LIMIT_TX_POWER
+            range 8 84
+            default 34
+            help
+                34 = 8.5 dBm. Steps the PHY uses (a value between two steps goes
+                down to the lower one): 8 (2 dBm), 20 (5), 28 (7), 34 (8.5),
+                44 (11), 52 (13), 56 (14), 60 (15), 66 (16.5), 72 (18), 80 (20 dBm).
+
+        config PRESENCE_CONFIG_SCAN_HOLD_OFF_SEC
+            int "BLE scanning starts this long after a phone joins the SoftAP (s)"
+            range 0 60
+            default 5
+            help
+                In CONFIG mode BLE scanning runs only while a phone is connected to
+                the SoftAP. With nobody connected the radio is left to Wi-Fi alone
+                (the phones' probe requests and connection attempts: SoftAP next to
+                BLE scanning is "C1, supported but the performance is unstable" in
+                the ESP-IDF coexistence table once a station connects), and a phone
+                that just joined gets these seconds for its DHCP request and the
+                first page. The beacon list fills from then on.
+
         config PRESENCE_CONFIG_SCAN_INTERVAL_MS
             int "BLE scan interval in CONFIG mode (ms)"
             range 20 10240
-            default 100
+            default 160
 
         config PRESENCE_CONFIG_SCAN_WINDOW_MS
             int "BLE scan window in CONFIG mode (ms)"
             range 10 PRESENCE_CONFIG_SCAN_INTERVAL_MS
-            default 50
+            default 40
             help
                 Wi-Fi SoftAP with a connected phone and BLE scanning share the one
-                radio (coexistence "C1" in the ESP-IDF table for the ESP32-C6): a
-                window well below the interval leaves time to the web page.
+                radio: 40 ms of 160 ms (25 %) leaves most of the time to the web
+                page. A beacon advertising every second still shows up in the list
+                within a few seconds when its signal is good.
 
         config PRESENCE_CONFIG_ACTIVE_SCAN
             bool "Active scanning in CONFIG mode (beacon names from scan responses)"
