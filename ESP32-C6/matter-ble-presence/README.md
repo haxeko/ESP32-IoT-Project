@@ -12,6 +12,11 @@ không ESPHome, không Matter bridge.
 > mã nguồn, bảng phân vùng và phần cấu hình chung của thư mục này (`ble_presence.cmake`), chỉ khác mạng Matter (Wi-Fi
 > thay Thread), product ID và các tùy chọn tiết kiệm RAM. Cấu hình riêng của bản C6 (Thread) nằm trong
 > `sdkconfig.defaults.esp32c6`.
+>
+> **Bản hai chip (ESP32-C3 quét BLE + ESP32-H2 Matter over Thread, nối UART):**
+> [`ESP32-C3/ble-presence-scanner`](../../ESP32-C3/ble-presence-scanner) và
+> [`ESP32-H2/matter-ble-presence-h2`](../../ESP32-H2/matter-ble-presence-h2), cùng mã nguồn này với vai trò chọn bằng
+> Kconfig `PRESENCE_ROLE`; mỗi chip một radio nên BLE scan và Thread không tranh nhau.
 
 > **Trạng thái:** mã nguồn hoàn chỉnh, **build thành công** với ESP-IDF v6.0.2 + esp-matter v1.6.1 (kết quả ở mục
 > [Kết quả build](#kết-quả-build-thực-tế)), host test đạt. **Chưa chạy trên phần cứng** trong phiên làm việc này: mọi
@@ -345,8 +350,9 @@ Cài trên máy (theo *Developing with the SDK*): clone `esp-idf` tag `v6.0.2` (
 `idf.py` như trên. Lần build đầu tải `espressif/cjson` (và các phụ thuộc của esp-matter) từ ESP Component Registry
 nên cần Internet.
 
-`sdkconfig.defaults` chứa phần dùng chung với bản ESP32-C3, `sdkconfig.defaults.esp32c6` phần riêng của bản C6
-(Thread, product ID 0x8002, console Matter); ESP-IDF tự áp dụng file thứ hai sau file thứ nhất khi target là esp32c6.
+`sdkconfig.defaults` chứa phần dùng chung với mọi bản (BLE, SoftAP, bảng phân vùng), `sdkconfig.defaults.esp32c6`
+phần riêng của bản C6 (Thread, product ID 0x8002, console Matter; ESP-IDF tự áp dụng ngay sau file chung khi target là
+esp32c6), `sdkconfig.defaults.matter` phần Matter (chỉ các bản chạy Matter nạp, `ble_presence.cmake`).
 Sau khi sửa các file này, chạy lại `idf.py set-target esp32c6` (hoặc xóa `sdkconfig`).
 Tùy chọn của dự án: `idf.py menuconfig` → **BLE Presence x5** (nút BOOT, SoftAP, quét BLE, hiện diện, feature Matter,
 chẩn đoán).
@@ -478,13 +484,13 @@ Chạy trong `espressif/esp-matter:release-v1.6.1_idf_v6.0.2` (các commit ở �
 [Build](#build): `idf.py set-target esp32c6` rồi `idf.py build`.
 
 ```
-matter_ble_presence.bin binary size 0x1fb330 bytes. Smallest app partition is 0x3a0000 bytes. 0x1a4cd0 bytes (45%) free.
+matter_ble_presence.bin binary size 0x1fb620 bytes. Smallest app partition is 0x3a0000 bytes. 0x1a49e0 bytes (45%) free.
 Project build complete.
 ```
 
 | Hạng mục | Giá trị |
 |---|---|
-| App `matter_ble_presence.bin` | 2 077 488 byte (0x1FB330) trong phân vùng `factory` 3 712 KB (0x3A0000): **còn trống 45%** |
+| App `matter_ble_presence.bin` | 2 078 240 byte (0x1FB620) trong phân vùng `factory` 3 712 KB (0x3A0000): **còn trống 45%** |
 | Bootloader / bảng phân vùng | 22 192 byte tại 0x0 / 3 072 byte tại 0xC000 |
 | Flash code (`idf.py size`) | 1 954 750 byte (.text 1 639 346, .rodata 314 684) |
 | DIRAM tĩnh | 216 396 / 452 112 byte (47,9%): IRAM .text 104 320, .bss 93 736, .data 18 340 → 235 716 byte cho heap lúc khởi động (heap còn lại khi Matter + Thread + BLE chạy **cần đo trên phần cứng**, log `diag` in mỗi 60 s) |

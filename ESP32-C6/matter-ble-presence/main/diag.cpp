@@ -19,6 +19,9 @@
 
 #include "ble_scanner.h"
 #include "matter_device.h"
+#if CONFIG_PRESENCE_ROLE_SCANNER
+#include "presence_link.h"
+#endif
 #include "presence_manager.h"
 #include "scan_cache.h"
 #include "wifi_config.h"
@@ -77,7 +80,11 @@ static void diag_task(void *)
         log_scanner(&last_reports, &last_ms);
         if (s_mode == APP_MODE_NORMAL) {
             log_presence();
+#if CONFIG_PRESENCE_ROLE_SCANNER
+            presence_link_log_diagnostics();
+#else
             matter_device_log_diagnostics();
+#endif
         } else {
             scan_cache_stats_t cache;
             scan_cache_get_stats(&cache);
@@ -85,6 +92,9 @@ static void diag_task(void *)
                      static_cast<unsigned>(cache.count), static_cast<unsigned>(cache.capacity),
                      static_cast<unsigned>(cache.queue_drops), static_cast<unsigned>(cache.evictions),
                      wifi_config_station_count(), static_cast<unsigned>(app_mode_idle_remaining_s()));
+#if CONFIG_PRESENCE_ROLE_SCANNER
+            presence_link_log_diagnostics();
+#endif
         }
     }
 }

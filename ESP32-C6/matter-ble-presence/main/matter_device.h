@@ -30,7 +30,11 @@
 
 #include "sdkconfig.h"
 
-#if CONFIG_ENABLE_MATTER_OVER_THREAD
+#if CONFIG_PRESENCE_ROLE_SCANNER
+// Two-chip version, scanner: Matter runs on the ESP32-H2 (Thread), this chip has none
+#define MATTER_DEVICE_NETWORK_NAME "Thread (ESP32-H2)"
+#define MATTER_DEVICE_NETWORK_ID "h2"
+#elif CONFIG_ENABLE_MATTER_OVER_THREAD
 #define MATTER_DEVICE_NETWORK_NAME "Thread"
 #define MATTER_DEVICE_NETWORK_ID "thread" // for the configuration page
 #else
@@ -43,6 +47,9 @@ esp_err_t matter_device_start(void);
 // Occupancy attribute of a slot's endpoint, from the presence task. Takes the Matter stack lock; the cluster only
 // reports (subscriptions, OccupancyChanged event) when the value changes. Returns false if Matter is not up yet.
 bool matter_device_set_occupancy(int slot, bool occupied);
+
+// Any task: Matter started, at least one fabric, network up (Thread attached / Wi-Fi connected), fabric count
+void matter_device_get_status(bool *started, bool *commissioned, bool *network_up, uint8_t *fabrics);
 
 // For the diagnostics log: Thread role, link mode, parent RSSI and MAC / MLE counters, or Wi-Fi signal, channel and
 // disconnections

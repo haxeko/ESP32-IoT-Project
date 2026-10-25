@@ -1,5 +1,67 @@
 menu "BLE Presence x5"
 
+    choice PRESENCE_ROLE
+        prompt "Role of this chip"
+        default PRESENCE_ROLE_SINGLE
+        help
+            One chip does everything, or the two-chip version splits the work over
+            a UART link (ESP32-C3 scanning, ESP32-H2 Matter over Thread), so that
+            BLE scanning and Thread each have their own radio.
+
+        config PRESENCE_ROLE_SINGLE
+            bool "One chip: Matter + BLE scanning + web configuration"
+
+        config PRESENCE_ROLE_SCANNER
+            bool "Two chips, scanner (ESP32-C3): BLE scanning + web configuration, no Matter"
+            help
+                Computes the presence of the five slots and sends it every second
+                (and at every change) to the Matter node over the UART link.
+
+        config PRESENCE_ROLE_MATTER_UART
+            bool "Two chips, Matter node (ESP32-H2): five Occupancy Sensors fed by the UART link"
+            help
+                No BLE scanning, no web page and no CONFIG mode on this chip: BLE is
+                only used for commissioning.
+    endchoice
+
+    menu "Two-chip UART link"
+        depends on !PRESENCE_ROLE_SINGLE
+
+        config PRESENCE_LINK_UART_NUM
+            int "UART controller"
+            range 0 1
+            default 1
+
+        config PRESENCE_LINK_TX_GPIO
+            int "TX GPIO (to the RX of the other chip)"
+            range 0 30
+            default 20 if PRESENCE_ROLE_SCANNER
+            default 24
+
+        config PRESENCE_LINK_RX_GPIO
+            int "RX GPIO (from the TX of the other chip)"
+            range 0 30
+            default 21 if PRESENCE_ROLE_SCANNER
+            default 23
+
+        config PRESENCE_LINK_BAUD
+            int "Baud rate"
+            range 9600 921600
+            default 115200
+
+        config PRESENCE_LINK_TIMEOUT_SEC
+            int "Matter node: all sensors off after the scanner is silent for (s), 0: never"
+            depends on PRESENCE_ROLE_MATTER_UART
+            range 0 3600
+            default 120
+            help
+                Frames come every second. A short gap (the scanner restarting,
+                switching to its CONFIG mode) keeps the last states; a scanner that
+                stays silent this long is treated as gone and every sensor reports
+                "not occupied" rather than staying stuck on.
+
+    endmenu
+
     menu "Device information"
 
         config PRESENCE_VENDOR_NAME

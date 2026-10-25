@@ -17,6 +17,10 @@
 //           "VN-Presence-XXXX", web page at http://192.168.4.1, BLE scanning of the beacons around (own host).
 //           Back to NORMAL by the page, another triple click, or after CONFIG_PRESENCE_CONFIG_IDLE_TIMEOUT_MIN
 //           without interaction.
+//
+// Two-chip version, scanner (CONFIG_PRESENCE_ROLE_SCANNER, ESP32-C3): the same two modes without Matter. In NORMAL
+// the scanner has the radio to itself (own NimBLE host, no Wi-Fi) and the presence goes to the ESP32-H2 over the
+// UART link (presence_link.h); the Matter node is app_main_h2.cpp.
 
 #include <esp_app_desc.h>
 #include <esp_idf_version.h>
@@ -33,6 +37,9 @@
 #include "diag.h"
 #include "matter_device.h"
 #include "presence_config.h"
+#if CONFIG_PRESENCE_ROLE_SCANNER
+#include "presence_link.h"
+#endif
 #include "presence_manager.h"
 #include "scan_cache.h"
 #include "web_server.h"
@@ -55,6 +62,46 @@ static void check(esp_err_t err, const char *what)
     }
 }
 
+static uint8_t active_mask(const presence_config_t &cfg)
+{
+    uint8_t mask = 0;
+    for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
+        mask |= presence_slot_is_active(&cfg.slots[i]) ? static_cast<uint8_t>(1u << i) : 0;
+    }
+    return mask;
+}
+
+#if CONFIG_PRESENCE_ROLE_SCANNER
+
+static void run_normal(esp_err_t)
+{
+    presence_config_t cfg;
+    config_store_get(&cfg);
+    const uint8_t mask = active_mask(cfg);
+
+    // Presence first: its queue exists before the scanner can deliver anything. The link always runs, so the
+    // Matter node knows this chip is alive even with no beacon assigned.
+    check(presence_manager_start(&cfg, presence_link_report), "Presence task");
+    check(presence_link_start_scanner(false, mask), "UART link");
+    if (mask == 0) {
+        ESP_LOGW(TAG, "No beacon assigned: BLE scanner not started");
+        return;
+    }
+    ble_scanner_config_t scan = {};
+    scan.own_host = true; // no Matter on this chip: the scanner owns NimBLE and the radio
+    scan.active = false;  // passive: never transmits
+    scan.interval_ms = cfg.scan_interval_ms;
+    scan.window_ms = cfg.scan_window_ms;
+    scan.parse_names = false;
+    scan.initial_pause = 0;
+    scan.watchdog_s = CONFIG_PRESENCE_SCAN_WATCHDOG_SEC;
+    scan.filter = presence_manager_filter;
+    scan.sink = presence_manager_sink;
+    check(ble_scanner_start(&scan), "BLE scanner");
+}
+
+#else
+
 static void run_normal(esp_err_t nvs_err)
 {
     if (nvs_err != ESP_OK) {
@@ -72,11 +119,7 @@ static void run_normal(esp_err_t nvs_err)
     // Presence first: its queue exists before the scanner can deliver anything
     check(presence_manager_start(&cfg, matter_device_set_occupancy), "Presence task");
 
-    int active = 0;
-    for (const presence_slot_config_t &s : cfg.slots) {
-        active += presence_slot_is_active(&s) ? 1 : 0;
-    }
-    if (active > 0) {
+    if (active_mask(cfg) != 0) {
         // Before Matter: the Matter event callback drives the scanner's pause reasons from the first event on.
         ble_scanner_config_t scan = {};
         scan.own_host = false; // NimBLE belongs to the Matter SDK
@@ -96,6 +139,8 @@ static void run_normal(esp_err_t nvs_err)
     check(matter_device_start(), "Matter");
 }
 
+#endif
+
 static void run_config(const char *ap_password, esp_err_t nvs_err)
 {
     check(scan_cache_start(), "Beacon list");
@@ -112,6 +157,9 @@ static void run_config(const char *ap_password, esp_err_t nvs_err)
     scan.sink = scan_cache_sink;
     check(ble_scanner_start(&scan), "BLE scanner");
 
+#if CONFIG_PRESENCE_ROLE_SCANNER
+    check(presence_link_start_scanner(true, 0), "UART link"); // tells the Matter node to keep its states
+#endif
     check(wifi_config_start(ap_password), "SoftAP");
     const web_server_info_t info = { s_ssid, nvs_err };
     check(web_server_start(&info), "Web server");

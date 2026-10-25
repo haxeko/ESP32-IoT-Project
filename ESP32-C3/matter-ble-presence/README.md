@@ -129,8 +129,9 @@ idf.py build
 ```
 
 Phiên bản đã ghim (ESP-IDF v6.0.2 `7101770dc6`, esp-matter release/v1.6.1 `4c9dd7aa80`, connectedhomeip `b1902b39ac`,
-image Docker theo digest): bảng ở README bản C6. Cấu hình: `ESP32-C6/matter-ble-presence/sdkconfig.defaults` (chung)
-rồi `sdkconfig.defaults` thư mục này (Wi-Fi, PID, RAM); `sdkconfig.defaults.esp32c6` của bản C6 **không** áp dụng.
+image Docker theo digest): bảng ở README bản C6. Cấu hình: `ESP32-C6/matter-ble-presence/sdkconfig.defaults` (chung),
+`sdkconfig.defaults.matter` (Matter) rồi `sdkconfig.defaults` thư mục này (Wi-Fi, PID, RAM);
+`sdkconfig.defaults.esp32c6` của bản C6 **không** áp dụng.
 Sau khi sửa các file này chạy lại `idf.py set-target esp32c3` (hoặc xóa `sdkconfig`). Tùy chọn dự án:
 `idf.py menuconfig` → **BLE Presence x5**.
 
@@ -202,13 +203,13 @@ Trong `espressif/esp-matter:release-v1.6.1_idf_v6.0.2`, đúng hai lệnh ở m�
 `sdkconfig` mới từ các file defaults):
 
 ```
-matter_ble_presence_c3.bin binary size 0x1886f0 bytes. Smallest app partition is 0x3a0000 bytes. 0x217910 bytes (58%) free.
+matter_ble_presence_c3.bin binary size 0x1889e0 bytes. Smallest app partition is 0x3a0000 bytes. 0x217620 bytes (58%) free.
 Project build complete.
 ```
 
 | Hạng mục | Giá trị |
 |---|---|
-| App `matter_ble_presence_c3.bin` | 1 607 408 byte (0x1886F0) trong phân vùng `factory` 3 712 KB: **còn trống 58%** |
+| App `matter_ble_presence_c3.bin` | 1 608 160 byte (0x1889E0) trong phân vùng `factory` 3 712 KB: **còn trống 58%** |
 | Bootloader | 21 088 byte (0x5260) |
 | Flash (`idf.py size`) | code 1 254 864 byte, dữ liệu 267 676 byte |
 | DRAM tĩnh | 149 959 / 321 296 byte (46,7%): IRAM .text 69 918, .bss 65 224, .data 14 817 → **171 337 byte cho heap** lúc khởi động |

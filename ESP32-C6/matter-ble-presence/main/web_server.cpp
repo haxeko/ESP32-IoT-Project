@@ -33,6 +33,9 @@
 #include "json_util.h"
 #include "matter_device.h"
 #include "presence_config.h"
+#if CONFIG_PRESENCE_ROLE_SCANNER
+#include "presence_link.h"
+#endif
 #include "scan_cache.h"
 #include "wifi_config.h"
 
@@ -305,7 +308,19 @@ static esp_err_t status_get(httpd_req_t *req)
     out.str(config_store_status_detail());
     out.raw(",\"nvs_main\":");
     out.str(esp_err_to_name(s_info.nvs_main_err));
-    out.raw("}}");
+    out.raw("}");
+#if CONFIG_PRESENCE_ROLE_SCANNER
+    // Two-chip version: what the Matter node (ESP32-H2) last reported over the UART link
+    presence_link_stats_t link;
+    presence_link_get_stats(&link);
+    const long long ago = link.last_rx_ms > 0 ? (esp_timer_get_time() / 1000 - link.last_rx_ms) / 1000 : -1;
+    out.fmt(",\"h2\":{\"seen\":%s,\"ago_s\":%lld,\"commissioned\":%s,\"network_up\":%s,\"fabrics\":%u}",
+            link.have_peer_status ? "true" : "false", ago,
+            (link.peer_status.flags & PLINK_STATUS_COMMISSIONED) ? "true" : "false",
+            (link.peer_status.flags & PLINK_STATUS_NETWORK_UP) ? "true" : "false",
+            static_cast<unsigned>(link.peer_status.fabrics));
+#endif
+    out.raw("}");
     return out.finish();
 }
 

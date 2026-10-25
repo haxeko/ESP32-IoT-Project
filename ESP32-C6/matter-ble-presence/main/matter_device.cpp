@@ -43,6 +43,26 @@
 #include "ble_scanner.h"
 #include "presence_config.h"
 
+// Two-chip version, Matter node: the ESP32-C3 scans with its own radio, so nothing here pauses a scanner
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+static void gate_pause(uint32_t) {}
+static void gate_resume(uint32_t) {}
+static void gate_hold_off(uint32_t) {}
+#else
+static void gate_pause(uint32_t reasons)
+{
+    ble_scanner_pause(reasons);
+}
+static void gate_resume(uint32_t reasons)
+{
+    ble_scanner_resume(reasons);
+}
+static void gate_hold_off(uint32_t ms)
+{
+    ble_scanner_hold_off(ms);
+}
+#endif
+
 // ESP32-C6 version: Thread; ESP32-C3 version: Wi-Fi station (ble_presence.cmake)
 #if defined(CONFIG_ENABLE_MATTER_OVER_THREAD) == defined(CONFIG_ENABLE_WIFI_STATION)
 #error "Build with exactly one Matter network: Thread (ESP32-C6 version) or Wi-Fi station (ESP32-C3 version)"
@@ -65,6 +85,10 @@ static uint16_t s_endpoint_ids[PRESENCE_SLOT_COUNT];
 static std::atomic<bool> s_started{ false };
 static std::atomic<uint32_t> s_network_ups{ 0 };
 static std::atomic<uint32_t> s_network_downs{ 0 };
+// For matter_device_get_status() (any task)
+static std::atomic<bool> s_commissioned{ false };
+static std::atomic<bool> s_network_up{ false };
+static std::atomic<uint8_t> s_fabrics{ 0 };
 #if CONFIG_ENABLE_WIFI_STATION
 static std::atomic<uint16_t> s_wifi_disconnect_reason{ 0 }; // wifi_err_reason_t of the last disconnection
 #endif
@@ -89,27 +113,31 @@ static bool is_commissioned()
 
 static void hold_off_scanner()
 {
-    ble_scanner_hold_off(CONFIG_PRESENCE_SCAN_RESUME_DELAY_SEC * 1000);
+    gate_hold_off(CONFIG_PRESENCE_SCAN_RESUME_DELAY_SEC * 1000);
 }
 
 // Matter task
 static void update_commissioning_gate()
 {
-    if (is_commissioned()) {
-        ble_scanner_resume(SCAN_PAUSE_NOT_COMMISSIONED);
+    const uint8_t fabrics = chip::Server::GetInstance().GetFabricTable().FabricCount();
+    s_fabrics = fabrics;
+    s_commissioned = fabrics > 0;
+    if (fabrics > 0) {
+        gate_resume(SCAN_PAUSE_NOT_COMMISSIONED);
     } else {
-        ble_scanner_pause(SCAN_PAUSE_NOT_COMMISSIONED);
+        gate_pause(SCAN_PAUSE_NOT_COMMISSIONED);
     }
 }
 
 // Matter task: Thread attached / Wi-Fi connected, or not
 static void set_network_up(bool up)
 {
+    s_network_up = up;
     if (up) {
         hold_off_scanner();
-        ble_scanner_resume(SCAN_PAUSE_NETWORK_DOWN);
+        gate_resume(SCAN_PAUSE_NETWORK_DOWN);
     } else {
-        ble_scanner_pause(SCAN_PAUSE_NETWORK_DOWN);
+        gate_pause(SCAN_PAUSE_NETWORK_DOWN);
     }
 }
 
@@ -184,7 +212,7 @@ static void on_matter_started(intptr_t)
     const bool network_up = ConnectivityMgr().IsWiFiStationConnected();
 #endif
 
-    ble_scanner_resume(SCAN_PAUSE_MATTER_STARTING);
+    gate_resume(SCAN_PAUSE_MATTER_STARTING);
     update_commissioning_gate();
     set_network_up(network_up);
     if (!is_commissioned()) {
@@ -242,36 +270,36 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t)
     switch (event->Type) {
     case DeviceEventType::kCommissioningSessionStarted:
         ESP_LOGI(TAG, "Commissioning session started: scanner paused");
-        ble_scanner_pause(SCAN_PAUSE_COMMISSIONING);
+        gate_pause(SCAN_PAUSE_COMMISSIONING);
         break;
 
     case DeviceEventType::kCommissioningSessionStopped:
         ESP_LOGI(TAG, "Commissioning session stopped");
         hold_off_scanner();
-        ble_scanner_resume(SCAN_PAUSE_COMMISSIONING);
+        gate_resume(SCAN_PAUSE_COMMISSIONING);
         break;
 
     case DeviceEventType::kCHIPoBLEConnectionEstablished:
         ESP_LOGI(TAG, "BLE connection from a controller: scanner paused");
-        ble_scanner_pause(SCAN_PAUSE_BLE_CONNECTION);
+        gate_pause(SCAN_PAUSE_BLE_CONNECTION);
         break;
 
     case DeviceEventType::kCHIPoBLEConnectionClosed:
         ESP_LOGI(TAG, "BLE connection closed");
         hold_off_scanner();
-        ble_scanner_resume(SCAN_PAUSE_BLE_CONNECTION);
+        gate_resume(SCAN_PAUSE_BLE_CONNECTION);
         break;
 
     case DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete: scanner resumes once the network is up");
         hold_off_scanner();
-        ble_scanner_resume(SCAN_PAUSE_COMMISSIONING);
+        gate_resume(SCAN_PAUSE_COMMISSIONING);
         update_commissioning_gate();
         break;
 
     case DeviceEventType::kFailSafeTimerExpired:
         ESP_LOGW(TAG, "Commissioning failed: fail-safe timer expired");
-        ble_scanner_resume(SCAN_PAUSE_COMMISSIONING);
+        gate_resume(SCAN_PAUSE_COMMISSIONING);
         update_commissioning_gate();
         break;
 
@@ -332,8 +360,13 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t)
 #endif
 
     case DeviceEventType::kBLEDeinitialized:
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+        // Two-chip version: BLE was only needed for commissioning (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING)
+        ESP_LOGI(TAG, "BLE released after commissioning");
+#else
         // Only with CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING, which this firmware turns off
         ESP_LOGE(TAG, "BLE was released by the Matter SDK: beacon scanning is no longer possible");
+#endif
         break;
 
     default:
@@ -441,6 +474,14 @@ esp_err_t matter_device_start(void)
     esp_matter::console::init();
 #endif
     return ESP_OK;
+}
+
+void matter_device_get_status(bool *started, bool *commissioned, bool *network_up, uint8_t *fabrics)
+{
+    *started = s_started;
+    *commissioned = s_commissioned;
+    *network_up = s_network_up;
+    *fabrics = s_fabrics;
 }
 
 bool matter_device_set_occupancy(int slot, bool occupied)

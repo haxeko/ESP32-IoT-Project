@@ -127,6 +127,9 @@ const netText = {
   wifi: {name: "Wi-Fi",
     coex: "BLE và Wi-Fi dùng chung một radio, chia thời gian: cửa sổ lớn nghe beacon nhanh hơn nhưng để ít thời gian hơn cho Wi-Fi (bảng coexistence của ESP-IDF xếp BLE scan cùng Wi-Fi station đã kết nối mức Y – hỗ trợ, ổn định).",
     duty: "Wi-Fi có thể phản hồi chậm hoặc rớt kết nối."},
+  h2: {name: "Thread (ESP32-H2)",
+    coex: "Bản hai chip: Matter chạy trên ESP32-H2 với radio riêng, chip này chỉ quét BLE (Wi-Fi tắt khi không ở trang cấu hình), nên có thể dùng cửa sổ lớn.",
+    duty: ""},
 };
 const netName = () => net ? net.name : "mạng";
 function el(tag, props, ...kids) {
@@ -204,6 +207,9 @@ async function refreshStatus() {
   kv("Chế độ", "CONFIG (Matter/" + netName() + " tạm dừng, dữ liệu ghép giữ nguyên)");
   kv("Firmware", s.firmware + " · ESP-IDF " + s.idf);
   kv("Thời gian chạy", Math.floor(s.uptime_s / 60) + " phút " + (s.uptime_s % 60) + " giây");
+  if (s.h2) kv("ESP32-H2 (Matter)", !s.h2.seen ? "chưa nhận được tín hiệu qua UART (kiểm tra dây nối)" :
+    (s.h2.ago_s > 5 ? "mất tín hiệu " + s.h2.ago_s + " s" : "đang kết nối") + " · " + (s.h2.commissioned ? "đã ghép (" + s.h2.fabrics + " fabric)" : "chưa ghép") +
+    " · Thread " + (s.h2.network_up ? "đã kết nối" : "chưa kết nối"));
   kv("Bộ nhớ trống", Math.round(s.heap.free / 1024) + " KB (thấp nhất " + Math.round(s.heap.min / 1024) + " KB)");
   kv("Điện thoại kết nối", s.ap.stations + " · kênh " + s.ap.channel);
   kv("Quét BLE", (s.scan.active ? "chủ động" : "thụ động") + " " + s.scan.window_ms + "/" + s.scan.interval_ms + " ms · " + s.scan.adv_reports + " gói, " + s.scan.ibeacon_reports + " iBeacon");
@@ -435,7 +441,7 @@ function validateAll(showAll) {
   $("scanItvl").classList.toggle("invalid", !!se); $("scanWin").classList.toggle("invalid", !!se);
   if (!se && itvl > 0) {
     const duty = Math.round(win * 100 / itvl);
-    $("scanInfo").textContent = "Radio quét " + duty + "% thời gian." + (duty > 50 ? " ⚠ Trên 50%: " + (net ? net.duty : "mạng Matter có thể phản hồi chậm.") : "");
+    $("scanInfo").textContent = "Radio quét " + duty + "% thời gian." + (duty > 50 && !(net && !net.duty) ? " ⚠ Trên 50%: " + (net ? net.duty : "mạng Matter có thể phản hồi chậm.") : "");
   } else $("scanInfo").textContent = "";
   return {ok, slots, itvl, win};
 }

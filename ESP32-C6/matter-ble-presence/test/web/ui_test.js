@@ -46,7 +46,8 @@ async function openPage(browser, network, posts) {
     const url = new URL(req.url());
     const json = (obj, code = 200) => route.fulfill({ status: code, contentType: 'application/json', body: JSON.stringify(obj) });
     if (url.pathname === '/') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
-    if (url.pathname === '/api/status') return json(Object.assign({}, status, { network }));
+    if (url.pathname === '/api/status') return json(Object.assign({}, status, { network },
+      network === 'h2' ? { h2: { seen: true, ago_s: 1, commissioned: true, network_up: false, fabrics: 1 } } : {}));
     if (url.pathname === '/api/scan' && req.method() === 'GET') return json({ beacons });
     if (url.pathname === '/api/config' && req.method() === 'GET') return json(Object.assign({}, config, { network }));
     if (req.method() === 'POST') {
@@ -162,6 +163,15 @@ async function openPage(browser, network, posts) {
   check(!(await wifi.textContent('#coexNote')).includes('Thread'), 'Wi-Fi version: no Thread in the scan note');
   await wifi.fill('#scanWin', '120');
   check((await wifi.textContent('#scanInfo')).includes('Wi-Fi'), 'Wi-Fi version: duty warning names Wi-Fi');
+
+  // Two-chip version: the ESP32-C3 scanner's page (Matter on the ESP32-H2)
+  const h2 = await openPage(browser, 'h2', []);
+  await h2.waitForTimeout(300);
+  check((await h2.textContent('#statusGrid')).includes('Matter/Thread (ESP32-H2)'), 'two-chip: mode names the ESP32-H2');
+  check((await h2.textContent('#statusGrid')).includes('đã ghép (1 fabric) · Thread chưa kết nối'), 'two-chip: H2 status shown');
+  check((await h2.textContent('#coexNote')).includes('hai chip'), 'two-chip: scan note');
+  await h2.fill('#scanWin', '120');
+  check(!(await h2.textContent('#scanInfo')).includes('⚠'), 'two-chip: no warning above 50 % (own radio)');
 
   await browser.close();
   console.log(failures ? `${failures} FAILED` : 'UI checks passed');
