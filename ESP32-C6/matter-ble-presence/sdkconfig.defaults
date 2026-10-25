@@ -1,11 +1,13 @@
-# ESP32-C6, flash 4 MB or more (ESP32-C6-DevKitM-1 N4: 4 MB; ESP32-C6-DevKitC-1 N8: 8 MB, the first 4 MB are used).
-# Matter over Thread (end device) with five Occupancy Sensor endpoints, BLE passive scanning of iBeacons, and a
-# Wi-Fi SoftAP only in the CONFIG mode. After changing this file run idf.py set-target esp32c6 (or delete sdkconfig):
-# an existing sdkconfig keeps its old values.
-CONFIG_IDF_TARGET="esp32c6"
+# Settings shared by the two versions of the firmware: five Occupancy Sensor endpoints fed by BLE passive scanning of
+# iBeacons, and a Wi-Fi SoftAP only in the CONFIG mode. The network of Matter comes from the target:
+#   - ESP32-C6 (this directory): Matter over Thread, sdkconfig.defaults.esp32c6 (applied after this file)
+#   - ESP32-C3 (ESP32-C3/matter-ble-presence): Matter over Wi-Fi, the sdkconfig.defaults of that directory
+# Flash 4 MB or more (ESP32-C6-DevKitM-1 N4, ESP32-C3-DevKitM-1 and C3 SuperMini: 4 MB; ESP32-C6-DevKitC-1 N8: 8 MB,
+# the first 4 MB are used). After changing these files run idf.py set-target (or delete sdkconfig): an existing
+# sdkconfig keeps the values set in it.
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
-# Own partition table (partitions.csv): one factory app (no OTA in this version), "nvs" for Matter / Thread / PHY,
+# Own partition table (partitions.csv): one factory app (no OTA in this version), "nvs" for Matter / network / PHY,
 # "app_cfg" for the beacon configuration only. Table at 0xC000 as in the esp-matter examples.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
@@ -14,7 +16,7 @@ CONFIG_PARTITION_TABLE_OFFSET=0xC000
 # ---------------------------------------------------------------------------------------------------------------------
 # BLE: NimBLE, one host shared by Matter (peripheral: commissioning advertisement and connection) and the beacon
 # scanner (observer). Central role off (no connection to the beacons). Legacy advertising and scanning, as the
-# esp-matter C6 Thread examples (sdkconfig.defaults.c6_thread of examples/light).
+# esp-matter examples.
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
@@ -28,52 +30,21 @@ CONFIG_BT_NIMBLE_HCI_EVT_BUF_SIZE=70
 # Keep BLE after commissioning: by default the SDK shuts NimBLE down and releases its memory once commissioned
 # (FAQ A1.16), which would stop the scanner for good.
 CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=n
-# Duplicate filtering is off in every scan this firmware starts (filter_duplicates = 0), so each advertisement is
-# reported. Should a scan ever be started with filtering on, the controller would report an address once and then
-# never again while scanning (refresh period 0 = never): refresh the list every second instead.
-CONFIG_BT_LE_SCAN_DUPL_CACHE_REFRESH_PERIOD=1
 
-# ---------------------------------------------------------------------------------------------------------------------
-# Thread: minimal Thread device (MTD) build. An MTD has no router code at all, so the device can never become a
-# Thread router or leader: BLE scanning next to a router is "X, not supported" in the ESP-IDF coexistence table of
-# the ESP32-C6, next to an end device "C1, supported but unstable". The device type is set to Minimal End Device
-# (receiver on when idle, mains powered, no polling delay); see matter_device.cpp.
-CONFIG_OPENTHREAD_ENABLED=y
-CONFIG_OPENTHREAD_MTD=y
-CONFIG_OPENTHREAD_SRP_CLIENT=y
-CONFIG_OPENTHREAD_DNS_CLIENT=y
-CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
-CONFIG_OPENTHREAD_LOG_LEVEL_NOTE=y
-# OpenThread CLI in the Matter console ("matter esp ot_cli state", "... counters mac") to measure the coexistence
-CONFIG_OPENTHREAD_CLI=y
-# Thread assigns the addresses: no SLAAC from router advertisements
-CONFIG_LWIP_IPV6_AUTOCONFIG=n
-CONFIG_LWIP_IPV6_NUM_ADDRESSES=8
-CONFIG_LWIP_MULTICAST_PING=y
-# DNS-SD over SRP on Thread instead of mDNS
-CONFIG_USE_MINIMAL_MDNS=n
-CONFIG_ENABLE_EXTENDED_DISCOVERY=y
+# Radio coexistence (BLE + Thread or Wi-Fi station in NORMAL, BLE + Wi-Fi SoftAP in CONFIG): arbitration by software,
+# required by the coexistence guide of ESP-IDF
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+
 CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
 CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
 
-# Radio coexistence (BLE + 802.15.4 in NORMAL, BLE + Wi-Fi in CONFIG): arbitration by software, required by the
-# coexistence guide of ESP-IDF
-CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
-
 # ---------------------------------------------------------------------------------------------------------------------
-# Wi-Fi: no Wi-Fi for Matter (Thread only). The Wi-Fi driver is linked for the SoftAP of the CONFIG mode and is
-# started only in that mode.
-CONFIG_ENABLE_WIFI_STATION=n
+# Wi-Fi SoftAP of the CONFIG mode (started only in that mode, with its settings kept in RAM: wifi_config.cpp)
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
-# The SoftAP settings are not kept in flash: no Wi-Fi write to the "nvs" partition of Matter / Thread
-CONFIG_ESP_WIFI_NVS_ENABLED=n
-# Wi-Fi code in flash instead of IRAM (the C6 shares one SRAM for code and data): more heap, the configuration
-# page does not need throughput
+# Wi-Fi code in flash instead of IRAM (code and data share one SRAM): more heap; the configuration page and Matter
+# need little throughput
 CONFIG_ESP_WIFI_IRAM_OPT=n
 CONFIG_ESP_WIFI_RX_IRAM_OPT=n
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
-CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=8
-CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=8
 CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
 
 # Configuration web server: phones send long headers (cookies, Accept-Language)
@@ -84,11 +55,10 @@ CONFIG_CJSON_NESTING_LIMIT=16
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Matter
-# Test vendor 0xFFF1 with an own product ID: the SDK example DAC, PAI and Certification Declaration cover
-# 0xFFF1/0x8000-0x801F. 0x8002 is not used by the other firmware of this repository (0x8000 H2, 0x8001 C3).
-# Development credentials only, see README.
+# Test vendor 0xFFF1; each version has its own product ID (sdkconfig.defaults.esp32c6: 0x8002, ESP32-C3: 0x8003),
+# covered by the SDK example DAC, PAI and Certification Declaration (0xFFF1/0x8000-0x801F). Development credentials
+# only, see README.
 CONFIG_DEVICE_VENDOR_ID=0xFFF1
-CONFIG_DEVICE_PRODUCT_ID=0x8002
 # Root node and five Occupancy Sensor endpoints (endpoint ids 0-5, fixed by the creation order)
 CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=6
 CONFIG_CHIP_PROJECT_CONFIG="main/chip_project_config.h"
@@ -98,14 +68,13 @@ CONFIG_DEVICE_TYPE=263
 CONFIG_BLE_DEVICE_NAME_PREFIX="Presence-"
 # No OTA in this version
 CONFIG_ENABLE_OTA_REQUESTOR=n
-# Matter console on the serial port: factory reset ("matter esp factoryreset"), diagnostics, OpenThread CLI
-CONFIG_ENABLE_CHIP_SHELL=y
 # TC_RR_1_1 requires MaxGroupKeysPerFabric >= 4
 CONFIG_MAX_GROUP_KEYS_PER_FABRIC=4
 
 # Clusters no endpoint of this device has: less flash. Kept: the root node clusters, Identify, Occupancy Sensing,
-# Thread Network Diagnostics, and Binding, Groups, Scenes, On/Off, Level and Color Control (code the SDK builds
-# anyway). Generated from components/esp_matter/utils/cluster_select/Kconfig.in of esp-matter v1.6.1.
+# and Binding, Groups, Scenes, On/Off, Level and Color Control (code the SDK builds anyway); the network diagnostics
+# cluster of each version is chosen with its network (sdkconfig.defaults.esp32c6, ESP32-C3/matter-ble-presence).
+# Generated from components/esp_matter/utils/cluster_select/Kconfig.in of esp-matter v1.6.1.
 CONFIG_SUPPORT_ACCOUNT_LOGIN_CLUSTER=n
 CONFIG_SUPPORT_ACTIONS_CLUSTER=n
 CONFIG_SUPPORT_ACTIVATED_CARBON_FILTER_MONITORING_CLUSTER=n
@@ -225,7 +194,6 @@ CONFIG_SUPPORT_WATER_HEATER_MANAGEMENT_CLUSTER=n
 CONFIG_SUPPORT_WATER_HEATER_MODE_CLUSTER=n
 CONFIG_SUPPORT_WEB_RTC_TRANSPORT_PROVIDER_CLUSTER=n
 CONFIG_SUPPORT_WEB_RTC_TRANSPORT_REQUESTOR_CLUSTER=n
-CONFIG_SUPPORT_WIFI_NETWORK_DIAGNOSTICS_CLUSTER=n
 CONFIG_SUPPORT_WIFI_NETWORK_MANAGEMENT_CLUSTER=n
 CONFIG_SUPPORT_WINDOW_COVERING_CLUSTER=n
 CONFIG_SUPPORT_ZONE_MANAGEMENT_CLUSTER=n

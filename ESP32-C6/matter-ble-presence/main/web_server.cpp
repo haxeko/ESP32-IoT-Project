@@ -31,6 +31,7 @@
 #include "config_store.h"
 #include "http_guard.h"
 #include "json_util.h"
+#include "matter_device.h"
 #include "presence_config.h"
 #include "scan_cache.h"
 #include "wifi_config.h"
@@ -272,7 +273,7 @@ static esp_err_t status_get(httpd_req_t *req)
 
     json_headers(req, "200 OK");
     JsonOut out(req);
-    out.raw("{\"mode\":\"config\",\"firmware\":");
+    out.raw("{\"mode\":\"config\",\"network\":\"" MATTER_DEVICE_NETWORK_ID "\",\"firmware\":");
     out.str(esp_app_get_description()->version);
     out.raw(",\"idf\":");
     out.str(esp_get_idf_version());
@@ -427,7 +428,8 @@ static esp_err_t config_get(httpd_req_t *req)
             "\"window_ms\":%d}",
             CONFIG_PRESENCE_DEFAULT_TIMEOUT_SEC, CONFIG_PRESENCE_DEFAULT_RSSI_THRESHOLD,
             CONFIG_PRESENCE_DEFAULT_RSSI_HYSTERESIS, CONFIG_PRESENCE_SCAN_INTERVAL_MS, CONFIG_PRESENCE_SCAN_WINDOW_MS);
-    out.fmt(",\"allow_duplicates\":%s", kAllowDuplicates ? "true" : "false");
+    out.fmt(",\"allow_duplicates\":%s,\"network\":\"%s\"", kAllowDuplicates ? "true" : "false",
+            MATTER_DEVICE_NETWORK_ID);
     out.raw(",\"storage\":{\"status\":");
     out.str(config_store_status_name(config_store_status()));
     out.raw(",\"detail\":");
@@ -635,7 +637,7 @@ static esp_err_t config_post(httpd_req_t *req)
         char message[320];
         snprintf(message, sizeof(message),
                  "Phân vùng cấu hình beacon không dùng được (%s). Hãy định dạng phân vùng cấu hình beacon "
-                 "rồi lưu lại. Dữ liệu ghép Matter/Thread không bị ảnh hưởng.",
+                 "rồi lưu lại. Dữ liệu ghép Matter/" MATTER_DEVICE_NETWORK_NAME " không bị ảnh hưởng.",
                  config_store_status_detail());
         return send_message(req, "500 Internal Server Error", false, message);
     }

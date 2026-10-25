@@ -9,7 +9,8 @@
 // Periodic diagnostics log (CONFIG_PRESENCE_DIAG_PERIOD_SEC), for the long-run hardware tests:
 //   heap free / minimum / largest block
 //   scanner state, pause reasons, reports per second, starts, failures, unexpected stops, watchdog restarts
-//   NORMAL: per slot state, last RSSI, age, packets; queue drops; Thread role and MAC / MLE counters
+//   NORMAL: per slot state, last RSSI, age, packets; queue drops; Thread role and MAC / MLE counters, or Wi-Fi
+//           signal and disconnections
 //   CONFIG: beacons in the list, SoftAP stations, idle countdown
 
 #pragma once

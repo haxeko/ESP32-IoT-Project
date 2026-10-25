@@ -60,7 +60,7 @@ typedef void (*ble_scanner_sink_t)(const ble_adv_report_t *report);
 #define SCAN_PAUSE_NOT_COMMISSIONED (1u << 1) // no fabric yet: the radio is left to commissioning
 #define SCAN_PAUSE_COMMISSIONING (1u << 2)    // PASE session (commissioning in progress)
 #define SCAN_PAUSE_BLE_CONNECTION (1u << 3)   // a controller is connected over BLE (CHIPoBLE)
-#define SCAN_PAUSE_THREAD_DETACHED (1u << 4)  // not attached to the Thread network: attach first
+#define SCAN_PAUSE_NETWORK_DOWN (1u << 4)     // Thread detached / Wi-Fi disconnected: the network comes first
 #define SCAN_PAUSE_USER (1u << 5)             // "stop scanning" on the configuration page
 
 typedef struct {
@@ -79,7 +79,7 @@ typedef enum {
     BLE_SCANNER_STOPPED = 0,
     BLE_SCANNER_WAIT_HOST, // NimBLE not (yet, or no longer) synced with the controller
     BLE_SCANNER_PAUSED,
-    BLE_SCANNER_HOLD_OFF, // resuming after a short delay (Thread just attached, commissioning just ended)
+    BLE_SCANNER_HOLD_OFF, // resuming after a short delay (network just up, commissioning just ended)
     BLE_SCANNER_BACKOFF,  // waiting before retrying after an error
     BLE_SCANNER_RUNNING,
 } ble_scanner_state_t;
@@ -111,5 +111,5 @@ void ble_scanner_hold_off(uint32_t ms);
 uint64_t ble_scanner_scan_clock_ms(void);
 void ble_scanner_get_stats(ble_scanner_stats_t *out);
 const char *ble_scanner_state_name(ble_scanner_state_t state);
-// "not_commissioned,thread_detached" into buf
+// "not_commissioned,network_down" into buf
 const char *ble_scanner_pause_text(uint32_t mask, char *buf, size_t size);

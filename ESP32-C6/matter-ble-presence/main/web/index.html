@@ -70,7 +70,7 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px;margin-top:8px
     <div id="storageBox" style="display:none">
       <div class="banner warn show" id="storageMsg"></div>
       <button class="danger" id="btnFormat">Định dạng phân vùng cấu hình beacon</button>
-      <div class="small">Chỉ xóa phân vùng app_cfg (cấu hình 5 slot và mật khẩu Wi-Fi cấu hình). Dữ liệu ghép Matter và mạng Thread không bị ảnh hưởng.</div>
+      <div class="small">Chỉ xóa phân vùng app_cfg (cấu hình 5 slot và mật khẩu Wi-Fi cấu hình). Dữ liệu ghép Matter (cả mạng Thread/Wi-Fi đã lưu) không bị ảnh hưởng.</div>
     </div>
   </section>
 
@@ -101,7 +101,7 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px;margin-top:8px
     </div>
     <div id="scanErr" class="err"></div>
     <div id="scanInfo" class="small"></div>
-    <div class="small">Bộ thu nghe trong "cửa sổ" ms mỗi "chu kỳ" ms. BLE và Thread dùng chung một radio: cửa sổ lớn nghe beacon nhanh hơn nhưng lấy thời gian của Thread (Thread là End Device; bảng coexistence của ESP-IDF xếp BLE scan cùng Thread End Device mức C1 – hỗ trợ nhưng hiệu năng không ổn định). Mặc định 40/160 ms (25%).</div>
+    <div class="small" id="coexNote"></div>
   </section>
 </main>
 
@@ -114,11 +114,21 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px;margin-top:8px
 <script>
 "use strict";
 const SLOTS = 5;
-let cfg = null, limits = {}, defaults = {}, allowDup = false;
+let cfg = null, limits = {}, defaults = {}, allowDup = false, net = null;
 let beacons = [], dirty = false, stopped = false, restarting = false;
 let idleLeft = null, lastKeepalive = 0, userStopped = false, beaconsStale = false;
 
 const $ = id => document.getElementById(id);
+// Network of Matter in NORMAL mode: ESP32-C6 version Thread, ESP32-C3 version Wi-Fi ("network" from the device)
+const netText = {
+  thread: {name: "Thread",
+    coex: "BLE và Thread dùng chung một radio: cửa sổ lớn nghe beacon nhanh hơn nhưng lấy thời gian của Thread (Thread là End Device; bảng coexistence của ESP-IDF xếp BLE scan cùng Thread End Device mức C1 – hỗ trợ nhưng hiệu năng không ổn định).",
+    duty: "Thread có thể mất gói, rớt mạng hoặc phản hồi chậm."},
+  wifi: {name: "Wi-Fi",
+    coex: "BLE và Wi-Fi dùng chung một radio, chia thời gian: cửa sổ lớn nghe beacon nhanh hơn nhưng để ít thời gian hơn cho Wi-Fi (bảng coexistence của ESP-IDF xếp BLE scan cùng Wi-Fi station đã kết nối mức Y – hỗ trợ, ổn định).",
+    duty: "Wi-Fi có thể phản hồi chậm hoặc rớt kết nối."},
+};
+const netName = () => net ? net.name : "mạng";
 function el(tag, props, ...kids) {
   const e = document.createElement(tag);
   if (props) for (const k in props) {
@@ -190,7 +200,8 @@ async function refreshStatus() {
   const g = $("statusGrid");
   g.replaceChildren();
   const kv = (k, v) => g.append(el("div", {class: "kv"}, k + ": ", el("b", {text: v})));
-  kv("Chế độ", "CONFIG (Matter/Thread tạm dừng, dữ liệu ghép giữ nguyên)");
+  if (netText[s.network]) net = netText[s.network];
+  kv("Chế độ", "CONFIG (Matter/" + netName() + " tạm dừng, dữ liệu ghép giữ nguyên)");
   kv("Firmware", s.firmware + " · ESP-IDF " + s.idf);
   kv("Thời gian chạy", Math.floor(s.uptime_s / 60) + " phút " + (s.uptime_s % 60) + " giây");
   kv("Bộ nhớ trống", Math.round(s.heap.free / 1024) + " KB (thấp nhất " + Math.round(s.heap.min / 1024) + " KB)");
@@ -424,7 +435,7 @@ function validateAll(showAll) {
   $("scanItvl").classList.toggle("invalid", !!se); $("scanWin").classList.toggle("invalid", !!se);
   if (!se && itvl > 0) {
     const duty = Math.round(win * 100 / itvl);
-    $("scanInfo").textContent = "Radio quét " + duty + "% thời gian." + (duty > 50 ? " ⚠ Trên 50%: Thread có thể mất gói, rớt mạng hoặc phản hồi chậm." : "");
+    $("scanInfo").textContent = "Radio quét " + duty + "% thời gian." + (duty > 50 ? " ⚠ Trên 50%: " + (net ? net.duty : "mạng Matter có thể phản hồi chậm.") : "");
   } else $("scanInfo").textContent = "";
   return {ok, slots, itvl, win};
 }
@@ -465,6 +476,9 @@ async function loadConfig() {
   const r = await api("GET", "/api/config");
   if (!r.ok || !r.data) { banner("err", "Không đọc được cấu hình từ thiết bị."); return; }
   cfg = r.data; limits = cfg.limits; defaults = cfg.defaults; allowDup = cfg.allow_duplicates;
+  if (netText[cfg.network]) net = netText[cfg.network];
+  $("coexNote").textContent = "Bộ thu nghe trong \"cửa sổ\" ms mỗi \"chu kỳ\" ms. " + (net ? net.coex + " " : "") +
+    "Mặc định " + defaults.window_ms + "/" + defaults.interval_ms + " ms (" + Math.round(defaults.window_ms * 100 / defaults.interval_ms) + "%).";
   fillForm(cfg);
 }
 
@@ -494,7 +508,7 @@ async function clearList() {
 }
 
 async function formatCfg() {
-  if (!confirm("Xóa phân vùng cấu hình beacon (5 slot và mật khẩu Wi-Fi cấu hình)? Dữ liệu ghép Matter/Thread không bị ảnh hưởng.")) return;
+  if (!confirm("Xóa phân vùng cấu hình beacon (5 slot và mật khẩu Wi-Fi cấu hình)? Dữ liệu ghép Matter/" + netName() + " không bị ảnh hưởng.")) return;
   const r = await api("POST", "/api/format", {confirm: "FORMAT"});
   banner(r.ok ? "ok" : "err", (r.data && r.data.message) || "Lỗi");
   await loadConfig();

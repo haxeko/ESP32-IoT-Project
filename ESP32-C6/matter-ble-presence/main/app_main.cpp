@@ -6,13 +6,14 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-// Matter over Thread device with five Occupancy Sensor endpoints ("Presence 1".."Presence 5"), each following one
-// iBeacon heard by BLE passive scanning. ESP32-C6: Thread (802.15.4), BLE and Wi-Fi share its single radio.
+// Matter device with five Occupancy Sensor endpoints ("Presence 1".."Presence 5"), each following one iBeacon heard
+// by BLE passive scanning. ESP32-C6 version: Matter over Thread; ESP32-C3 version: Matter over Wi-Fi. Either way
+// BLE and the network share the single 2.4 GHz radio of the chip.
 //
 // Two modes, chosen at boot (app_mode.h):
-//   NORMAL  Matter over Thread (Minimal End Device) + NimBLE passive scanning (Matter's own host) + presence.
-//           Wi-Fi off.
-//   CONFIG  Triple click on BOOT. Matter and Thread are not started (their data stays untouched). Wi-Fi SoftAP
+//   NORMAL  Matter (Thread Minimal End Device / Wi-Fi station) + NimBLE passive scanning (Matter's own host) +
+//           presence. No SoftAP.
+//   CONFIG  Triple click on BOOT. Matter is not started (its data, network included, stays untouched). Wi-Fi SoftAP
 //           "VN-Presence-XXXX", web page at http://192.168.4.1, BLE scanning of the beacons around (own host).
 //           Back to NORMAL by the page, another triple click, or after CONFIG_PRESENCE_CONFIG_IDLE_TIMEOUT_MIN
 //           without interaction.
@@ -60,7 +61,7 @@ static void run_normal(esp_err_t nvs_err)
         // Matter would fail on this partition. It is left as it is (the pairing may still be recoverable):
         // README, "Lỗi NVS".
         ESP_LOGE(TAG,
-                 "Matter NOT started: partition 'nvs' (fabrics, Thread dataset) cannot be opened (%s). It is not "
+                 "Matter NOT started: partition 'nvs' (fabrics, network) cannot be opened (%s). It is not "
                  "erased automatically. Triple-click BOOT for the configuration page.",
                  esp_err_to_name(nvs_err));
         return;
@@ -83,13 +84,13 @@ static void run_normal(esp_err_t nvs_err)
         scan.interval_ms = cfg.scan_interval_ms;
         scan.window_ms = cfg.scan_window_ms;
         scan.parse_names = false;
-        scan.initial_pause = SCAN_PAUSE_MATTER_STARTING | SCAN_PAUSE_THREAD_DETACHED;
+        scan.initial_pause = SCAN_PAUSE_MATTER_STARTING | SCAN_PAUSE_NETWORK_DOWN;
         scan.watchdog_s = CONFIG_PRESENCE_SCAN_WATCHDOG_SEC;
         scan.filter = presence_manager_filter;
         scan.sink = presence_manager_sink;
         check(ble_scanner_start(&scan), "BLE scanner");
     } else {
-        ESP_LOGW(TAG, "No beacon assigned: BLE scanner not started, the radio is left to Thread");
+        ESP_LOGW(TAG, "No beacon assigned: BLE scanner not started, the radio is left to Matter");
     }
 
     check(matter_device_start(), "Matter");
@@ -122,9 +123,9 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "%s %s, firmware %s, ESP-IDF %s", CONFIG_PRESENCE_VENDOR_NAME, CONFIG_PRESENCE_PRODUCT_NAME,
              esp_app_get_description()->version, esp_get_idf_version());
 
-    // "nvs" holds the Matter fabrics and keys, the Thread dataset and the PHY calibration. Unlike the ESP-IDF
-    // examples, no nvs_flash_erase() on ESP_ERR_NVS_NO_FREE_PAGES / ESP_ERR_NVS_NEW_VERSION_FOUND: that would
-    // silently drop the pairing. The error is reported instead.
+    // "nvs" holds the Matter fabrics and keys, the Thread dataset or the Wi-Fi credentials, and the PHY calibration.
+    // Unlike the ESP-IDF examples, no nvs_flash_erase() on ESP_ERR_NVS_NO_FREE_PAGES / ESP_ERR_NVS_NEW_VERSION_FOUND:
+    // that would silently drop the pairing. The error is reported instead.
     const esp_err_t nvs_err = nvs_flash_init();
     if (nvs_err != ESP_OK) {
         ESP_LOGE(TAG, "nvs_flash_init(): %s. Partition 'nvs' left untouched.", esp_err_to_name(nvs_err));

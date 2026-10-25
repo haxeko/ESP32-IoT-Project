@@ -8,6 +8,11 @@ trên Wi-Fi SoftAP của chính thiết bị (chế độ CONFIG, vào bằng c�
 Chỉ dùng ESP-IDF và esp-matter chính thức của Espressif, NimBLE của ESP-IDF, OpenThread của ESP-IDF. Không Arduino,
 không ESPHome, không Matter bridge.
 
+> **Bản ESP32-C3 (Matter over Wi-Fi):** [`ESP32-C3/matter-ble-presence`](../../ESP32-C3/matter-ble-presence) dùng chung
+> mã nguồn, bảng phân vùng và phần cấu hình chung của thư mục này (`ble_presence.cmake`), chỉ khác mạng Matter (Wi-Fi
+> thay Thread), product ID và các tùy chọn tiết kiệm RAM. Cấu hình riêng của bản C6 (Thread) nằm trong
+> `sdkconfig.defaults.esp32c6`.
+
 > **Trạng thái:** mã nguồn hoàn chỉnh, **build thành công** với ESP-IDF v6.0.2 + esp-matter v1.6.1 (kết quả ở mục
 > [Kết quả build](#kết-quả-build-thực-tế)), host test đạt. **Chưa chạy trên phần cứng** trong phiên làm việc này: mọi
 > hành vi RF (BLE cùng Thread), ghép nối với Apple Home / Google Home / Home Assistant, độ trễ và độ tin cậy phải đo
@@ -132,7 +137,7 @@ lạ khi mở cổng, hãy tắt điều khiển DTR/RTS hoặc xem log qua cổ
 | `scan_cache.*` | Danh sách iBeacon ở CONFIG (gộp trùng, giới hạn 32, loại bản ghi cũ) |
 | `presence_config.*`, `config_store.*`, `crc32.*` | Cấu hình 5 slot: mặc định, kiểm tra, blob có version + CRC, NVS phân vùng riêng |
 | `wifi_config.*`, `web_server.*`, `http_guard.*`, `web/index.html` | SoftAP WPA2, HTTP server + API JSON (chỉ nhận `Host` đúng và POST JSON), trang tiếng Việt nhúng |
-| `matter_device.*` | Node Matter, 5 endpoint, Thread MED, cổng chặn scanner theo sự kiện Matter/Thread, cập nhật Occupancy |
+| `matter_device.*` | Node Matter, 5 endpoint, Thread MED (bản C6) hoặc Wi-Fi station (bản C3), cổng chặn scanner theo sự kiện Matter/mạng, cập nhật Occupancy |
 | `diag.*` | Log chẩn đoán định kỳ (heap, scanner, từng slot, bộ đếm Thread) |
 
 Các module thuần logic (`click_detector`, `presence_logic`, `ibeacon_parser`, `ble_addr`, `presence_config`,
@@ -340,11 +345,14 @@ Cài trên máy (theo *Developing with the SDK*): clone `esp-idf` tag `v6.0.2` (
 `idf.py` như trên. Lần build đầu tải `espressif/cjson` (và các phụ thuộc của esp-matter) từ ESP Component Registry
 nên cần Internet.
 
-Sau khi sửa `sdkconfig.defaults`, chạy lại `idf.py set-target esp32c6` (hoặc xóa `sdkconfig`).
+`sdkconfig.defaults` chứa phần dùng chung với bản ESP32-C3, `sdkconfig.defaults.esp32c6` phần riêng của bản C6
+(Thread, product ID 0x8002, console Matter); ESP-IDF tự áp dụng file thứ hai sau file thứ nhất khi target là esp32c6.
+Sau khi sửa các file này, chạy lại `idf.py set-target esp32c6` (hoặc xóa `sdkconfig`).
 Tùy chọn của dự án: `idf.py menuconfig` → **BLE Presence x5** (nút BOOT, SoftAP, quét BLE, hiện diện, feature Matter,
 chẩn đoán).
 
-CI: `.github/workflows/matter-ble-presence-c6.yml` chạy host test và build trong cùng image.
+CI: `.github/workflows/matter-ble-presence-c6.yml` chạy host test, test trang web và build trong cùng image;
+`matter-ble-presence-c3.yml` build bản ESP32-C3 (cả khi chỉ mã nguồn chung ở thư mục này thay đổi).
 
 ---
 
@@ -384,7 +392,7 @@ Router, …) và ứng dụng/controller Matter hỗ trợ Thread.
    chip-tool occupancysensing read occupancy 0x11 1     # endpoint 1..5
    chip-tool descriptor read tag-list 0x11 3
    ```
-4. Sau `Commissioning complete` và `Thread attached`, scanner tự chạy lại sau 10 s. Reboot sau đó tự dùng lại fabric và
+4. Sau `Commissioning complete` và `Thread up`, scanner tự chạy lại sau 10 s. Reboot sau đó tự dùng lại fabric và
    Thread dataset đã lưu, không cần ghép lại.
 
 Ứng dụng có thể hiển thị thiết bị là cảm biến *Occupancy* với 5 ô. Firmware **chưa được thử** với Apple Home, Google
@@ -454,13 +462,14 @@ node ui_test.js                 # tùy chọn: node ui_test.js ../../main/web/in
 ```
 
 `ui_test.js` mở đúng file `main/web/index.html` được nhúng vào firmware trong Chromium (khung 390×844, cảm ứng),
-trả lời các API `/api/*` bằng dữ liệu giả và kiểm tra 32 điểm: tên beacon chứa `<img onerror=…>` chỉ hiện dạng chữ
+trả lời các API `/api/*` bằng dữ liệu giả và kiểm tra 39 điểm: tên beacon chứa `<img onerror=…>` chỉ hiện dạng chữ
 (không chèn phần tử, không chạy script), cảnh báo RPA, nạp cấu hình đã lưu, gán beacon từ danh sách (điền MAC + loại
 địa chỉ, bật slot), **từ chối gán một beacon cho hai slot** kèm tên slot đang dùng, MAC nhập tay sai/trùng bị chặn và
 không gửi gì lên thiết bị, timeout ngoài khoảng, cảnh báo chu kỳ quét > 50%, nội dung lệnh lưu (MAC chuẩn hóa
 `AA:BB:CC:DD:EE:FF`, số nguyên, đủ 5 slot), keepalive khi có thao tác, **mọi POST gửi `application/json`**,
 **danh sách beacon không bị dựng lại khi đang mở ô "Gán vào…"** (trên điện thoại việc dựng lại sẽ đóng ô chọn), nút
-khởi động lại. Kết quả trong phiên này:
+khởi động lại, và chữ hiển thị theo mạng của thiết bị (`"network"` trong API: "Thread" + mức coexistence C1 cho bản
+C6, "Wi-Fi" + mức Y cho bản C3). Kết quả trong phiên này:
 `UI checks passed` (Playwright 1.63.0, Node 22). Test này không thay cho thử trên điện thoại thật nối vào SoftAP.
 
 ### Kết quả build thực tế
@@ -469,15 +478,15 @@ Chạy trong `espressif/esp-matter:release-v1.6.1_idf_v6.0.2` (các commit ở �
 [Build](#build): `idf.py set-target esp32c6` rồi `idf.py build`.
 
 ```
-matter_ble_presence.bin binary size 0x1faee0 bytes. Smallest app partition is 0x3a0000 bytes. 0x1a5120 bytes (45%) free.
+matter_ble_presence.bin binary size 0x1fb330 bytes. Smallest app partition is 0x3a0000 bytes. 0x1a4cd0 bytes (45%) free.
 Project build complete.
 ```
 
 | Hạng mục | Giá trị |
 |---|---|
-| App `matter_ble_presence.bin` | 2 076 384 byte (0x1FAEE0) trong phân vùng `factory` 3 712 KB (0x3A0000): **còn trống 45%** |
+| App `matter_ble_presence.bin` | 2 077 488 byte (0x1FB330) trong phân vùng `factory` 3 712 KB (0x3A0000): **còn trống 45%** |
 | Bootloader / bảng phân vùng | 22 192 byte tại 0x0 / 3 072 byte tại 0xC000 |
-| Flash code (`idf.py size`) | 1 953 660 byte (.text 1 639 320, .rodata 313 620) |
+| Flash code (`idf.py size`) | 1 954 750 byte (.text 1 639 346, .rodata 314 684) |
 | DIRAM tĩnh | 216 396 / 452 112 byte (47,9%): IRAM .text 104 320, .bss 93 736, .data 18 340 → 235 716 byte cho heap lúc khởi động (heap còn lại khi Matter + Thread + BLE chạy **cần đo trên phần cứng**, log `diag` in mỗi 60 s) |
 | LP SRAM | `.rtc_noinit` 16 byte = bản ghi yêu cầu CONFIG (`app_mode_rtc_t`), `.rtc_reserved` 24 byte |
 | Cảnh báo biên dịch từ mã dự án | 0 (cờ mặc định của ESP-IDF: `-Wall -Werror` trừ vài nhóm, `-Wextra`) |
@@ -529,11 +538,11 @@ số gói/s, từng slot, bộ đếm MAC/MLE của Thread.
 | 1 | Ghép Matter, đọc đủ 5 endpoint (`descriptor read parts-list 0x11 0`, `occupancysensing read occupancy 0x11 1..5`, `read feature-map`) | parts-list = [1,2,3,4,5]; occupancy = 0; feature-map = 0x240 |
 | 2 | Bấm BOOT 3 lần; điện thoại vào SoftAP, mở web | log `Boot in CONFIG mode (reset: software)`; trang tải được |
 | 3 | Quét, gán đủ 5 beacon, lưu, khởi động lại | lưu báo thành công; log NORMAL in 5 slot đúng MAC |
-| 4 | Sau reboot | Matter trở lại mạng cũ không cần ghép (`Commissioned (1 fabric(s))`, `Thread attached`) |
+| 4 | Sau reboot | Matter trở lại mạng cũ không cần ghép (`Commissioned (1 fabric(s))`, `Thread up`) |
 | 5 | Bật/tắt (hoặc mang ra xa) từng beacon | đúng endpoint đổi; đo độ trễ ON (kỳ vọng ~vài giây) và OFF (≈ timeout ± 0,25 s) |
 | 6 | Rút nguồn, cấp lại | về NORMAL; cấu hình còn nguyên; mọi slot OFF tới khi nhận gói mới |
 | 7 | Đổi MAC một slot ở CONFIG | endpoint ID không đổi (parts-list giống bước 1) |
-| 8 | Tắt/bật Border Router; ghép thêm controller (multi-admin) | log `Thread detached` → scanner `paused by thread_detached` → `Thread attached` → quét lại sau 10 s; không OFF giả trong thời gian dừng |
+| 8 | Tắt/bật Border Router; ghép thêm controller (multi-admin) | log `Thread detached` → scanner `paused by network_down` → `Thread up` → quét lại sau 10 s; không OFF giả trong thời gian dừng |
 | 9 | Beacon phát chậm (5 s, 10 s), che chắn, beacon địa chỉ RPA | đối chiếu bảng xác suất; trang web cảnh báo RPA; ghi số lần OFF giả |
 | 10 | Chạy ≥ 24 giờ | ghi: độ trễ ON/OFF, **số lần báo vắng sai** (so với nhật ký thực tế), số lần `Thread detached`, `MAC retry`/`no-ack-expiry`, heap min, `unexpected stops`, `watchdog restarts`, `queue drops` |
 
@@ -557,8 +566,9 @@ liệu của bước 10 và xem [khuyến nghị](#khuyến-nghị-phương-án-
   `RTC_NOINIT_ATTR` trên C6, DAC thử nghiệm cho PID 0x8002, sơ đồ nút BOOT của DevKitC-1 v1.4.
 * `idf.py set-target esp32c6` + `idf.py build` thành công (số liệu ở mục kết quả build).
 * Host test: 9 bộ, đạt (ASan/UBSan).
-* Trang web cấu hình chạy trong Chromium headless với API giả lập: 32 kiểm tra đạt (escape tên, gán/trùng beacon,
-  kiểm tra dữ liệu, nội dung lệnh lưu, kiểu nội dung POST, ô chọn không bị đóng, khởi động lại).
+* Trang web cấu hình chạy trong Chromium headless với API giả lập: 39 kiểm tra đạt (escape tên, gán/trùng beacon,
+  kiểm tra dữ liệu, nội dung lệnh lưu, kiểu nội dung POST, ô chọn không bị đóng, khởi động lại, chữ theo mạng
+  Thread/Wi-Fi).
 * Rà soát mã độc lập (đối chiếu mã nguồn SDK): các lỗi tìm được đã sửa, xem [mục dưới](#rà-soát-mã-độc-lập).
 
 **Chưa xác minh — cần thử trên phần cứng**

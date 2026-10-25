@@ -18,22 +18,35 @@
 #if CONFIG_ENABLE_CHIP_SHELL
 #include <esp_matter_console.h>
 #endif
+#if CONFIG_ENABLE_MATTER_OVER_THREAD
 #include <esp_openthread.h>
 #include <esp_openthread_lock.h>
 #include <openthread/link.h>
 #include <openthread/thread.h>
+#endif
+#if CONFIG_ENABLE_WIFI_STATION
+#include <esp_event.h>
+#include <esp_wifi.h>
+#endif
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/server/Server.h>
 #include <data_model_provider/clusters/occupancy_sensing/integration.h>
 #include <platform/CHIPDeviceLayer.h>
+#if CONFIG_ENABLE_MATTER_OVER_THREAD
 #include <platform/ESP32/OpenthreadLauncher.h>
+#endif
 #include <setup_payload/OnboardingCodesUtil.h>
 
 #include "sdkconfig.h"
 
 #include "ble_scanner.h"
 #include "presence_config.h"
+
+// ESP32-C6 version: Thread; ESP32-C3 version: Wi-Fi station (ble_presence.cmake)
+#if defined(CONFIG_ENABLE_MATTER_OVER_THREAD) == defined(CONFIG_ENABLE_WIFI_STATION)
+#error "Build with exactly one Matter network: Thread (ESP32-C6 version) or Wi-Fi station (ESP32-C3 version)"
+#endif
 
 static const char *TAG = "matter";
 
@@ -50,8 +63,11 @@ static constexpr uint8_t kNamespaceCommonNumber = 0x07;
 
 static uint16_t s_endpoint_ids[PRESENCE_SLOT_COUNT];
 static std::atomic<bool> s_started{ false };
-static std::atomic<uint32_t> s_attaches{ 0 };
-static std::atomic<uint32_t> s_detaches{ 0 };
+static std::atomic<uint32_t> s_network_ups{ 0 };
+static std::atomic<uint32_t> s_network_downs{ 0 };
+#if CONFIG_ENABLE_WIFI_STATION
+static std::atomic<uint16_t> s_wifi_disconnect_reason{ 0 }; // wifi_err_reason_t of the last disconnection
+#endif
 
 // TagList: the labels must stay valid for the life of the node
 static char s_tag_labels[PRESENCE_SLOT_COUNT][16];
@@ -86,18 +102,21 @@ static void update_commissioning_gate()
     }
 }
 
-// Matter task
-static void set_thread_attached(bool attached)
+// Matter task: Thread attached / Wi-Fi connected, or not
+static void set_network_up(bool up)
 {
-    if (attached) {
+    if (up) {
         hold_off_scanner();
-        ble_scanner_resume(SCAN_PAUSE_THREAD_DETACHED);
+        ble_scanner_resume(SCAN_PAUSE_NETWORK_DOWN);
     } else {
-        ble_scanner_pause(SCAN_PAUSE_THREAD_DETACHED);
+        ble_scanner_pause(SCAN_PAUSE_NETWORK_DOWN);
     }
 }
 
-static const char *thread_role()
+#if CONFIG_ENABLE_MATTER_OVER_THREAD
+
+// Thread role ("child", "detached"...)
+static const char *network_state(char *, size_t)
 {
     otInstance *ot = esp_openthread_get_instance();
     if (ot == nullptr) {
@@ -125,12 +144,34 @@ static const char *device_type_name(ConnectivityManager::ThreadDeviceType type)
     }
 }
 
+#else // Wi-Fi station
+
+// Signal and channel of the access point, written to buf
+static const char *network_state(char *buf, size_t size)
+{
+    wifi_ap_record_t ap = {};
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
+        return "not connected";
+    }
+    snprintf(buf, size, "RSSI %d dBm, channel %u", ap.rssi, ap.primary);
+    return buf;
+}
+
+// Event loop task: only the reason is kept, for the logs
+static void on_wifi_disconnected(void *, esp_event_base_t, int32_t, void *data)
+{
+    s_wifi_disconnect_reason.store(static_cast<const wifi_event_sta_disconnected_t *>(data)->reason);
+}
+
+#endif
+
 // Matter task, once, right after esp_matter::start() (Server::Init done, fabrics loaded). kServerReady is not used
-// for this: on a Thread-only build it waits for DNS-SD, i.e. for an SRP server to answer, which cannot happen before
-// commissioning (no Thread network yet: the pairing codes would never be printed) and never happens while the SRP
-// server of the Border Router is unreachable (the scanner would stay paused).
+// for this: it waits for DNS-SD, which on the Thread version means waiting for an SRP server to answer. That cannot
+// happen before commissioning (no Thread network yet: the pairing codes would never be printed) and never happens
+// while the SRP server of the Border Router is unreachable (the scanner would stay paused).
 static void on_matter_started(intptr_t)
 {
+#if CONFIG_ENABLE_MATTER_OVER_THREAD
     // MTD build: Minimal End Device keeps the receiver on when idle (no polling delay; the device is mains
     // powered). It is the OpenThread default for an MTD, set explicitly so a future SDK default cannot change it.
     const CHIP_ERROR err = ConnectivityMgr().SetThreadDeviceType(ConnectivityManager::kThreadDeviceType_MinimalEndDevice);
@@ -138,16 +179,22 @@ static void on_matter_started(intptr_t)
         ESP_LOGW(TAG, "Setting the Thread device type failed: %" CHIP_ERROR_FORMAT, err.Format());
     }
     ESP_LOGI(TAG, "Thread device type: %s", device_type_name(ConnectivityMgr().GetThreadDeviceType()));
+    const bool network_up = ConnectivityMgr().IsThreadAttached();
+#else
+    const bool network_up = ConnectivityMgr().IsWiFiStationConnected();
+#endif
 
     ble_scanner_resume(SCAN_PAUSE_MATTER_STARTING);
     update_commissioning_gate();
-    set_thread_attached(ConnectivityMgr().IsThreadAttached());
+    set_network_up(network_up);
     if (!is_commissioned()) {
         ESP_LOGI(TAG, "Not commissioned: commissioning window open (BLE), beacon scanning paused until done");
         PrintOnboardingCodes(chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE));
     } else {
-        ESP_LOGI(TAG, "Commissioned (%u fabric(s)), Thread %s",
-                 static_cast<unsigned>(chip::Server::GetInstance().GetFabricTable().FabricCount()), thread_role());
+        char state[40];
+        ESP_LOGI(TAG, "Commissioned (%u fabric(s)), %s %s",
+                 static_cast<unsigned>(chip::Server::GetInstance().GetFabricTable().FabricCount()),
+                 MATTER_DEVICE_NETWORK_NAME, network_state(state, sizeof(state)));
     }
 }
 
@@ -166,6 +213,27 @@ static void open_commissioning_window()
         return;
     }
     PrintOnboardingCodes(chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE));
+}
+
+// Matter task: kThreadConnectivityChange / kWiFiConnectivityChange
+static void on_connectivity_change(chip::DeviceLayer::ConnectivityChange result)
+{
+    char state[40];
+    if (result == chip::DeviceLayer::kConnectivity_Established) {
+        s_network_ups.fetch_add(1);
+        ESP_LOGI(TAG, "%s up (%s): scanning resumes in %d s", MATTER_DEVICE_NETWORK_NAME,
+                 network_state(state, sizeof(state)), CONFIG_PRESENCE_SCAN_RESUME_DELAY_SEC);
+        set_network_up(true);
+    } else if (result == chip::DeviceLayer::kConnectivity_Lost) {
+        s_network_downs.fetch_add(1);
+#if CONFIG_ENABLE_WIFI_STATION
+        ESP_LOGW(TAG, "Wi-Fi down (reason %u): scanner paused until connected again",
+                 static_cast<unsigned>(s_wifi_disconnect_reason.load()));
+#else
+        ESP_LOGW(TAG, "Thread detached: scanner paused until attached again");
+#endif
+        set_network_up(false);
+    }
 }
 
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t)
@@ -195,7 +263,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t)
         break;
 
     case DeviceEventType::kCommissioningComplete:
-        ESP_LOGI(TAG, "Commissioning complete: scanner resumes once Thread is attached");
+        ESP_LOGI(TAG, "Commissioning complete: scanner resumes once the network is up");
         hold_off_scanner();
         ble_scanner_resume(SCAN_PAUSE_COMMISSIONING);
         update_commissioning_gate();
@@ -227,25 +295,41 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t)
         update_commissioning_gate();
         break;
 
-    case DeviceEventType::kThreadConnectivityChange: {
-        const bool attached = event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Established;
-        if (attached) {
-            s_attaches.fetch_add(1);
-            ESP_LOGI(TAG, "Thread attached (%s): scanning resumes in %d s", thread_role(),
-                     CONFIG_PRESENCE_SCAN_RESUME_DELAY_SEC);
-        } else if (event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Lost) {
-            s_detaches.fetch_add(1);
-            ESP_LOGW(TAG, "Thread detached: scanner paused until attached again");
-        }
-        set_thread_attached(attached);
+#if CONFIG_ENABLE_MATTER_OVER_THREAD
+    case DeviceEventType::kThreadConnectivityChange:
+        on_connectivity_change(event->ThreadConnectivityChange.Result);
         break;
-    }
 
     case DeviceEventType::kThreadStateChange:
         if (event->ThreadStateChange.RoleChanged) {
-            ESP_LOGI(TAG, "Thread role: %s", thread_role());
+            char state[40];
+            ESP_LOGI(TAG, "Thread role: %s", network_state(state, sizeof(state)));
         }
         break;
+#else
+    case DeviceEventType::kWiFiConnectivityChange:
+        on_connectivity_change(event->WiFiConnectivityChange.Result);
+        break;
+
+    case DeviceEventType::kInterfaceIpAddressChanged:
+        switch (event->InterfaceIpAddressChanged.Type) {
+        case chip::DeviceLayer::InterfaceIpChangeType::kIpV4_Assigned:
+            ESP_LOGI(TAG, "Wi-Fi: IPv4 address assigned");
+            break;
+        case chip::DeviceLayer::InterfaceIpChangeType::kIpV4_Lost:
+            ESP_LOGW(TAG, "Wi-Fi: IPv4 address lost");
+            break;
+        case chip::DeviceLayer::InterfaceIpChangeType::kIpV6_Assigned:
+            ESP_LOGI(TAG, "Wi-Fi: IPv6 address assigned");
+            break;
+        case chip::DeviceLayer::InterfaceIpChangeType::kIpV6_Lost:
+            ESP_LOGW(TAG, "Wi-Fi: IPv6 address lost");
+            break;
+        default:
+            break;
+        }
+        break;
+#endif
 
     case DeviceEventType::kBLEDeinitialized:
         // Only with CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING, which this firmware turns off
@@ -318,6 +402,7 @@ esp_err_t matter_device_start(void)
         return err;
     }
 
+#if CONFIG_ENABLE_MATTER_OVER_THREAD
     esp_openthread_platform_config_t ot_config = {};
     ot_config.radio_config.radio_mode = RADIO_MODE_NATIVE;
     ot_config.host_config.host_connection_mode = HOST_CONNECTION_MODE_NONE;
@@ -325,6 +410,14 @@ esp_err_t matter_device_start(void)
     ot_config.port_config.netif_queue_size = 10;
     ot_config.port_config.task_queue_size = 10;
     set_openthread_platform_config(&ot_config);
+#else
+    // The default event loop esp_matter::start() would create, created here so that the reason of a disconnection is
+    // recorded from the first connection attempt on
+    err = esp_event_loop_create_default();
+    if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+        esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, on_wifi_disconnected, nullptr);
+    }
+#endif
 
     err = esp_matter::start(app_event_cb);
     if (err != ESP_OK) {
@@ -341,6 +434,9 @@ esp_err_t matter_device_start(void)
     esp_matter::console::factoryreset_register_commands();
 #if CONFIG_OPENTHREAD_CLI
     esp_matter::console::otcli_register_commands();
+#endif
+#if CONFIG_ENABLE_WIFI_STATION
+    esp_matter::console::wifi_register_commands();
 #endif
     esp_matter::console::init();
 #endif
@@ -361,6 +457,8 @@ bool matter_device_set_occupancy(int slot, bool occupied)
     return true;
 }
 
+#if CONFIG_ENABLE_MATTER_OVER_THREAD
+
 void matter_device_log_diagnostics(void)
 {
     otInstance *ot = s_started ? esp_openthread_get_instance() : nullptr;
@@ -378,11 +476,26 @@ void matter_device_log_diagnostics(void)
 
     ESP_LOGI(TAG, "Thread %s, rx-on-when-idle %d, full device %d, parent RSSI %d dBm%s; attached %u, detached %u",
              otThreadDeviceRoleToString(role), mode.mRxOnWhenIdle, mode.mDeviceType, parent_rssi,
-             has_parent_rssi ? "" : " (n/a)", static_cast<unsigned>(s_attaches.load()),
-             static_cast<unsigned>(s_detaches.load()));
+             has_parent_rssi ? "" : " (n/a)", static_cast<unsigned>(s_network_ups.load()),
+             static_cast<unsigned>(s_network_downs.load()));
     ESP_LOGI(TAG,
              "MAC tx %" PRIu32 " retry %" PRIu32 " cca-err %" PRIu32 " no-ack-expiry %" PRIu32 ", rx %" PRIu32
              " no-frame %" PRIu32 " fcs-err %" PRIu32 "; MLE detached %u child %u attach-attempts %u parent-changes %u",
              mac.mTxTotal, mac.mTxRetry, mac.mTxErrCca, mac.mTxDirectMaxRetryExpiry, mac.mRxTotal, mac.mRxErrNoFrame,
              mac.mRxErrFcs, mle.mDetachedRole, mle.mChildRole, mle.mAttachAttempts, mle.mParentChanges);
 }
+
+#else // Wi-Fi station
+
+void matter_device_log_diagnostics(void)
+{
+    if (!s_started) {
+        return;
+    }
+    char state[40];
+    ESP_LOGI(TAG, "Wi-Fi %s; connected %u, disconnected %u, last disconnection reason %u",
+             network_state(state, sizeof(state)), static_cast<unsigned>(s_network_ups.load()),
+             static_cast<unsigned>(s_network_downs.load()), static_cast<unsigned>(s_wifi_disconnect_reason.load()));
+}
+
+#endif

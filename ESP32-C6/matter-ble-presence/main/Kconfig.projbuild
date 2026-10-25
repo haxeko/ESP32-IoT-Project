@@ -164,20 +164,23 @@ menu "BLE Presence x5"
             range 10 PRESENCE_SCAN_INTERVAL_MS
             default 40
             help
-                40 ms of 160 ms: the radio scans 25 % of the time and Thread keeps the
-                rest. BLE scanning next to a Thread end device is "C1, supported but
-                the performance is unstable" in the ESP-IDF coexistence table for the
-                ESP32-C6, and 802.15.4 reception has the lowest priority: a larger
-                window hears beacons sooner but costs Thread frames. Never the whole
-                interval by default.
+                40 ms of 160 ms: the radio scans 25 % of the time and the network
+                keeps the rest. ESP32-C6 (Thread): BLE scanning next to a Thread end
+                device is "C1, supported but the performance is unstable" in the
+                ESP-IDF coexistence table, and 802.15.4 reception has the lowest
+                priority: a larger window hears beacons sooner but costs Thread
+                frames. ESP32-C3 (Wi-Fi): BLE scanning next to a connected Wi-Fi
+                station is "Y, supported and stable"; a larger window still leaves
+                Wi-Fi less time. Never the whole interval by default.
 
         config PRESENCE_SCAN_RESUME_DELAY_SEC
-            int "Scanning resumes this long after Thread attaches or commissioning ends (s)"
+            int "Scanning resumes this long after the network is up or commissioning ends (s)"
             range 0 120
             default 10
             help
-                Leaves the radio to Thread while the device registers its services
-                (SRP) and the controllers set up their sessions and subscriptions.
+                Leaves the radio to the network (Thread attached / Wi-Fi connected)
+                while the device announces its services (SRP on Thread, mDNS on
+                Wi-Fi) and the controllers set up their sessions and subscriptions.
 
         config PRESENCE_SCAN_WATCHDOG_SEC
             int "Restart scanning when no advertisement at all arrives for (s), 0: never"
@@ -229,7 +232,8 @@ menu "BLE Presence x5"
             default "app_cfg"
             help
                 Its own partition (partitions.csv), never the "nvs" partition of
-                the Matter fabrics and the Thread dataset.
+                the Matter fabrics and the network (Thread dataset / Wi-Fi
+                credentials).
 
     endmenu
 
@@ -262,6 +266,7 @@ menu "BLE Presence x5"
         default 60
         help
             Heap, scanner counters, per-slot packets and states, Thread role and
-            counters (NORMAL), SoftAP stations and list size (CONFIG).
+            counters or Wi-Fi signal and disconnections (NORMAL), SoftAP stations
+            and list size (CONFIG).
 
 endmenu

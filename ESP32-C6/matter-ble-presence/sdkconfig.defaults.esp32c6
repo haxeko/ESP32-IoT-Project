@@ -1,0 +1,50 @@
+CONFIG_IDF_TARGET="esp32c6"
+
+# ESP32-C6 version: Matter over Thread. Applied after sdkconfig.defaults (ESP-IDF loads sdkconfig.defaults.<target>
+# after the file with the same name).
+
+# Own product ID, so controllers never mix up the ESP32-C6 (Thread) and ESP32-C3 (Wi-Fi) firmware. 0x8002 is not used
+# by the other firmware of this repository (0x8000 H2, 0x8001 C3 LD2410, 0x8003 the ESP32-C3 version of this one).
+CONFIG_DEVICE_PRODUCT_ID=0x8002
+
+# Duplicate filtering is off in every scan this firmware starts (filter_duplicates = 0), so each advertisement is
+# reported. Should a scan ever be started with filtering on, the controller would report an address once and then
+# never again while scanning (refresh period 0 = never): refresh the list every second instead.
+CONFIG_BT_LE_SCAN_DUPL_CACHE_REFRESH_PERIOD=1
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Thread: minimal Thread device (MTD) build. An MTD has no router code at all, so the device can never become a
+# Thread router or leader: BLE scanning next to a router is "X, not supported" in the ESP-IDF coexistence table of
+# the ESP32-C6, next to an end device "C1, supported but unstable". The device type is set to Minimal End Device
+# (receiver on when idle, mains powered, no polling delay); see matter_device.cpp.
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_MTD=y
+CONFIG_OPENTHREAD_SRP_CLIENT=y
+CONFIG_OPENTHREAD_DNS_CLIENT=y
+CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
+CONFIG_OPENTHREAD_LOG_LEVEL_NOTE=y
+# OpenThread CLI in the Matter console ("matter esp ot_cli state", "... counters mac") to measure the coexistence
+CONFIG_OPENTHREAD_CLI=y
+# Thread assigns the addresses: no SLAAC from router advertisements
+CONFIG_LWIP_IPV6_AUTOCONFIG=n
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=8
+CONFIG_LWIP_MULTICAST_PING=y
+# DNS-SD over SRP on Thread instead of mDNS
+CONFIG_USE_MINIMAL_MDNS=n
+CONFIG_ENABLE_EXTENDED_DISCOVERY=y
+CONFIG_SUPPORT_THREAD_NETWORK_DIAGNOSTICS_CLUSTER=y
+CONFIG_SUPPORT_WIFI_NETWORK_DIAGNOSTICS_CLUSTER=n
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Wi-Fi: not used by Matter (Thread only); the driver serves the SoftAP of the CONFIG mode only
+CONFIG_ENABLE_WIFI_STATION=n
+# Nothing of Wi-Fi is kept in flash: no Wi-Fi write to the "nvs" partition of Matter / Thread
+CONFIG_ESP_WIFI_NVS_ENABLED=n
+# Buffers sized for the SoftAP and its configuration page only
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=8
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Matter console on the serial port: factory reset ("matter esp factoryreset"), diagnostics, OpenThread CLI
+CONFIG_ENABLE_CHIP_SHELL=y

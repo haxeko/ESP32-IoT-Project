@@ -17,10 +17,10 @@ const config = {
   limits: { label_max_bytes: 48, timeout_min: 10, timeout_max: 3600, rssi_min: -100, rssi_max: -20, hysteresis_max: 20,
             interval_min: 20, interval_max: 10240, window_min: 10 },
   defaults: { timeout_s: 45, rssi_threshold: -80, rssi_hysteresis: 5, interval_ms: 160, window_ms: 40 },
-  allow_duplicates: false, storage: { status: 'ok', detail: '' },
+  allow_duplicates: false, storage: { status: 'ok', detail: '' }, network: 'thread',
 };
 const status = {
-  mode: 'config', firmware: '1.0.181', idf: 'v6.0.2', uptime_s: 75, idle_left_s: 587, idle_timeout_s: 600,
+  mode: 'config', network: 'thread', firmware: '1.0.181', idf: 'v6.0.2', uptime_s: 75, idle_left_s: 587, idle_timeout_s: 600,
   heap: { free: 123456, min: 100000, largest: 80000 }, ap: { ssid: 'VN-Presence-3A7C', stations: 1, channel: 1 },
   scan: { state: 'running', paused_by: '', active: true, interval_ms: 100, window_ms: 50, adv_reports: 1234,
           ibeacon_reports: 210, starts: 1, start_failures: 0, unexpected_stops: 0, watchdog_restarts: 0, last_error: 0,
@@ -37,21 +37,18 @@ const beacons = [
     major: 10, minor: 7, tx_power: -60, name: '', age_ms: 9000, count: 5, same_id_other_mac: true },
 ];
 
-(async () => {
-  const browser = await chromium.launch();
+// A page of the device with the API answered by the mock; network: 'thread' (ESP32-C6) or 'wifi' (ESP32-C3)
+async function openPage(browser, network, posts) {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
-  const posts = [];
-  let dialogs = 0;
-  page.on('dialog', async d => { dialogs++; await d.accept(); });
   page.on('pageerror', e => { failures++; console.log('FAIL page error', e.message); });
   await page.route('http://device.test/**', async route => {
     const req = route.request();
     const url = new URL(req.url());
     const json = (obj, code = 200) => route.fulfill({ status: code, contentType: 'application/json', body: JSON.stringify(obj) });
     if (url.pathname === '/') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
-    if (url.pathname === '/api/status') return json(status);
+    if (url.pathname === '/api/status') return json(Object.assign({}, status, { network }));
     if (url.pathname === '/api/scan' && req.method() === 'GET') return json({ beacons });
-    if (url.pathname === '/api/config' && req.method() === 'GET') return json(config);
+    if (url.pathname === '/api/config' && req.method() === 'GET') return json(Object.assign({}, config, { network }));
     if (req.method() === 'POST') {
       posts.push({ path: url.pathname, body: req.postData(), type: req.headers()['content-type'] || '' });
       if (url.pathname === '/api/config') return json({ ok: true, message: 'Đã lưu và đọc lại kiểm tra thành công.' });
@@ -59,10 +56,23 @@ const beacons = [
     }
     return route.fulfill({ status: 404, body: '' });
   });
-
   await page.goto('http://device.test/');
   await page.waitForSelector('.beacon');
+  return page;
+}
+
+(async () => {
+  const browser = await chromium.launch();
+  const posts = [];
+  let dialogs = 0;
+  const page = await openPage(browser, 'thread', posts);
+  page.on('dialog', async d => { dialogs++; await d.accept(); });
   await page.waitForTimeout(300);
+
+  // Texts of the ESP32-C6 version (Matter over Thread)
+  check((await page.textContent('#statusGrid')).includes('Matter/Thread'), 'Thread version: mode shows Matter/Thread');
+  check((await page.textContent('#coexNote')).includes('C1'), 'Thread version: coexistence note (C1)');
+  check((await page.textContent('#coexNote')).includes('40/160 ms (25%)'), 'scan defaults from the device');
 
   // Rendering and escaping
   const names = await page.$$eval('.beacon b', els => els.map(e => e.textContent));
@@ -143,6 +153,15 @@ const beacons = [
   await page.waitForTimeout(200);
   check(posts.some(p => p.path === '/api/restart'), 'restart request sent');
   check(dialogs === 0, 'no confirm dialog after a successful save');
+
+  // Texts of the ESP32-C3 version (Matter over Wi-Fi)
+  const wifi = await openPage(browser, 'wifi', []);
+  await wifi.waitForTimeout(300);
+  check((await wifi.textContent('#statusGrid')).includes('Matter/Wi-Fi'), 'Wi-Fi version: mode shows Matter/Wi-Fi');
+  check((await wifi.textContent('#coexNote')).includes('mức Y'), 'Wi-Fi version: coexistence note (Y)');
+  check(!(await wifi.textContent('#coexNote')).includes('Thread'), 'Wi-Fi version: no Thread in the scan note');
+  await wifi.fill('#scanWin', '120');
+  check((await wifi.textContent('#scanInfo')).includes('Wi-Fi'), 'Wi-Fi version: duty warning names Wi-Fi');
 
   await browser.close();
   console.log(failures ? `${failures} FAILED` : 'UI checks passed');

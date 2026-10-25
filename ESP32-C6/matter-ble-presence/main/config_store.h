@@ -7,8 +7,8 @@
 */
 
 // Beacon configuration in flash: its own NVS partition (CONFIG_PRESENCE_CFG_PARTITION, "app_cfg"), separate from
-// the "nvs" partition that holds the Matter fabrics, the Thread dataset and the PHY calibration, and from the
-// factory partitions. Nothing here ever touches those.
+// the "nvs" partition that holds the Matter fabrics, the network (Thread dataset / Wi-Fi credentials) and the PHY
+// calibration, and from the factory partitions. Nothing here ever touches those.
 //
 // Error handling never erases anything on its own: a partition that NVS cannot open (no free pages, newer NVS
 // format, missing partition) or a blob that does not decode leaves the device running with the defaults (every

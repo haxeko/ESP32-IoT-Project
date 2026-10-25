@@ -9,7 +9,7 @@
 // Presence decision of the five slots. No ESP-IDF dependency (host tests); presence_manager.cpp runs it.
 //
 // Time is the scan clock (ble_scanner_scan_clock_ms()): milliseconds during which the radio was actually scanning.
-// It stops while the firmware pauses the scanner (commissioning, Thread attach, host reset, backoff), so an
+// It stops while the firmware pauses the scanner (commissioning, network down, host reset, backoff), so an
 // absence timeout only counts time in which the beacon could have been heard: pausing never turns a slot off.
 //
 //   - a valid packet (matching address and type, passing the RSSI filter when enabled) turns the slot on at once

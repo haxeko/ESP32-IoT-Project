@@ -402,7 +402,7 @@ const char *ble_scanner_pause_text(uint32_t mask, char *buf, size_t size)
     } kNames[] = {
         { SCAN_PAUSE_MATTER_STARTING, "matter_starting" }, { SCAN_PAUSE_NOT_COMMISSIONED, "not_commissioned" },
         { SCAN_PAUSE_COMMISSIONING, "commissioning" },     { SCAN_PAUSE_BLE_CONNECTION, "ble_connection" },
-        { SCAN_PAUSE_THREAD_DETACHED, "thread_detached" }, { SCAN_PAUSE_USER, "user" },
+        { SCAN_PAUSE_NETWORK_DOWN, "network_down" },       { SCAN_PAUSE_USER, "user" },
     };
     if (size == 0) {
         return buf;

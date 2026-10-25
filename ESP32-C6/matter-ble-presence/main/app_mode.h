@@ -7,8 +7,8 @@
 */
 
 // NORMAL / CONFIG mode, chosen once at boot. Switching is always a controlled restart:
-//   NORMAL --triple click--> request CONFIG in RTC memory, restart --> CONFIG (Matter and Thread not started,
-//   their data untouched) --"restart to Matter" on the page, triple click, or no interaction for
+//   NORMAL --triple click--> request CONFIG in RTC memory, restart --> CONFIG (Matter not started, its data and
+//   network untouched) --"restart to Matter" on the page, triple click, or no interaction for
 //   CONFIG_PRESENCE_CONFIG_IDLE_TIMEOUT_MIN--> restart --> NORMAL.
 // The request is valid for one software restart only (app_mode_logic.h): power-on always starts NORMAL.
 

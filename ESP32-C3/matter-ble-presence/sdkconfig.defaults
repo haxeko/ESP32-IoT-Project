@@ -1,0 +1,60 @@
+# ESP32-C3 version of ESP32-C6/matter-ble-presence: Matter over Wi-Fi (the ESP32-C3 has no 802.15.4 radio for
+# Thread). Applied after ESP32-C6/matter-ble-presence/sdkconfig.defaults, the settings shared by the two versions
+# (see ESP32-C6/matter-ble-presence/ble_presence.cmake).
+CONFIG_IDF_TARGET="esp32c3"
+
+# Files of the shared project, relative to this directory
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../ESP32-C6/matter-ble-presence/partitions.csv"
+CONFIG_CHIP_PROJECT_CONFIG="../../ESP32-C6/matter-ble-presence/main/chip_project_config.h"
+
+# Own product ID, so controllers never mix up the ESP32-C3 (Wi-Fi) and ESP32-C6 (Thread) firmware. Covered by the SDK
+# test DAC and Certification Declaration (0xFFF1/0x8000-0x801F); not used by the other firmware of this repository
+# (0x8000 H2, 0x8001 C3 LD2410, 0x8002 the ESP32-C6 version).
+CONFIG_DEVICE_PRODUCT_ID=0x8003
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Matter over Wi-Fi, station only: commissioning over BLE (the phone sends the SSID and password of a 2.4 GHz network),
+# then the device talks to the controllers over the Wi-Fi LAN (mDNS of the Matter SDK).
+CONFIG_ENABLE_WIFI_STATION=y
+CONFIG_OPENTHREAD_ENABLED=n
+# The Matter SDK relies on the Wi-Fi driver to keep the network credentials in "nvs" ("ESP-WiFi persists all wifi
+# credentials changes", ESP32 NetworkCommissioningDriver.cpp). The SoftAP of the CONFIG mode never writes there: it
+# starts the driver with nvs_enable = 0 (wifi_config.cpp).
+CONFIG_ESP_WIFI_NVS_ENABLED=y
+# IPv6 addresses from the router advertisements (SLAAC) on the Wi-Fi LAN: link-local + up to 5, as the esp-matter Wi-Fi
+# examples
+CONFIG_LWIP_IPV6_AUTOCONFIG=y
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=6
+CONFIG_SUPPORT_WIFI_NETWORK_DIAGNOSTICS_CLUSTER=y
+
+# BLE scanning next to a connected Wi-Fi station is "Y, supported and the performance is stable" in the ESP-IDF
+# coexistence table (next to the SoftAP of the CONFIG mode with a phone connected: "C1"). Wi-Fi modem sleep (the
+# default, required with Bluetooth) leaves the radio to BLE between the beacons of the access point.
+
+# Duplicate filtering is off in every scan this firmware starts (filter_duplicates = 0), so each advertisement is
+# reported. Should a scan ever be started with filtering on, the controller would report an address once and then
+# never again while scanning (refresh period 0 = never): refresh the list every second instead.
+CONFIG_BT_CTRL_DUPL_SCAN_CACHE_REFRESH_PERIOD=1
+
+# ---------------------------------------------------------------------------------------------------------------------
+# RAM. The ESP32-C3 has 400 KB of SRAM for code and data, and this firmware keeps BLE after commissioning (the
+# esp-matter light example gains about 65 KB of heap on the ESP32-C3 when BLE is released). Settings from the RAM
+# guide of esp-matter (docs/en/optimizations.rst) that do not change the behaviour; the heap left is in the
+# diagnostics log every 60 s and must be checked on the device.
+# Matter console off (about 10 KB of heap): logs still go to the serial console (UART0 and USB-Serial-JTAG)
+CONFIG_ENABLE_CHIP_SHELL=n
+# One device type per endpoint (16 by default)
+CONFIG_ESP_MATTER_MAX_DEVICE_TYPE_COUNT=2
+# Critical Matter events (start-up, boot reason): 1 KB instead of 4 KB
+CONFIG_EVENT_LOGGING_CRIT_BUFFER_SIZE=1024
+# BLE controller: at most 1 advertising set (commissioning) + 1 scan + 1 connection (828 bytes each)
+CONFIG_BT_CTRL_BLE_MAX_ACT=3
+# NimBLE host buffers for the single connection (the commissioner): half of the defaults
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=12
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=12
+# Wi-Fi: fewer buffers (Matter sends small UDP messages) and no Wi-Fi code in IRAM
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_EXTRA_IRAM_OPT=n
+CONFIG_ESP_WIFI_SLP_IRAM_OPT=n
