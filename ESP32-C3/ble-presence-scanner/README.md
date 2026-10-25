@@ -184,11 +184,12 @@ chân UART và console (cả hai chip log qua USB-Serial-JTAG), cấu hình theo
 
 | Firmware | App (phân vùng 3,6 MB) | RAM tĩnh → heap lúc khởi động |
 |---|---|---|
-| `ble_presence_scanner_c3.bin` (C3) | 1 087 040 byte, trống 71% | 107 275 / 321 296 byte → còn 214 021 byte |
-| `matter_ble_presence_h2.bin` (H2) | 1 558 608 byte, trống 59% | 162 832 / 258 000 byte → còn 95 168 byte (BLE được giải phóng sau khi ghép) |
+| `ble_presence_scanner_c3.bin` (C3) | 1 092 064 byte, trống 71% | 126 795 / 321 296 byte → còn 194 501 byte (mã Wi-Fi trong IRAM: thêm ~19 KB) |
+| `matter_ble_presence_h2.bin` (H2) | 1 559 616 byte, trống 59% | 162 840 / 258 000 byte → còn 95 160 byte (BLE được giải phóng sau khi ghép) |
 
-  Bản C6 và bản C3 Wi-Fi build lại sau thay đổi chung: thành công, `sdkconfig` của C6 sinh mới giống bản đã kiểm chứng
-  (chỉ thêm `CONFIG_PRESENCE_ROLE_SINGLE=y`).
+  Bản C6 và bản C3 Wi-Fi build lại sau thay đổi chung (`sdkconfig` sinh mới từ defaults): thành công, 0 cảnh báo.
 
 **Cần thử trên phần cứng:** đường UART thật (dây, chân H2, xung đột lúc reset), hiện diện ON/OFF qua H2, ghép Matter
-trên H2, ảnh hưởng của hai anten sát nhau (so `matched` mỗi phút khi H2 tắt và khi H2 chạy).
+trên H2, ảnh hưởng của hai anten sát nhau (so `matched` mỗi phút khi H2 tắt và khi H2 chạy), độ ổn định SoftAP sau các
+thay đổi trên (log RSSI điện thoại, `Station ... left`), bấm BOOT thong thả, thoát chế độ cấu hình mà cảm biến đang ON
+vẫn giữ ON, xóa thiết bị khỏi controller rồi ghép lại bằng BLE.

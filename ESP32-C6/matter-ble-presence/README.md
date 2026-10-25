@@ -493,16 +493,16 @@ Chạy trong `espressif/esp-matter:release-v1.6.1_idf_v6.0.2` (các commit ở �
 [Build](#build): `idf.py set-target esp32c6` rồi `idf.py build`.
 
 ```
-matter_ble_presence.bin binary size 0x1fb620 bytes. Smallest app partition is 0x3a0000 bytes. 0x1a49e0 bytes (45%) free.
+matter_ble_presence.bin binary size 0x1fc2d0 bytes. Smallest app partition is 0x3a0000 bytes. 0x1a3d30 bytes (45%) free.
 Project build complete.
 ```
 
 | Hạng mục | Giá trị |
 |---|---|
-| App `matter_ble_presence.bin` | 2 078 240 byte (0x1FB620) trong phân vùng `factory` 3 712 KB (0x3A0000): **còn trống 45%** |
+| App `matter_ble_presence.bin` | 2 081 488 byte (0x1FC2D0) trong phân vùng `factory` 3 712 KB (0x3A0000): **còn trống 45%** |
 | Bootloader / bảng phân vùng | 22 192 byte tại 0x0 / 3 072 byte tại 0xC000 |
-| Flash code (`idf.py size`) | 1 954 750 byte (.text 1 639 346, .rodata 314 684) |
-| DIRAM tĩnh | 216 396 / 452 112 byte (47,9%): IRAM .text 104 320, .bss 93 736, .data 18 340 → 235 716 byte cho heap lúc khởi động (heap còn lại khi Matter + Thread + BLE chạy **cần đo trên phần cứng**, log `diag` in mỗi 60 s) |
+| Flash code (`idf.py size`) | 1 958 764 byte (.text 1 641 160, .rodata 316 880) |
+| DIRAM tĩnh | 216 420 / 452 112 byte (47,9%): IRAM .text 104 320, .bss 93 760, .data 18 340 → 235 692 byte cho heap lúc khởi động (heap còn lại khi Matter + Thread + BLE chạy **cần đo trên phần cứng**, log `diag` in mỗi 60 s) |
 | LP SRAM | `.rtc_noinit` 16 byte = bản ghi yêu cầu CONFIG (`app_mode_rtc_t`), `.rtc_reserved` 24 byte |
 | Cảnh báo biên dịch từ mã dự án | 0 (cờ mặc định của ESP-IDF: `-Wall -Werror` trừ vài nhóm, `-Wextra`) |
 | Kconfig | không còn ký hiệu không tồn tại trong `sdkconfig.defaults` (chỉ còn các NOTE của chính SDK) |

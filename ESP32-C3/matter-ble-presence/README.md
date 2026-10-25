@@ -207,16 +207,16 @@ Trong `espressif/esp-matter:release-v1.6.1_idf_v6.0.2`, đúng hai lệnh ở m�
 `sdkconfig` mới từ các file defaults):
 
 ```
-matter_ble_presence_c3.bin binary size 0x1889e0 bytes. Smallest app partition is 0x3a0000 bytes. 0x217620 bytes (58%) free.
+matter_ble_presence_c3.bin binary size 0x1896c0 bytes. Smallest app partition is 0x3a0000 bytes. 0x216940 bytes (58%) free.
 Project build complete.
 ```
 
 | Hạng mục | Giá trị |
 |---|---|
-| App `matter_ble_presence_c3.bin` | 1 608 160 byte (0x1889E0) trong phân vùng `factory` 3 712 KB: **còn trống 58%** |
+| App `matter_ble_presence_c3.bin` | 1 611 456 byte (0x1896C0) trong phân vùng `factory` 3 712 KB: **còn trống 58%** |
 | Bootloader | 21 088 byte (0x5260) |
-| Flash (`idf.py size`) | code 1 254 864 byte, dữ liệu 267 676 byte |
-| DRAM tĩnh | 149 959 / 321 296 byte (46,7%): IRAM .text 69 918, .bss 65 224, .data 14 817 → **171 337 byte cho heap** lúc khởi động |
+| Flash (`idf.py size`) | code 1 256 672 byte, dữ liệu 269 916 byte |
+| DRAM tĩnh | 149 983 / 321 296 byte (46,7%): IRAM .text 69 918, .bss 65 248, .data 14 817 → **171 313 byte cho heap** lúc khởi động |
 | RTC SLOW | `.rtc_noinit` 16 byte = bản ghi yêu cầu CONFIG (giữ qua reset phần mềm), `.rtc_reserved` 24 byte |
 | Cảnh báo biên dịch | 0 |
 | Thành phần | cjson 1.7.19~2, mdns 1.14.1, esp_secure_cert_mgr 2.9.3, esp_encrypted_img 2.7.0, esp_delta_ota 1.1.4 (`dependencies.lock`) |
