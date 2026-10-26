@@ -23,7 +23,9 @@
 //              model length (1), model (PRESENCE_MODEL_MAX_BYTES, zero padded)
 //   end 4  CRC-32 of everything before it
 // Version 1 is the same without the model, written by the firmware with five slots: it still decodes (its slots
-// become the first ones, the others take the defaults) and is written as version 2 at the next save.
+// become the first ones, the others take the defaults) and is written as version 2 at the next save. A blob with more
+// slots than the firmware (the two-chip scanner's 20 read by a five-slot version) decodes when no beacon is assigned
+// to the extra ones (they are dropped), else it is refused and kept in flash until the configuration is saved.
 // The whole configuration is one blob written with one nvs_set_blob() + nvs_commit(): NVS keeps the old blob
 // until the new one is complete, so a power cut leaves either the old or the new configuration, never half of
 // the slots. A newer firmware that changes the layout bumps the version and keeps a decoder for each older one

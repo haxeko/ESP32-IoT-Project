@@ -551,9 +551,10 @@ async function save() {
   banner("err", (r.data && r.data.message) || ("Lưu thất bại (HTTP " + r.status + "). Thiết bị vẫn ở trang cấu hình."));
 }
 
-// The settings of every slot with a field marked invalid are opened, so the error is seen
+// Every section holding a field marked invalid is opened (also the nested RSSI filter), so the error is seen
 function openInvalid() {
-  for (let i = 0; i < SLOTS; i++) if ($("slot" + i).querySelector(".invalid")) $("det" + i).open = true;
+  for (const bad of document.querySelectorAll(".invalid"))
+    for (let d = bad.closest("details"); d; d = d.parentElement.closest("details")) d.open = true;
 }
 
 async function loadConfig() {
@@ -581,14 +582,15 @@ function renderHome() {
     const active = saved.enabled && saved.mac !== "";
     const ep = lastH2 && lastH2.bridged ? lastH2.bridged[i] : 0;
     const waiting = lastH2 && lastH2.waiting ? lastH2.waiting[i] : false;
+    const failed = waiting && lastH2.errors ? lastH2.errors[i] : false;
     let text;
     if (ep > 0 && !active) text = "Đang gỡ thiết bị con khỏi Nhà (endpoint " + ep + ")…";
     else if (ep > 0) text = "Trên Nhà: thiết bị con " + saved.mac + " (endpoint " + ep + ")";
     else if (!active) text = "Chưa có trên Nhà: gán MAC, bật slot rồi Lưu để thêm";
     else if (!lastH2 || !lastH2.seen) text = "Chờ ESP32-H2 (chưa nhận được tín hiệu qua UART)";
-    else if (waiting && lastH2.wait_reason === "commissioning") text = "Chờ ghép Matter xong: H2 giữ bộ nhớ cho việc ghép, thiết bị " + saved.mac + " được thêm ngay sau đó";
-    else if (waiting && lastH2.wait_reason === "memory") text = "Chờ: H2 không đủ bộ nhớ để thêm " + saved.mac + " lúc này (thêm khi đủ)";
-    else if (waiting && lastH2.wait_reason === "error") text = "H2 không thêm được " + saved.mac + " (xem log USB của H2), thử lại sau 30 giây";
+    else if (failed) text = "H2 không thêm được " + saved.mac + " (xem log USB của H2), tự thử lại sau 30 giây, lần sau giãn dần tới 1 giờ";
+    else if (waiting && !lastH2.commissioned) text = "Chờ ghép Matter xong: H2 giữ bộ nhớ cho việc ghép, thiết bị " + saved.mac + " được thêm ngay sau đó";
+    else if (waiting) text = "Chờ: H2 không đủ bộ nhớ để thêm " + saved.mac + " lúc này (thêm khi đủ)";
     else text = "Đang chờ ESP32-H2 thêm thiết bị con " + saved.mac + "…";
     line.textContent = text;
   }

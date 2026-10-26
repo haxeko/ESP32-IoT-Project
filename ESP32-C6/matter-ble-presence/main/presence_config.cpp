@@ -111,52 +111,60 @@ struct ErrorSink {
 
 } // namespace
 
+static void check_scan(uint16_t interval_ms, uint16_t window_ms, ErrorSink &sink)
+{
+    const bool interval_ok = interval_ms >= PRESENCE_SCAN_INTERVAL_MIN_MS && interval_ms <= PRESENCE_SCAN_INTERVAL_MAX_MS;
+    if (!interval_ok) {
+        sink.add(-1, PRESENCE_FIELD_SCAN_INTERVAL, PRESENCE_ERR_SCAN_INTERVAL_RANGE);
+    }
+    if (window_ms < PRESENCE_SCAN_WINDOW_MIN_MS || window_ms > PRESENCE_SCAN_INTERVAL_MAX_MS) {
+        sink.add(-1, PRESENCE_FIELD_SCAN_WINDOW, PRESENCE_ERR_SCAN_WINDOW_RANGE);
+    } else if (interval_ok && window_ms > interval_ms) {
+        // Not reported against an interval that is itself out of range: one error is enough to fix
+        sink.add(-1, PRESENCE_FIELD_SCAN_WINDOW, PRESENCE_ERR_SCAN_WINDOW_ABOVE_INTERVAL);
+    }
+}
+
+// The field ranges of one slot
+static void check_slot(int i, const presence_slot_config_t &s, ErrorSink &sink)
+{
+    const size_t label_len = strnlen(s.label, sizeof(s.label));
+    if (label_len > PRESENCE_LABEL_MAX_BYTES) {
+        sink.add(i, PRESENCE_FIELD_LABEL, PRESENCE_ERR_LABEL_TOO_LONG);
+    } else if (!utf8_is_valid_text(s.label, label_len)) {
+        sink.add(i, PRESENCE_FIELD_LABEL, PRESENCE_ERR_LABEL_INVALID);
+    }
+    const size_t model_len = strnlen(s.model, sizeof(s.model));
+    if (model_len > PRESENCE_MODEL_MAX_BYTES) {
+        sink.add(i, PRESENCE_FIELD_MODEL, PRESENCE_ERR_MODEL_TOO_LONG);
+    } else if (!utf8_is_valid_text(s.model, model_len)) {
+        sink.add(i, PRESENCE_FIELD_MODEL, PRESENCE_ERR_MODEL_INVALID);
+    }
+    if (s.has_addr && !ble_addr_is_usable(s.addr)) {
+        sink.add(i, PRESENCE_FIELD_ADDR, PRESENCE_ERR_ADDR_INVALID);
+    }
+    if (s.addr_type > BEACON_ADDR_ANY) {
+        sink.add(i, PRESENCE_FIELD_ADDR_TYPE, PRESENCE_ERR_ADDR_TYPE);
+    }
+    if (s.timeout_s < PRESENCE_TIMEOUT_MIN_S || s.timeout_s > PRESENCE_TIMEOUT_MAX_S) {
+        sink.add(i, PRESENCE_FIELD_TIMEOUT, PRESENCE_ERR_TIMEOUT_RANGE);
+    }
+    if (s.rssi_threshold < PRESENCE_RSSI_THRESHOLD_MIN || s.rssi_threshold > PRESENCE_RSSI_THRESHOLD_MAX) {
+        sink.add(i, PRESENCE_FIELD_RSSI_THRESHOLD, PRESENCE_ERR_RSSI_RANGE);
+    }
+    if (s.rssi_hysteresis > PRESENCE_RSSI_HYSTERESIS_MAX) {
+        sink.add(i, PRESENCE_FIELD_RSSI_HYSTERESIS, PRESENCE_ERR_HYSTERESIS_RANGE);
+    }
+}
+
 size_t presence_config_validate(const presence_config_t *cfg, bool allow_duplicate_beacons,
                                 presence_config_error_t *errors, size_t max_errors)
 {
     ErrorSink sink{ errors, max_errors, 0 };
-
-    const bool interval_ok =
-        cfg->scan_interval_ms >= PRESENCE_SCAN_INTERVAL_MIN_MS && cfg->scan_interval_ms <= PRESENCE_SCAN_INTERVAL_MAX_MS;
-    if (!interval_ok) {
-        sink.add(-1, PRESENCE_FIELD_SCAN_INTERVAL, PRESENCE_ERR_SCAN_INTERVAL_RANGE);
-    }
-    if (cfg->scan_window_ms < PRESENCE_SCAN_WINDOW_MIN_MS || cfg->scan_window_ms > PRESENCE_SCAN_INTERVAL_MAX_MS) {
-        sink.add(-1, PRESENCE_FIELD_SCAN_WINDOW, PRESENCE_ERR_SCAN_WINDOW_RANGE);
-    } else if (interval_ok && cfg->scan_window_ms > cfg->scan_interval_ms) {
-        // Not reported against an interval that is itself out of range: one error is enough to fix
-        sink.add(-1, PRESENCE_FIELD_SCAN_WINDOW, PRESENCE_ERR_SCAN_WINDOW_ABOVE_INTERVAL);
-    }
-
+    check_scan(cfg->scan_interval_ms, cfg->scan_window_ms, sink);
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
         const presence_slot_config_t &s = cfg->slots[i];
-        const size_t label_len = strnlen(s.label, sizeof(s.label));
-        if (label_len > PRESENCE_LABEL_MAX_BYTES) {
-            sink.add(i, PRESENCE_FIELD_LABEL, PRESENCE_ERR_LABEL_TOO_LONG);
-        } else if (!utf8_is_valid_text(s.label, label_len)) {
-            sink.add(i, PRESENCE_FIELD_LABEL, PRESENCE_ERR_LABEL_INVALID);
-        }
-        const size_t model_len = strnlen(s.model, sizeof(s.model));
-        if (model_len > PRESENCE_MODEL_MAX_BYTES) {
-            sink.add(i, PRESENCE_FIELD_MODEL, PRESENCE_ERR_MODEL_TOO_LONG);
-        } else if (!utf8_is_valid_text(s.model, model_len)) {
-            sink.add(i, PRESENCE_FIELD_MODEL, PRESENCE_ERR_MODEL_INVALID);
-        }
-        if (s.has_addr && !ble_addr_is_usable(s.addr)) {
-            sink.add(i, PRESENCE_FIELD_ADDR, PRESENCE_ERR_ADDR_INVALID);
-        }
-        if (s.addr_type > BEACON_ADDR_ANY) {
-            sink.add(i, PRESENCE_FIELD_ADDR_TYPE, PRESENCE_ERR_ADDR_TYPE);
-        }
-        if (s.timeout_s < PRESENCE_TIMEOUT_MIN_S || s.timeout_s > PRESENCE_TIMEOUT_MAX_S) {
-            sink.add(i, PRESENCE_FIELD_TIMEOUT, PRESENCE_ERR_TIMEOUT_RANGE);
-        }
-        if (s.rssi_threshold < PRESENCE_RSSI_THRESHOLD_MIN || s.rssi_threshold > PRESENCE_RSSI_THRESHOLD_MAX) {
-            sink.add(i, PRESENCE_FIELD_RSSI_THRESHOLD, PRESENCE_ERR_RSSI_RANGE);
-        }
-        if (s.rssi_hysteresis > PRESENCE_RSSI_HYSTERESIS_MAX) {
-            sink.add(i, PRESENCE_FIELD_RSSI_HYSTERESIS, PRESENCE_ERR_HYSTERESIS_RANGE);
-        }
+        check_slot(i, s, sink);
         if (!allow_duplicate_beacons) {
             for (int j = 0; j < i; j++) {
                 if (presence_slots_conflict(&cfg->slots[j], &s)) {
@@ -311,8 +319,32 @@ static bool get_text(const uint8_t *p, size_t max, char *out)
     return memchr(out, '\0', len) == nullptr;
 }
 
+// One slot of the blob. false if a text field is too long or holds a NUL.
+static bool parse_slot(const uint8_t *p, size_t slot_size, presence_slot_config_t *s)
+{
+    s->enabled = (p[0] & kFlagEnabled) != 0;
+    s->has_addr = (p[0] & kFlagHasAddr) != 0;
+    s->rssi_filter = (p[0] & kFlagRssiFilter) != 0;
+    s->addr_type = p[1];
+    memcpy(s->addr, &p[2], BLE_ADDR_LEN);
+    s->timeout_s = get_u16(&p[8]);
+    s->rssi_threshold = static_cast<int8_t>(p[10]);
+    s->rssi_hysteresis = p[11];
+    if (!get_text(&p[12], PRESENCE_LABEL_MAX_BYTES, s->label)) {
+        return false;
+    }
+    if (slot_size == kSlotSizeV2) {
+        return get_text(&p[kSlotSizeV1], PRESENCE_MODEL_MAX_BYTES, s->model);
+    }
+    s->model[0] = '\0'; // version 1 has none
+    return true;
+}
+
 // Version 1 (no model) and 2. slot_size: kSlotSizeV1 or kSlotSizeV2. The blob may hold fewer slots than this
-// firmware (version 1: five): the others keep the defaults. More is refused (written by another product).
+// firmware (version 1: five): the others keep the defaults. More (the 20 slots of the two-chip scanner read by a
+// five-slot firmware): the extra ones are dropped if no beacon is assigned to them, else the blob is refused, so no
+// assigned beacon is lost without notice.
+// Checked slot by slot first, then decoded into *out: no whole configuration (2 KB with 20 slots) on the stack.
 static presence_decode_result_t decode_slots(const uint8_t *payload, size_t payload_len, size_t slot_size,
                                              presence_config_t *out)
 {
@@ -323,37 +355,29 @@ static presence_decode_result_t decode_slots(const uint8_t *payload, size_t payl
     if (payload_len != kScanSize + count * slot_size) {
         return PRESENCE_DECODE_BAD_LENGTH;
     }
-    if (count > PRESENCE_SLOT_COUNT) {
-        return PRESENCE_DECODE_BAD_VALUE;
-    }
-    presence_config_t cfg;
-    presence_config_set_defaults(&cfg);
-    cfg.scan_interval_ms = get_u16(payload);
-    cfg.scan_window_ms = get_u16(payload + 2);
-    const uint8_t *p = payload + kScanSize;
-    for (size_t i = 0; i < count; i++) {
-        presence_slot_config_t &s = cfg.slots[i];
-        s.enabled = (p[0] & kFlagEnabled) != 0;
-        s.has_addr = (p[0] & kFlagHasAddr) != 0;
-        s.rssi_filter = (p[0] & kFlagRssiFilter) != 0;
-        s.addr_type = p[1];
-        memcpy(s.addr, &p[2], BLE_ADDR_LEN);
-        s.timeout_s = get_u16(&p[8]);
-        s.rssi_threshold = static_cast<int8_t>(p[10]);
-        s.rssi_hysteresis = p[11];
-        if (!get_text(&p[12], PRESENCE_LABEL_MAX_BYTES, s.label)) {
-            return PRESENCE_DECODE_BAD_VALUE;
-        }
-        if (slot_size == kSlotSizeV2 && !get_text(&p[kSlotSizeV1], PRESENCE_MODEL_MAX_BYTES, s.model)) {
-            return PRESENCE_DECODE_BAD_VALUE;
-        }
-        p += slot_size;
-    }
+    const uint16_t interval_ms = get_u16(payload);
+    const uint16_t window_ms = get_u16(payload + 2);
+    const uint8_t *slots = payload + kScanSize;
     // Field ranges only: duplicates were allowed or refused when the configuration was saved.
-    if (presence_config_validate(&cfg, true, nullptr, 0) != 0) {
+    ErrorSink sink{ nullptr, 0, 0 };
+    check_scan(interval_ms, window_ms, sink);
+    presence_slot_config_t slot;
+    for (size_t i = 0; i < count && sink.count == 0; i++) {
+        if (!parse_slot(slots + i * slot_size, slot_size, &slot) ||
+            (i >= PRESENCE_SLOT_COUNT && slot.has_addr)) {
+            return PRESENCE_DECODE_BAD_VALUE;
+        }
+        check_slot(static_cast<int>(i), slot, sink);
+    }
+    if (sink.count != 0) {
         return PRESENCE_DECODE_BAD_VALUE;
     }
-    *out = cfg;
+    presence_config_set_defaults(out);
+    out->scan_interval_ms = interval_ms;
+    out->scan_window_ms = window_ms;
+    for (size_t i = 0; i < count && i < PRESENCE_SLOT_COUNT; i++) {
+        parse_slot(slots + i * slot_size, slot_size, &out->slots[i]);
+    }
     return PRESENCE_DECODE_OK;
 }
 

@@ -57,9 +57,10 @@ async function openPage(browser, network, posts, opts = {}) {
     if (url.pathname === '/') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
     if (url.pathname === '/api/status') return json(Object.assign({}, status, { network },
       network === 'h2' ? { h2: Object.assign({ seen: true, ago_s: 1, commissioned: false, network_up: false, window_open: true,
-        fabrics: 0, heap_kb: 52, heap_min_kb: 41, wait_reason: 'commissioning',
+        fabrics: 0, heap_kb: 52, heap_min_kb: 41,
         bridged: Array.from({ length: 20 }, (_, i) => (i === 0 ? 2 : 0)),
         waiting: Array.from({ length: 20 }, (_, i) => i === 3),
+        errors: Array.from({ length: 20 }, () => false),
         pairing: { manual: '34970112332', qr: 'MT:Y.K9042C00KA0648G00' } }, opts.h2 || {}) } : {}));
     if (url.pathname === '/api/scan' && req.method() === 'GET') {
       const st = opts.stats || {};
@@ -133,6 +134,14 @@ async function openPage(browser, network, posts, opts = {}) {
   await page.click('#btnSave');
   check((await page.textContent('#emac2')).length > 0, 'invalid MAC error shown');
   check(posts.filter(p => p.path === '/api/config').length === 0, 'nothing sent while invalid');
+
+  // An invalid field in the folded RSSI filter section opens that section too
+  const setRt1 = v => page.$eval('#rt1', (e, v) => { e.value = v; e.dispatchEvent(new Event('input')); }, v);
+  await setRt1('-5');
+  check(!(await page.isVisible('#rt1')), 'RSSI filter section folded before the save');
+  await page.click('#btnSave');
+  check(await page.isVisible('#rt1') && (await page.textContent('#ert1')).length > 0, 'invalid RSSI threshold: its sections opened');
+  await setRt1('-80');
 
   // Manual duplicate (same MAC as slot 1, "any") is an error too
   await page.fill('#mac2', 'c0-11-22-33-44-01');
@@ -254,10 +263,15 @@ async function openPage(browser, network, posts, opts = {}) {
   if (out) await h2.screenshot({ path: path.join(out, 'config_page_two_chip.png'), fullPage: true });
 
   // Not enough memory on the H2: explained per slot
-  const h2mem = await openPage(browser, 'h2', [], { h2: { commissioned: true, fabrics: 1, network_up: true, window_open: false, wait_reason: 'memory', pairing: null } });
+  const h2mem = await openPage(browser, 'h2', [], { h2: { commissioned: true, fabrics: 1, network_up: true, window_open: false, pairing: null } });
   await h2mem.waitForTimeout(300);
   check((await h2mem.textContent('#home3')).includes('không đủ bộ nhớ'), 'two-chip: device waiting for memory explained');
   check((await h2mem.textContent('#statusGrid')).includes('ẩn vì H2 đã ghép'), 'two-chip: code hidden once paired and not in pairing mode');
+  // The H2 could not build the device: told per slot, whatever the commissioning state
+  const h2err = await openPage(browser, 'h2', [], { h2: { errors: Array.from({ length: 20 }, (_, i) => i === 3) } });
+  await h2err.waitForTimeout(300);
+  check((await h2err.textContent('#home3')).includes('không thêm được'), 'two-chip: device the H2 failed to add explained');
+  check((await h2err.textContent('#home4')).startsWith('Chưa có trên Nhà'), 'two-chip: failure shown only on its slot');
   check((await h2.textContent('#statusGrid')).includes('chưa ghép · Thread chưa kết nối'), 'two-chip: H2 status shown');
   check((await h2.textContent('#coexNote')).includes('hai chip'), 'two-chip: scan note');
   await h2.fill('#scanWin', '120');

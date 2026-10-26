@@ -317,11 +317,11 @@ static void version_1_migrates()
     CHECK(presence_config_decode(blob, len, &out) == PRESENCE_DECODE_BAD_LENGTH);
 }
 
+// A version 2 blob with more slots than this build (the two-chip scanner's 20 read by a five-slot firmware)
 static void more_slots_than_this_firmware()
 {
-    // A version 2 blob with one slot more than this build: written by another product, refused
     const size_t slot_size = 61 + 1 + PRESENCE_MODEL_MAX_BYTES;
-    const size_t count = PRESENCE_SLOT_COUNT + 1;
+    const size_t count = PRESENCE_SLOT_COUNT + 2;
     const size_t payload = 6 + count * slot_size;
     const size_t len = 8 + payload + 4;
     uint8_t *blob = static_cast<uint8_t *>(calloc(1, len));
@@ -331,12 +331,44 @@ static void more_slots_than_this_firmware()
     put16(&blob[8], 160);
     put16(&blob[10], 40);
     blob[12] = static_cast<uint8_t>(count);
+    uint8_t *slots = &blob[8 + 6];
     for (size_t i = 0; i < count; i++) {
-        put16(&blob[8 + 6 + i * slot_size + 8], 45); // valid timeout
-        blob[8 + 6 + i * slot_size + 1] = BEACON_ADDR_ANY;
+        put16(&slots[i * slot_size + 8], 45); // valid timeout
+        slots[i * slot_size + 1] = BEACON_ADDR_ANY;
+        slots[i * slot_size + 10] = static_cast<uint8_t>(-80);
     }
+    // Slot 1 of this build: enabled with a beacon and a model
+    const uint8_t addr[6] = { 0xC0, 0x11, 0x22, 0x33, 0x44, 0x55 };
+    slots[slot_size] = 0x03;
+    memcpy(&slots[slot_size + 2], addr, 6);
+    slots[slot_size + 61] = 5;
+    memcpy(&slots[slot_size + 62], "CP101", 5);
+    // An extra slot that is enabled without a beacon, with a label: nothing is lost by dropping it
+    const size_t extra = PRESENCE_SLOT_COUNT * slot_size;
+    slots[extra] = 0x01;
+    slots[extra + 12] = static_cast<uint8_t>(strlen("Bếp"));
+    memcpy(&slots[extra + 13], "Bếp", strlen("Bếp"));
     seal(blob, len);
     presence_config_t out;
+    presence_config_set_defaults(&out);
+    CHECK(presence_config_decode(blob, len, &out) == PRESENCE_DECODE_OK);
+    CHECK(out.scan_interval_ms == 160 && out.scan_window_ms == 40);
+    CHECK(presence_slot_is_active(&out.slots[1]) && out.slots[1].addr[5] == 0x55);
+    CHECK_STR(out.slots[1].model, "CP101");
+    CHECK(!out.slots[0].enabled && !out.slots[PRESENCE_SLOT_COUNT - 1].has_addr);
+
+    // A beacon assigned to an extra slot (even disabled): refused, *out untouched
+    const presence_config_t before = out;
+    slots[extra + slot_size] = 0x02;
+    memcpy(&slots[extra + slot_size + 2], addr, 6);
+    seal(blob, len);
+    CHECK(presence_config_decode(blob, len, &out) == PRESENCE_DECODE_BAD_VALUE);
+    CHECK(presence_config_equal(&out, &before));
+
+    // An extra slot with a bad value: refused too (the blob is not one this format wrote)
+    slots[extra + slot_size] = 0x00;
+    put16(&slots[extra + slot_size + 8], 5); // timeout below the minimum
+    seal(blob, len);
     CHECK(presence_config_decode(blob, len, &out) == PRESENCE_DECODE_BAD_VALUE);
     free(blob);
 }

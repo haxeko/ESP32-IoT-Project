@@ -60,7 +60,7 @@ bool matter_bridge_ready(void);
 // Endpoint of the slot's device, 0 if none (or not restored yet)
 uint16_t matter_bridge_endpoint(int slot);
 
-// bridged_mask, waiting_mask, wait_reason and endpoint[] of the STATUS frame
+// bridged_mask, waiting_mask, error_mask and endpoint[] of the STATUS frame
 void matter_bridge_get_status(plink_status_t *status);
 
 // Reachable attribute of every bridged device (false while the scanner is silent)

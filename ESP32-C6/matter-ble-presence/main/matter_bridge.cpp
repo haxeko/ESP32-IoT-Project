@@ -9,6 +9,7 @@
 #include "matter_bridge.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <atomic>
@@ -37,6 +38,7 @@ using namespace chip::app::Clusters;
 
 static constexpr const char *kNamespace = "pbridge";
 static constexpr const char *kKey = "table";
+static constexpr const char *kKeyUnreadable = "table_bad"; // a table this firmware cannot read, kept as it was
 static constexpr uint32_t kMagicV1 = 0x50425231; // "PBR1": five slots, endpoint and MAC only
 static constexpr uint32_t kMagic = 0x50425232;   // "PBR2"
 static constexpr int kSlotsV1 = 5;
@@ -44,7 +46,11 @@ static constexpr int kSlotsV1 = 5;
 // free above the reserve
 static constexpr size_t kDeviceCost = 4096;
 static constexpr size_t kLargestBlockMin = 2048;
-static constexpr int64_t kErrorRetryMs = 30000; // after a device that could not be built
+// After a device that could not be built: 30 s, doubled at each failure up to an hour (each attempt to add a device
+// uses up an endpoint ID). A saved device that cannot be restored is retried this way kRestoreAttempts times.
+static constexpr int64_t kErrorRetryMs = 30000;
+static constexpr int64_t kErrorRetryMaxMs = 3600000;
+static constexpr uint8_t kRestoreAttempts = 3;
 static constexpr char kDefaultModel[] = "iBeacon";
 static constexpr char kPowerSourceDescription[] = "Battery";
 
@@ -57,8 +63,9 @@ struct Entry {
     uint8_t battery_pct; // PLINK_BATTERY_UNKNOWN until known
     uint8_t battery_level;
     char model[PLINK_MODEL_MAX + 1]; // "" until known
-    uint8_t reserved;
+    uint8_t flags;                   // kEntryModelConfigured
 };
+constexpr uint8_t kEntryModelConfigured = 0x01; // model typed on the scanner's page (else its advertised name)
 static_assert(sizeof(Entry) == 44, "stored entry layout");
 
 struct Table {
@@ -86,9 +93,11 @@ static uint32_t s_occupancy_feature;
 static Entry s_entries[PLINK_SLOT_COUNT]; // the table: devices built or to restore
 static bool s_built[PLINK_SLOT_COUNT];    // the entry's endpoint exists in the data model
 static bool s_waiting[PLINK_SLOT_COUNT];  // should have a device that is not there yet
+static bool s_error[PLINK_SLOT_COUNT];    // waiting: it could not be built (retried at s_retry_ms)
 static int64_t s_retry_ms[PLINK_SLOT_COUNT];
-static uint8_t s_wait_reason = PLINK_WAIT_NONE;
-static bool s_ready;
+static int64_t s_retry_delay_ms[PLINK_SLOT_COUNT];
+static uint8_t s_failures[PLINK_SLOT_COUNT]; // of the restore of a saved device
+static bool s_ready;  // table loaded; false again once erased (factory reset running)
 static bool s_reachable = true;
 static std::atomic<bool> s_commissioned{ false };
 static size_t s_last_cost;
@@ -134,6 +143,27 @@ static void save_table()
     }
 }
 
+// A saved table this firmware cannot read (another firmware's format, damaged): copied as it is to "table_bad"
+// before the bridge rebuilds its own from the scanner's list and saves it over "table". Nothing is erased.
+static void keep_unreadable_table(size_t len)
+{
+    ESP_LOGE(TAG, "Bridged device table unreadable (%u bytes): kept as %s/%s, devices rebuilt from the scanner's list "
+                  "on new endpoints",
+             static_cast<unsigned>(len), kNamespace, kKeyUnreadable);
+    nvs_handle_t h;
+    if (len == 0 || len > 4096 || nvs_open(kNamespace, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    size_t kept = 0;
+    uint8_t *copy = static_cast<uint8_t *>(malloc(len));
+    if (copy != nullptr && nvs_get_blob(h, kKeyUnreadable, nullptr, &kept) == ESP_ERR_NVS_NOT_FOUND &&
+        nvs_get_blob(h, kKey, copy, &len) == ESP_OK && nvs_set_blob(h, kKeyUnreadable, copy, len) == ESP_OK) {
+        nvs_commit(h);
+    }
+    free(copy);
+    nvs_close(h);
+}
+
 // The table saved by this firmware, or by the five-slot one (converted)
 static bool load_table()
 {
@@ -167,7 +197,7 @@ static bool load_table()
     }
     nvs_close(h);
     if (!ok && err != ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGW(TAG, "Bridged device table unreadable (%s): rebuilt from the scanner's list", esp_err_to_name(err));
+        keep_unreadable_table(len);
     }
     return ok;
 }
@@ -211,18 +241,18 @@ static endpoint_t *build_device(int slot, const Entry &e, uint16_t resume_id)
     snprintf(config.bridged_device_basic_information.unique_id, sizeof(config.bridged_device_basic_information.unique_id),
              "presence-%u-%02X%02X%02X%02X%02X%02X", number, e.mac[0], e.mac[1], e.mac[2], e.mac[3], e.mac[4],
              e.mac[5]);
+    // What bridged_node::create() / resume() do, step by step, so that an endpoint added to the node is always known
+    // here and removed again if a later step fails. resume() adds nothing when it fails (the ID is in use, or was
+    // never given out by this node).
     const uint8_t flags = ENDPOINT_FLAG_DESTROYABLE | ENDPOINT_FLAG_BRIDGE;
-    endpoint_t *ep = resume_id == chip::kInvalidEndpointId
-        ? bridged_node::create(s_node, &config, flags, nullptr)
-        : bridged_node::resume(s_node, &config, flags, resume_id, nullptr);
+    endpoint_t *ep = resume_id == chip::kInvalidEndpointId ? endpoint::create(s_node, flags, nullptr)
+                                                          : endpoint::resume(s_node, flags, resume_id, nullptr);
     if (ep == nullptr) {
-        // bridged_node::resume() can fail after the endpoint was added to the node (cluster allocation): drop it
-        if (resume_id != chip::kInvalidEndpointId) {
-            endpoint_t *left = endpoint::get(s_node, resume_id);
-            if (left != nullptr) {
-                endpoint::destroy(s_node, left);
-            }
-        }
+        return nullptr;
+    }
+    if (cluster::descriptor::create(ep, &config.descriptor, CLUSTER_FLAG_SERVER) == nullptr ||
+        bridged_node::add(ep, &config) != ESP_OK) {
+        endpoint::destroy(s_node, ep);
         return nullptr;
     }
     char mac[PLINK_MAC_STR_SIZE];
@@ -251,7 +281,8 @@ static endpoint_t *build_device(int slot, const Entry &e, uint16_t resume_id)
               info_attr::create_serial_number(info, mac, strlen(mac)) != nullptr &&
               info_attr::create_vendor_name(info, vendor, strlen(vendor)) != nullptr &&
               info_attr::create_product_name(info, model, strlen(model)) != nullptr &&
-              occupancy_sensor::add(ep, &sensor) == ESP_OK && endpoint::power_source::add(ep, &power) == ESP_OK;
+              occupancy_sensor::add(ep, &sensor) == ESP_OK && cluster::get(ep, Identify::Id) != nullptr &&
+              cluster::get(ep, OccupancySensing::Id) != nullptr && endpoint::power_source::add(ep, &power) == ESP_OK;
     cluster_t *battery = ok ? cluster::get(ep, PowerSource::Id) : nullptr;
     ok = ok && battery != nullptr &&
          cluster::power_source::attribute::create_bat_percent_remaining(battery, percent_value(e.battery_pct),
@@ -266,6 +297,16 @@ static endpoint_t *build_device(int slot, const Entry &e, uint16_t resume_id)
     return ep;
 }
 
+// The slot needs no device built any more (it has one, or none is wanted): nothing to wait for or retry
+static void clear_wait(int slot)
+{
+    s_waiting[slot] = false;
+    s_error[slot] = false;
+    s_retry_ms[slot] = 0;
+    s_retry_delay_ms[slot] = 0;
+    s_failures[slot] = 0;
+}
+
 // Builds the device of the slot's entry; true if it now exists. Logs what it cost.
 static bool build_entry(int slot, uint16_t resume_id)
 {
@@ -277,7 +318,7 @@ static bool build_entry(int slot, uint16_t resume_id)
     }
     e.endpoint = endpoint::get_id(ep);
     s_built[slot] = true;
-    s_waiting[slot] = false;
+    clear_wait(slot);
     refresh_endpoint_lists();
     const size_t after = heap_caps_get_free_size(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
     s_last_cost = before > after ? before - after : 0;
@@ -318,25 +359,29 @@ static bool memory_allows(int slot)
     if (free_now >= reserve + kDeviceCost && largest >= kLargestBlockMin) {
         return true;
     }
-    const uint8_t reason = commissioned ? PLINK_WAIT_MEMORY : PLINK_WAIT_COMMISSIONING;
-    if (!s_waiting[slot] || s_wait_reason != reason) {
+    if (!s_waiting[slot] || s_error[slot]) {
         ESP_LOGW(TAG, "Presence %d: device waits (%s: %u bytes free, %u kept in reserve)", slot + 1,
                  commissioned ? "not enough memory" : "memory kept for commissioning, added once commissioned",
                  static_cast<unsigned>(free_now), static_cast<unsigned>(reserve));
     }
     s_waiting[slot] = true;
-    s_wait_reason = reason;
+    s_error[slot] = false;
     return false;
 }
 
-// What the scanner sends replaces what the table has; an empty model or an unknown battery keeps the known ones
-// (the scanner only knows them in its NORMAL mode). Returns true if the entry changed.
+// What the scanner sends replaces what the table has. An unknown battery keeps the known one; an empty model keeps
+// the advertised name known (the scanner only hears names in its NORMAL mode) but clears a model that was typed on
+// the page and is no longer. Returns true if the entry changed.
 static bool merge(Entry &e, const plink_slot_t &want)
 {
     bool changed = false;
-    if (want.model[0] != '\0' && strcmp(e.model, want.model) != 0) {
-        memcpy(e.model, want.model, sizeof(e.model));
-        changed = true;
+    const bool typed = (e.flags & kEntryModelConfigured) != 0;
+    if (want.model[0] != '\0' || typed) {
+        if (strcmp(e.model, want.model) != 0 || typed != want.model_configured) {
+            memcpy(e.model, want.model, sizeof(e.model));
+            e.flags = want.model_configured ? (e.flags | kEntryModelConfigured) : (e.flags & ~kEntryModelConfigured);
+            changed = true;
+        }
     }
     if (want.battery_pct != PLINK_BATTERY_UNKNOWN &&
         (e.battery_pct != want.battery_pct || e.battery_level != want.battery_level)) {
@@ -378,6 +423,16 @@ static void update_device(int slot, const plink_slot_t &want)
     save_table();
 }
 
+// The slot's device could not be built: waits, tried again after a delay doubled at each failure
+static void retry_later(int slot)
+{
+    const int64_t delay = s_retry_delay_ms[slot] == 0 ? kErrorRetryMs : s_retry_delay_ms[slot] * 2;
+    s_retry_delay_ms[slot] = delay < kErrorRetryMaxMs ? delay : kErrorRetryMaxMs;
+    s_retry_ms[slot] = now_ms() + s_retry_delay_ms[slot];
+    s_waiting[slot] = true;
+    s_error[slot] = true;
+}
+
 // A saved device not built yet (memory at boot): built now if memory allows. want: the scanner's wish, if known.
 // Returns false while it has to wait.
 static bool restore(int slot, const plink_slot_t *want, bool *added)
@@ -390,10 +445,11 @@ static bool restore(int slot, const plink_slot_t *want, bool *added)
         ESP_LOGI(TAG, "Presence %d: saved device %s (endpoint %u) no longer in the scanner's list", slot + 1, mac,
                  e.endpoint);
         memset(&e, 0, sizeof(e));
+        clear_wait(slot);
         save_table();
         return true;
     }
-    if (!memory_allows(slot)) {
+    if (now_ms() < s_retry_ms[slot] || !memory_allows(slot)) {
         return false;
     }
     const bool merged = want != nullptr && merge(e, *want);
@@ -404,9 +460,21 @@ static bool restore(int slot, const plink_slot_t *want, bool *added)
         }
         return true;
     }
-    // e.g. the Matter data was erased: the scanner's list adds the device again on a new endpoint
-    ESP_LOGW(TAG, "Presence %d: device %s on endpoint %u cannot be restored", slot + 1, mac, e.endpoint);
+    if (++s_failures[slot] < kRestoreAttempts) {
+        // Memory short of the estimate: the endpoint ID is kept (the accessory stays the same in the controllers)
+        ESP_LOGW(TAG, "Presence %d: device %s on endpoint %u not restored, tried again later", slot + 1, mac,
+                 e.endpoint);
+        retry_later(slot);
+        if (merged) {
+            save_table(); // the new model or battery is kept for the next attempt
+        }
+        return false;
+    }
+    // The endpoint cannot come back (e.g. the Matter data was erased): the scanner's list adds the device again on a
+    // new endpoint
+    ESP_LOGE(TAG, "Presence %d: device %s on endpoint %u cannot be restored", slot + 1, mac, e.endpoint);
     memset(&e, 0, sizeof(e));
+    clear_wait(slot);
     save_table();
     return true;
 }
@@ -455,9 +523,6 @@ bool matter_bridge_step(int slot, const plink_slot_t *want, bool *added)
         return false;
     }
     Entry &e = s_entries[slot];
-    if (now_ms() < s_retry_ms[slot]) {
-        return false;
-    }
     if (e.endpoint != 0 && !s_built[slot] && !restore(slot, want, added)) {
         return false;
     }
@@ -470,12 +535,12 @@ bool matter_bridge_step(int slot, const plink_slot_t *want, bool *added)
         if (have) {
             update_device(slot, *want);
         }
-        s_waiting[slot] = false;
+        clear_wait(slot);
         return true;
     case PLINK_SLOT_REMOVE:
         remove_device(slot);
         save_table();
-        s_waiting[slot] = false;
+        clear_wait(slot);
         return true;
     case PLINK_SLOT_REPLACE:
         remove_device(slot);
@@ -484,8 +549,8 @@ bool matter_bridge_step(int slot, const plink_slot_t *want, bool *added)
     case PLINK_SLOT_ADD:
         break;
     }
-    if (!memory_allows(slot)) {
-        return false;
+    if (now_ms() < s_retry_ms[slot] || !memory_allows(slot)) {
+        return false; // after a failure, and while memory is short
     }
     Entry fresh = {};
     memcpy(fresh.mac, want->mac, PLINK_MAC_LEN);
@@ -493,14 +558,12 @@ bool matter_bridge_step(int slot, const plink_slot_t *want, bool *added)
     merge(fresh, *want);
     e = fresh;
     if (!build_entry(slot, chip::kInvalidEndpointId)) {
+        memset(&e, 0, sizeof(e));
+        retry_later(slot); // each attempt uses up an endpoint ID
         char mac[PLINK_MAC_STR_SIZE];
         plink_mac_string(want->mac, mac);
         ESP_LOGE(TAG, "Presence %d: device %s could not be added (endpoints or memory), tried again in %d s", slot + 1,
-                 mac, static_cast<int>(kErrorRetryMs / 1000));
-        memset(&e, 0, sizeof(e));
-        s_waiting[slot] = true;
-        s_wait_reason = PLINK_WAIT_ERROR;
-        s_retry_ms[slot] = now_ms() + kErrorRetryMs; // each attempt uses up an endpoint ID
+                 mac, static_cast<int>(s_retry_delay_ms[slot] / 1000));
         return false;
     }
     save_table();
@@ -522,15 +585,16 @@ void matter_bridge_get_status(plink_status_t *status)
 {
     status->bridged_mask = 0;
     status->waiting_mask = 0;
+    status->error_mask = 0;
     for (int i = 0; i < PLINK_SLOT_COUNT; i++) {
         status->endpoint[i] = matter_bridge_endpoint(i);
         if (status->endpoint[i] != 0) {
             status->bridged_mask |= 1u << i;
         } else if (s_waiting[i] || (s_entries[i].endpoint != 0 && !s_built[i])) {
             status->waiting_mask |= 1u << i;
+            status->error_mask |= s_error[i] ? 1u << i : 0;
         }
     }
-    status->wait_reason = status->waiting_mask != 0 ? s_wait_reason : static_cast<uint8_t>(PLINK_WAIT_NONE);
 }
 
 void matter_bridge_set_reachable(bool reachable)
@@ -553,6 +617,8 @@ void matter_bridge_set_commissioned(bool commissioned)
 
 void matter_bridge_erase(void)
 {
+    // No step from now on (the restart follows): one would add a device and save a table again
+    s_ready = false;
     nvs_handle_t h;
     if (nvs_open(kNamespace, NVS_READWRITE, &h) == ESP_OK) {
         nvs_erase_all(h);
@@ -560,16 +626,22 @@ void matter_bridge_erase(void)
         nvs_close(h);
     }
     memset(s_entries, 0, sizeof(s_entries));
+    memset(s_built, 0, sizeof(s_built));
+    memset(s_waiting, 0, sizeof(s_waiting));
+    memset(s_error, 0, sizeof(s_error));
 }
 
 void matter_bridge_log_diagnostics(void)
 {
     int built = 0;
     int waiting = 0;
+    int errors = 0;
     for (int i = 0; i < PLINK_SLOT_COUNT; i++) {
         built += s_built[i] ? 1 : 0;
-        waiting += !s_built[i] && (s_waiting[i] || s_entries[i].endpoint != 0) ? 1 : 0;
+        const bool w = !s_built[i] && (s_waiting[i] || s_entries[i].endpoint != 0);
+        waiting += w ? 1 : 0;
+        errors += w && s_error[i] ? 1 : 0;
     }
-    ESP_LOGI(TAG, "Bridge: %d device(s), %d waiting (reason %u); heap of the last device %u bytes, largest %u",
-             built, waiting, s_wait_reason, static_cast<unsigned>(s_last_cost), static_cast<unsigned>(s_max_cost));
+    ESP_LOGI(TAG, "Bridge: %d device(s), %d waiting (%d after an error); heap of the last device %u bytes, largest %u",
+             built, waiting, errors, static_cast<unsigned>(s_last_cost), static_cast<unsigned>(s_max_cost));
 }

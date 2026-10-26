@@ -29,3 +29,6 @@ esp_err_t status_ui_start(void);
 // A factory reset is about to run (button or the scanner's configuration page): the LED confirms it after the
 // restart. Any task.
 void status_ui_mark_factory_reset(void);
+
+// The factory reset marked above could not be started: the mark is removed and the LED stays red for 2 s. Any task.
+void status_ui_cancel_factory_reset(void);

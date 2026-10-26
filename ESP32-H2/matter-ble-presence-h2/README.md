@@ -24,11 +24,12 @@ và đọc log: xem [README bản hai chip](../../ESP32-C3/ble-presence-scanner/
     qua BLE như lúc mới nạp; đã ghép thì qua mạng Thread (thêm bridge vào một ứng dụng nữa);
   * **giữ 5 giây** → đèn **đỏ**, **thả nút** → xóa ghép Matter, mạng Thread và bảng thiết bị con, khởi động lại; khởi
     động xong kiểm tra không còn fabric nào thì **đèn nháy đỏ 3 lần** (reset thành công), rồi nháy xanh dương (chờ ghép).
-    Reset chạy lúc thả vì GPIO9 là chân strapping: chip không được khởi động lại khi nút còn giữ;
+    Reset chạy lúc thả vì GPIO9 là chân strapping: chip không được khởi động lại khi nút còn giữ. Đèn **đỏ liền 2 giây**
+    (không nháy 3 lần): reset không chạy được (Matter chưa chạy, xem log) hoặc sau khi khởi động vẫn còn ghép;
   * nút "Mở chế độ ghép" và "Xóa ghép Matter của ESP32-H2" trên trang của C3 làm đúng hai việc này.
 * Thread MTD, Minimal End Device (cắm điện), BLE chỉ dùng lúc ghép rồi giải phóng (`USE_BLE_ONLY_FOR_COMMISSIONING=y`).
   Controller cuối cùng xóa thiết bị → H2 tự khởi động lại sau 2 s để ghép lại được bằng BLE. Không xóa gì.
-* UART1: TX GPIO24, RX GPIO23 (chân TX/RX in trên board, RX có kéo lên nội), 115200 baud, giao thức **phiên bản 4**: nạp
+* UART1: TX GPIO24, RX GPIO23 (chân TX/RX in trên board, RX có kéo lên nội), 115200 baud, giao thức **phiên bản 5**: nạp
   C3 và H2 cùng đợt. Log qua USB-Serial-JTAG.
 * Không nhận được gì từ C3 trong 120 s → mọi cảm biến về "không hiện diện" và thiết bị con báo không truy cập được.
   Sau khi C3 khởi động lại, slot chưa biết (C3 chưa nghe thấy beacon, chưa quét đủ thời gian vắng mặt) giữ nguyên trạng

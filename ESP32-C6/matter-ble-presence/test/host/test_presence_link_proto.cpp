@@ -80,11 +80,11 @@ static void present_only_for_active_slots()
     CHECK(plink_decode_state(raw, sizeof(raw), &out) && out.active_mask == PLINK_SLOT_MASK && out.present_mask == PLINK_SLOT_MASK);
 }
 
-// Firmware of an earlier protocol (version 1: no known_mask, 2: no bridge, 3: five slots) on the other chip: its
-// frames are counted as bad and never applied, whatever their CRC
+// Firmware of an earlier protocol (version 1: no known_mask, 2: no bridge, 3: five slots, 4: one wait reason for
+// every device) on the other chip: its frames are counted as bad and never applied, whatever their CRC
 static void other_version_rejected()
 {
-    for (uint8_t version = 1; version <= 5; version++) {
+    for (uint8_t version = 1; version <= 6; version++) {
         if (version == PLINK_VERSION) {
             continue;
         }
@@ -133,7 +133,7 @@ static void status_with_bridge()
     in.uptime_s = 77;
     in.bridged_mask = 0x80005; // slots 0, 2 and 19 on the bridge
     in.waiting_mask = 0x0000A | 0x80000; // slots 1 and 3 waiting (19 is bridged: never waiting)
-    in.wait_reason = PLINK_WAIT_MEMORY;
+    in.error_mask = 0x00008 | 0x00100;   // slot 3 could not be created (8 is not waiting: dropped)
     in.heap_free_kb = 41;
     in.heap_min_kb = 23;
     in.endpoint[0] = 2;
@@ -143,18 +143,13 @@ static void status_with_bridge()
     uint8_t frame[PLINK_MAX_FRAME];
     const size_t n = plink_encode_status(&in, frame, sizeof(frame));
     plink_parser_t p;
-    CHECK(through_parser(frame, n, &p, PLINK_TYPE_STATUS) == 59);
+    CHECK(through_parser(frame, n, &p, PLINK_TYPE_STATUS) == 62);
     plink_status_t out;
     CHECK(plink_decode_status(p.payload, p.len, &out));
     CHECK(out.bridged_mask == 0x80005 && out.endpoint[0] == 2 && out.endpoint[1] == 0 && out.endpoint[2] == 0x1234);
     CHECK(out.endpoint[19] == 40 && out.endpoint[3] == 0 && out.fabrics == 1 && out.uptime_s == 77);
-    CHECK(out.waiting_mask == 0x0000A && out.wait_reason == PLINK_WAIT_MEMORY);
+    CHECK(out.waiting_mask == 0x0000A && out.error_mask == 0x00008);
     CHECK(out.heap_free_kb == 41 && out.heap_min_kb == 23);
-    // An unknown wait reason from a newer firmware reads as an error
-    uint8_t payload[PLINK_MAX_PAYLOAD];
-    memcpy(payload, p.payload, p.len);
-    payload[14] = 9;
-    CHECK(plink_decode_status(payload, p.len, &out) && out.wait_reason == PLINK_WAIT_ERROR);
 }
 
 static void slot_round_trip()
@@ -167,6 +162,7 @@ static void slot_round_trip()
     in.battery_pct = 87;
     in.battery_level = 0;
     in.battery_mv = 2950;
+    in.model_configured = true;
     strcpy(in.model, "CP101 Bếp"); // UTF-8
     uint8_t frame[PLINK_MAX_FRAME];
     const size_t n = plink_encode_slot(&in, frame, sizeof(frame));
@@ -179,6 +175,13 @@ static void slot_round_trip()
     CHECK(out.slot == 19 && out.active && memcmp(out.mac, a, 6) == 0);
     CHECK(out.battery_pct == 87 && out.battery_level == 0 && out.battery_mv == 2950);
     CHECK_STR(out.model, "CP101 Bếp");
+    CHECK(out.model_configured);
+
+    // A name the beacon advertises: not the configured model
+    plink_slot_t heard = in;
+    heard.model_configured = false;
+    CHECK(through_parser(frame, plink_encode_slot(&heard, frame, sizeof(frame)), &p, PLINK_TYPE_SLOT) > 0);
+    CHECK(plink_decode_slot(p.payload, p.len, &out) && !out.model_configured && strcmp(out.model, "CP101 Bếp") == 0);
 
     // Longest model: fits the frame
     memset(in.model, 'M', PLINK_MODEL_MAX);
@@ -197,12 +200,13 @@ static void slot_round_trip()
     CHECK(out.slot == 4 && !out.active && memcmp(out.mac, zero, 6) == 0 && out.model[0] == '\0');
     CHECK(out.battery_pct == PLINK_BATTERY_UNKNOWN && out.battery_mv == 0);
 
-    // Battery unknown
+    // Battery unknown; an empty model is never "configured"
     in.battery_pct = PLINK_BATTERY_UNKNOWN;
     in.battery_mv = 0;
     strcpy(in.model, "");
     CHECK(through_parser(frame, plink_encode_slot(&in, frame, sizeof(frame)), &p, PLINK_TYPE_SLOT) == 13);
     CHECK(plink_decode_slot(p.payload, p.len, &out) && out.battery_pct == PLINK_BATTERY_UNKNOWN);
+    CHECK(!out.model_configured);
 
     // The encoder refuses a slot beyond the 20 and a model without its NUL
     plink_slot_t bad = in;
@@ -236,8 +240,11 @@ static void slot_decode_checks()
     b[0] = PLINK_SLOT_COUNT; // slot index out of range
     CHECK(!plink_decode_slot(b, len, &out));
     memcpy(b, good, len);
-    b[1] = 0x03; // unknown flag
+    b[1] = 0x05; // unknown flag
     CHECK(!plink_decode_slot(b, len, &out));
+    memcpy(b, good, len);
+    b[1] = 0x03; // active, model configured
+    CHECK(plink_decode_slot(b, len, &out) && out.model_configured);
     memcpy(b, good, len);
     b[8] = 101; // battery above 100 %
     CHECK(!plink_decode_slot(b, len, &out));

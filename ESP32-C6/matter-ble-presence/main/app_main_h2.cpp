@@ -63,7 +63,9 @@ static void link_command(uint8_t command)
     switch (command) {
     case PLINK_CMD_FACTORY_RESET:
         status_ui_mark_factory_reset(); // the LED confirms it after the restart, as for the BOOT button
-        matter_device_factory_reset();
+        if (!matter_device_factory_reset()) {
+            status_ui_cancel_factory_reset();
+        }
         break;
     case PLINK_CMD_OPEN_WINDOW:
         matter_device_open_pairing_window();

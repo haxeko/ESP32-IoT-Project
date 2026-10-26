@@ -10,6 +10,8 @@
 
 #include "sdkconfig.h"
 
+#include <atomic>
+
 #include <driver/gpio.h>
 #include <esp_attr.h>
 #include <esp_log.h>
@@ -31,6 +33,17 @@ static constexpr int kConfirmBlinks = 3;
 static constexpr uint32_t kResetMagic = 0x52535421; // "RST!"
 static constexpr uint8_t kLevel = 40;               // of 255: the LED is bright and next to the eyes
 
+#if CONFIG_PRESENCE_BOOT_ACTIVE_LOW
+static constexpr bool kActiveLow = true;
+#else
+static constexpr bool kActiveLow = false;
+#endif
+#if CONFIG_PRESENCE_BOOT_PULLUP
+static constexpr bool kPullUp = true;
+#else
+static constexpr bool kPullUp = false;
+#endif
+
 enum Color : uint8_t { kOff, kBlue, kRed };
 
 // Survives the software restart of the factory reset (not the power-on: checked with the reset reason)
@@ -43,7 +56,9 @@ static bool s_holding;   // held past the reset time, not released yet
 static bool s_resetting; // released: the reset runs, the chip restarts
 static bool s_confirm_pending;
 static uint32_t s_confirm_left; // ticks of the three red blinks
-static uint32_t s_error_left;   // ticks of a long red: the reset did not remove the pairing
+static uint32_t s_error_left;   // ticks of a long red: the reset did not run or did not remove the pairing
+static std::atomic<bool> s_reset_failed; // set by any task, turned into the long red by the timer
+static bool s_button;                    // configured and usable
 static Color s_color = kOff;
 #if CONFIG_PRESENCE_STATUS_LED_WS2812
 static led_strip_handle_t s_led;
@@ -51,7 +66,12 @@ static led_strip_handle_t s_led;
 
 static bool read_pressed()
 {
-    return gpio_get_level(static_cast<gpio_num_t>(CONFIG_PRESENCE_BOOT_GPIO)) == 0;
+#if CONFIG_PRESENCE_BOOT_GPIO < 0
+    return false;
+#else
+    const int level = gpio_get_level(static_cast<gpio_num_t>(CONFIG_PRESENCE_BOOT_GPIO));
+    return kActiveLow ? level == 0 : level == 1;
+#endif
 }
 
 static void set_color(Color c)
@@ -87,8 +107,7 @@ static void start_factory_reset()
     status_ui_mark_factory_reset();
     s_resetting = matter_device_factory_reset();
     if (!s_resetting) {
-        s_reset_magic = 0;
-        s_error_left = 200;
+        status_ui_cancel_factory_reset();
     }
 }
 
@@ -136,7 +155,11 @@ static Color wanted_color()
 static void tick_cb(void *)
 {
     s_ticks++;
-    switch (click_detector_update(&s_detector, read_pressed(), static_cast<uint32_t>(esp_timer_get_time() / 1000))) {
+    if (s_reset_failed.exchange(false)) {
+        s_error_left = 200;
+    }
+    const bool pressed = s_button && read_pressed();
+    switch (click_detector_update(&s_detector, pressed, static_cast<uint32_t>(esp_timer_get_time() / 1000))) {
     case CLICK_EVENT_CLICKS:
         ESP_LOGI(TAG, "BOOT double click: pairing mode");
         matter_device_open_pairing_window();
@@ -162,6 +185,36 @@ static void tick_cb(void *)
 void status_ui_mark_factory_reset(void)
 {
     s_reset_magic = kResetMagic;
+}
+
+void status_ui_cancel_factory_reset(void)
+{
+    s_reset_magic = 0;
+    s_reset_failed = true;
+}
+
+// The BOOT button as configured (polarity, pull-up), false if there is none
+static esp_err_t start_button(bool *present)
+{
+    *present = false;
+#if CONFIG_PRESENCE_BOOT_GPIO < 0
+    ESP_LOGW(TAG, "No BOOT button configured: pairing mode and factory reset only from the scanner's page");
+    return ESP_OK;
+#else
+    if (!GPIO_IS_VALID_GPIO(CONFIG_PRESENCE_BOOT_GPIO)) {
+        ESP_LOGE(TAG, "GPIO%d is not a valid GPIO", CONFIG_PRESENCE_BOOT_GPIO);
+        return ESP_ERR_INVALID_ARG;
+    }
+    gpio_config_t io = {};
+    io.pin_bit_mask = 1ULL << CONFIG_PRESENCE_BOOT_GPIO;
+    io.mode = GPIO_MODE_INPUT;
+    io.pull_up_en = kPullUp ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE;
+    io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io.intr_type = GPIO_INTR_DISABLE;
+    const esp_err_t err = gpio_config(&io);
+    *present = err == ESP_OK;
+    return err;
+#endif
 }
 
 static esp_err_t start_led()
@@ -206,14 +259,8 @@ esp_err_t status_ui_start(void)
         ESP_LOGE(TAG, "Status LED on GPIO%d not started: %s", CONFIG_PRESENCE_STATUS_LED_GPIO, esp_err_to_name(err));
     }
 
-    gpio_config_t io = {};
-    io.pin_bit_mask = 1ULL << CONFIG_PRESENCE_BOOT_GPIO;
-    io.mode = GPIO_MODE_INPUT;
-    io.pull_up_en = GPIO_PULLUP_ENABLE;
-    err = gpio_config(&io);
-    if (err != ESP_OK) {
-        return err;
-    }
+    // Without a usable button the LED still shows the pairing mode and the result of a reset from the page
+    const esp_err_t button_err = start_button(&s_button);
     const click_detector_config_t cfg = {
         .debounce_ms = CONFIG_PRESENCE_BOOT_DEBOUNCE_MS,
         .gap_ms = CONFIG_PRESENCE_BOOT_CLICK_GAP_MS,
@@ -221,8 +268,9 @@ esp_err_t status_ui_start(void)
         .clicks_needed = 2,
         .hold_ms = CONFIG_PRESENCE_FACTORY_RESET_HOLD_SEC * 1000u,
     };
-    // A button already held now is ignored until released
-    click_detector_init(&s_detector, &cfg, read_pressed(), static_cast<uint32_t>(esp_timer_get_time() / 1000));
+    // A button already held now is ignored until released (no button: never pressed)
+    click_detector_init(&s_detector, &cfg, s_button && read_pressed(),
+                        static_cast<uint32_t>(esp_timer_get_time() / 1000));
 
     const esp_timer_create_args_t args = {
         .callback = tick_cb,
@@ -235,10 +283,11 @@ esp_err_t status_ui_start(void)
     if (err == ESP_OK) {
         err = esp_timer_start_periodic(s_timer, kTickMs * 1000);
     }
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "BOOT on GPIO%d: double click = pairing mode (LED blinks blue), hold %d s = factory reset (LED "
-                      "red, three red blinks once done); LED on GPIO%d",
-                 CONFIG_PRESENCE_BOOT_GPIO, CONFIG_PRESENCE_FACTORY_RESET_HOLD_SEC, CONFIG_PRESENCE_STATUS_LED_GPIO);
+    if (err == ESP_OK && s_button) {
+        ESP_LOGI(TAG, "BOOT on GPIO%d (active %s, pull-up %s): double click = pairing mode (LED blinks blue), hold %d s "
+                      "= factory reset (LED red, three red blinks once done); LED on GPIO%d",
+                 CONFIG_PRESENCE_BOOT_GPIO, kActiveLow ? "low" : "high", kPullUp ? "on" : "off",
+                 CONFIG_PRESENCE_FACTORY_RESET_HOLD_SEC, CONFIG_PRESENCE_STATUS_LED_GPIO);
     }
-    return err;
+    return err != ESP_OK ? err : button_err;
 }

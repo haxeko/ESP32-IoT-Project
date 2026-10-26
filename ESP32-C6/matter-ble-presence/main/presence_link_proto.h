@@ -28,7 +28,7 @@
 // 4: 20 slots (32-bit masks), one SLOT frame per slot with the model and battery of its beacon, STATUS with the
 // waiting devices, commissioning window and heap of the Matter node.
 // Both chips need firmware of the same version: frames of another version are counted as bad frames and ignored.
-#define PLINK_VERSION 4
+#define PLINK_VERSION 5
 #define PLINK_MAX_PAYLOAD 64
 #define PLINK_MAX_FRAME (2 + 3 + PLINK_MAX_PAYLOAD + 4)
 #define PLINK_SLOT_COUNT 20 // = PRESENCE_SLOT_COUNT of the two-chip version (checked where both are known)
@@ -65,22 +65,16 @@ typedef struct {
 #define PLINK_STATUS_NETWORK_UP 0x04  // Thread attached
 #define PLINK_STATUS_WINDOW_OPEN 0x08 // commissioning window open (pairing mode)
 
-// Why devices of active slots are not on the bridge yet
-typedef enum {
-    PLINK_WAIT_NONE = 0,
-    PLINK_WAIT_COMMISSIONING = 1, // not commissioned: the memory is kept for commissioning, added once paired
-    PLINK_WAIT_MEMORY = 2,        // not enough free memory on the Matter node
-    PLINK_WAIT_ERROR = 3,         // the device could not be created (see the Matter node's log)
-} plink_wait_reason_t;
-
-// Sent by the Matter node every second
+// Sent by the Matter node every second. A device waits for memory: before commissioning the memory is kept for it
+// (added once commissioned), after it there is not enough free; error_mask: it could not be created (retried later,
+// see the Matter node's log).
 typedef struct {
     uint8_t flags; // PLINK_STATUS_*
     uint8_t fabrics;
     uint32_t uptime_s;
     uint32_t bridged_mask;               // slot has its device on the bridge
     uint32_t waiting_mask;               // slot should have a device that is not there yet
-    uint8_t wait_reason;                 // plink_wait_reason_t of the waiting slots
+    uint32_t error_mask;                 // waiting slots whose device could not be created
     uint16_t heap_free_kb;               // free heap of the Matter node now, and its lowest since boot
     uint16_t heap_min_kb;
     uint16_t endpoint[PLINK_SLOT_COUNT]; // Matter endpoint of the slot's device, 0 if none
@@ -94,6 +88,9 @@ typedef struct {
 typedef struct {
     uint8_t slot;
     bool active;
+    // model typed on the configuration page; else it is the name the beacon advertises (or "": not known yet), and
+    // an empty one only clears a model that was typed before
+    bool model_configured;
     uint8_t mac[PLINK_MAC_LEN];      // display order; zero for an inactive slot
     uint8_t battery_pct;             // 0-100, PLINK_BATTERY_UNKNOWN (no Eddystone-TLM frame heard yet)
     uint8_t battery_level;           // Matter BatChargeLevel: 0 OK, 1 warning, 2 critical

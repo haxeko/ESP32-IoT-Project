@@ -616,7 +616,7 @@ void matter_device_get_bridge(plink_status_t *status)
     if (!s_started) {
         status->bridged_mask = 0;
         status->waiting_mask = 0;
-        status->wait_reason = PLINK_WAIT_NONE;
+        status->error_mask = 0;
         memset(status->endpoint, 0, sizeof(status->endpoint));
         return;
     }

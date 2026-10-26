@@ -35,43 +35,62 @@ static uint32_t s_evictions;
 
 static std::atomic<uint32_t> s_queue_drops{ 0 };
 
-// NimBLE host task only: addresses of the iBeacons heard lately, oldest replaced first
+// NimBLE host task only: addresses of the iBeacons heard lately; the one heard least recently is replaced first, so
+// a beacon that keeps advertising stays known (its TLM and name frames are kept) even with many beacons around
 namespace {
 struct KnownAddr {
     uint8_t addr[BLE_ADDR_LEN];
     uint8_t addr_type;
     bool used;
+    uint32_t heard; // s_known_clock at its last iBeacon frame
 };
 } // namespace
 static KnownAddr s_known[CONFIG_PRESENCE_SCAN_CACHE_SIZE];
-static size_t s_known_next;
+static uint32_t s_known_clock;
 
 static int64_t now_ms()
 {
     return esp_timer_get_time() / 1000;
 }
 
-static bool is_known(const uint8_t addr[BLE_ADDR_LEN], uint8_t addr_type)
+static KnownAddr *find_known(const uint8_t addr[BLE_ADDR_LEN], uint8_t addr_type)
 {
-    for (const KnownAddr &k : s_known) {
+    for (KnownAddr &k : s_known) {
         if (k.used && k.addr_type == addr_type && memcmp(k.addr, addr, BLE_ADDR_LEN) == 0) {
-            return true;
+            return &k;
         }
     }
-    return false;
+    return nullptr;
+}
+
+// An iBeacon frame: the address is known from now on
+static void remember(const uint8_t addr[BLE_ADDR_LEN], uint8_t addr_type)
+{
+    const uint32_t clock = ++s_known_clock;
+    KnownAddr *k = find_known(addr, addr_type);
+    if (k == nullptr) {
+        k = &s_known[0];
+        for (KnownAddr &c : s_known) {
+            if (!c.used) {
+                k = &c;
+                break;
+            }
+            if (clock - c.heard > clock - k->heard) { // wrap-safe: the longest since heard
+                k = &c;
+            }
+        }
+        memcpy(k->addr, addr, BLE_ADDR_LEN);
+        k->addr_type = addr_type;
+        k->used = true;
+    }
+    k->heard = clock;
 }
 
 void scan_cache_sink(const ble_adv_report_t *report)
 {
     if (report->has_ibeacon) {
-        if (!is_known(report->addr, report->addr_type)) {
-            KnownAddr &k = s_known[s_known_next];
-            memcpy(k.addr, report->addr, BLE_ADDR_LEN);
-            k.addr_type = report->addr_type;
-            k.used = true;
-            s_known_next = (s_known_next + 1) % CONFIG_PRESENCE_SCAN_CACHE_SIZE;
-        }
-    } else if (!is_known(report->addr, report->addr_type)) {
+        remember(report->addr, report->addr_type);
+    } else if (find_known(report->addr, report->addr_type) == nullptr) {
         return; // a name or TLM frame of a device that sends no iBeacon: not listed
     }
     if (xQueueSend(s_queue, report, 0) != pdTRUE) {

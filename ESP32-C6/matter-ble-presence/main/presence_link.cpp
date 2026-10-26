@@ -148,7 +148,8 @@ static void send_slot(int i)
             slot.battery_level = info.battery_level;
             slot.battery_mv = info.battery_mv;
         }
-        const char *model = cfg.model[0] != '\0' ? cfg.model : info.name;
+        slot.model_configured = cfg.model[0] != '\0';
+        const char *model = slot.model_configured ? cfg.model : info.name;
         const size_t len = strnlen(model, PLINK_MODEL_MAX + 1);
         // Never a frame the Matter node would refuse (it takes the whole slot with it): no model rather than that
         if (len <= PLINK_MODEL_MAX && utf8_is_valid_text(model, len)) {
@@ -527,13 +528,14 @@ void presence_link_log_diagnostics(void)
         }
         ESP_LOGI(TAG,
                  "Matter node %u s ago: commissioned %d, Thread up %d, pairing window %d, %u fabric(s), bridged "
-                 "devices 0x%05lx, waiting 0x%05lx (reason %u), heap %u KB (min %u KB), up %u s; tx %u, rx %u, CRC "
-                 "errors %u, bad frames %u",
+                 "devices 0x%05lx, waiting 0x%05lx (failed 0x%05lx), heap %u KB (min %u KB), up %u s; tx %u, rx %u, "
+                 "CRC errors %u, bad frames %u",
                  ago, (st.peer_status.flags & PLINK_STATUS_COMMISSIONED) != 0,
                  (st.peer_status.flags & PLINK_STATUS_NETWORK_UP) != 0,
                  (st.peer_status.flags & PLINK_STATUS_WINDOW_OPEN) != 0, st.peer_status.fabrics,
                  static_cast<unsigned long>(st.peer_status.bridged_mask),
-                 static_cast<unsigned long>(st.peer_status.waiting_mask), st.peer_status.wait_reason,
+                 static_cast<unsigned long>(st.peer_status.waiting_mask),
+                 static_cast<unsigned long>(st.peer_status.error_mask),
                  st.peer_status.heap_free_kb, st.peer_status.heap_min_kb, static_cast<unsigned>(st.peer_status.uptime_s),
                  static_cast<unsigned>(st.tx_frames), static_cast<unsigned>(st.rx_frames),
                  static_cast<unsigned>(st.crc_errors), static_cast<unsigned>(st.bad_frames));

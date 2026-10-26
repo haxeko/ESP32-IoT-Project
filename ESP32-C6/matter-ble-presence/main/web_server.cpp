@@ -320,15 +320,14 @@ static esp_err_t status_get(httpd_req_t *req)
     presence_link_get_stats(&link);
     const plink_status_t &h2 = link.peer_status;
     const long long ago = link.last_rx_ms > 0 ? (esp_timer_get_time() / 1000 - link.last_rx_ms) / 1000 : -1;
-    static const char *const kWaitReasons[] = { "", "commissioning", "memory", "error" };
     out.fmt(",\"h2\":{\"seen\":%s,\"ago_s\":%lld,\"commissioned\":%s,\"network_up\":%s,\"window_open\":%s,"
             "\"fabrics\":%u",
             link.have_peer_status ? "true" : "false", ago, (h2.flags & PLINK_STATUS_COMMISSIONED) ? "true" : "false",
             (h2.flags & PLINK_STATUS_NETWORK_UP) ? "true" : "false",
             (h2.flags & PLINK_STATUS_WINDOW_OPEN) ? "true" : "false", static_cast<unsigned>(h2.fabrics));
-    out.fmt(",\"heap_kb\":%u,\"heap_min_kb\":%u,\"wait_reason\":\"%s\"", h2.heap_free_kb, h2.heap_min_kb,
-            kWaitReasons[h2.wait_reason <= PLINK_WAIT_ERROR ? h2.wait_reason : static_cast<uint8_t>(PLINK_WAIT_ERROR)]);
-    // Endpoint of each slot's bridged device (0: none), and the slots whose device waits
+    out.fmt(",\"heap_kb\":%u,\"heap_min_kb\":%u", h2.heap_free_kb, h2.heap_min_kb);
+    // Endpoint of each slot's bridged device (0: none), the slots whose device waits (for memory: kept for
+    // commissioning before it, too little after) and those among them that could not be created
     out.raw(",\"bridged\":[");
     for (int i = 0; i < PLINK_SLOT_COUNT; i++) {
         out.fmt("%s%u", i ? "," : "", static_cast<unsigned>(link.have_peer_status ? h2.endpoint[i] : 0));
@@ -336,6 +335,10 @@ static esp_err_t status_get(httpd_req_t *req)
     out.raw("],\"waiting\":[");
     for (int i = 0; i < PLINK_SLOT_COUNT; i++) {
         out.fmt("%s%s", i ? "," : "", link.have_peer_status && (h2.waiting_mask & (1u << i)) ? "true" : "false");
+    }
+    out.raw("],\"errors\":[");
+    for (int i = 0; i < PLINK_SLOT_COUNT; i++) {
+        out.fmt("%s%s", i ? "," : "", link.have_peer_status && (h2.error_mask & (1u << i)) ? "true" : "false");
     }
     // The code only while the H2 can be commissioned (not paired yet, or pairing mode): otherwise it opens nothing,
     // and the SoftAP password is shared

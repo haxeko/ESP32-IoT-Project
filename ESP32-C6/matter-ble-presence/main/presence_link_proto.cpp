@@ -17,12 +17,13 @@ static constexpr uint8_t kMagic0 = 0xA5;
 static constexpr uint8_t kMagic1 = 0x5A;
 static constexpr size_t kHeader = 5;                                      // magic, magic, version, type, length
 static constexpr size_t kStateLen = 1 + 1 + 4 + 4 + 4 + 4;                // mode, flags, 3 masks, uptime
-static constexpr size_t kStatusLen = 1 + 1 + 4 + 4 + 4 + 1 + 2 + 2 + 2 * PLINK_SLOT_COUNT;
+static constexpr size_t kStatusLen = 1 + 1 + 4 + 4 + 4 + 4 + 2 + 2 + 2 * PLINK_SLOT_COUNT;
 static constexpr size_t kSlotMinLen = 1 + 1 + PLINK_MAC_LEN + 1 + 1 + 2 + 1; // then the model
 static constexpr size_t kPairingMinLen = PLINK_MANUAL_CODE_LEN + 1;        // manual code, QR length, QR code
 static constexpr size_t kCommandLen = 5;
 static constexpr uint8_t kCommandCheck[4] = { 'P', 'L', 'C', 'M' };
 static constexpr uint8_t kSlotFlagActive = 0x01;
+static constexpr uint8_t kSlotFlagModelConfigured = 0x02;
 
 static_assert(PLINK_SLOT_COUNT <= 32, "slot masks are 32 bits");
 static_assert(kStateLen <= PLINK_MAX_PAYLOAD && kStatusLen <= PLINK_MAX_PAYLOAD &&
@@ -107,11 +108,11 @@ size_t plink_encode_status(const plink_status_t *status, uint8_t *out, size_t ou
     put_u32(&p[2], status->uptime_s);
     put_u32(&p[6], status->bridged_mask & PLINK_SLOT_MASK);
     put_u32(&p[10], status->waiting_mask & PLINK_SLOT_MASK);
-    p[14] = status->wait_reason;
-    put_u16(&p[15], status->heap_free_kb);
-    put_u16(&p[17], status->heap_min_kb);
+    put_u32(&p[14], status->error_mask & PLINK_SLOT_MASK);
+    put_u16(&p[18], status->heap_free_kb);
+    put_u16(&p[20], status->heap_min_kb);
     for (int i = 0; i < PLINK_SLOT_COUNT; i++) {
-        put_u16(&p[19 + 2 * i], status->endpoint[i]);
+        put_u16(&p[22 + 2 * i], status->endpoint[i]);
     }
     return plink_encode(PLINK_TYPE_STATUS, p, sizeof(p), out, out_size);
 }
@@ -125,6 +126,9 @@ size_t plink_encode_slot(const plink_slot_t *slot, uint8_t *out, size_t out_size
     uint8_t p[kSlotMinLen + PLINK_MODEL_MAX] = {};
     p[0] = slot->slot;
     p[1] = slot->active ? kSlotFlagActive : 0;
+    if (slot->active && slot->model_configured && model_len > 0) {
+        p[1] |= kSlotFlagModelConfigured;
+    }
     p[8] = PLINK_BATTERY_UNKNOWN;
     if (slot->active) {
         memcpy(&p[2], slot->mac, PLINK_MAC_LEN);
@@ -184,19 +188,20 @@ bool plink_decode_status(const uint8_t *payload, size_t len, plink_status_t *sta
     status->uptime_s = get_u32(&payload[2]);
     status->bridged_mask = get_u32(&payload[6]) & PLINK_SLOT_MASK;
     status->waiting_mask = get_u32(&payload[10]) & PLINK_SLOT_MASK & ~status->bridged_mask;
-    status->wait_reason = payload[14] <= PLINK_WAIT_ERROR ? payload[14] : static_cast<uint8_t>(PLINK_WAIT_ERROR);
-    status->heap_free_kb = get_u16(&payload[15]);
-    status->heap_min_kb = get_u16(&payload[17]);
+    status->error_mask = get_u32(&payload[14]) & status->waiting_mask;
+    status->heap_free_kb = get_u16(&payload[18]);
+    status->heap_min_kb = get_u16(&payload[20]);
     for (int i = 0; i < PLINK_SLOT_COUNT; i++) {
         const bool bridged = status->bridged_mask & (1u << i);
-        status->endpoint[i] = bridged ? get_u16(&payload[19 + 2 * i]) : 0;
+        status->endpoint[i] = bridged ? get_u16(&payload[22 + 2 * i]) : 0;
     }
     return true;
 }
 
 bool plink_decode_slot(const uint8_t *payload, size_t len, plink_slot_t *slot)
 {
-    if (len < kSlotMinLen || payload[0] >= PLINK_SLOT_COUNT || (payload[1] & ~kSlotFlagActive) != 0) {
+    if (len < kSlotMinLen || payload[0] >= PLINK_SLOT_COUNT ||
+        (payload[1] & ~(kSlotFlagActive | kSlotFlagModelConfigured)) != 0) {
         return false;
     }
     const size_t model_len = payload[12];
@@ -215,6 +220,7 @@ bool plink_decode_slot(const uint8_t *payload, size_t len, plink_slot_t *slot)
     slot->active = active;
     slot->battery_pct = PLINK_BATTERY_UNKNOWN;
     if (active) {
+        slot->model_configured = (payload[1] & kSlotFlagModelConfigured) != 0 && model_len > 0;
         memcpy(slot->mac, &payload[2], PLINK_MAC_LEN);
         slot->battery_pct = pct;
         slot->battery_level = payload[9];

@@ -90,14 +90,14 @@ Theo cách bạn đã nối:
   [20 thiết bị và bộ nhớ của H2](#20-thiết-bị-và-bộ-nhớ-của-h2)).
 * **H2:** áp trạng thái nhận được vào thiết bị con của từng slot (chỉ khi đổi; Matter chưa sẵn sàng thì thử lại mỗi
   100 ms), gửi khung **STATUS** (Matter đã chạy, đã ghép, Thread lên, đang ở chế độ ghép, số fabric, endpoint của từng
-  thiết bị con, thiết bị đang chờ và lý do, heap trống) về C3 mỗi giây và **mã ghép** mỗi 5 s. **Không nhận được khung nào từ C3 trong 120 s** (`PRESENCE_LINK_TIMEOUT_SEC`) → mọi
+  thiết bị con, thiết bị đang chờ, thiết bị không tạo được, heap trống) về C3 mỗi giây và **mã ghép** mỗi 5 s. **Không nhận được khung nào từ C3 trong 120 s** (`PRESENCE_LINK_TIMEOUT_SEC`) → mọi
   cảm biến về "không hiện diện" và thiết bị con chuyển **không truy cập được** (Reachable = false, Nhà báo "Không phản
   hồi"); C3 nối lại thì trở lại bình thường.
 * **C3 khởi động lại** (thoát chế độ cấu hình, reset): mỗi slot là **"chưa biết"** cho tới khi C3 nghe thấy beacon của
   slot đó hoặc đã quét đủ thời gian vắng mặt của slot (ví dụ 45 s) mà không nghe thấy. Trong lúc đó **H2 giữ nguyên
   trạng thái** cảm biến: không còn cảnh cảm biến tắt rồi bật lại mỗi lần C3 khởi động lại. (Trước bản này, khung đầu
   tiên sau khi C3 khởi động báo "không ai" và H2 tắt ngay mọi cảm biến.)
-* **Hai chip phải cùng phiên bản giao thức UART** (bản này: **4**, 20 slot, model, pin): khi cập nhật, **nạp lại cả C3
+* **Hai chip phải cùng phiên bản giao thức UART** (bản này: **5**, 20 slot, model, pin): khi cập nhật, **nạp lại cả C3
   và H2**. Lệch phiên bản thì khung của chip kia bị loại (log `bad frames` tăng), và sau 120 s H2 tắt mọi cảm biến.
 * Mật khẩu cố định giống nhau trên mọi thiết bị: ai biết mật khẩu và ở gần đều vào được SoftAP **trong lúc thiết bị ở
   chế độ cấu hình** (tối đa 10 phút không thao tác). Trang vẫn chỉ nhận request đúng địa chỉ 192.168.4.1 và POST JSON.
@@ -136,6 +136,10 @@ trên chân khác cũng chọn được).
 * Reset chạy **lúc thả nút**, không chạy ngay khi đủ 5 s: GPIO9 là chân strapping, chip khởi động lại trong lúc nút còn
   giữ sẽ vào chế độ nạp firmware thay vì chạy.
 * Giữ lâu hơn 1,5 s mà chưa tới 5 s: không làm gì. Lần bấm trước khi giữ không cộng với lần giữ.
+* Đèn **đỏ liền 2 giây** thay vì nháy 3 lần: reset không chạy được (Matter chưa chạy, ví dụ phân vùng `nvs` lỗi) hoặc sau
+  khi khởi động lại vẫn còn ghép; gửi log H2.
+* Board không có nút BOOT trên GPIO9: Kconfig `PRESENCE_BOOT_GPIO` (-1 = không có nút), `PRESENCE_BOOT_ACTIVE_LOW`,
+  `PRESENCE_BOOT_PULLUP`; khi không có nút, hai việc trên làm từ trang của C3.
 * Trang của C3 có hai nút làm đúng hai việc này: **"Mở chế độ ghép trên ESP32-H2"** và **"Xóa ghép Matter của
   ESP32-H2"** (cũng nháy đỏ 3 lần sau khi H2 khởi động lại).
 * Log H2: `ui: BOOT double click: pairing mode`, `matter: Pairing mode: commissioning window open for 600 s over ...`,
@@ -145,7 +149,7 @@ trên chân khác cũng chọn được).
 
 **C3:** 20 slot không đáng kể: cấu hình 20 slot là 1,9 KB trong flash (định dạng 2, cấu hình 5 slot cũ được đọc và
 chuyển tự động), trạng thái mỗi slot vài chục byte, mỗi slot một so sánh MAC cho mỗi gói quảng bá. Khung UART: STATE
-27 byte/giây, STATUS 68 byte/giây, SLOT ≤ 54 byte mỗi 250 ms: khoảng 0,4 KB/s trên 11,5 KB/s của 115200 baud.
+27 byte/giây, STATUS 71 byte/giây, SLOT ≤ 54 byte mỗi 250 ms: khoảng 0,4 KB/s trên 11,5 KB/s của 115200 baud.
 
 **H2:** giới hạn thật là **heap**. ESP32-H2 có 320 KB SRAM; firmware dùng tĩnh khoảng 170 KB (`idf.py size`, DIRAM), còn lại là heap, BLE
 chiếm thêm khoảng 34 KB cho tới khi ghép xong (tài liệu esp-matter, ví dụ light trên ESP32-H2: 44 KB trống lúc khởi động,
@@ -160,7 +164,8 @@ Occupancy Sensing, Power Source) tốn ước tính **2,5–4 KB heap**: 20 thi�
   ngay khi đủ: trước khi ghép chỉ một phần (ước tính 6–8) thiết bị có mặt, **phần còn lại được thêm ngay sau khi ghép xong**
   (ứng dụng Nhà hiện thêm phụ kiện mới ngay sau đó). Ước tính sau khi ghép: 20 thiết bị vẫn còn trống 20–40 KB.
 * Trang của C3 hiện **"Thiết bị con trên bridge: 12/20 · 8 đang chờ · bộ nhớ H2 trống 46 KB (thấp nhất 41 KB)"** và ở
-  từng slot đang chờ lý do: chờ ghép xong, H2 không đủ bộ nhớ, hoặc lỗi tạo thiết bị (thử lại sau 30 s).
+  từng slot đang chờ lý do: chờ ghép xong, H2 không đủ bộ nhớ, hoặc H2 không tạo được thiết bị (tự thử lại sau 30 s,
+  các lần sau giãn dần tới 1 giờ; mỗi slot báo riêng).
 * Log H2 ghi heap thật mỗi thiết bị tốn: `bridge: Presence N: device ... added on endpoint E (B bytes of heap, F left)`
   và mỗi phút `bridge: Bridge: 20 device(s), 0 waiting ...; heap of the last device B bytes, largest M`. **Gửi lại các dòng
   này sau khi thử:** ước tính trên chưa đo được trên board thật.
@@ -273,7 +278,7 @@ Nạp mới hoàn toàn (xóa sạch, dùng file gộp; **xóa cả ghép Matter
 Không nạp file gộp lên chip đang dùng mà không xóa: file gộp ghi đè cả vùng `nvs` (0x10000–0x1FFFF), mất ghép Matter.
 
 **Lên bản này (20 slot, pin, model, "iBeacon Bridge") từ bản bridge trước (1.0.19x):**
-1. **Nạp cả hai chip** (giao thức UART đổi sang phiên bản 4). C3: nạp 3 file, **cấu hình beacon được giữ** (5 slot cũ
+1. **Nạp cả hai chip** (giao thức UART đổi sang phiên bản 5). C3: nạp 3 file, **cấu hình beacon được giữ** (5 slot cũ
    thành Presence 1–5, Presence 6–20 trống, model trống). H2: nạp 3 file cũng chạy được (bảng thiết bị con được chuyển,
    giữ endpoint cũ), **nhưng nên ghép lại từ đầu** để ứng dụng Nhà đọc tên bridge mới, cụm pin và thông tin phụ kiện
    (Apple Home thường không đọc lại cấu trúc của phụ kiện đã thêm):
@@ -328,12 +333,18 @@ chân UART và console (cả hai chip log qua USB-Serial-JTAG), cấu hình theo
 
 ## Kiểm thử
 
-* Host test (10 bộ, ASan/UBSan), gồm bộ `presence_link`: khung đúng, **mọi bit lật bị loại**, mọi kiểu cắt cụt, bắt
-  lại nhịp sau rác giống log ROM, 200 000 byte nhiễu ngẫu nhiên không tạo ra khung giả, khung của giao thức cũ bị loại,
-  **slot "chưa biết" sau khi C3 khởi động lại** (đến khi nghe thấy beacon, quét đủ thời gian vắng mặt, hoặc quá 5 phút
-  khi không quét được); bộ `click_detector`: bấm thong thả, nghỉ quá 2 s thì đếm lại, giữ lâu.
-* Test trang web (Playwright): 46 kiểm tra, gồm trang của bản hai chip (dòng tình trạng H2, không cảnh báo quét > 50%,
-  "Sắp quét" trong 5 s đầu) và Wi-Fi chậm (thiết bị trả lời sau 3 s: chỉ một request mỗi loại một lúc).
+* Host test (`ESP32-C6/matter-ble-presence/test/host/run.sh`, 14 bộ, ASan/UBSan; các bộ cấu hình, trạng thái và lưu
+  trữ chạy cả với 5 và 20 slot), gồm bộ `presence_link` (giao thức v5): khung đúng, **mọi bit lật bị loại**, mọi kiểu
+  cắt cụt, bắt lại nhịp sau rác giống log ROM, 200 000 byte nhiễu ngẫu nhiên không tạo ra khung giả, khung của giao thức
+  1–4 bị loại, khung SLOT (MAC, model UTF-8, model gõ tay hay tên quảng bá, pin), STATUS (thiết bị chờ, thiết bị lỗi
+  từng slot, heap), **slot "chưa biết" sau khi C3 khởi động lại**; `presence_battery`: mV → %, trung vị 5 lần đọc, bước
+  2 %, thay pin; `test_ibeacon`: gói Eddystone-TLM (mọi độ dài cắt cụt, TLM mã hóa bị loại); `presence_config`: định
+  dạng 2 có model, đọc định dạng 1 của bản 5 slot, blob 20 slot đọc bằng bản 5 slot (slot thừa trống thì bỏ, có beacon
+  thì từ chối và giữ nguyên trong flash); `click_detector`: bấm 2 lần, giữ 5 s rồi thả.
+* Test trang web (Playwright, `test/web/ui_test.js`): 79 kiểm tra, gồm trang của bản hai chip: 20 slot, model (giới hạn
+  32 byte UTF-8, tự điền tên beacon khi gán), pin, dòng tình trạng H2 và từng thiết bị con (trên Nhà, chờ ghép, thiếu bộ
+  nhớ, H2 không tạo được), mã ghép chỉ hiện khi H2 ghép được, ô lỗi nằm trong mục "Lọc RSSI" đang gập được mở ra; Wi-Fi
+  chậm (thiết bị trả lời sau 3 s: chỉ một request mỗi loại một lúc).
 * Build (`espressif/esp-matter:release-v1.6.1_idf_v6.0.2`, `set-target` rồi `build`), 0 cảnh báo:
 
 | Firmware | App (phân vùng 3,6 MB) | RAM tĩnh → heap lúc khởi động |
