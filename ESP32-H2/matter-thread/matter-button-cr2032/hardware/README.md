@@ -22,6 +22,7 @@ Chưa đặt mạch, chưa đo trên bo thật: kiểm tra lại footprint modul
 | `matter-button-cr2032.kicad_pro/.kicad_sch/.kicad_pcb` | dự án KiCad 9 (mở bằng KiCad ≥ 9.0) |
 | `lib/matter_button.kicad_sym`, `lib/matter_button.pretty/` | linh kiện riêng: symbol + footprint ESP32-H2-WROOM-02C, power symbol VBAT, đế Keystone 3034 (bản sửa) |
 | `fab/matter-button-cr2032-gerber.zip` | Gerber X2 + khoan Excellon: gửi thẳng cho nhà sản xuất PCB |
+| `fab/bom-vi.csv` | BOM theo tên và thông số linh kiện (tiếng Việt), kèm từ khóa tìm mua và linh kiện thay thế |
 | `fab/bom.csv`, `fab/cpl.csv` | BOM (theo MPN) và file vị trí linh kiện (tên cột theo JLCPCB) cho dịch vụ lắp ráp |
 | `docs/schematic.pdf` | schematic KiCad |
 | `docs/assembly-top.svg`, `docs/assembly-bottom.svg` | bản vẽ lắp ráp: viền linh kiện + ký hiệu (C7 gạch chéo: không lắp) |
