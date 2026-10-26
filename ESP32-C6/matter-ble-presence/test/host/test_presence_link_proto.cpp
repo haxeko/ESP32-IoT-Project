@@ -67,27 +67,171 @@ static void present_only_for_active_slots()
     CHECK(out.known_mask == 0xFC); // the active slots are not known yet, the inactive ones are off
 }
 
-// Firmware of the previous protocol (version 1, no known_mask) on the other chip: its frames are counted as bad and
-// never applied, whatever their CRC
+// Firmware of an earlier protocol (version 1: no known_mask, version 2: no bridge) on the other chip: its frames are
+// counted as bad and never applied, whatever their CRC
 static void other_version_rejected()
 {
-    const plink_state_t in = { PLINK_MODE_NORMAL, 0, 0x01, 0x01, 0x01, 3 };
-    uint8_t frame[PLINK_MAX_FRAME];
-    const size_t n = plink_encode_state(&in, frame, sizeof(frame));
-    frame[2] = 1;
-    const uint32_t crc = crc32_ieee(&frame[2], n - 6);
-    for (int i = 0; i < 4; i++) {
-        frame[n - 4 + i] = static_cast<uint8_t>(crc >> (8 * i));
+    for (uint8_t version = 1; version <= 2; version++) {
+        const plink_state_t in = { PLINK_MODE_NORMAL, 0, 0x01, 0x01, 0x01, 3 };
+        uint8_t frame[PLINK_MAX_FRAME];
+        const size_t n = plink_encode_state(&in, frame, sizeof(frame));
+        frame[2] = version;
+        const uint32_t crc = crc32_ieee(&frame[2], n - 6);
+        for (int i = 0; i < 4; i++) {
+            frame[n - 4 + i] = static_cast<uint8_t>(crc >> (8 * i));
+        }
+        plink_parser_t p;
+        plink_parser_init(&p);
+        uint8_t type = 0;
+        CHECK(feed_all(&p, frame, n, &type) == 0);
+        CHECK(p.bad_frames == 1 && p.crc_errors == 0);
     }
-    plink_parser_t p;
-    plink_parser_init(&p);
-    uint8_t type = 0;
-    CHECK(feed_all(&p, frame, n, &type) == 0);
-    CHECK(p.bad_frames == 1 && p.crc_errors == 0);
-    // A version 1 state frame (8 byte payload) would not decode either
+    // A version 1 state frame (8 byte payload) and a version 2 status frame (6 bytes) would not decode either
     plink_state_t out;
     const uint8_t v1_payload[8] = { PLINK_MODE_NORMAL, 0, 0x01, 0x01, 3, 0, 0, 0 };
     CHECK(!plink_decode_state(v1_payload, sizeof(v1_payload), &out));
+    plink_status_t status;
+    const uint8_t v2_status[6] = { PLINK_STATUS_COMMISSIONED, 1, 0, 0, 0, 0 };
+    CHECK(!plink_decode_status(v2_status, sizeof(v2_status), &status));
+}
+
+// One frame through the parser; returns its payload length, -1 if no frame came out
+static int through_parser(const uint8_t *frame, size_t n, plink_parser_t *p, uint8_t expected_type)
+{
+    plink_parser_init(p);
+    uint8_t type = 0;
+    if (feed_all(p, frame, n, &type) != 1 || type != expected_type) {
+        return -1;
+    }
+    return p->len;
+}
+
+static void status_with_bridge()
+{
+    plink_status_t in = {};
+    in.flags = PLINK_STATUS_MATTER_STARTED | PLINK_STATUS_COMMISSIONED | PLINK_STATUS_NETWORK_UP;
+    in.fabrics = 1;
+    in.uptime_s = 77;
+    in.bridged_mask = 0x05; // slots 0 and 2 on the bridge
+    in.endpoint[0] = 2;
+    in.endpoint[1] = 9; // not bridged: decodes as 0
+    in.endpoint[2] = 0x1234;
+    uint8_t frame[PLINK_MAX_FRAME];
+    const size_t n = plink_encode_status(&in, frame, sizeof(frame));
+    plink_parser_t p;
+    CHECK(through_parser(frame, n, &p, PLINK_TYPE_STATUS) == 17);
+    plink_status_t out;
+    CHECK(plink_decode_status(p.payload, p.len, &out));
+    CHECK(out.bridged_mask == 0x05 && out.endpoint[0] == 2 && out.endpoint[1] == 0 && out.endpoint[2] == 0x1234);
+    CHECK(out.endpoint[3] == 0 && out.endpoint[4] == 0 && out.fabrics == 1 && out.uptime_s == 77);
+}
+
+static void slots_round_trip()
+{
+    plink_slots_t in = {};
+    in.active_mask = 0x0B; // slots 0, 1, 3
+    const uint8_t a[6] = { 0xC0, 0x11, 0x22, 0x33, 0x44, 0x01 };
+    const uint8_t b[6] = { 0xD4, 0xAA, 0xBB, 0xCC, 0xDD, 0x02 };
+    const uint8_t c[6] = { 0x5A, 0x01, 0x02, 0x03, 0x04, 0x05 };
+    memcpy(in.mac[0], a, 6);
+    memcpy(in.mac[1], b, 6);
+    memcpy(in.mac[2], c, 6); // inactive: not sent
+    memcpy(in.mac[3], c, 6);
+    uint8_t frame[PLINK_MAX_FRAME];
+    const size_t n = plink_encode_slots(&in, frame, sizeof(frame));
+    CHECK(n == 2 + 3 + 31 + 4);
+    plink_parser_t p;
+    CHECK(through_parser(frame, n, &p, PLINK_TYPE_SLOTS) == 31);
+    plink_slots_t out;
+    CHECK(plink_decode_slots(p.payload, p.len, &out));
+    CHECK(out.active_mask == 0x0B);
+    CHECK(memcmp(out.mac[0], a, 6) == 0 && memcmp(out.mac[1], b, 6) == 0 && memcmp(out.mac[3], c, 6) == 0);
+    const uint8_t zero[6] = {};
+    CHECK(memcmp(out.mac[2], zero, 6) == 0 && memcmp(out.mac[4], zero, 6) == 0);
+    // A mask with bits beyond the five slots is not a valid frame
+    uint8_t bad[31] = {};
+    bad[0] = 0x20;
+    CHECK(!plink_decode_slots(bad, sizeof(bad), &out));
+    CHECK(!plink_decode_slots(bad, 30, &out));
+}
+
+static void pairing_round_trip()
+{
+    plink_pairing_t in = {};
+    strcpy(in.manual_code, "34970112332");
+    strcpy(in.qr_code, "MT:Y.K9042C00KA0648G00");
+    uint8_t frame[PLINK_MAX_FRAME];
+    const size_t n = plink_encode_pairing(&in, frame, sizeof(frame));
+    plink_parser_t p;
+    CHECK(through_parser(frame, n, &p, PLINK_TYPE_PAIRING) == 12 + 22);
+    plink_pairing_t out;
+    CHECK(plink_decode_pairing(p.payload, p.len, &out));
+    CHECK_STR(out.manual_code, "34970112332");
+    CHECK_STR(out.qr_code, "MT:Y.K9042C00KA0648G00");
+
+    // Never anything but digits in the manual code and base-38 in the QR code: the page shows them as they come
+    uint8_t payload[PLINK_MAX_PAYLOAD];
+    memcpy(payload, p.payload, p.len);
+    payload[3] = 'x';
+    CHECK(!plink_decode_pairing(payload, p.len, &out));
+    memcpy(payload, p.payload, p.len);
+    payload[12 + 5] = '<';
+    CHECK(!plink_decode_pairing(payload, p.len, &out));
+    memcpy(payload, p.payload, p.len);
+    payload[11] = 23; // QR length beyond the payload
+    CHECK(!plink_decode_pairing(payload, p.len, &out));
+    CHECK(!plink_decode_pairing(p.payload, 11, &out));
+    // No QR code (not known yet) is fine
+    plink_pairing_t only_manual = {};
+    strcpy(only_manual.manual_code, "34970112332");
+    CHECK(through_parser(frame, plink_encode_pairing(&only_manual, frame, sizeof(frame)), &p, PLINK_TYPE_PAIRING) == 12);
+    CHECK(plink_decode_pairing(p.payload, p.len, &out) && out.qr_code[0] == '\0');
+    // The encoder refuses a manual code of the wrong length
+    plink_pairing_t wrong = {};
+    strcpy(wrong.manual_code, "1234");
+    CHECK(plink_encode_pairing(&wrong, frame, sizeof(frame)) == 0);
+}
+
+static void command_round_trip()
+{
+    const plink_command_t in = { PLINK_CMD_FACTORY_RESET };
+    uint8_t frame[PLINK_MAX_FRAME];
+    const size_t n = plink_encode_command(&in, frame, sizeof(frame));
+    plink_parser_t p;
+    CHECK(through_parser(frame, n, &p, PLINK_TYPE_COMMAND) == 5);
+    plink_command_t out = {};
+    CHECK(plink_decode_command(p.payload, p.len, &out) && out.command == PLINK_CMD_FACTORY_RESET);
+    // Without the check word it is not a command
+    uint8_t payload[5];
+    memcpy(payload, p.payload, 5);
+    payload[4] ^= 1;
+    CHECK(!plink_decode_command(payload, 5, &out));
+    CHECK(!plink_decode_command(p.payload, 4, &out));
+    // Every corrupted byte of a command frame is rejected by the parser
+    for (size_t i = 0; i < n; i++) {
+        uint8_t bad[PLINK_MAX_FRAME];
+        memcpy(bad, frame, n);
+        bad[i] ^= 0x10;
+        plink_parser_t q;
+        plink_parser_init(&q);
+        uint8_t type = 0;
+        CHECK(feed_all(&q, bad, n, &type) == 0);
+    }
+}
+
+static void slot_actions()
+{
+    const uint8_t a[6] = { 1, 2, 3, 4, 5, 6 };
+    const uint8_t b[6] = { 1, 2, 3, 4, 5, 7 };
+    CHECK(plink_slot_action(false, a, false, a) == PLINK_SLOT_KEEP);
+    CHECK(plink_slot_action(false, a, true, a) == PLINK_SLOT_ADD);
+    CHECK(plink_slot_action(true, a, true, a) == PLINK_SLOT_KEEP);
+    CHECK(plink_slot_action(true, a, true, b) == PLINK_SLOT_REPLACE);
+    CHECK(plink_slot_action(true, a, false, a) == PLINK_SLOT_REMOVE);
+    char name[PLINK_MAC_STR_SIZE];
+    const uint8_t mac[6] = { 0xC0, 0x11, 0x22, 0x3A, 0xB4, 0x0F };
+    plink_mac_string(mac, name);
+    CHECK_STR(name, "C0:11:22:3A:B4:0F");
 }
 
 // After a restart of the scanner a slot is unknown (the Matter node keeps its state) until its beacon is reported or
@@ -125,9 +269,12 @@ static void every_corruption_rejected()
             plink_parser_init(&p);
             uint8_t type = 0;
             CHECK(feed_all(&p, bad, n, &type) == 0);
-            // A damaged length byte can make the parser swallow the next frame; the one after it is received
-            int got = feed_all(&p, frame, n, &type);
-            got += feed_all(&p, frame, n, &type);
+            // A damaged length byte (up to PLINK_MAX_PAYLOAD) makes the parser swallow up to 52 more bytes, here the
+            // next two frames and the start of the third: the fourth is received
+            int got = 0;
+            for (int k = 0; k < 4; k++) {
+                got += feed_all(&p, frame, n, &type);
+            }
             CHECK(got >= 1);
         }
     }
@@ -195,6 +342,11 @@ int main()
     RUN(status_round_trip);
     RUN(present_only_for_active_slots);
     RUN(other_version_rejected);
+    RUN(status_with_bridge);
+    RUN(slots_round_trip);
+    RUN(pairing_round_trip);
+    RUN(command_round_trip);
+    RUN(slot_actions);
     RUN(known_mask_after_restart);
     RUN(every_corruption_rejected);
     RUN(truncation_then_resync);

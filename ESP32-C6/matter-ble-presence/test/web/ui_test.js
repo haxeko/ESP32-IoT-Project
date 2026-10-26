@@ -48,7 +48,8 @@ async function openPage(browser, network, posts, opts = {}) {
     const json = (obj, code = 200) => route.fulfill({ status: code, contentType: 'application/json', body: JSON.stringify(obj) });
     if (url.pathname === '/') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
     if (url.pathname === '/api/status') return json(Object.assign({}, status, { network },
-      network === 'h2' ? { h2: { seen: true, ago_s: 1, commissioned: true, network_up: false, fabrics: 1 } } : {}));
+      network === 'h2' ? { h2: { seen: true, ago_s: 1, commissioned: true, network_up: false, fabrics: 1,
+        bridged: [2, 0, 0, 0, 0], pairing: { manual: '34970112332', qr: 'MT:Y.K9042C00KA0648G00' } } } : {}));
     if (url.pathname === '/api/scan' && req.method() === 'GET') {
       const st = opts.stats || {};
       st.scanInFlight = (st.scanInFlight || 0) + 1;
@@ -168,6 +169,7 @@ async function openPage(browser, network, posts, opts = {}) {
   const wifi = await openPage(browser, 'wifi', []);
   await wifi.waitForTimeout(300);
   check((await wifi.textContent('#statusGrid')).includes('Matter/Wi-Fi'), 'Wi-Fi version: mode shows Matter/Wi-Fi');
+  check(!(await wifi.isVisible('#h2ResetBox')) && (await wifi.textContent('#home0')) === '', 'one-chip version: no bridge items');
   check((await wifi.textContent('#coexNote')).includes('mức Y'), 'Wi-Fi version: coexistence note (Y)');
   check(!(await wifi.textContent('#coexNote')).includes('Thread'), 'Wi-Fi version: no Thread in the scan note');
   await wifi.fill('#scanWin', '120');
@@ -180,6 +182,19 @@ async function openPage(browser, network, posts, opts = {}) {
   await h2.waitForTimeout(300);
   check((await h2.textContent('#scanChip')) === 'Sắp quét', 'scanning held off after the phone joined: "Sắp quét"');
   check((await h2.textContent('#statusGrid')).includes('Matter/Thread (ESP32-H2)'), 'two-chip: mode names the ESP32-H2');
+  check((await h2.textContent('#statusGrid')).includes('3497-011-2332'), 'two-chip: Matter pairing code shown (no console needed)');
+  check((await h2.textContent('#home0')) === 'Trên Nhà: thiết bị con C0:11:22:33:44:01 (endpoint 2)', 'two-chip: slot 1 is a bridged device named by its MAC');
+  check((await h2.textContent('#home1')).startsWith('Chưa có trên Nhà'), 'two-chip: inactive slot has no device');
+  check((await h2.textContent('#slotsNote')).includes('thiết bị con của Matter bridge'), 'two-chip: slots explained as bridged devices');
+  check(await h2.isVisible('#h2ResetBox'), 'two-chip: H2 reset offered');
+  const h2Posts = [];
+  h2.on('request', r => { if (r.method() === 'POST') h2Posts.push({ path: new URL(r.url()).pathname, body: r.postData() }); });
+  h2.on('dialog', async d => { await d.accept(); });
+  await h2.click('#h2ResetBox summary');
+  await h2.click('#btnH2Reset');
+  await h2.waitForTimeout(300);
+  const reset = h2Posts.find(p => p.path === '/api/h2/reset');
+  check(reset && JSON.parse(reset.body).confirm === 'RESET-MATTER', 'two-chip: H2 reset sent with its confirmation word');
   check((await h2.textContent('#statusGrid')).includes('đã ghép (1 fabric) · Thread chưa kết nối'), 'two-chip: H2 status shown');
   check((await h2.textContent('#coexNote')).includes('hai chip'), 'two-chip: scan note');
   await h2.fill('#scanWin', '120');

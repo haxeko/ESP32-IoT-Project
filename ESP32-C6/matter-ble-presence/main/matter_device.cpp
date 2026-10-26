@@ -10,6 +10,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <atomic>
 
@@ -44,6 +45,9 @@
 
 #include "ble_scanner.h"
 #include "presence_config.h"
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+#include "matter_bridge.h"
+#endif
 
 // Two-chip version, Matter node: the ESP32-C3 scans with its own radio, so nothing here pauses a scanner
 #if CONFIG_PRESENCE_ROLE_MATTER_UART
@@ -80,10 +84,7 @@ using chip::DeviceLayer::ConnectivityMgr;
 
 // Window reopened after the last fabric is removed
 static constexpr uint32_t kRecommissioningWindowSec = 300;
-// Matter "Common Number" semantic tag namespace (data_model/1.6.1/namespaces/Namespace-Common-Number.xml)
-static constexpr uint8_t kNamespaceCommonNumber = 0x07;
 
-static uint16_t s_endpoint_ids[PRESENCE_SLOT_COUNT];
 static std::atomic<bool> s_started{ false };
 static std::atomic<uint32_t> s_network_ups{ 0 };
 static std::atomic<uint32_t> s_network_downs{ 0 };
@@ -95,9 +96,18 @@ static std::atomic<uint8_t> s_fabrics{ 0 };
 static std::atomic<uint16_t> s_wifi_disconnect_reason{ 0 }; // wifi_err_reason_t of the last disconnection
 #endif
 
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+// Onboarding codes for the scanner's page: written once in the Matter task, then only read
+static plink_pairing_t s_pairing;
+static std::atomic<bool> s_pairing_valid{ false };
+#else
+// Matter "Common Number" semantic tag namespace (data_model/1.6.1/namespaces/Namespace-Common-Number.xml)
+static constexpr uint8_t kNamespaceCommonNumber = 0x07;
+static uint16_t s_endpoint_ids[PRESENCE_SLOT_COUNT];
 // TagList: the labels must stay valid for the life of the node
 static char s_tag_labels[PRESENCE_SLOT_COUNT][16];
 static chip::app::DataModel::Provider::SemanticTag s_tags[PRESENCE_SLOT_COUNT];
+#endif
 
 static uint32_t occupancy_feature()
 {
@@ -195,6 +205,27 @@ static void on_wifi_disconnected(void *, esp_event_base_t, int32_t, void *data)
 
 #endif
 
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+// Matter task: the codes printed at boot, kept for the configuration page of the scanner (no console needed)
+static void store_pairing_codes()
+{
+    const auto flags = chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE);
+    char manual[PLINK_MANUAL_CODE_LEN + 1] = {};
+    char qr[PLINK_QR_CODE_MAX + 1] = {};
+    chip::MutableCharSpan manual_span(manual);
+    chip::MutableCharSpan qr_span(qr);
+    if (GetManualPairingCode(manual_span, flags) != CHIP_NO_ERROR || manual_span.size() != PLINK_MANUAL_CODE_LEN) {
+        ESP_LOGW(TAG, "Manual pairing code unavailable: not shown on the scanner's page");
+        return;
+    }
+    memcpy(s_pairing.manual_code, manual, PLINK_MANUAL_CODE_LEN);
+    if (GetQRCode(qr_span, flags) == CHIP_NO_ERROR && qr_span.size() <= PLINK_QR_CODE_MAX) {
+        memcpy(s_pairing.qr_code, qr, qr_span.size());
+    }
+    s_pairing_valid.store(true, std::memory_order_release);
+}
+#endif
+
 // Matter task, once, right after esp_matter::start() (Server::Init done, fabrics loaded). kServerReady is not used
 // for this: it waits for DNS-SD, which on the Thread version means waiting for an SRP server to answer. That cannot
 // happen before commissioning (no Thread network yet: the pairing codes would never be printed) and never happens
@@ -217,6 +248,10 @@ static void on_matter_started(intptr_t)
     gate_resume(SCAN_PAUSE_MATTER_STARTING);
     update_commissioning_gate();
     set_network_up(network_up);
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+    matter_bridge_restore();
+    store_pairing_codes();
+#endif
     if (!is_commissioned()) {
         ESP_LOGI(TAG, "Not commissioned: commissioning window open (BLE), beacon scanning paused until done");
         PrintOnboardingCodes(chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE));
@@ -421,6 +456,7 @@ static esp_err_t attribute_update_cb(attribute::callback_type_t type, uint16_t e
     return ESP_OK; // no writable attribute drives anything here
 }
 
+#if !CONFIG_PRESENCE_ROLE_MATTER_UART
 static esp_err_t create_presence_endpoints(node_t *node)
 {
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
@@ -455,6 +491,7 @@ static esp_err_t create_presence_endpoints(node_t *node)
     );
     return ESP_OK;
 }
+#endif
 
 esp_err_t matter_device_start(void)
 {
@@ -464,7 +501,11 @@ esp_err_t matter_device_start(void)
         ESP_LOGE(TAG, "Failed to create the Matter node");
         return ESP_FAIL;
     }
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+    esp_err_t err = matter_bridge_create_aggregator(node, occupancy_feature());
+#else
     esp_err_t err = create_presence_endpoints(node);
+#endif
     if (err != ESP_OK) {
         return err;
     }
@@ -524,13 +565,81 @@ bool matter_device_set_occupancy(int slot, bool occupied)
         return false;
     }
     lock::ScopedChipStackLock lock(portMAX_DELAY);
-    OccupancySensingCluster *cluster = OccupancySensing::FindClusterOnEndpoint(s_endpoint_ids[slot]);
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+    const uint16_t endpoint_id = matter_bridge_endpoint(slot);
+    if (endpoint_id == 0) {
+        return true; // no device for this slot on the bridge: nothing to show (set again when it is added)
+    }
+#else
+    const uint16_t endpoint_id = s_endpoint_ids[slot];
+#endif
+    OccupancySensingCluster *cluster = OccupancySensing::FindClusterOnEndpoint(endpoint_id);
     if (cluster == nullptr) {
         return false;
     }
     cluster->SetOccupancy(occupied);
     return true;
 }
+
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+
+bool matter_device_sync_bridge(const plink_slots_t *want, uint8_t *changed)
+{
+    *changed = 0;
+    if (!s_started) {
+        return false;
+    }
+    lock::ScopedChipStackLock lock(portMAX_DELAY);
+    return matter_bridge_sync(want, changed);
+}
+
+void matter_device_get_bridge(uint8_t *bridged_mask, uint16_t endpoint[PLINK_SLOT_COUNT])
+{
+    if (!s_started) {
+        *bridged_mask = 0;
+        memset(endpoint, 0, sizeof(uint16_t) * PLINK_SLOT_COUNT);
+        return;
+    }
+    lock::ScopedChipStackLock lock(portMAX_DELAY);
+    matter_bridge_get(bridged_mask, endpoint);
+}
+
+void matter_device_set_reachable(bool reachable)
+{
+    if (!s_started) {
+        return;
+    }
+    lock::ScopedChipStackLock lock(portMAX_DELAY);
+    matter_bridge_set_reachable(reachable);
+}
+
+bool matter_device_get_pairing(plink_pairing_t *out)
+{
+    if (!s_pairing_valid.load(std::memory_order_acquire)) {
+        return false;
+    }
+    *out = s_pairing;
+    return true;
+}
+
+static void factory_reset_work(intptr_t)
+{
+    ESP_LOGW(TAG, "Factory reset asked on the configuration page: removing the pairing and the bridged devices");
+    matter_bridge_erase();
+    esp_matter::factory_reset(); // erases the Matter and Thread data, then restarts
+}
+
+void matter_device_factory_reset(void)
+{
+    if (!s_started) {
+        // Matter could not start (e.g. "nvs" unusable): nothing scheduled can run, so only the bridge table goes
+        ESP_LOGE(TAG, "Factory reset asked while Matter is not running: not done");
+        return;
+    }
+    chip::DeviceLayer::PlatformMgr().ScheduleWork(factory_reset_work);
+}
+
+#endif
 
 #if CONFIG_ENABLE_MATTER_OVER_THREAD
 

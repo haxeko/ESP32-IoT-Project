@@ -5,7 +5,7 @@
 set(common_srcs "crc32.cpp" "ble_addr.cpp" "json_util.cpp" "presence_link_proto.cpp")
 
 if(CONFIG_PRESENCE_ROLE_MATTER_UART)
-    set(srcs ${common_srcs} "app_main_h2.cpp" "matter_device.cpp" "presence_link.cpp")
+    set(srcs ${common_srcs} "app_main_h2.cpp" "matter_device.cpp" "matter_bridge.cpp" "presence_link.cpp")
     set(embed "")
 else()
     set(srcs ${common_srcs}

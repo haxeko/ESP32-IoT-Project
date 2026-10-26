@@ -72,6 +72,11 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px;margin-top:8px
       <button class="danger" id="btnFormat">Định dạng phân vùng cấu hình beacon</button>
       <div class="small">Chỉ xóa phân vùng app_cfg (cấu hình 5 slot và mật khẩu Wi-Fi cấu hình). Dữ liệu ghép Matter (cả mạng Thread/Wi-Fi đã lưu) không bị ảnh hưởng.</div>
     </div>
+    <details id="h2ResetBox" style="display:none;margin-top:8px">
+      <summary>Xóa ghép Matter của ESP32-H2</summary>
+      <div class="small" style="margin:6px 0">Chỉ dùng khi không ghép lại được (ví dụ đã xóa thiết bị khỏi ứng dụng Nhà lúc H2 đang tắt). H2 xóa ghép Matter và mạng Thread, khởi động lại rồi chờ ghép mới bằng mã ghép ở trên. Cấu hình beacon trên chip này giữ nguyên; thiết bị con được tạo lại theo cấu hình đã lưu. Bình thường chỉ cần xóa thiết bị trong ứng dụng Nhà: H2 tự khởi động lại và chờ ghép.</div>
+      <button class="danger" id="btnH2Reset">Xóa ghép Matter của ESP32-H2</button>
+    </details>
   </section>
 
   <section id="secScan">
@@ -89,7 +94,7 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px;margin-top:8px
 
   <section id="secSlots">
     <h2>Presence 1–5</h2>
-    <div class="small">Mỗi slot là một endpoint Occupancy Sensor cố định trong Matter. Slot tắt hoặc chưa có MAC luôn báo "không hiện diện". Tên chỉ là nhãn nội bộ, ứng dụng Matter có thể không hiển thị.</div>
+    <div class="small" id="slotsNote">Mỗi slot là một endpoint Occupancy Sensor cố định trong Matter. Slot tắt hoặc chưa có MAC luôn báo "không hiện diện". Tên chỉ là nhãn nội bộ, ứng dụng Matter có thể không hiển thị.</div>
     <div id="slots"></div>
   </section>
 
@@ -116,7 +121,7 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px;margin-top:8px
 const SLOTS = 5;
 let cfg = null, limits = {}, defaults = {}, allowDup = false, net = null;
 let beacons = [], dirty = false, stopped = false, restarting = false;
-let idleLeft = null, lastKeepalive = 0, userStopped = false, beaconsStale = false;
+let idleLeft = null, lastKeepalive = 0, userStopped = false, beaconsStale = false, lastH2 = null;
 
 const $ = id => document.getElementById(id);
 // Network of Matter in NORMAL mode: ESP32-C6 version Thread, ESP32-C3 version Wi-Fi ("network" from the device)
@@ -226,9 +231,15 @@ async function fetchStatus() {
   kv("Chế độ", "CONFIG (Matter/" + netName() + " tạm dừng, dữ liệu ghép giữ nguyên)");
   kv("Firmware", s.firmware + " · ESP-IDF " + s.idf);
   kv("Thời gian chạy", Math.floor(s.uptime_s / 60) + " phút " + (s.uptime_s % 60) + " giây");
-  if (s.h2) kv("ESP32-H2 (Matter)", !s.h2.seen ? "chưa nhận được tín hiệu qua UART (kiểm tra dây nối)" :
-    (s.h2.ago_s > 5 ? "mất tín hiệu " + s.h2.ago_s + " s" : "đang kết nối") + " · " + (s.h2.commissioned ? "đã ghép (" + s.h2.fabrics + " fabric)" : "chưa ghép") +
-    " · Thread " + (s.h2.network_up ? "đã kết nối" : "chưa kết nối"));
+  if (s.h2) {
+    kv("ESP32-H2 (Matter bridge)", !s.h2.seen ? "chưa nhận được tín hiệu qua UART (kiểm tra dây nối)" :
+      (s.h2.ago_s > 5 ? "mất tín hiệu " + s.h2.ago_s + " s" : "đang kết nối") + " · " + (s.h2.commissioned ? "đã ghép (" + s.h2.fabrics + " fabric)" : "chưa ghép") +
+      " · Thread " + (s.h2.network_up ? "đã kết nối" : "chưa kết nối"));
+    if (s.h2.pairing) kv("Mã ghép Matter", fmtPairing(s.h2.pairing.manual) + " (nhập trong ứng dụng Nhà khi thêm phụ kiện; không đổi)");
+    lastH2 = s.h2;
+    renderHome();
+  }
+  $("h2ResetBox").style.display = s.h2 ? "block" : "none";
   kv("Bộ nhớ trống", Math.round(s.heap.free / 1024) + " KB (thấp nhất " + Math.round(s.heap.min / 1024) + " KB)");
   kv("Điện thoại kết nối", s.ap.stations + " · kênh " + s.ap.channel);
   kv("Quét BLE", (s.scan.active ? "chủ động" : "thụ động") + " " + s.scan.window_ms + "/" + s.scan.interval_ms + " ms · " + s.scan.adv_reports + " gói, " + s.scan.ibeacon_reports + " iBeacon");
@@ -338,6 +349,7 @@ function buildSlots() {
         el("h3", {text: "Presence " + (i + 1)}),
         el("label", {class: "chk"}, en, "Bật")),
       el("div", {class: "small", id: "seen" + i}),
+      el("div", {class: "small home", id: "home" + i}),
       el("div", {class: "grid"},
         field("Tên (nhãn nội bộ)", label, "elabel" + i),
         field("Thời gian vắng mặt (giây)", to, "eto" + i, "Phải gấp nhiều lần chu kỳ phát của beacon: beacon 1 s → 45 s là dư; beacon 10 s cần 60 s trở lên và tỉ lệ quét cao hơn."),
@@ -504,7 +516,31 @@ async function loadConfig() {
   if (netText[cfg.network]) net = netText[cfg.network];
   $("coexNote").textContent = "Bộ thu nghe trong \"cửa sổ\" ms mỗi \"chu kỳ\" ms. " + (net ? net.coex + " " : "") +
     "Mặc định " + defaults.window_ms + "/" + defaults.interval_ms + " ms (" + Math.round(defaults.window_ms * 100 / defaults.interval_ms) + "%).";
+  if (cfg.network === "h2") $("slotsNote").textContent = "Bản hai chip: mỗi Presence đã bật và có MAC là một thiết bị con của Matter bridge (ESP32-H2), tên trên ứng dụng Nhà là địa chỉ MAC của beacon. Thêm: gán MAC, bật slot, bấm Lưu – H2 thêm thiết bị ngay. Tắt slot hoặc xóa MAC rồi Lưu – thiết bị bị gỡ khỏi Nhà. Gán beacon khác vào slot – thiết bị cũ bị gỡ, thiết bị mới được thêm.";
   fillForm(cfg);
+  renderHome();
+}
+
+// Two-chip version: the slot's device on the ESP32-H2 bridge, from the saved configuration and the H2's report
+function renderHome() {
+  for (let i = 0; i < SLOTS; i++) {
+    const line = $("home" + i);
+    if (!line) continue;
+    if (!cfg || cfg.network !== "h2") { line.textContent = ""; continue; }
+    const saved = cfg.slots[i];
+    const active = saved.enabled && saved.mac !== "";
+    const ep = lastH2 && lastH2.bridged ? lastH2.bridged[i] : 0;
+    let text;
+    if (ep > 0) text = "Trên Nhà: thiết bị con " + saved.mac + " (endpoint " + ep + ")";
+    else if (!active) text = "Chưa có trên Nhà: gán MAC, bật slot rồi Lưu để thêm";
+    else if (!lastH2 || !lastH2.seen) text = "Chờ ESP32-H2 (chưa nhận được tín hiệu qua UART)";
+    else text = "Đang chờ ESP32-H2 thêm thiết bị con " + saved.mac + "…";
+    line.textContent = text;
+  }
+}
+
+function fmtPairing(code) {
+  return /^[0-9]{11}$/.test(code) ? code.slice(0, 4) + "-" + code.slice(4, 7) + "-" + code.slice(7) : code;
 }
 
 // ---- Actions -----------------------------------------------------------------------------------------------------
@@ -532,6 +568,12 @@ async function clearList() {
   refreshScan();
 }
 
+async function resetH2() {
+  if (!confirm("Xóa ghép Matter của ESP32-H2? H2 xóa ghép và mạng Thread, khởi động lại rồi chờ ghép mới. Nên xóa thiết bị khỏi ứng dụng Nhà trước.")) return;
+  const r = await api("POST", "/api/h2/reset", {confirm: "RESET-MATTER"});
+  banner(r.ok && r.data && r.data.ok ? "ok" : "err", (r.data && r.data.message) || ("Lỗi (HTTP " + r.status + ")"));
+}
+
 async function formatCfg() {
   if (!confirm("Xóa phân vùng cấu hình beacon (5 slot và mật khẩu Wi-Fi cấu hình)? Dữ liệu ghép Matter/" + netName() + " không bị ảnh hưởng.")) return;
   const r = await api("POST", "/api/format", {confirm: "FORMAT"});
@@ -555,6 +597,7 @@ $("btnRestart").addEventListener("click", restart);
 $("btnScan").addEventListener("click", toggleScan);
 $("btnClear").addEventListener("click", clearList);
 $("btnFormat").addEventListener("click", formatCfg);
+$("btnH2Reset").addEventListener("click", resetH2);
 $("btnExtend").addEventListener("click", () => { lastKeepalive = 0; keepalive(); });
 $("scanItvl").addEventListener("input", () => { markDirty(); validateAll(false); });
 $("scanWin").addEventListener("input", () => { markDirty(); validateAll(false); });

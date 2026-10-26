@@ -82,6 +82,8 @@ static void run_normal(esp_err_t)
     // Presence first: its queue exists before the scanner can deliver anything. The link always runs, so the
     // Matter node knows this chip is alive even with no beacon assigned.
     check(presence_manager_start(&cfg, presence_link_report), "Presence task");
+    // The devices of the ESP32-H2's bridge, only from a configuration read from flash
+    presence_link_set_slots(&cfg, config_store_status() == CONFIG_STORE_OK);
     check(presence_link_start_scanner(false, &cfg), "UART link");
     if (mask == 0) {
         ESP_LOGW(TAG, "No beacon assigned: BLE scanner not started");
@@ -173,6 +175,9 @@ static void run_config(const char *ap_password, esp_err_t nvs_err)
     check(ble_scanner_start(&scan), "BLE scanner");
 
 #if CONFIG_PRESENCE_ROLE_SCANNER
+    presence_config_t saved;
+    config_store_get(&saved);
+    presence_link_set_slots(&saved, config_store_status() == CONFIG_STORE_OK); // updated again by every save
     check(presence_link_start_scanner(true, nullptr), "UART link"); // tells the Matter node to keep its states
 #endif
     check(wifi_config_start(ap_password, on_ap_stations), "SoftAP");

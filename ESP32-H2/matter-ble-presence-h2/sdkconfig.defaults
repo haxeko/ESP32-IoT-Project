@@ -21,6 +21,13 @@ CONFIG_DEVICE_PRODUCT_ID=0x8004
 # commissioned
 CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y
 
+# Matter bridge (matter_bridge.cpp): root node, Aggregator on endpoint 1, one bridged device per presence slot
+# (5), named after the beacon's MAC by the Bridged Device Basic Information cluster
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=7
+CONFIG_SUPPORT_BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER=y
+# Device type in commissionable discovery (DNS-SD "DT"): 14 = 0x000E Aggregator
+CONFIG_DEVICE_TYPE=14
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Thread, as the ESP32-C6 version (MTD, set to Minimal End Device, mains powered); the radio serves Thread only
 CONFIG_ENABLE_WIFI_STATION=n
@@ -38,5 +45,6 @@ CONFIG_USE_MINIMAL_MDNS=n
 CONFIG_ENABLE_EXTENDED_DISCOVERY=y
 CONFIG_SUPPORT_THREAD_NETWORK_DIAGNOSTICS_CLUSTER=y
 
-# Matter console on USB-Serial-JTAG: factory reset ("matter esp factoryreset"), diagnostics, OpenThread CLI
+# Matter console on USB-Serial-JTAG, for diagnostics only (diagnostics, OpenThread CLI): nothing needs it, the pairing
+# code and the factory reset are on the scanner's configuration page
 CONFIG_ENABLE_CHIP_SHELL=y

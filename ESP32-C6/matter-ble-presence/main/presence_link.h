@@ -11,11 +11,13 @@
 //   scanner (ESP32-C3)      sends a STATE frame every second and within 100 ms of a presence change; in the CONFIG
 //                           mode it keeps sending (mode CONFIG) so the Matter node knows it is alive. After a
 //                           restart a slot is "unknown" until its beacon is heard or a whole absence timeout of
-//                           scanning has passed (plink_known_mask()).
-//   Matter node (ESP32-H2)  applies the known states of the STATE frames to the five Occupancy Sensors (only
-//                           changes, and again until Matter accepts them) and keeps the others, sends a STATUS frame
-//                           every second, and turns every sensor off when the scanner stays silent for
-//                           CONFIG_PRESENCE_LINK_TIMEOUT_SEC.
+//                           scanning has passed (plink_known_mask()). Every 5 s and after a save it sends the list
+//                           of devices of the bridge (SLOTS), and once asked, a command (three times).
+//   Matter node (ESP32-H2)  applies the known states of the STATE frames to the bridged Occupancy Sensors (only
+//                           changes, and again until Matter accepts them) and keeps the others, adds and removes the
+//                           bridged devices from the SLOTS frames, sends a STATUS frame every second and its
+//                           onboarding codes every 5 s, and when the scanner stays silent for
+//                           CONFIG_PRESENCE_LINK_TIMEOUT_SEC turns every sensor off and marks the devices unreachable.
 //
 // Pins, UART and baud rate: Kconfig "Two-chip UART link". The console of both chips must not use those pins
 // (sdkconfig.defaults of the two projects: console on USB-Serial-JTAG only).
@@ -40,19 +42,31 @@ typedef struct {
     plink_state_t peer_state; // Matter node: last STATE received
     bool have_peer_status;
     plink_status_t peer_status; // scanner: last STATUS received
-    uint32_t link_losses;       // Matter node: times the scanner was declared gone
+    bool have_pairing;
+    plink_pairing_t pairing; // scanner: onboarding codes of the Matter node
+    uint32_t link_losses;    // Matter node: times the scanner was declared gone
 } presence_link_stats_t;
 
 // Scanner side. cfg: the configuration presence_manager runs with (NORMAL mode), nullptr in CONFIG mode.
 esp_err_t presence_link_start_scanner(bool config_mode, const presence_config_t *cfg);
 // presence_report_fn_t of the scanner: records the state, the link task sends it. Never blocks, always delivered.
 bool presence_link_report(int slot, bool present);
+// Scanner, any task: the devices of the bridge are the active slots of cfg. send: cfg was read from flash or just
+// saved; a scanner with nothing saved (or unreadable storage) sends no list, so it never empties the bridge.
+void presence_link_set_slots(const presence_config_t *cfg, bool send);
+// Scanner, any task: sends a PLINK_CMD_* to the Matter node (three frames, acted on once)
+void presence_link_request_command(uint8_t command);
 
-// Matter node side: apply(slot, occupied) returns false when Matter cannot take the value yet (retried);
-// status() fills the STATUS frame (called from the link task).
-typedef bool (*presence_link_apply_fn_t)(int slot, bool occupied);
-typedef void (*presence_link_status_fn_t)(plink_status_t *status);
-esp_err_t presence_link_start_matter(presence_link_apply_fn_t apply, presence_link_status_fn_t status);
+// Matter node side, all called from the link task
+typedef struct {
+    bool (*apply)(int slot, bool occupied);                    // false: Matter cannot take it yet (retried)
+    void (*status)(plink_status_t *status);                    // fills the STATUS frame
+    bool (*sync)(const plink_slots_t *want, uint8_t *changed); // the bridged devices; false: not ready (retried)
+    void (*reachable)(bool reachable);                         // the scanner went silent or came back
+    bool (*pairing)(plink_pairing_t *out);                     // onboarding codes; false: not known yet
+    void (*command)(uint8_t command);                          // PLINK_CMD_*, once per request
+} presence_link_matter_ops_t;
+esp_err_t presence_link_start_matter(const presence_link_matter_ops_t *ops);
 
 void presence_link_get_stats(presence_link_stats_t *out);
 // One line for the diagnostics log

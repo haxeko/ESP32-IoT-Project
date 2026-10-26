@@ -314,11 +314,27 @@ static esp_err_t status_get(httpd_req_t *req)
     presence_link_stats_t link;
     presence_link_get_stats(&link);
     const long long ago = link.last_rx_ms > 0 ? (esp_timer_get_time() / 1000 - link.last_rx_ms) / 1000 : -1;
-    out.fmt(",\"h2\":{\"seen\":%s,\"ago_s\":%lld,\"commissioned\":%s,\"network_up\":%s,\"fabrics\":%u}",
+    out.fmt(",\"h2\":{\"seen\":%s,\"ago_s\":%lld,\"commissioned\":%s,\"network_up\":%s,\"fabrics\":%u",
             link.have_peer_status ? "true" : "false", ago,
             (link.peer_status.flags & PLINK_STATUS_COMMISSIONED) ? "true" : "false",
             (link.peer_status.flags & PLINK_STATUS_NETWORK_UP) ? "true" : "false",
             static_cast<unsigned>(link.peer_status.fabrics));
+    // Endpoint of each slot's bridged device, 0: none
+    out.raw(",\"bridged\":[");
+    for (int i = 0; i < PLINK_SLOT_COUNT; i++) {
+        out.fmt("%s%u", i ? "," : "", static_cast<unsigned>(link.have_peer_status ? link.peer_status.endpoint[i] : 0));
+    }
+    out.raw("],\"pairing\":");
+    if (link.have_pairing) {
+        out.raw("{\"manual\":");
+        out.str(link.pairing.manual_code);
+        out.raw(",\"qr\":");
+        out.str(link.pairing.qr_code);
+        out.raw("}");
+    } else {
+        out.raw("null");
+    }
+    out.raw("}");
 #endif
     out.raw("}");
     return out.finish();
@@ -663,8 +679,16 @@ static esp_err_t config_post(httpd_req_t *req)
                  esp_err_to_name(err));
         return send_message(req, "500 Internal Server Error", false, message);
     }
+#if CONFIG_PRESENCE_ROLE_SCANNER
+    // The bridge of the ESP32-H2 adds and removes its devices now; the presence states follow after the restart
+    presence_link_set_slots(&cfg, true);
+    return send_message(req, "200 OK", true,
+                        "Đã lưu và đọc lại kiểm tra thành công. Thiết bị con trên Matter bridge (ESP32-H2) được cập "
+                        "nhật ngay. Bấm \"Khởi động lại về chế độ Matter\" để bắt đầu quét với cấu hình mới.");
+#else
     return send_message(req, "200 OK", true,
                         "Đã lưu và đọc lại kiểm tra thành công. Bấm \"Khởi động lại về chế độ Matter\" để áp dụng.");
+#endif
 }
 
 static esp_err_t restart_post(httpd_req_t *req)
@@ -728,6 +752,41 @@ static esp_err_t format_post(httpd_req_t *req)
     return send_message(req, "200 OK", true, "Đã định dạng phân vùng cấu hình beacon. Hãy cấu hình lại và lưu.");
 }
 
+#if CONFIG_PRESENCE_ROLE_SCANNER
+// Two-chip version: removes the Matter pairing of the ESP32-H2 (fabrics, Thread network, bridged devices), so it
+// can be commissioned again, without any console command. Explicit confirmation in the body, as /api/format.
+static esp_err_t h2_reset_post(httpd_req_t *req)
+{
+    if (!request_allowed(req)) {
+        return ESP_FAIL;
+    }
+    app_mode_note_activity();
+    size_t len = 0;
+    if (read_body(req, s_body, kMaxSmallBody, &len) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    cJSON *root = cJSON_ParseWithLength(s_body, len);
+    const char *confirm = json_string(root, "confirm");
+    const bool confirmed = confirm != nullptr && strcmp(confirm, "RESET-MATTER") == 0;
+    cJSON_Delete(root);
+    if (!confirmed) {
+        return send_message(req, "400 Bad Request", false, "Thiếu xác nhận");
+    }
+    presence_link_stats_t link;
+    presence_link_get_stats(&link);
+    const int64_t ago_ms = esp_timer_get_time() / 1000 - link.last_rx_ms;
+    if (!link.have_peer_status || ago_ms > 10000) {
+        return send_message(req, "409 Conflict", false,
+                            "Không có tín hiệu từ ESP32-H2 qua UART: lệnh không được gửi. Kiểm tra dây nối và nguồn.");
+    }
+    presence_link_request_command(PLINK_CMD_FACTORY_RESET);
+    ESP_LOGW(TAG, "Matter factory reset of the ESP32-H2 asked on the page");
+    return send_message(req, "200 OK", true,
+                        "Đã gửi lệnh tới ESP32-H2: H2 xóa ghép Matter và mạng Thread rồi khởi động lại, chờ ghép mới "
+                        "(mã ghép không đổi). Thiết bị con được tạo lại theo cấu hình đã lưu.");
+}
+#endif
+
 // ---------------------------------------------------------------------------------------------------------------------
 
 esp_err_t web_server_start(const web_server_info_t *info)
@@ -769,6 +828,9 @@ esp_err_t web_server_start(const web_server_info_t *info)
         { .uri = "/api/restart", .method = HTTP_POST, .handler = restart_post, .user_ctx = nullptr },
         { .uri = "/api/keepalive", .method = HTTP_POST, .handler = keepalive_post, .user_ctx = nullptr },
         { .uri = "/api/format", .method = HTTP_POST, .handler = format_post, .user_ctx = nullptr },
+#if CONFIG_PRESENCE_ROLE_SCANNER
+        { .uri = "/api/h2/reset", .method = HTTP_POST, .handler = h2_reset_post, .user_ctx = nullptr },
+#endif
     };
     for (const httpd_uri_t &uri : uris) {
         err = httpd_register_uri_handler(server, &uri);

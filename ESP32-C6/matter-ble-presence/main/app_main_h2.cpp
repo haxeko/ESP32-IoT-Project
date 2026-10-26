@@ -6,10 +6,12 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-// Two-chip version, Matter node (CONFIG_PRESENCE_ROLE_MATTER_UART, ESP32-H2): Matter over Thread with the five
-// Occupancy Sensor endpoints ("Presence 1".."Presence 5"), whose states come from the ESP32-C3 scanner over the UART
-// link (presence_link.h). The H2 radio serves Thread only (BLE just for commissioning): no BLE scanning, no web page
-// and no CONFIG mode here; the beacons are assigned on the scanner's page.
+// Two-chip version, Matter node (CONFIG_PRESENCE_ROLE_MATTER_UART, ESP32-H2): a Matter over Thread bridge whose
+// devices are the active slots of the ESP32-C3 scanner, one Occupancy Sensor each, named after the beacon's MAC
+// (matter_bridge.h). States, the device list and the commands of the configuration page come over the UART link
+// (presence_link.h). The H2 radio serves Thread only (BLE just for commissioning): no BLE scanning, no web page and
+// no CONFIG mode here; the beacons are assigned on the scanner's page, which also shows the pairing code. No
+// console command is needed for anything.
 
 #include <esp_app_desc.h>
 #include <esp_heap_caps.h>
@@ -46,6 +48,17 @@ static void link_status(plink_status_t *st)
     st->flags = (started ? PLINK_STATUS_MATTER_STARTED : 0) | (commissioned ? PLINK_STATUS_COMMISSIONED : 0) |
                 (network_up ? PLINK_STATUS_NETWORK_UP : 0);
     st->fabrics = fabrics;
+    matter_device_get_bridge(&st->bridged_mask, st->endpoint);
+}
+
+// Link task: a command from the scanner's configuration page
+static void link_command(uint8_t command)
+{
+    if (command == PLINK_CMD_FACTORY_RESET) {
+        matter_device_factory_reset();
+    } else {
+        ESP_LOGW(TAG, "Unknown command %u from the scanner", command);
+    }
 }
 
 static void diag_task(void *)
@@ -70,7 +83,15 @@ extern "C" void app_main(void)
     const esp_err_t nvs_err = nvs_flash_init();
 
     // The link first: states received before Matter is up are applied as soon as it is (retried every 100 ms)
-    check(presence_link_start_matter(matter_device_set_occupancy, link_status), "UART link");
+    static const presence_link_matter_ops_t ops = {
+        .apply = matter_device_set_occupancy,
+        .status = link_status,
+        .sync = matter_device_sync_bridge,
+        .reachable = matter_device_set_reachable,
+        .pairing = matter_device_get_pairing,
+        .command = link_command,
+    };
+    check(presence_link_start_matter(&ops), "UART link");
     if (nvs_err != ESP_OK) {
         ESP_LOGE(TAG, "Matter NOT started: partition 'nvs' (fabrics, Thread) cannot be opened (%s). It is not erased "
                       "automatically.",

@@ -143,6 +143,7 @@ lạ khi mở cổng, hãy tắt điều khiển DTR/RTS hoặc xem log qua cổ
 | `presence_config.*`, `config_store.*`, `crc32.*` | Cấu hình 5 slot: mặc định, kiểm tra, blob có version + CRC, NVS phân vùng riêng |
 | `wifi_config.*`, `web_server.*`, `http_guard.*`, `web/index.html` | SoftAP WPA2 kênh 20 MHz (giới hạn công suất phát trên ESP32-C3), HTTP server + API JSON (chỉ nhận `Host` đúng và POST JSON), trang tiếng Việt nhúng |
 | `matter_device.*` | Node Matter, 5 endpoint, Thread MED (bản C6) hoặc Wi-Fi station (bản C3), cổng chặn scanner theo sự kiện Matter/mạng, cập nhật Occupancy |
+| `matter_bridge.*`, `presence_link*`, `app_main_h2.cpp` | Chỉ bản hai chip: Matter bridge trên ESP32-H2 (thiết bị con tên MAC), giao thức UART giữa C3 và H2 |
 | `diag.*` | Log chẩn đoán định kỳ (heap, scanner, từng slot, bộ đếm Thread) |
 
 Các module thuần logic (`click_detector`, `presence_logic`, `ibeacon_parser`, `ble_addr`, `presence_config`,
@@ -475,14 +476,15 @@ node ui_test.js                 # tùy chọn: node ui_test.js ../../main/web/in
 ```
 
 `ui_test.js` mở đúng file `main/web/index.html` được nhúng vào firmware trong Chromium (khung 390×844, cảm ứng),
-trả lời các API `/api/*` bằng dữ liệu giả và kiểm tra 46 điểm: tên beacon chứa `<img onerror=…>` chỉ hiện dạng chữ
+trả lời các API `/api/*` bằng dữ liệu giả và kiểm tra 53 điểm: tên beacon chứa `<img onerror=…>` chỉ hiện dạng chữ
 (không chèn phần tử, không chạy script), cảnh báo RPA, nạp cấu hình đã lưu, gán beacon từ danh sách (điền MAC + loại
 địa chỉ, bật slot), **từ chối gán một beacon cho hai slot** kèm tên slot đang dùng, MAC nhập tay sai/trùng bị chặn và
 không gửi gì lên thiết bị, timeout ngoài khoảng, cảnh báo chu kỳ quét > 50%, nội dung lệnh lưu (MAC chuẩn hóa
 `AA:BB:CC:DD:EE:FF`, số nguyên, đủ 5 slot), keepalive khi có thao tác, **mọi POST gửi `application/json`**,
 **danh sách beacon không bị dựng lại khi đang mở ô "Gán vào…"** (trên điện thoại việc dựng lại sẽ đóng ô chọn), nút
 khởi động lại, chữ hiển thị theo mạng của thiết bị (`"network"` trong API: "Thread" + mức coexistence C1 cho bản
-C6, "Wi-Fi" + mức Y cho bản C3, dòng tình trạng ESP32-H2 cho bản hai chip), trạng thái quét "Sắp quét", và **Wi-Fi
+C6, "Wi-Fi" + mức Y cho bản C3, dòng tình trạng ESP32-H2, mã ghép Matter, thiết bị con của bridge theo từng slot và
+nút xóa ghép H2 cho bản hai chip), trạng thái quét "Sắp quét", và **Wi-Fi
 chậm** (thiết bị trả lời danh sách beacon sau 3 s, lâu hơn chu kỳ hỏi 2 s: không bao giờ có hai request cùng loại
 đang chờ). Kết quả trong phiên này:
 `UI checks passed` (Playwright 1.63.0, Node 22). Test này không thay cho thử trên điện thoại thật nối vào SoftAP.
@@ -522,7 +524,7 @@ http_guard           26 checks, 0 failed
 ibeacon_parser     202007 checks, 0 failed
 json_util            22 checks, 0 failed
 presence_config     398 checks, 0 failed
-presence_link       322 checks, 0 failed
+presence_link       404 checks, 0 failed
 presence_logic     4248 checks, 0 failed
 All host tests passed
 ```
@@ -583,7 +585,7 @@ liệu của bước 10 và xem [khuyến nghị](#khuyến-nghị-phương-án-
   `RTC_NOINIT_ATTR` trên C6, DAC thử nghiệm cho PID 0x8002, sơ đồ nút BOOT của DevKitC-1 v1.4.
 * `idf.py set-target esp32c6` + `idf.py build` thành công (số liệu ở mục kết quả build).
 * Host test: 10 bộ, đạt (ASan/UBSan).
-* Trang web cấu hình chạy trong Chromium headless với API giả lập: 46 kiểm tra đạt (escape tên, gán/trùng beacon,
+* Trang web cấu hình chạy trong Chromium headless với API giả lập: 53 kiểm tra đạt (escape tên, gán/trùng beacon,
   kiểm tra dữ liệu, nội dung lệnh lưu, kiểu nội dung POST, ô chọn không bị đóng, khởi động lại, chữ theo mạng
   Thread/Wi-Fi/hai chip, trạng thái "Sắp quét", Wi-Fi chậm: không request chồng nhau).
 * Rà soát mã độc lập (đối chiếu mã nguồn SDK): các lỗi tìm được đã sửa, xem [mục dưới](#rà-soát-mã-độc-lập).
