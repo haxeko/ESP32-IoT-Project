@@ -1,24 +1,33 @@
-# Bản hai chip: ESP32-C3 quét BLE + ESP32-H2 Matter bridge over Thread
+# Bản hai chip: ESP32-C3 quét BLE + ESP32-H2 "iBeacon Bridge" (Matter bridge over Thread)
 
-Cùng thiết bị như [`ESP32-C6/matter-ble-presence`](../../ESP32-C6/matter-ble-presence) (tối đa 5 cảm biến hiện diện từ
-5 iBeacon, cấu hình bằng trang web), nhưng chia việc cho **hai chip, mỗi chip một radio**, và ESP32-H2 là một
-**Matter bridge**: mỗi beacon thêm trên trang của C3 hiện thành **một thiết bị riêng trong ứng dụng Nhà, tên là địa chỉ
-MAC của beacon**.
+Cùng kiểu thiết bị như [`ESP32-C6/matter-ble-presence`](../../ESP32-C6/matter-ble-presence) (cảm biến hiện diện từ
+iBeacon, cấu hình bằng trang web), nhưng chia việc cho **hai chip, mỗi chip một radio**, và ESP32-H2 là một **Matter
+bridge tên "iBeacon Bridge"**: mỗi beacon thêm trên trang của C3 (tối đa **20**) hiện thành **một cảm biến hiện diện
+riêng trong ứng dụng Nhà**, kèm thông tin phụ kiện và **dung lượng pin** của beacon:
+
+| Trong ứng dụng Nhà | Lấy từ |
+|---|---|
+| Tên phụ kiện, **Số sê-ri** | địa chỉ MAC của beacon (`C0:11:22:33:44:01`) |
+| **Nhà sản xuất** | `Haxeko` |
+| **Kiểu máy (Model)** | tên thiết bị trong gói tin của beacon (ví dụ `CP101`): tự điền khi gán từ danh sách quét, sửa được; để trống thì H2 dùng tên beacon quảng bá khi C3 nghe thấy |
+| **Pin** | điện áp trong gói **Eddystone-TLM** của beacon → % (cảnh báo pin yếu ≤ 20 %, cần thay ≤ 10 %), xem [Pin của beacon](#pin-của-beacon-eddystone-tlm) |
 
 | Chip | Thư mục | Việc |
 |---|---|---|
-| **ESP32-C3** (scanner) | `ESP32-C3/ble-presence-scanner` (thư mục này) | Quét BLE thụ động, tính hiện diện 5 slot, trang web cấu hình (bấm BOOT của C3 3 lần): thêm/gỡ thiết bị con, mã ghép Matter, xóa ghép H2. Gửi trạng thái và danh sách thiết bị sang H2 qua UART. **Không chạy Matter**, Wi-Fi tắt ngoài chế độ cấu hình |
-| **ESP32-H2** (Matter bridge) | [`ESP32-H2/matter-ble-presence-h2`](../../ESP32-H2/matter-ble-presence-h2) | Matter over Thread: endpoint 1 là Aggregator, mỗi Presence đã bật và có MAC là một thiết bị con (Bridged Node + Occupancy Sensor, tên = MAC). BLE chỉ dùng lúc ghép rồi giải phóng |
+| **ESP32-C3** (scanner) | `ESP32-C3/ble-presence-scanner` (thư mục này) | Quét BLE thụ động, tính hiện diện 20 slot, đọc pin từ gói TLM, trang web cấu hình (bấm BOOT của C3 3 lần): thêm/gỡ thiết bị con, model, mã ghép Matter, mở chế độ ghép / xóa ghép H2. Gửi trạng thái và thiết bị của từng slot sang H2 qua UART. **Không chạy Matter**, Wi-Fi tắt ngoài chế độ cấu hình |
+| **ESP32-H2** (iBeacon Bridge) | [`ESP32-H2/matter-ble-presence-h2`](../../ESP32-H2/matter-ble-presence-h2) | Matter over Thread: endpoint 1 là Aggregator, mỗi Presence đã bật và có MAC là một thiết bị con (Bridged Node + Occupancy Sensor + Power Source). Nút BOOT: **bấm 2 lần** = chế độ ghép (đèn nháy xanh dương), **giữ 5 s** = xóa ghép (đèn nháy đỏ 3 lần khi xong). BLE chỉ dùng lúc ghép rồi giải phóng |
 
-**Không cần gõ lệnh console ở chip nào:** mã ghép Matter hiện trên trang của C3, thêm/gỡ thiết bị con bằng nút Lưu, xóa
-ghép H2 bằng một nút trên trang (hoặc xóa thiết bị trong ứng dụng Nhà).
+**Không cần gõ lệnh console ở chip nào:** mã ghép Matter hiện trên trang của C3, thêm/gỡ thiết bị con bằng nút Lưu,
+chế độ ghép và xóa ghép H2 bằng nút BOOT của H2 hoặc nút trên trang (hoặc xóa thiết bị trong ứng dụng Nhà).
 
 Hai thư mục chỉ có `CMakeLists.txt`, `sdkconfig.defaults` và README; mã nguồn, trang web, bảng phân vùng dùng chung
 với bản C6 (chọn vai trò bằng Kconfig `PRESENCE_ROLE`). Lý do chọn: BLE scan và Thread không còn tranh nhau một radio
 (trên ESP32-C6 cặp này chỉ đạt mức "C1" trong bảng coexistence của Espressif), và C3 được dùng radio cho BLE gần như
 toàn thời gian (mặc định quét 120 ms mỗi 160 ms = 75%).
 
-> **Trạng thái:** build thành công cả hai firmware, host test và test trang web đạt. **Chưa chạy trên phần cứng.**
+> **Trạng thái:** build thành công cả hai firmware, host test và test trang web đạt. **Chưa chạy trên phần cứng, chưa
+> ghép Matter/Thread thật:** môi trường làm việc này không có board ESP32-H2, Thread Border Router hay điện thoại, nên
+> không thể chạy thử ghép nối. Cách thử trên phần cứng và những log cần gửi lại: [Thử ghép trên H2](#thử-ghép-matterthread-trên-h2).
 
 ---
 
@@ -59,38 +68,133 @@ Theo cách bạn đã nối:
 
 * **C3, chế độ thường:** quét thụ động (Wi-Fi tắt), tính hiện diện như bản một chip (thời gian vắng mặt trên "đồng hồ
   quét", không ghi gì xuống flash), gửi khung **STATE** mỗi giây và ngay khi có thay đổi (≤ 100 ms).
-* **C3, chế độ cấu hình** (bấm BOOT **của C3** 3 lần, xem [Nút BOOT](#nút-boot)): SoftAP **`VN-Presence-XXXX`**,
+* **C3, chế độ cấu hình** (bấm BOOT **của C3** 3 lần, xem [Nút BOOT của C3](#nút-boot-của-c3)): SoftAP **`VN-Presence-XXXX`**,
   **mật khẩu cố định `69696969`**, trang `http://192.168.4.1` như bản một chip (có thêm dòng tình trạng của ESP32-H2: đã
   ghép chưa, Thread lên chưa). Quét BLE chỉ chạy khi có điện thoại nối SoftAP, bắt đầu 5 s sau khi điện thoại vào (xem
   [Wi-Fi cấu hình chập chờn](#wi-fi-cấu-hình-chập-chờn)). C3 vẫn gửi khung STATE với cờ CONFIG: **H2 giữ nguyên trạng
   thái** các cảm biến trong lúc cấu hình. "Khởi động lại về chế độ Matter" đưa C3 về chế độ thường (H2 không khởi động
   lại).
-* **Thiết bị con của bridge:** C3 gửi danh sách (khung **SLOTS**: slot nào đã bật và có MAC, MAC nào) mỗi 5 s và ngay
-  khi bấm **Lưu** trên trang (cả lúc đang ở chế độ cấu hình). H2 so với danh sách đang có:
+* **Thiết bị con của bridge:** C3 gửi thiết bị của từng slot (khung **SLOT**: đã bật và có MAC chưa, MAC, model, pin),
+  mỗi slot 5 s một lần (một khung mỗi 250 ms), và cả 20 slot trong khoảng 2 s ngay khi bấm **Lưu** trên trang (cả lúc
+  đang ở chế độ cấu hình). H2 so với thiết bị đang có, mỗi lượt 100 ms một slot:
   * slot mới bật/có MAC → **thêm** thiết bị con (endpoint mới, tên = MAC, ví dụ `C0:11:22:33:44:01`); ứng dụng Nhà hiện
     thêm một cảm biến hiện diện;
   * slot tắt hoặc xóa MAC → **gỡ** thiết bị con khỏi Nhà;
-  * gán beacon khác vào slot → gỡ thiết bị cũ, thêm thiết bị mới (tên mới). Đổi nhãn, thời gian vắng mặt, lọc RSSI
-    không đổi gì trên Nhà.
-  C3 chỉ gửi danh sách khi cấu hình **đọc được từ flash** (hoặc vừa lưu): C3 mới nạp chưa có cấu hình, hay phân vùng
-  cấu hình lỗi, không bao giờ làm bridge mất thiết bị. H2 lưu bảng slot → endpoint trong NVS (`pbridge`), nên sau khi
-  khởi động lại các thiết bị con trở lại đúng endpoint cũ trước cả khi C3 gửi gì. Trang của C3 hiện từng slot "Trên Nhà:
-  thiết bị con … (endpoint N)".
+  * gán beacon khác vào slot → gỡ thiết bị cũ, thêm thiết bị mới (tên mới);
+  * đổi model, pin thay đổi → cập nhật ngay trên thiết bị đang có (không tạo lại). Đổi nhãn, thời gian vắng mặt, lọc
+    RSSI không đổi gì trên Nhà.
+  C3 chỉ gửi khi cấu hình **đọc được từ flash** (hoặc vừa lưu): C3 mới nạp chưa có cấu hình, hay phân vùng cấu hình lỗi,
+  không bao giờ làm bridge mất thiết bị. H2 lưu bảng slot → (endpoint, MAC, model, pin) trong NVS (`pbridge`), nên sau
+  khi khởi động lại các thiết bị con trở lại đúng endpoint cũ (với model và pin đã biết) trước cả khi C3 gửi gì. Trang
+  của C3 hiện từng slot "Trên Nhà: thiết bị con … (endpoint N)", hoặc vì sao thiết bị còn chờ (xem
+  [20 thiết bị và bộ nhớ của H2](#20-thiết-bị-và-bộ-nhớ-của-h2)).
 * **H2:** áp trạng thái nhận được vào thiết bị con của từng slot (chỉ khi đổi; Matter chưa sẵn sàng thì thử lại mỗi
-  100 ms), gửi khung **STATUS** (Matter đã chạy, đã ghép, Thread lên, số fabric, endpoint của từng thiết bị con) về C3
-  mỗi giây và **mã ghép** mỗi 5 s. **Không nhận được khung nào từ C3 trong 120 s** (`PRESENCE_LINK_TIMEOUT_SEC`) → mọi
+  100 ms), gửi khung **STATUS** (Matter đã chạy, đã ghép, Thread lên, đang ở chế độ ghép, số fabric, endpoint của từng
+  thiết bị con, thiết bị đang chờ và lý do, heap trống) về C3 mỗi giây và **mã ghép** mỗi 5 s. **Không nhận được khung nào từ C3 trong 120 s** (`PRESENCE_LINK_TIMEOUT_SEC`) → mọi
   cảm biến về "không hiện diện" và thiết bị con chuyển **không truy cập được** (Reachable = false, Nhà báo "Không phản
   hồi"); C3 nối lại thì trở lại bình thường.
 * **C3 khởi động lại** (thoát chế độ cấu hình, reset): mỗi slot là **"chưa biết"** cho tới khi C3 nghe thấy beacon của
   slot đó hoặc đã quét đủ thời gian vắng mặt của slot (ví dụ 45 s) mà không nghe thấy. Trong lúc đó **H2 giữ nguyên
   trạng thái** cảm biến: không còn cảnh cảm biến tắt rồi bật lại mỗi lần C3 khởi động lại. (Trước bản này, khung đầu
   tiên sau khi C3 khởi động báo "không ai" và H2 tắt ngay mọi cảm biến.)
-* **Hai chip phải cùng phiên bản giao thức UART** (bản này: 3, bridge): khi cập nhật, **nạp lại cả C3 và H2**. Lệch
-  phiên bản thì khung của chip kia bị loại (log `bad frames` tăng), và sau 120 s H2 tắt mọi cảm biến.
+* **Hai chip phải cùng phiên bản giao thức UART** (bản này: **4**, 20 slot, model, pin): khi cập nhật, **nạp lại cả C3
+  và H2**. Lệch phiên bản thì khung của chip kia bị loại (log `bad frames` tăng), và sau 120 s H2 tắt mọi cảm biến.
 * Mật khẩu cố định giống nhau trên mọi thiết bị: ai biết mật khẩu và ở gần đều vào được SoftAP **trong lúc thiết bị ở
   chế độ cấu hình** (tối đa 10 phút không thao tác). Trang vẫn chỉ nhận request đúng địa chỉ 192.168.4.1 và POST JSON.
 
-## Nút BOOT
+## Pin của beacon (Eddystone-TLM)
+
+Beacon như CP101 phát xen giữa các gói iBeacon một gói **Eddystone-TLM** (telemetry) có **điện áp pin** (mV). C3 đọc gói
+này **khi nó đến từ đúng địa chỉ MAC của beacon** (gói TLM không chứa mã nhận diện nào khác) và gửi % pin sang H2:
+
+* % pin tuyến tính từ **2200 mV = 0 %** đến **3000 mV = 100 %** (`PRESENCE_BATTERY_EMPTY_MV`, `PRESENCE_BATTERY_FULL_MV`;
+  pin cúc áo CR2032/CR2477 và 2 pin AA/AAA mới đều khoảng 3 V và giữ gần 3 V gần hết đời rồi tụt nhanh, nên % đọc cao
+  trong nhiều tháng rồi giảm). **≤ 20 %**: BatChargeLevel = Warning (ứng dụng báo pin yếu); **≤ 10 %**: Critical và
+  BatReplacementNeeded (cần thay pin) (`PRESENCE_BATTERY_WARNING_PCT`, `PRESENCE_BATTERY_CRITICAL_PCT`).
+* Điện áp trong gói dao động vài chục mV (lúc phát, nhiệt độ): C3 lấy **trung vị 5 lần đọc gần nhất**, % chỉ **giảm** khi
+  giảm từ 2 % trở lên và chỉ **tăng** khi tăng từ 15 % trở lên (thay pin mới), nên không nhảy qua lại. Đọc tối đa một gói
+  TLM mỗi giây mỗi beacon. Gói TLM **không** làm slot hiện diện: chỉ gói iBeacon mới tính.
+* Trên ứng dụng Nhà pin là thuộc tính BatPercentRemaining của cụm Power Source trên chính thiết bị con, **trống (null)
+  cho tới gói TLM đầu tiên**. C3 ở chế độ cấu hình hay vừa khởi động chưa có số đo: H2 **giữ % đã biết** (lưu cả trong
+  NVS), không về "chưa biết".
+* **Kiểm tra trên trang của C3:** danh sách beacon xung quanh có dòng **"Pin: 94% · 2950 mV"** cho beacon gửi TLM cùng
+  MAC (số đo một gói, chưa lọc). Dòng "chưa thấy gói Eddystone-TLM" nghĩa là beacon không bật khung TLM, hoặc gửi TLM
+  bằng **địa chỉ khác** với iBeacon: bật khung TLM trong ứng dụng cấu hình của beacon và cho mọi khung dùng chung một MAC.
+* Log C3 khi % đổi: `presence: Presence N "...": battery 94% (2950 mV)`; mỗi phút `diag: Presence N: ..., battery 94%
+  (2950 mV, 3 s ago, 120 TLM)`. Log H2: `bridge: Presence N: battery 94%`.
+
+## Nút BOOT và đèn của ESP32-H2
+
+ESP32-H2 SuperMini: nút **BOOT = GPIO9**, đèn **RGB WS2812 = GPIO8** (Kconfig "Matter node button and LED"; đèn một màu
+trên chân khác cũng chọn được).
+
+| Thao tác trên BOOT **của H2** | Kết quả | Đèn |
+|---|---|---|
+| **Bấm 2 lần** (lần sau trong vòng 2 s, mỗi lần giữ < 1,5 s) | **chế độ ghép**: mở cửa sổ ghép **10 phút** (`PRESENCE_PAIRING_WINDOW_SEC`). Chưa ghép: qua BLE, như lúc mới nạp. Đã ghép: qua mạng Thread, để thêm bridge vào một ứng dụng nữa (Home Assistant, Google…). Mã ghép hiện lại trên trang của C3 | **nháy xanh dương** chừng nào cửa sổ còn mở, tắt khi ghép xong hoặc hết giờ |
+| **Giữ 5 giây** (`PRESENCE_FACTORY_RESET_HOLD_SEC`) | tới 5 s đèn **đỏ**: **thả nút** là xóa ghép Matter, mạng Thread và bảng thiết bị con rồi khởi động lại. Cấu hình beacon nằm trên C3 nên giữ nguyên; thiết bị con được tạo lại theo cấu hình đó | đỏ lúc giữ quá 5 s; khởi động xong và kiểm tra **không còn fabric nào** thì **nháy đỏ 3 lần** (reset thành công), rồi nháy xanh dương (chờ ghép mới) |
+
+* Reset chạy **lúc thả nút**, không chạy ngay khi đủ 5 s: GPIO9 là chân strapping, chip khởi động lại trong lúc nút còn
+  giữ sẽ vào chế độ nạp firmware thay vì chạy.
+* Giữ lâu hơn 1,5 s mà chưa tới 5 s: không làm gì. Lần bấm trước khi giữ không cộng với lần giữ.
+* Trang của C3 có hai nút làm đúng hai việc này: **"Mở chế độ ghép trên ESP32-H2"** và **"Xóa ghép Matter của
+  ESP32-H2"** (cũng nháy đỏ 3 lần sau khi H2 khởi động lại).
+* Log H2: `ui: BOOT double click: pairing mode`, `matter: Pairing mode: commissioning window open for 600 s over ...`,
+  `ui: BOOT held 5 s: release it ...`, sau khởi động lại `ui: Factory reset done: the Matter pairing is removed`.
+
+## 20 thiết bị và bộ nhớ của H2
+
+**C3:** 20 slot không đáng kể: cấu hình 20 slot là 1,9 KB trong flash (định dạng 2, cấu hình 5 slot cũ được đọc và
+chuyển tự động), trạng thái mỗi slot vài chục byte, mỗi slot một so sánh MAC cho mỗi gói quảng bá. Khung UART: STATE
+27 byte/giây, STATUS 68 byte/giây, SLOT ≤ 54 byte mỗi 250 ms: khoảng 0,4 KB/s trên 11,5 KB/s của 115200 baud.
+
+**H2:** giới hạn thật là **heap**. ESP32-H2 có 320 KB SRAM; firmware dùng tĩnh khoảng 170 KB (`idf.py size`, DIRAM), còn lại là heap, BLE
+chiếm thêm khoảng 34 KB cho tới khi ghép xong (tài liệu esp-matter, ví dụ light trên ESP32-H2: 44 KB trống lúc khởi động,
+78 KB sau khi ghép). Mỗi thiết bị con (endpoint, Descriptor, Bridged Device Basic Information với 4 chuỗi, Identify,
+Occupancy Sensing, Power Source) tốn ước tính **2,5–4 KB heap**: 20 thiết bị ≈ 50–80 KB. Vì vậy:
+
+* **Console Matter tắt** trên H2 (thêm ~10 KB heap theo tài liệu esp-matter cho ESP32-H2), số endpoint động = 22 (root +
+  Aggregator + 20), số loại thiết bị mỗi endpoint = 4: không cấp RAM tĩnh thừa.
+* H2 **chỉ tạo một thiết bị con khi heap còn đủ**: trên **44 KB** + 4 KB lúc **chưa ghép** (BLE đang chạy, việc ghép cần bộ
+  nhớ cho chứng chỉ và phiên bảo mật; 44 KB là heap lúc khởi động của ví dụ esp-matter trên ESP32-H2, ví dụ đó ghép được),
+  trên **20 KB** + 4 KB khi **đã ghép** (`PRESENCE_BRIDGE_*_RESERVE_KB`). Thiết bị chưa tạo được thì **chờ** và được tạo
+  ngay khi đủ: trước khi ghép chỉ một phần (ước tính 6–8) thiết bị có mặt, **phần còn lại được thêm ngay sau khi ghép xong**
+  (ứng dụng Nhà hiện thêm phụ kiện mới ngay sau đó). Ước tính sau khi ghép: 20 thiết bị vẫn còn trống 20–40 KB.
+* Trang của C3 hiện **"Thiết bị con trên bridge: 12/20 · 8 đang chờ · bộ nhớ H2 trống 46 KB (thấp nhất 41 KB)"** và ở
+  từng slot đang chờ lý do: chờ ghép xong, H2 không đủ bộ nhớ, hoặc lỗi tạo thiết bị (thử lại sau 30 s).
+* Log H2 ghi heap thật mỗi thiết bị tốn: `bridge: Presence N: device ... added on endpoint E (B bytes of heap, F left)`
+  và mỗi phút `bridge: Bridge: 20 device(s), 0 waiting ...; heap of the last device B bytes, largest M`. **Gửi lại các dòng
+  này sau khi thử:** ước tính trên chưa đo được trên board thật.
+* Thread và Matter: 20 cảm biến đổi trạng thái thưa (vài lần mỗi giờ), pin đổi vài tuần một lần: lưu lượng báo cáo
+  nhỏ. Lúc ghép, controller đọc toàn bộ cấu trúc (khoảng 20 × 50 thuộc tính), chia nhiều gói trên Thread: lâu hơn bridge
+  5 thiết bị vài giây.
+
+## Thử ghép Matter/Thread trên H2
+
+Phiên làm việc này **không chạy được ghép thật** (không có board, Border Router, điện thoại). Trình tự thử và những gì
+cần nhìn:
+
+1. Nạp cả hai chip (lệnh ở [Build và nạp](#build-và-nạp)). H2 mới: `erase-flash` + file gộp, hoặc giữ BOOT 5 s sau khi
+   nạp 3 file. Mở log H2 (`screen /dev/cu.usbmodem2101 115200` khi chỉ cắm H2):
+   `app_main: Haxeko iBeacon Bridge (two-chip version, Matter node), firmware 1.0.N`,
+   `bridge: Matter bridge "iBeacon Bridge": Aggregator on endpoint 1, up to 20 bridged devices`,
+   `matter: Not commissioned: commissioning window open (BLE)`, đèn H2 **nháy xanh dương**.
+2. C3 ở chế độ thường đã có cấu hình: log H2 có `link: Scanner seen (mode NORMAL, ...)` và các dòng
+   `bridge: Presence N: device C0:...:01 "CP101" added on endpoint 2 (... bytes of heap, ... left)`; thiết bị vượt mức
+   bộ nhớ ghi `device waits (memory kept for commissioning, added once commissioned ...)`.
+3. Trang của C3 (bấm BOOT của C3 3 lần): dòng "Mã ghép Matter" (ví dụ `3497-011-2332`), "đang ở chế độ ghép".
+4. Ứng dụng Nhà → Thêm phụ kiện → Thêm mã thủ công (hoặc quét QR từ log). Cần Thread Border Router (HomePod mini/Apple
+   TV 4K). Trong lúc ghép, log H2: `Commissioning session started`, `Commissioning complete`, `BLE released after
+   commissioning`, `Thread up (child)`; đèn tắt khi ghép xong.
+5. Sau khi ghép: các thiết bị đang chờ được thêm trong vài giây (log `added on endpoint`), ứng dụng Nhà hiện "iBeacon
+   Bridge" và các cảm biến hiện diện. Mở chi tiết một cảm biến: **Nhà sản xuất Haxeko, Kiểu máy = tên beacon, Số sê-ri =
+   MAC, Pin %** (pin hiện sau gói TLM đầu tiên: C3 ở chế độ thường).
+6. Thử: beacon ra xa / tắt beacon → sau thời gian vắng mặt cảm biến về "không phát hiện"; bấm BOOT H2 2 lần → đèn nháy
+   xanh, thêm bridge vào ứng dụng thứ hai bằng mã ghép trên trang C3; giữ BOOT 5 s → đỏ, thả → khởi động lại, nháy đỏ 3
+   lần, nháy xanh; thêm/gỡ beacon trên trang C3 (Lưu) → phụ kiện xuất hiện/biến mất trên Nhà.
+7. Gửi lại log H2 (từ lúc khởi động tới sau khi ghép, và vài dòng `diag:` / `bridge:` mỗi phút), log C3 lúc ở chế độ
+   thường, và ảnh chụp chi tiết một phụ kiện trên Nhà.
+
+## Nút BOOT của C3
 
 Bấm-nhả BOOT **của C3** 3 lần khi firmware đang chạy, **thong thả cũng được**: lần bấm sau chỉ cần bắt đầu trong vòng
 **2 s** kể từ lần nhả trước (`PRESENCE_BOOT_CLICK_GAP_MS`, tối đa 5 s), mỗi lần bấm giữ tối đa **1,5 s**
@@ -168,31 +272,43 @@ Nạp mới hoàn toàn (xóa sạch, dùng file gộp; **xóa cả ghép Matter
 
 Không nạp file gộp lên chip đang dùng mà không xóa: file gộp ghi đè cả vùng `nvs` (0x10000–0x1FFFF), mất ghép Matter.
 
-**Lên bản bridge từ bản cũ (5 cảm biến cố định):** cấu trúc thiết bị Matter đổi (endpoint 1 thành Aggregator), nên:
-1. xóa thiết bị cũ khỏi ứng dụng Nhà;
-2. H2: `erase-flash` rồi nạp `matter_ble_presence_h2_merged.bin` (lệnh ở trên); C3: nạp 3 file (giữ cấu hình beacon);
-3. ghép lại H2 (mã ghép trên trang của C3), rồi vào trang của C3 bấm **Lưu** một lần nếu thiết bị con chưa hiện (C3
-   cũng tự gửi danh sách mỗi 5 s nếu đã có cấu hình lưu).
+**Lên bản này (20 slot, pin, model, "iBeacon Bridge") từ bản bridge trước (1.0.19x):**
+1. **Nạp cả hai chip** (giao thức UART đổi sang phiên bản 4). C3: nạp 3 file, **cấu hình beacon được giữ** (5 slot cũ
+   thành Presence 1–5, Presence 6–20 trống, model trống). H2: nạp 3 file cũng chạy được (bảng thiết bị con được chuyển,
+   giữ endpoint cũ), **nhưng nên ghép lại từ đầu** để ứng dụng Nhà đọc tên bridge mới, cụm pin và thông tin phụ kiện
+   (Apple Home thường không đọc lại cấu trúc của phụ kiện đã thêm):
+2. xóa "BLE Presence x5"/bridge cũ khỏi ứng dụng Nhà;
+3. H2: **giữ BOOT 5 giây rồi thả** (đèn đỏ, sau đó nháy đỏ 3 lần), hoặc `erase-flash` + file gộp (lệnh ở trên);
+4. vào trang của C3, gán lại beacon từ danh sách (model tự điền tên beacon) hoặc gõ model, bấm **Lưu**;
+5. ghép lại H2 bằng mã ghép trên trang của C3 (xem [Thử ghép trên H2](#thử-ghép-matterthread-trên-h2)).
+
+**Lên bản bridge từ bản cũ hơn (5 cảm biến cố định, chưa là bridge):** xóa thiết bị cũ khỏi ứng dụng Nhà; H2:
+`erase-flash` rồi nạp `matter_ble_presence_h2_merged.bin`; C3: nạp 3 file (giữ cấu hình beacon); ghép lại H2.
 
 **Ghép Matter:** mã ghép thủ công hiện ngay trên trang cấu hình của C3 (dòng "Mã ghép Matter", ví dụ `3497-011-2332`,
-không đổi), không cần mở console hay log của H2. Trong ứng dụng Nhà: thêm phụ kiện, chọn nhập mã thủ công. Cần Thread
-Border Router (Apple TV/HomePod mini, Google Nest Hub, Home Assistant + OpenThread Border Router), như bản C6. Sau khi
-ghép, Nhà hiện bridge và mỗi thiết bị con là một cảm biến hiện diện tên là MAC; có thể đổi tên trong Nhà.
+không đổi) khi H2 chưa ghép hoặc đang ở chế độ ghép, không cần mở console hay log của H2. Trong ứng dụng Nhà: thêm phụ
+kiện, chọn nhập mã thủ công. Cần Thread Border Router (Apple TV/HomePod mini, Google Nest Hub, Home Assistant +
+OpenThread Border Router), như bản C6. Sau khi ghép, Nhà hiện "iBeacon Bridge" và mỗi thiết bị con là một cảm biến hiện
+diện tên là MAC (nhà sản xuất Haxeko, kiểu máy = tên beacon, số sê-ri = MAC, pin); có thể đổi tên trong Nhà. Thêm bridge
+vào ứng dụng thứ hai: bấm BOOT của H2 2 lần (hoặc nút trên trang của C3) rồi dùng cùng mã ghép.
 
 **Gỡ ghép:** xóa thiết bị trong ứng dụng Nhà. H2 đã giải phóng BLE sau lần ghép trước (tiết kiệm RAM) nên khi
 controller cuối cùng xóa thiết bị, **H2 tự khởi động lại sau 2 s** (log `Last fabric removed: restarting...`) rồi phát
-BLE để ghép lại bằng mã cũ; không xóa gì. Nếu không ghép lại được (ví dụ đã xóa trong Nhà lúc H2 đang tắt), dùng nút
-**"Xóa ghép Matter của ESP32-H2"** trên trang của C3: H2 xóa ghép Matter, mạng Thread và bảng thiết bị con, khởi động
-lại, chờ ghép mới; thiết bị con được tạo lại theo cấu hình đã lưu trên C3.
+BLE để ghép lại bằng mã cũ; không xóa gì. Nếu không ghép lại được (ví dụ đã xóa trong Nhà lúc H2 đang tắt): **giữ BOOT
+của H2 5 giây rồi thả**, hoặc nút **"Xóa ghép Matter của ESP32-H2"** trên trang của C3: H2 xóa ghép Matter, mạng Thread
+và bảng thiết bị con, khởi động lại (đèn nháy đỏ 3 lần), chờ ghép mới; thiết bị con được tạo lại theo cấu hình đã lưu
+trên C3.
 
 ## Đọc log
 
-* C3, mỗi 60 s: `diag: Scanner running, ... adv/s`, từng `Presence N: ON/OFF, RSSI, matched ...`, và
-  `link: Matter node 0 s ago: commissioned 1, Thread up 1, ...`. Dòng `Matter node never heard ... (check the wiring)`
-  nghĩa là C3 chưa nhận được gì từ H2: kiểm tra dây, chân H2, GND chung.
-* H2, mỗi 60 s: `link: Scanner 0 s ago: NORMAL, scanning 1, assigned 0x03, present 0x01, known 0x03, ...` (bit 0 =
-  Presence 1; slot chưa có trong `known` thì H2 đang giữ trạng thái cũ), các dòng `link: Presence N: ON/OFF` khi trạng
-  thái đổi, và dòng Thread của Matter.
+* C3, mỗi 60 s: `diag: Scanner running, ... adv/s, ... iBeacon, ... TLM`, từng `Presence N: ON/OFF, RSSI, matched ...,
+  battery 94% (2950 mV, 3 s ago, 120 TLM)`, và `link: Matter node 0 s ago: commissioned 1, Thread up 1, pairing window 0,
+  bridged devices 0x0000f, waiting 0x00000 (reason 0), heap 46 KB (min 41 KB), ...`. Dòng `Matter node never heard ...
+  (check the wiring)` nghĩa là C3 chưa nhận được gì từ H2: kiểm tra dây, chân H2, GND chung.
+* H2, mỗi 60 s: `link: Scanner 0 s ago: NORMAL, scanning 1, assigned 0x00003, present 0x00001, known 0x00003, ...` (bit
+  0 = Presence 1; slot chưa có trong `known` thì H2 đang giữ trạng thái cũ), `bridge: Bridge: N device(s), M waiting ...;
+  heap of the last device ... bytes`, `diag: ... heap free ...`, các dòng `link: Presence N: ON/OFF` khi trạng thái đổi,
+  `bridge: Presence N: battery 94%` khi pin đổi, và dòng Thread của Matter.
 
 ## Rà soát độc lập lần 2 (bản hai chip)
 

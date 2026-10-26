@@ -135,20 +135,20 @@ lạ khi mở cổng, hãy tắt điều khiển DTR/RTS hoặc xem log qua cổ
 |---|---|
 | `app_main.cpp` | Khởi tạo NVS (không xóa), nạp cấu hình, chọn chế độ, khởi động đúng tập dịch vụ |
 | `app_mode.*`, `app_mode_logic.*` | Cờ RTC một lần, khởi động lại có kiểm soát, đếm thời gian rảnh ở CONFIG |
-| `button_handler.*`, `click_detector.*` | Đọc GPIO9 mỗi 10 ms bằng `esp_timer` (không ISR), chống dội, nhận diện 3 lần bấm-nhả (bấm chậm được: nghỉ giữa hai lần tối đa 2 s) |
+| `button_handler.*`, `click_detector.*` | Đọc GPIO9 mỗi 10 ms bằng `esp_timer` (không ISR), chống dội, nhận diện 3 lần bấm-nhả (bấm chậm được: nghỉ giữa hai lần tối đa 2 s); giữ lâu (bản hai chip, H2) |
 | `ble_scanner.*` | Vòng đời quét GAP (observer) trên **host NimBLE duy nhất**, backoff, watchdog, "đồng hồ quét" |
-| `ibeacon_parser.*`, `ble_addr.*`, `json_util.*` | Giải mã khung iBeacon/tên an toàn độ dài, MAC và thứ tự byte, UTF-8/JSON escape |
-| `presence_manager.*`, `presence_logic.*` | Lọc MAC trong callback BLE → hàng đợi giới hạn → task hiện diện → báo Matter |
-| `scan_cache.*` | Danh sách iBeacon ở CONFIG (gộp trùng, giới hạn 32, loại bản ghi cũ) |
-| `presence_config.*`, `config_store.*`, `crc32.*` | Cấu hình 5 slot: mặc định, kiểm tra, blob có version + CRC, NVS phân vùng riêng |
+| `ibeacon_parser.*`, `ble_addr.*`, `json_util.*` | Giải mã khung iBeacon, Eddystone-TLM (điện áp pin) và tên an toàn độ dài, MAC và thứ tự byte, UTF-8/JSON escape |
+| `presence_manager.*`, `presence_logic.*`, `presence_battery.*` | Lọc MAC trong callback BLE → hàng đợi giới hạn → task hiện diện → báo Matter; pin từ gói TLM (trung vị, bước công bố) và tên quảng bá của từng slot |
+| `scan_cache.*` | Danh sách iBeacon ở CONFIG (gộp trùng, giới hạn 32, loại bản ghi cũ, pin và tên của chính địa chỉ đó) |
+| `presence_config.*`, `config_store.*`, `crc32.*` | Cấu hình 5 slot (bản hai chip: 20, có model): mặc định, kiểm tra, blob có version + CRC (định dạng 2, đọc được định dạng 1), NVS phân vùng riêng |
 | `wifi_config.*`, `web_server.*`, `http_guard.*`, `web/index.html` | SoftAP WPA2 kênh 20 MHz (giới hạn công suất phát trên ESP32-C3), HTTP server + API JSON (chỉ nhận `Host` đúng và POST JSON), trang tiếng Việt nhúng |
 | `matter_device.*` | Node Matter, 5 endpoint, Thread MED (bản C6) hoặc Wi-Fi station (bản C3), cổng chặn scanner theo sự kiện Matter/mạng, cập nhật Occupancy |
-| `matter_bridge.*`, `presence_link*`, `app_main_h2.cpp` | Chỉ bản hai chip: Matter bridge trên ESP32-H2 (thiết bị con tên MAC), giao thức UART giữa C3 và H2 |
+| `matter_bridge.*`, `presence_link*`, `status_ui.*`, `app_main_h2.cpp` | Chỉ bản hai chip: Matter bridge "iBeacon Bridge" trên ESP32-H2 (tối đa 20 thiết bị con: tên và sê-ri là MAC, model, pin; giới hạn theo heap), giao thức UART v4 giữa C3 và H2, nút BOOT (bấm 2 lần: ghép, giữ 5 s: xóa ghép) và đèn RGB của H2 |
 | `diag.*` | Log chẩn đoán định kỳ (heap, scanner, từng slot, bộ đếm Thread) |
 
-Các module thuần logic (`click_detector`, `presence_logic`, `ibeacon_parser`, `ble_addr`, `presence_config`,
-`app_mode_logic`, `json_util`, `http_guard`, `crc32`, `config_store` với NVS giả lập) không phụ thuộc ESP-IDF và có
-host test.
+Các module thuần logic (`click_detector`, `presence_logic`, `presence_battery`, `ibeacon_parser`, `ble_addr`,
+`presence_config`, `presence_link_proto`, `app_mode_logic`, `json_util`, `http_guard`, `crc32`, `config_store` với NVS
+giả lập) không phụ thuộc ESP-IDF và có host test (các bộ có số slot chạy cả với 5 và 20 slot).
 
 ### Mô hình dữ liệu Matter
 
@@ -457,12 +457,14 @@ ESP32-C6/matter-ble-presence/test/host/run.sh      # g++ ≥ 9, chạy với Add
 
 | Bộ test | Nội dung |
 |---|---|
-| `test_ibeacon` | khung hợp lệ (có/không Flags, sau tên), không phải iBeacon (hãng khác, sai type/độ dài, Eddystone), **mọi độ dài cắt cụt**, độ dài vượt cuối, cấu trúc độ dài 0, 2 cấu trúc manufacturer, tên (complete/shortened, UTF-8, ký tự điều khiển, cắt đúng ranh giới), **fuzz 200 000 mẫu** dưới ASan |
+| `test_ibeacon` | khung hợp lệ (có/không Flags, sau tên), không phải iBeacon (hãng khác, sai type/độ dài, Eddystone), **mọi độ dài cắt cụt**, độ dài vượt cuối, cấu trúc độ dài 0, 2 cấu trúc manufacturer, tên (complete/shortened, UTF-8, ký tự điều khiển, cắt đúng ranh giới), **Eddystone-TLM** (điện áp, nhiệt độ, TLM mã hóa / UID / UUID khác bị loại, mọi độ dài cắt cụt), **fuzz 250 000 mẫu** dưới ASan |
+| `test_presence_battery` | mV → % (kẹp 0–100, làm tròn, khoảng cấu hình sai không chia 0), mức Warning/Critical, trung vị 5 lần đọc, nhiễu và một gói thấp bất thường không đổi %, chỉ giảm theo bước 2 %, thay pin (tăng ≥ 15 %) |
 | `test_ble_addr` | các dạng MAC hợp lệ/không hợp lệ, chuẩn hóa, **thứ tự byte NimBLE ↔ hiển thị**, loại địa chỉ (public/static/RPA/NRPA), khớp loại |
 | `test_presence_logic` | ON tức thì, OFF đúng tại timeout, **1 giờ quảng bá cùng payload vẫn ON**, **tạm dừng scanner 10 phút không gây OFF**, slot độc lập, slot tắt, RSSI có trễ |
-| `test_click_detector` | 3 lần bấm, 2 lần, **bấm thong thả** (nghỉ đúng 2 s, bấm 1,5 s), nghỉ quá 2 s thì đếm lại, dội phím (cả khi bấm chậm), nhiễu ngắn, **giữ lâu không thành nhiều lần bấm**, nút đang giữ lúc khởi động, 4 lần, tràn bộ đếm ms |
+| `test_click_detector` | 3 lần bấm, 2 lần, **bấm thong thả** (nghỉ đúng 2 s, bấm 1,5 s), nghỉ quá 2 s thì đếm lại, dội phím (cả khi bấm chậm), nhiễu ngắn, **giữ lâu không thành nhiều lần bấm**, nút đang giữ lúc khởi động, 4 lần, tràn bộ đếm ms; H2: bấm 2 lần, **giữ 5 s báo một lần lúc còn giữ rồi lúc nhả**, bấm trước khi giữ không cộng, giữ 2 s không làm gì, dội phím trong lúc giữ |
 | `test_app_mode` | cờ RTC chỉ hợp lệ sau reset phần mềm, một lần, bị hỏng → NORMAL, 100 000 mẫu RTC ngẫu nhiên không bao giờ vào CONFIG |
-| `test_presence_config` | mặc định (cửa sổ < chu kỳ), mọi lỗi trường, trùng beacon (any/public/random, slot tắt), nhãn UTF-8, blob round-trip, **mọi bit lật bị phát hiện**, version mới hơn, magic sai |
+| `test_presence_config` | (5 và 20 slot) mặc định (cửa sổ < chu kỳ), mọi lỗi trường, trùng beacon (any/public/random, slot tắt), nhãn và model UTF-8, blob round-trip, **mọi bit lật bị phát hiện**, version mới hơn, magic sai, **blob định dạng 1 của bản 5 slot đọc được** (slot thêm lấy mặc định, lưu lại thành định dạng 2), blob nhiều slot hơn firmware bị từ chối |
+| `test_presence_link` | giao thức UART v4: khung đúng, mặt nạ 20 bit, khung SLOT (model UTF-8, pin, slot ngoài khoảng, ký tự điều khiển, độ dài sai), STATUS (thiết bị chờ, lý do, heap), **mọi bit lật bị loại**, mọi kiểu cắt cụt, rác giống log ROM, khung phiên bản 1–3 bị loại, slot "chưa biết" sau khi C3 khởi động lại |
 | `test_json_util` | escape JSON/HTML (`<script>`), UTF-8 hợp lệ/không hợp lệ, cắt không vỡ chuỗi |
 | `test_http_guard` | chỉ nhận `Host` = địa chỉ SoftAP (có/không `:80`; từ chối tên miền khác, `192.168.4.10`, `:8080`), POST phải là `application/json` (từ chối `text/plain`, form, `application/jsonp`…) |
 | `test_config_store` | NVS giả lập: lần đầu, lưu + đọc lại, **lưu lỗi (set/commit/open) giữ cấu hình cũ**, đọc lại không khớp, blob hỏng → mặc định và giữ dữ liệu, phân vùng `NO_FREE_PAGES`/`NEW_VERSION_FOUND` **không tự xóa**, định dạng theo yêu cầu, mật khẩu SoftAP; khẳng định **không bao giờ gọi `nvs_flash_erase()` và không chạm phân vùng khác** |
@@ -518,16 +520,22 @@ Host test (`test/host/run.sh`, g++ 13.3, ASan + UBSan):
 ```
 app_mode             11 checks, 0 failed
 ble_addr             63 checks, 0 failed
-click_detector       34 checks, 0 failed
+click_detector       51 checks, 0 failed
 config_store        108 checks, 0 failed
+config_store 20     108 checks, 0 failed
 http_guard           26 checks, 0 failed
-ibeacon_parser     202007 checks, 0 failed
+ibeacon_parser     202045 checks, 0 failed
 json_util            22 checks, 0 failed
-presence_config     398 checks, 0 failed
-presence_link       404 checks, 0 failed
+presence_battery   4037 checks, 0 failed
+presence_config     585 checks, 0 failed
+presence_config 20 2070 checks, 0 failed
+presence_link       602 checks, 0 failed
 presence_logic     4248 checks, 0 failed
+presence_logic 20  4278 checks, 0 failed
 All host tests passed
 ```
+
+(Các bộ "20" là cùng test, biên dịch với 20 slot của bản hai chip.)
 
 ### Rà soát mã độc lập
 
@@ -584,7 +592,7 @@ liệu của bước 10 và xem [khuyến nghị](#khuyến-nghị-phương-án-
   TagList, `SetThreadDeviceType`, OpenThread MTD mặc định rx-on-when-idle, Kconfig bộ lọc trùng của controller C6,
   `RTC_NOINIT_ATTR` trên C6, DAC thử nghiệm cho PID 0x8002, sơ đồ nút BOOT của DevKitC-1 v1.4.
 * `idf.py set-target esp32c6` + `idf.py build` thành công (số liệu ở mục kết quả build).
-* Host test: 10 bộ, đạt (ASan/UBSan).
+* Host test: 14 bộ (gồm 3 bộ biên dịch lại với 20 slot), đạt (ASan/UBSan).
 * Trang web cấu hình chạy trong Chromium headless với API giả lập: 53 kiểm tra đạt (escape tên, gán/trùng beacon,
   kiểm tra dữ liệu, nội dung lệnh lưu, kiểu nội dung POST, ô chọn không bị đóng, khởi động lại, chữ theo mạng
   Thread/Wi-Fi/hai chip, trạng thái "Sắp quét", Wi-Fi chậm: không request chồng nhau).

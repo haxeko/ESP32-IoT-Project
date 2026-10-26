@@ -16,7 +16,7 @@
 // after any error, so garbage only costs counted errors (a damaged length byte can also swallow the next frames, up
 // to PLINK_MAX_PAYLOAD + 4 bytes).
 // Frames repeat (every second or every few seconds), so none needs to be resent; COMMAND is sent three times and
-// acted on once.
+// acted on once. At 115200 baud the busiest second carries about 250 bytes (STATE, STATUS, a few SLOT frames).
 
 #pragma once
 
@@ -25,17 +25,21 @@
 #include <stdint.h>
 
 // 2: known_mask in STATE. 3: the Matter node is a bridge (SLOTS, PAIRING, COMMAND, bridged endpoints in STATUS).
-// Both chips need firmware of the same version.
-#define PLINK_VERSION 3
-#define PLINK_MAX_PAYLOAD 48
+// 4: 20 slots (32-bit masks), one SLOT frame per slot with the model and battery of its beacon, STATUS with the
+// waiting devices, commissioning window and heap of the Matter node.
+// Both chips need firmware of the same version: frames of another version are counted as bad frames and ignored.
+#define PLINK_VERSION 4
+#define PLINK_MAX_PAYLOAD 64
 #define PLINK_MAX_FRAME (2 + 3 + PLINK_MAX_PAYLOAD + 4)
-#define PLINK_SLOT_COUNT 5 // = PRESENCE_SLOT_COUNT (checked where both are known)
+#define PLINK_SLOT_COUNT 20 // = PRESENCE_SLOT_COUNT of the two-chip version (checked where both are known)
+#define PLINK_SLOT_MASK ((1u << PLINK_SLOT_COUNT) - 1)
 #define PLINK_MAC_LEN 6
+#define PLINK_MODEL_MAX 32 // bytes of UTF-8, as Matter's ProductName
 
 typedef enum {
     PLINK_TYPE_STATE = 1,   // scanner -> Matter node, every second and on change
     PLINK_TYPE_STATUS = 2,  // Matter node -> scanner, every second
-    PLINK_TYPE_SLOTS = 3,   // scanner -> Matter node: the devices of the bridge, every few seconds and after a save
+    PLINK_TYPE_SLOT = 3,    // scanner -> Matter node: one device of the bridge, each slot every 5 s, all after a save
     PLINK_TYPE_PAIRING = 4, // Matter node -> scanner: onboarding codes, every few seconds
     PLINK_TYPE_COMMAND = 5, // scanner -> Matter node: an action asked on the configuration page
 } plink_type_t;
@@ -45,37 +49,57 @@ typedef enum {
 
 #define PLINK_STATE_SCANNING 0x01 // the radio is scanning (not paused, not in backoff)
 
-// Sent by the scanner every second and right after a change
+// Sent by the scanner every second and right after a change. Masks: bit n is slot n.
 typedef struct {
-    uint8_t mode;         // PLINK_MODE_*
-    uint8_t flags;        // PLINK_STATE_*
-    uint8_t active_mask;  // bit n: slot n has a beacon assigned and is enabled
-    uint8_t present_mask; // bit n: slot n present (only bits of active slots can be set)
-    uint8_t known_mask;   // bit n: slot n's state is known; the Matter node keeps the state of the others (the bits of
-                          // inactive slots always read as known: they are off)
+    uint8_t mode;          // PLINK_MODE_*
+    uint8_t flags;         // PLINK_STATE_*
+    uint32_t active_mask;  // slot has a beacon assigned and is enabled
+    uint32_t present_mask; // slot present (only bits of active slots can be set)
+    uint32_t known_mask;   // slot's state is known; the Matter node keeps the state of the others (the bits of
+                           // inactive slots always read as known: they are off)
     uint32_t uptime_s;
 } plink_state_t;
 
 #define PLINK_STATUS_MATTER_STARTED 0x01
 #define PLINK_STATUS_COMMISSIONED 0x02
-#define PLINK_STATUS_NETWORK_UP 0x04 // Thread attached
+#define PLINK_STATUS_NETWORK_UP 0x04  // Thread attached
+#define PLINK_STATUS_WINDOW_OPEN 0x08 // commissioning window open (pairing mode)
+
+// Why devices of active slots are not on the bridge yet
+typedef enum {
+    PLINK_WAIT_NONE = 0,
+    PLINK_WAIT_COMMISSIONING = 1, // not commissioned: the memory is kept for commissioning, added once paired
+    PLINK_WAIT_MEMORY = 2,        // not enough free memory on the Matter node
+    PLINK_WAIT_ERROR = 3,         // the device could not be created (see the Matter node's log)
+} plink_wait_reason_t;
 
 // Sent by the Matter node every second
 typedef struct {
     uint8_t flags; // PLINK_STATUS_*
     uint8_t fabrics;
     uint32_t uptime_s;
-    uint8_t bridged_mask;                // bit n: slot n has its device on the bridge
-    uint16_t endpoint[PLINK_SLOT_COUNT]; // its Matter endpoint, 0 if none
+    uint32_t bridged_mask;               // slot has its device on the bridge
+    uint32_t waiting_mask;               // slot should have a device that is not there yet
+    uint8_t wait_reason;                 // plink_wait_reason_t of the waiting slots
+    uint16_t heap_free_kb;               // free heap of the Matter node now, and its lowest since boot
+    uint16_t heap_min_kb;
+    uint16_t endpoint[PLINK_SLOT_COUNT]; // Matter endpoint of the slot's device, 0 if none
 } plink_status_t;
 
-// The devices the bridge must show: one per active slot (enabled, beacon assigned), named after its MAC. Sent only
-// from a configuration read from flash, so a scanner with nothing saved (or unreadable storage) never empties the
-// bridge; an explicit save does.
+#define PLINK_BATTERY_UNKNOWN 0xFF
+
+// One device of the bridge: an active slot (enabled, beacon assigned) is an Occupancy Sensor named after its MAC,
+// with the model and battery of its beacon; an inactive slot has none. Sent only from a configuration read from
+// flash, so a scanner with nothing saved (or unreadable storage) never empties the bridge; an explicit save does.
 typedef struct {
-    uint8_t active_mask;
-    uint8_t mac[PLINK_SLOT_COUNT][PLINK_MAC_LEN]; // display order; zero for inactive slots
-} plink_slots_t;
+    uint8_t slot;
+    bool active;
+    uint8_t mac[PLINK_MAC_LEN];      // display order; zero for an inactive slot
+    uint8_t battery_pct;             // 0-100, PLINK_BATTERY_UNKNOWN (no Eddystone-TLM frame heard yet)
+    uint8_t battery_level;           // Matter BatChargeLevel: 0 OK, 1 warning, 2 critical
+    uint16_t battery_mv;             // 0: unknown
+    char model[PLINK_MODEL_MAX + 1]; // UTF-8, "" if unknown
+} plink_slot_t;
 
 #define PLINK_MANUAL_CODE_LEN 11 // digits of the Matter manual pairing code
 #define PLINK_QR_CODE_MAX 30     // "MT:" and the base-38 payload
@@ -86,13 +110,14 @@ typedef struct {
 } plink_pairing_t;
 
 #define PLINK_CMD_FACTORY_RESET 1 // remove the Matter pairing (fabrics, Thread network) and the bridged devices
+#define PLINK_CMD_OPEN_WINDOW 2   // open the commissioning window (pairing mode), as a double click on its BOOT
 
 // Travels with a fixed check word: with the CRC, a damaged or foreign frame is never taken for a command
 typedef struct {
     uint8_t command; // PLINK_CMD_*
 } plink_command_t;
 
-// What the bridge does with a slot when a SLOTS frame arrives
+// What the bridge does with a slot when its SLOT frame arrives
 typedef enum {
     PLINK_SLOT_KEEP = 0, // nothing to change
     PLINK_SLOT_ADD,      // new device
@@ -103,7 +128,7 @@ typedef enum {
 plink_slot_action_t plink_slot_action(bool have, const uint8_t have_mac[PLINK_MAC_LEN], bool want,
                                       const uint8_t want_mac[PLINK_MAC_LEN]);
 
-// "C0:11:22:33:44:01" (18 bytes with the NUL): the name of a bridged device
+// "C0:11:22:33:44:01" (18 bytes with the NUL): the name and serial number of a bridged device
 #define PLINK_MAC_STR_SIZE 18
 void plink_mac_string(const uint8_t mac[PLINK_MAC_LEN], char out[PLINK_MAC_STR_SIZE]);
 
@@ -114,21 +139,21 @@ void plink_mac_string(const uint8_t mac[PLINK_MAC_LEN], char out[PLINK_MAC_STR_S
 // cannot scan at all (BLE failure: the scan clock stands still) still declares the slot known, as absent, once its
 // uptime passes the timeout by PLINK_UNKNOWN_GRACE_MS: a stale "occupied" does not last forever.
 #define PLINK_UNKNOWN_GRACE_MS (5u * 60u * 1000u)
-uint8_t plink_known_mask(uint8_t active_mask, uint8_t reported_mask, const uint32_t *timeout_ms, int slots,
-                         uint64_t scan_clock_ms, uint64_t uptime_ms);
+uint32_t plink_known_mask(uint32_t active_mask, uint32_t reported_mask, const uint32_t *timeout_ms, int slots,
+                          uint64_t scan_clock_ms, uint64_t uptime_ms);
 
 // Frame into out; returns its length, 0 if it does not fit or the payload is too long
 size_t plink_encode(uint8_t type, const uint8_t *payload, size_t len, uint8_t *out, size_t out_size);
 size_t plink_encode_state(const plink_state_t *state, uint8_t *out, size_t out_size);
 size_t plink_encode_status(const plink_status_t *status, uint8_t *out, size_t out_size);
-size_t plink_encode_slots(const plink_slots_t *slots, uint8_t *out, size_t out_size);
+size_t plink_encode_slot(const plink_slot_t *slot, uint8_t *out, size_t out_size);
 size_t plink_encode_pairing(const plink_pairing_t *pairing, uint8_t *out, size_t out_size);
 size_t plink_encode_command(const plink_command_t *command, uint8_t *out, size_t out_size);
 
 // Payload of a received frame; false if its length does not match the type or a field is out of range
 bool plink_decode_state(const uint8_t *payload, size_t len, plink_state_t *state);
 bool plink_decode_status(const uint8_t *payload, size_t len, plink_status_t *status);
-bool plink_decode_slots(const uint8_t *payload, size_t len, plink_slots_t *slots);
+bool plink_decode_slot(const uint8_t *payload, size_t len, plink_slot_t *slot);
 bool plink_decode_pairing(const uint8_t *payload, size_t len, plink_pairing_t *pairing);
 bool plink_decode_command(const uint8_t *payload, size_t len, plink_command_t *command);
 

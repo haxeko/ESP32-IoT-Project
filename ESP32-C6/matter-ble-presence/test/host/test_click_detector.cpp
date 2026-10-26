@@ -1,6 +1,7 @@
 // BOOT button triple click (main/click_detector.cpp), sampled every 10 ms like button_handler.cpp, with the
 // Kconfig defaults: debounce 40 ms, at most 2 s from a release to the next press, a press up to 1.5 s is a click.
 // Slow clicks count, a longer pause starts again, a hold is never several clicks, button held at start-up ignored.
+// ESP32-H2 (status_ui.cpp): double click, and a 5 s hold reported while held and again at its release.
 #include "test.h"
 
 #include "click_detector.h"
@@ -13,11 +14,14 @@ struct Sim {
     click_detector_t cd;
     uint32_t now = 0;
     int fired = 0;
+    int holds = 0;
+    int hold_releases = 0;
+    uint32_t hold_at = 0; // time of the last CLICK_EVENT_HOLD
 
-    explicit Sim(bool pressed_at_start = false)
+    explicit Sim(bool pressed_at_start = false, uint8_t clicks = 3, uint32_t hold_ms = 0)
     {
         const click_detector_config_t cfg = { .debounce_ms = 40, .gap_ms = kGapMs, .max_press_ms = kMaxPressMs,
-                                              .clicks_needed = 3 };
+                                              .clicks_needed = clicks, .hold_ms = hold_ms };
         click_detector_init(&cd, &cfg, pressed_at_start, now);
     }
 
@@ -27,7 +31,20 @@ struct Sim {
     {
         for (uint32_t t = 0; t < ms; t += kPollMs) {
             now += kPollMs;
-            fired += click_detector_update(&cd, pressed, now) ? 1 : 0;
+            switch (click_detector_update(&cd, pressed, now)) {
+            case CLICK_EVENT_CLICKS:
+                fired++;
+                break;
+            case CLICK_EVENT_HOLD:
+                holds++;
+                hold_at = now;
+                break;
+            case CLICK_EVENT_HOLD_RELEASED:
+                hold_releases++;
+                break;
+            default:
+                break;
+            }
         }
     }
 
@@ -213,6 +230,72 @@ static void wraparound()
     CHECK(t.cd.clicks == 1);
 }
 
+// ESP32-H2: double click opens the pairing window, a 5 s hold is the factory reset
+static void h2_double_click_and_hold()
+{
+    Sim s(false, 2, 5000);
+    s.click();
+    CHECK(s.fired == 0);
+    s.click();
+    CHECK(s.fired == 1 && s.holds == 0);
+
+    // Hold: reported once when 5 s are reached, while still pressed, then at the release
+    s.hold(true, 4900);
+    CHECK(s.holds == 0);
+    s.hold(true, 200);
+    CHECK(s.holds == 1 && s.hold_releases == 0);
+    CHECK(s.hold_at >= 5000 && s.hold_at <= 5100 + 2000); // within a poll or two of 5 s from the press
+    s.hold(true, 10000); // held much longer: still one hold
+    CHECK(s.holds == 1);
+    s.hold(false, 300);
+    CHECK(s.hold_releases == 1 && s.fired == 1);
+
+    // A click before a hold does not combine with it, and the hold is not a click
+    s.hold(false, 3000);
+    s.click();
+    s.hold(true, 5200);
+    s.hold(false, 300);
+    CHECK(s.holds == 2 && s.hold_releases == 2 && s.fired == 1 && s.cd.clicks == 0);
+    s.click();
+    CHECK(s.fired == 1); // one click only: the click before the hold was dropped
+    s.click();
+    CHECK(s.fired == 2);
+
+    // A 2 s press: neither a click nor a hold
+    s.hold(false, 3000);
+    s.hold(true, 2000);
+    s.hold(false, 300);
+    CHECK(s.holds == 2 && s.hold_releases == 2 && s.fired == 2 && s.cd.clicks == 0);
+
+    // Bounces during a hold do not restart it
+    s.hold(false, 3000);
+    s.hold(true, 3000);
+    s.hold(false, 20); // shorter than the debounce
+    s.hold(true, 2100);
+    CHECK(s.holds == 3);
+    s.hold(false, 300);
+    CHECK(s.hold_releases == 3);
+}
+
+static void h2_hold_pressed_at_start_ignored()
+{
+    Sim s(true, 2, 5000); // held while the firmware starts
+    s.hold(true, 8000);
+    CHECK(s.holds == 0);
+    s.hold(false, 300);
+    CHECK(s.hold_releases == 0 && s.fired == 0);
+    s.hold(true, 5100); // a new press is a hold
+    CHECK(s.holds == 1);
+}
+
+static void no_hold_events_when_off()
+{
+    Sim s; // triple click, hold_ms 0 (ESP32-C6 / C3)
+    s.hold(true, 20000);
+    s.hold(false, 300);
+    CHECK(s.holds == 0 && s.hold_releases == 0 && s.fired == 0);
+}
+
 int main()
 {
     RUN(triple_click_fires_once);
@@ -226,5 +309,8 @@ int main()
     RUN(pressed_at_start_is_ignored);
     RUN(four_clicks_fire_once);
     RUN(wraparound);
+    RUN(h2_double_click_and_hold);
+    RUN(h2_hold_pressed_at_start_ignored);
+    RUN(no_hold_events_when_off);
     return test_summary("click_detector");
 }

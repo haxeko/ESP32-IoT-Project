@@ -6,7 +6,7 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-// Presence decision of the five slots. No ESP-IDF dependency (host tests); presence_manager.cpp runs it.
+// Presence decision of the slots. No ESP-IDF dependency (host tests); presence_manager.cpp runs it.
 //
 // Time is the scan clock (ble_scanner_scan_clock_ms()): milliseconds during which the radio was actually scanning.
 // It stops while the firmware pauses the scanner (commissioning, network down, host reset, backoff), so an
@@ -25,7 +25,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define PRESENCE_LOGIC_SLOTS 5
+#include "presence_config.h"
+
+#define PRESENCE_LOGIC_SLOTS PRESENCE_SLOT_COUNT // at most 32: presence_logic_tick() returns a bit mask
 
 typedef struct {
     bool active; // slot enabled and an address assigned; an inactive slot is always off

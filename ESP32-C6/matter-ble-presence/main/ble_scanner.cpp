@@ -43,6 +43,7 @@ static std::atomic<int64_t> s_last_adv_ms{ 0 };
 
 static std::atomic<uint32_t> s_adv_reports{ 0 };
 static std::atomic<uint32_t> s_ibeacon_reports{ 0 };
+static std::atomic<uint32_t> s_tlm_reports{ 0 };
 static std::atomic<uint32_t> s_starts{ 0 };
 static std::atomic<uint32_t> s_start_failures{ 0 };
 static std::atomic<uint32_t> s_unexpected_stops{ 0 };
@@ -119,14 +120,17 @@ static void handle_report(bool scan_response, const ble_addr_t &addr, int8_t rss
     report.scan_response = scan_response;
     report.time_ms = now;
     report.has_ibeacon = ibeacon_parse(data, len, &report.ibeacon);
+    report.has_tlm = !report.has_ibeacon && eddystone_tlm_parse(data, len, &report.tlm);
     report.name[0] = '\0';
     if (s_cfg.parse_names) {
         adv_parse_name(data, len, report.name, sizeof(report.name));
     }
     if (report.has_ibeacon) {
         s_ibeacon_reports.fetch_add(1, std::memory_order_relaxed);
-    } else if (!(scan_response && report.name[0] != '\0')) {
-        return;
+    } else if (report.has_tlm) {
+        s_tlm_reports.fetch_add(1, std::memory_order_relaxed);
+    } else if (report.name[0] == '\0') {
+        return; // nothing a sink uses
     }
     s_cfg.sink(&report);
 }
@@ -365,6 +369,7 @@ void ble_scanner_get_stats(ble_scanner_stats_t *out)
     out->pause_mask = s_pause.load();
     out->adv_reports = s_adv_reports.load();
     out->ibeacon_reports = s_ibeacon_reports.load();
+    out->tlm_reports = s_tlm_reports.load();
     out->starts = s_starts.load();
     out->start_failures = s_start_failures.load();
     out->unexpected_stops = s_unexpected_stops.load();

@@ -169,5 +169,5 @@ int main()
     RUN(rssi_filter_with_hysteresis);
     RUN(filter_off_accepts_any_rssi);
     RUN(age);
-    return test_summary("presence_logic");
+    return test_summary(PRESENCE_LOGIC_SLOTS == 5 ? "presence_logic" : "presence_logic 20");
 }

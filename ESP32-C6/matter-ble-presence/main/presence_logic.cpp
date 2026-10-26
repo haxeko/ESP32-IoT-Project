@@ -8,6 +8,8 @@
 
 #include "presence_logic.h"
 
+static_assert(PRESENCE_LOGIC_SLOTS <= 32, "presence_logic_tick() returns a 32-bit mask");
+
 #include <string.h>
 
 // HCI reports 127 when the controller has no RSSI for the packet

@@ -65,6 +65,6 @@ direct_dependencies:
 - espressif/esp_encrypted_img
 - espressif/esp_secure_cert_mgr
 - espressif/mdns
-manifest_hash: f589b0afae90499b80a11001aaa04e48d6933eb2eb2a9116289085fc0a40ad6a
+manifest_hash: 1872bd6c429712da633c8b1c2427919f61216de1383cc68c66f7468ba3dc2eb2
 target: esp32c6
 version: 3.0.0

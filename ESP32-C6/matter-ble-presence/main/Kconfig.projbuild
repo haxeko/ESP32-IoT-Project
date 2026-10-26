@@ -14,14 +14,16 @@ menu "BLE Presence x5"
         config PRESENCE_ROLE_SCANNER
             bool "Two chips, scanner (ESP32-C3): BLE scanning + web configuration, no Matter"
             help
-                Computes the presence of the five slots and sends it every second
-                (and at every change) to the Matter node over the UART link.
+                Computes the presence of the 20 slots and sends it every second
+                (and at every change) to the Matter node over the UART link, with
+                the device (MAC, model, battery) of each slot.
 
         config PRESENCE_ROLE_MATTER_UART
-            bool "Two chips, Matter node (ESP32-H2): five Occupancy Sensors fed by the UART link"
+            bool "Two chips, Matter node (ESP32-H2): Matter bridge fed by the UART link"
             help
-                No BLE scanning, no web page and no CONFIG mode on this chip: BLE is
-                only used for commissioning.
+                A Matter bridge with one Occupancy Sensor per active slot of the
+                scanner. No BLE scanning, no web page and no CONFIG mode on this
+                chip: BLE is only used for commissioning.
     endchoice
 
     menu "Two-chip UART link"
@@ -72,12 +74,14 @@ menu "BLE Presence x5"
 
         config PRESENCE_PRODUCT_NAME
             string "Model (Basic Information ProductName)"
+            default "iBeacon Bridge" if PRESENCE_ROLE_MATTER_UART
             default "BLE Presence x5"
             help
-                Max 32 characters.
+                Max 32 characters. Two-chip version: the name of the bridge.
 
         config PRESENCE_DISCOVERY_NAME
             string "Name advertised before commissioning (DNS-SD DN)"
+            default "iBeacon Bridge" if PRESENCE_ROLE_MATTER_UART
             default "BLE Presence"
             help
                 Max 32 characters.
@@ -136,6 +140,111 @@ menu "BLE Presence x5"
             help
                 A longer press is a hold: it never counts as one or more clicks
                 and it cancels the clicks counted so far.
+
+    endmenu
+
+    menu "Matter node button and LED"
+        depends on PRESENCE_ROLE_MATTER_UART
+
+        config PRESENCE_FACTORY_RESET_HOLD_SEC
+            int "Hold BOOT this long for a factory reset (s)"
+            range 3 30
+            default 5
+            help
+                Removes the Matter pairing (fabrics, Thread network) and the
+                bridged devices, once the button is released after this time (the
+                LED turns red when it is reached). The beacon configuration is on
+                the ESP32-C3 and stays. A double click on BOOT opens the pairing
+                window instead.
+
+        config PRESENCE_PAIRING_WINDOW_SEC
+            int "Pairing window opened by a double click (s)"
+            range 180 900
+            default 600
+            help
+                Over BLE while the bridge is not commissioned, over the Thread
+                network once it is (to add it to another controller). The LED
+                blinks blue while it is open.
+
+        choice PRESENCE_STATUS_LED
+            prompt "Status LED"
+            default PRESENCE_STATUS_LED_WS2812
+
+            config PRESENCE_STATUS_LED_WS2812
+                bool "RGB LED WS2812 (ESP32-H2 SuperMini: GPIO8)"
+
+            config PRESENCE_STATUS_LED_PLAIN
+                bool "One-colour LED on a GPIO"
+
+            config PRESENCE_STATUS_LED_NONE
+                bool "None"
+        endchoice
+
+        config PRESENCE_STATUS_LED_GPIO
+            int "GPIO of the status LED"
+            range 0 27
+            default 8
+
+        config PRESENCE_STATUS_LED_ACTIVE_HIGH
+            bool "The one-colour LED is on when the pin is high"
+            depends on PRESENCE_STATUS_LED_PLAIN
+            default y
+
+        config PRESENCE_BRIDGE_HEAP_RESERVE_KB
+            int "Bridge: free heap kept when adding a device, commissioned (KB)"
+            range 8 64
+            default 20
+            help
+                A bridged device (endpoint, Occupancy Sensing, Power Source,
+                Bridged Device Basic Information) takes a few KB of heap. One is
+                only added or restored while this much stays free for Matter
+                (sessions, subscriptions, reports, Thread); the others wait and
+                are shown as waiting on the scanner's page.
+
+        config PRESENCE_BRIDGE_COMMISSIONING_RESERVE_KB
+            int "Bridge: free heap kept when adding a device, not commissioned (KB)"
+            range 16 96
+            default 44
+            help
+                Before commissioning BLE is running and commissioning needs memory
+                of its own (certificates, sessions): devices that would leave less
+                than this wait, and are added right after commissioning, once BLE
+                is released. 44 KB is the free heap at boot of the esp-matter light
+                example on the ESP32-H2, which commissions with it.
+
+    endmenu
+
+    menu "Beacon battery (Eddystone-TLM)"
+        depends on !PRESENCE_ROLE_MATTER_UART
+
+        config PRESENCE_BATTERY_EMPTY_MV
+            int "Voltage read as 0 % (mV)"
+            range 1500 3600
+            default 2200
+            help
+                The battery level is linear between this voltage and the "100 %"
+                one, from the Eddystone-TLM frames of the beacon (sent between its
+                iBeacon frames, from the same address). Coin cells (CR2032, CR2477)
+                and two alkaline cells read about 3 V when new.
+
+        config PRESENCE_BATTERY_FULL_MV
+            int "Voltage read as 100 % (mV)"
+            range 1600 4200
+            default 3000
+
+        config PRESENCE_BATTERY_WARNING_PCT
+            int "Low battery at or below (%)"
+            range 1 60
+            default 20
+            help
+                Matter BatChargeLevel Warning: controllers show a low battery.
+
+        config PRESENCE_BATTERY_CRITICAL_PCT
+            int "Battery to replace at or below (%)"
+            range 0 50
+            default 10
+            help
+                Matter BatChargeLevel Critical and BatReplacementNeeded.
 
     endmenu
 

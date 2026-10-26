@@ -6,18 +6,24 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-// Beacon configuration of the five presence slots: defaults, validation and the stored format. No ESP-IDF
-// dependency besides sdkconfig.h (host tests); config_store.cpp keeps it in flash.
+// Beacon configuration of the presence slots: defaults, validation and the stored format. No ESP-IDF dependency
+// besides sdkconfig.h (host tests); config_store.cpp keeps it in flash.
 //
-// Stored format (one NVS blob, all integers little endian, version 1):
+// Slots: 5 in the one-chip versions (the five fixed Occupancy Sensor endpoints), 20 in the two-chip version (one
+// bridged device each on the ESP32-H2, presence_link_proto.h).
+//
+// Stored format (one NVS blob, all integers little endian, version 2):
 //   0   4  magic "BPRC"
 //   4   2  format version
 //   6   2  payload length
 //   8   .. payload: scan interval ms (2), scan window ms (2), slot count (1), reserved (1),
 //              then per slot: flags (1: bit0 enabled, bit1 address set, bit2 RSSI filter), address type (1),
 //              address (6, display order), timeout s (2), RSSI threshold (1, signed), hysteresis (1),
-//              label length (1), label (PRESENCE_LABEL_MAX_BYTES, zero padded)
+//              label length (1), label (PRESENCE_LABEL_MAX_BYTES, zero padded),
+//              model length (1), model (PRESENCE_MODEL_MAX_BYTES, zero padded)
 //   end 4  CRC-32 of everything before it
+// Version 1 is the same without the model, written by the firmware with five slots: it still decodes (its slots
+// become the first ones, the others take the defaults) and is written as version 2 at the next save.
 // The whole configuration is one blob written with one nvs_set_blob() + nvs_commit(): NVS keeps the old blob
 // until the new one is complete, so a power cut leaves either the old or the new configuration, never half of
 // the slots. A newer firmware that changes the layout bumps the version and keeps a decoder for each older one
@@ -29,10 +35,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "sdkconfig.h"
+
 #include "ble_addr.h"
 
-#define PRESENCE_SLOT_COUNT 5
+#if defined(CONFIG_PRESENCE_ROLE_SCANNER) || defined(CONFIG_PRESENCE_ROLE_MATTER_UART)
+#define PRESENCE_SLOT_COUNT 20 // two-chip version: one bridged device per slot on the ESP32-H2
+#else
+#define PRESENCE_SLOT_COUNT 5 // one-chip versions: the five fixed Occupancy Sensor endpoints
+#endif
 #define PRESENCE_LABEL_MAX_BYTES 48 // UTF-8 bytes; Vietnamese letters take 2-3 bytes
+// Model of the beacon (two-chip version: ProductName of its bridged device, "Model" in Apple Home), normally its
+// advertised name. Matter limits ProductName to 32 bytes.
+#define PRESENCE_MODEL_MAX_BYTES 32
 
 #define PRESENCE_TIMEOUT_MIN_S 10
 #define PRESENCE_TIMEOUT_MAX_S 3600
@@ -53,6 +68,7 @@ typedef struct {
     int8_t rssi_threshold;   // dBm
     uint8_t rssi_hysteresis; // dB
     char label[PRESENCE_LABEL_MAX_BYTES + 1]; // internal name shown on the web page and in the logs
+    char model[PRESENCE_MODEL_MAX_BYTES + 1]; // "" if unknown
 } presence_slot_config_t;
 
 typedef struct {
@@ -84,6 +100,7 @@ typedef enum {
     PRESENCE_FIELD_RSSI_HYSTERESIS,
     PRESENCE_FIELD_SCAN_INTERVAL,
     PRESENCE_FIELD_SCAN_WINDOW,
+    PRESENCE_FIELD_MODEL,
 } presence_field_t;
 
 typedef enum {
@@ -99,10 +116,12 @@ typedef enum {
     PRESENCE_ERR_SCAN_WINDOW_RANGE,
     PRESENCE_ERR_SCAN_WINDOW_ABOVE_INTERVAL,
     PRESENCE_ERR_TYPE, // wrong JSON type or missing field (web_server.cpp)
+    PRESENCE_ERR_MODEL_TOO_LONG,
+    PRESENCE_ERR_MODEL_INVALID,
 } presence_error_code_t;
 
 typedef struct {
-    int8_t slot;       // 0-4, -1 for the scan settings
+    int8_t slot;       // 0 to PRESENCE_SLOT_COUNT - 1, -1 for the scan settings
     uint8_t field;     // presence_field_t
     uint8_t code;      // presence_error_code_t
     int8_t other_slot; // the other slot of a duplicate address, else -1
@@ -118,8 +137,8 @@ const char *presence_field_name(uint8_t field); // JSON field name
 // ---------------------------------------------------------------------------------------------------------------------
 // Stored format
 
-#define PRESENCE_CONFIG_FORMAT_VERSION 1
-#define PRESENCE_CONFIG_BLOB_MAX_SIZE 512
+#define PRESENCE_CONFIG_FORMAT_VERSION 2
+#define PRESENCE_CONFIG_BLOB_MAX_SIZE 2048
 
 typedef enum {
     PRESENCE_DECODE_OK = 0,

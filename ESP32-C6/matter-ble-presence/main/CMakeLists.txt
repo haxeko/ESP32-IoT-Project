@@ -5,13 +5,15 @@
 set(common_srcs "crc32.cpp" "ble_addr.cpp" "json_util.cpp" "presence_link_proto.cpp")
 
 if(CONFIG_PRESENCE_ROLE_MATTER_UART)
-    set(srcs ${common_srcs} "app_main_h2.cpp" "matter_device.cpp" "matter_bridge.cpp" "presence_link.cpp")
+    set(srcs ${common_srcs} "app_main_h2.cpp" "matter_device.cpp" "matter_bridge.cpp" "presence_link.cpp"
+        "status_ui.cpp" "click_detector.cpp")
     set(embed "")
 else()
     set(srcs ${common_srcs}
         "app_main.cpp" "app_mode.cpp" "app_mode_logic.cpp" "button_handler.cpp" "click_detector.cpp"
         "ble_scanner.cpp" "ibeacon_parser.cpp" "presence_logic.cpp" "presence_manager.cpp" "presence_config.cpp"
-        "config_store.cpp" "scan_cache.cpp" "wifi_config.cpp" "web_server.cpp" "http_guard.cpp" "diag.cpp")
+        "presence_battery.cpp" "config_store.cpp" "scan_cache.cpp" "wifi_config.cpp" "web_server.cpp"
+        "http_guard.cpp" "diag.cpp")
     if(CONFIG_PRESENCE_ROLE_SCANNER)
         list(APPEND srcs "presence_link.cpp")
     else()

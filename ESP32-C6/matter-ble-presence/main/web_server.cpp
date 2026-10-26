@@ -32,10 +32,12 @@
 #include "http_guard.h"
 #include "json_util.h"
 #include "matter_device.h"
+#include "presence_battery.h"
 #include "presence_config.h"
 #if CONFIG_PRESENCE_ROLE_SCANNER
 #include "presence_link.h"
 #endif
+#include "presence_manager.h"
 #include "scan_cache.h"
 #include "wifi_config.h"
 
@@ -50,11 +52,13 @@ static const char *TAG = "web";
 extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_end");
 
-// The page sends at most about 1.3 KB (5 slots, 48-byte labels). Each JSON value costs cJSON about 50 bytes of
-// heap while parsing: the limit also bounds that (2 KB of "[0,0,..." -> about 50 KB).
-static constexpr size_t kMaxConfigBody = 2048;
+// The page sends about 260 bytes per slot (48-byte label, 32-byte model), up to about 360 with every character of
+// them escaped: 20 slots fit in 8 KB. Each JSON value costs cJSON about 50 bytes of heap while parsing: the number of
+// values is checked before (too_many_values()), so a body of thousands of tiny values is refused unparsed.
+static constexpr size_t kMaxConfigBody = 8192;
+static constexpr size_t kMaxConfigValues = 40 * PRESENCE_SLOT_COUNT + 32; // the page sends about 21 per slot
 static constexpr size_t kMaxSmallBody = 256;
-static constexpr size_t kMaxErrors = 24;
+static constexpr size_t kMaxErrors = 64;
 #if CONFIG_PRESENCE_ALLOW_DUPLICATE_BEACON
 static constexpr bool kAllowDuplicates = true;
 #else
@@ -64,8 +68,9 @@ static constexpr bool kAllowDuplicates = false;
 static web_server_info_t s_info;
 static char s_host[WIFI_CONFIG_IP_SIZE]; // the only Host served (SoftAP address)
 // The server runs one handler at a time (one task): these buffers are shared by the handlers.
-static char *s_body;           // kMaxConfigBody + 1
-static scan_entry_t *s_beacons; // CONFIG_PRESENCE_SCAN_CACHE_SIZE
+static char *s_body;               // kMaxConfigBody + 1
+static scan_entry_t *s_beacons;    // CONFIG_PRESENCE_SCAN_CACHE_SIZE
+static presence_config_t *s_cfg;   // 2 KB with 20 slots: not on the 8 KB stack of the server task
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Response helpers
@@ -313,20 +318,30 @@ static esp_err_t status_get(httpd_req_t *req)
     // Two-chip version: what the Matter node (ESP32-H2) last reported over the UART link
     presence_link_stats_t link;
     presence_link_get_stats(&link);
+    const plink_status_t &h2 = link.peer_status;
     const long long ago = link.last_rx_ms > 0 ? (esp_timer_get_time() / 1000 - link.last_rx_ms) / 1000 : -1;
-    out.fmt(",\"h2\":{\"seen\":%s,\"ago_s\":%lld,\"commissioned\":%s,\"network_up\":%s,\"fabrics\":%u",
-            link.have_peer_status ? "true" : "false", ago,
-            (link.peer_status.flags & PLINK_STATUS_COMMISSIONED) ? "true" : "false",
-            (link.peer_status.flags & PLINK_STATUS_NETWORK_UP) ? "true" : "false",
-            static_cast<unsigned>(link.peer_status.fabrics));
-    // Endpoint of each slot's bridged device, 0: none
+    static const char *const kWaitReasons[] = { "", "commissioning", "memory", "error" };
+    out.fmt(",\"h2\":{\"seen\":%s,\"ago_s\":%lld,\"commissioned\":%s,\"network_up\":%s,\"window_open\":%s,"
+            "\"fabrics\":%u",
+            link.have_peer_status ? "true" : "false", ago, (h2.flags & PLINK_STATUS_COMMISSIONED) ? "true" : "false",
+            (h2.flags & PLINK_STATUS_NETWORK_UP) ? "true" : "false",
+            (h2.flags & PLINK_STATUS_WINDOW_OPEN) ? "true" : "false", static_cast<unsigned>(h2.fabrics));
+    out.fmt(",\"heap_kb\":%u,\"heap_min_kb\":%u,\"wait_reason\":\"%s\"", h2.heap_free_kb, h2.heap_min_kb,
+            kWaitReasons[h2.wait_reason <= PLINK_WAIT_ERROR ? h2.wait_reason : static_cast<uint8_t>(PLINK_WAIT_ERROR)]);
+    // Endpoint of each slot's bridged device (0: none), and the slots whose device waits
     out.raw(",\"bridged\":[");
     for (int i = 0; i < PLINK_SLOT_COUNT; i++) {
-        out.fmt("%s%u", i ? "," : "", static_cast<unsigned>(link.have_peer_status ? link.peer_status.endpoint[i] : 0));
+        out.fmt("%s%u", i ? "," : "", static_cast<unsigned>(link.have_peer_status ? h2.endpoint[i] : 0));
     }
-    // The code only while the H2 can be commissioned: once paired it opens nothing, and the SoftAP password is shared
+    out.raw("],\"waiting\":[");
+    for (int i = 0; i < PLINK_SLOT_COUNT; i++) {
+        out.fmt("%s%s", i ? "," : "", link.have_peer_status && (h2.waiting_mask & (1u << i)) ? "true" : "false");
+    }
+    // The code only while the H2 can be commissioned (not paired yet, or pairing mode): otherwise it opens nothing,
+    // and the SoftAP password is shared
     out.raw("],\"pairing\":");
-    if (link.have_pairing && !(link.peer_status.flags & PLINK_STATUS_COMMISSIONED)) {
+    const bool pairable = !(h2.flags & PLINK_STATUS_COMMISSIONED) || (h2.flags & PLINK_STATUS_WINDOW_OPEN);
+    if (link.have_pairing && pairable) {
         out.raw("{\"manual\":");
         out.str(link.pairing.manual_code);
         out.raw(",\"qr\":");
@@ -380,6 +395,10 @@ static esp_err_t scan_get(httpd_req_t *req)
         out.fmt("\"uuid\":\"%s\",\"major\":%u,\"minor\":%u,\"tx_power\":%d,\"name\":", uuid, e.ibeacon.major,
                 e.ibeacon.minor, e.ibeacon.tx_power);
         out.str(e.name);
+        // Battery of its last Eddystone-TLM frame: one reading, the NORMAL mode smooths them (presence_battery.h)
+        const uint8_t pct = presence_battery_percent(presence_battery_kconfig(), e.battery_mv);
+        out.fmt(",\"battery_mv\":%u,\"battery_pct\":%d,\"battery_age_ms\":%lld", e.battery_mv,
+                pct == PRESENCE_BATTERY_UNKNOWN ? -1 : pct, e.battery_mv ? now - e.battery_ms : -1LL);
         out.fmt(",\"age_ms\":%lld,\"count\":%u,\"same_id_other_mac\":%s}", now - e.last_seen_ms,
                 static_cast<unsigned>(e.count), other_addr ? "true" : "false");
     }
@@ -434,7 +453,9 @@ static void write_config(JsonOut &out, const presence_config_t &cfg)
         out.str(s.label);
         out.fmt(",\"mac\":\"%s\",\"addr_type\":\"%s\",\"timeout_s\":%u,\"rssi_filter\":%s,", addr,
                 beacon_addr_type_name(s.addr_type), s.timeout_s, s.rssi_filter ? "true" : "false");
-        out.fmt("\"rssi_threshold\":%d,\"rssi_hysteresis\":%u}", s.rssi_threshold, s.rssi_hysteresis);
+        out.fmt("\"rssi_threshold\":%d,\"rssi_hysteresis\":%u,\"model\":", s.rssi_threshold, s.rssi_hysteresis);
+        out.str(s.model);
+        out.raw("}");
     }
     out.raw("]");
 }
@@ -445,15 +466,14 @@ static esp_err_t config_get(httpd_req_t *req)
         return ESP_FAIL;
     }
     note_activity(req);
-    presence_config_t cfg;
-    config_store_get(&cfg);
+    config_store_get(s_cfg);
     json_headers(req, "200 OK");
     JsonOut out(req);
-    write_config(out, cfg);
-    out.fmt(",\"limits\":{\"label_max_bytes\":%d,\"timeout_min\":%d,\"timeout_max\":%d,\"rssi_min\":%d,"
-            "\"rssi_max\":%d,\"hysteresis_max\":%d,",
-            PRESENCE_LABEL_MAX_BYTES, PRESENCE_TIMEOUT_MIN_S, PRESENCE_TIMEOUT_MAX_S, PRESENCE_RSSI_THRESHOLD_MIN,
-            PRESENCE_RSSI_THRESHOLD_MAX, PRESENCE_RSSI_HYSTERESIS_MAX);
+    write_config(out, *s_cfg);
+    out.fmt(",\"limits\":{\"label_max_bytes\":%d,\"model_max_bytes\":%d,\"timeout_min\":%d,\"timeout_max\":%d,"
+            "\"rssi_min\":%d,\"rssi_max\":%d,\"hysteresis_max\":%d,",
+            PRESENCE_LABEL_MAX_BYTES, PRESENCE_MODEL_MAX_BYTES, PRESENCE_TIMEOUT_MIN_S, PRESENCE_TIMEOUT_MAX_S,
+            PRESENCE_RSSI_THRESHOLD_MIN, PRESENCE_RSSI_THRESHOLD_MAX, PRESENCE_RSSI_HYSTERESIS_MAX);
     out.fmt("\"interval_min\":%d,\"interval_max\":%d,\"window_min\":%d}", PRESENCE_SCAN_INTERVAL_MIN_MS,
             PRESENCE_SCAN_INTERVAL_MAX_MS, PRESENCE_SCAN_WINDOW_MIN_MS);
     out.fmt(",\"defaults\":{\"timeout_s\":%d,\"rssi_threshold\":%d,\"rssi_hysteresis\":%d,\"interval_ms\":%d,"
@@ -537,6 +557,24 @@ static void parse_label(int slot, const char *text, presence_slot_config_t *s, E
     }
 }
 
+// Model without surrounding blanks; empty: unknown (the bridge shows the beacon's advertised name)
+static void parse_model(int slot, const char *text, presence_slot_config_t *s, Errors *errors)
+{
+    while (*text == ' ' || *text == '\t') {
+        text++;
+    }
+    size_t len = strlen(text);
+    while (len > 0 && (text[len - 1] == ' ' || text[len - 1] == '\t')) {
+        len--;
+    }
+    if (len > PRESENCE_MODEL_MAX_BYTES) {
+        errors->add(slot, PRESENCE_FIELD_MODEL, PRESENCE_ERR_MODEL_TOO_LONG); // refused, never cut silently
+        return;
+    }
+    memcpy(s->model, text, len);
+    s->model[len] = '\0';
+}
+
 // Fills cfg from the request; type errors go to errors, value checks are left to presence_config_validate().
 static void parse_config(const cJSON *root, presence_config_t *cfg, Errors *errors)
 {
@@ -606,7 +644,39 @@ static void parse_config(const cJSON *root, presence_config_t *cfg, Errors *erro
         } else {
             errors->add(i, PRESENCE_FIELD_RSSI_HYSTERESIS, PRESENCE_ERR_HYSTERESIS_RANGE);
         }
+        const char *model = json_string(o, "model");
+        if (model != nullptr) {
+            parse_model(i, model, &s, errors);
+        } else {
+            errors->add(i, PRESENCE_FIELD_MODEL, PRESENCE_ERR_TYPE);
+        }
     }
+}
+
+// Structural characters outside strings: about one per JSON value. Refuses a body cJSON would turn into thousands
+// of allocations before it is even parsed.
+static bool too_many_values(const char *body, size_t len)
+{
+    size_t n = 0;
+    bool in_string = false;
+    bool escaped = false;
+    for (size_t i = 0; i < len; i++) {
+        const char c = body[i];
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+        } else if (c == '"') {
+            in_string = true;
+        } else if ((c == ',' || c == ':' || c == '[' || c == '{') && ++n > kMaxConfigValues) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static esp_err_t send_errors(httpd_req_t *req, const Errors &errors)
@@ -644,17 +714,21 @@ static esp_err_t config_post(httpd_req_t *req)
     if (read_body(req, s_body, kMaxConfigBody, &len) != ESP_OK) {
         return ESP_FAIL;
     }
+    if (too_many_values(s_body, len)) {
+        return send_message(req, "400 Bad Request", false, "Dữ liệu gửi lên quá nhiều trường");
+    }
     cJSON *root = cJSON_ParseWithLength(s_body, len);
     if (!cJSON_IsObject(root)) {
         cJSON_Delete(root);
         return send_message(req, "400 Bad Request", false, "Dữ liệu gửi lên không phải JSON hợp lệ");
     }
-    presence_config_t cfg;
-    Errors errors;
+    presence_config_t &cfg = *s_cfg;
+    static Errors errors; // server task only: off its stack
+    errors = Errors();
     parse_config(root, &cfg, &errors);
     cJSON_Delete(root);
     if (errors.count == 0) {
-        presence_config_error_t found[kMaxErrors];
+        static presence_config_error_t found[kMaxErrors];
         const size_t n = presence_config_validate(&cfg, kAllowDuplicates, found, kMaxErrors);
         for (size_t i = 0; i < n && i < kMaxErrors; i++) {
             errors.list[i] = found[i];
@@ -684,7 +758,7 @@ static esp_err_t config_post(httpd_req_t *req)
     // The bridge of the ESP32-H2 adds and removes its devices now; the presence states follow after the restart
     presence_link_set_slots(&cfg, true);
     return send_message(req, "200 OK", true,
-                        "Đã lưu và đọc lại kiểm tra thành công. Thiết bị con trên Matter bridge (ESP32-H2) được cập "
+                        "Đã lưu và đọc lại kiểm tra thành công. Thiết bị con trên iBeacon Bridge (ESP32-H2) được cập "
                         "nhật ngay. Bấm \"Khởi động lại về chế độ Matter\" để bắt đầu quét với cấu hình mới.");
 #else
     return send_message(req, "200 OK", true,
@@ -754,6 +828,25 @@ static esp_err_t format_post(httpd_req_t *req)
 }
 
 #if CONFIG_PRESENCE_ROLE_SCANNER
+// A command for the ESP32-H2 is only sent while it answers over UART and runs Matter: else 409 with the reason
+static bool h2_reachable(httpd_req_t *req)
+{
+    presence_link_stats_t link;
+    presence_link_get_stats(&link);
+    const int64_t ago_ms = esp_timer_get_time() / 1000 - link.last_rx_ms;
+    if (!link.have_peer_status || ago_ms > 10000) {
+        send_message(req, "409 Conflict", false,
+                     "Không có tín hiệu từ ESP32-H2 qua UART: lệnh không được gửi. Kiểm tra dây nối và nguồn.");
+        return false;
+    }
+    if (!(link.peer_status.flags & PLINK_STATUS_MATTER_STARTED)) {
+        send_message(req, "409 Conflict", false,
+                     "Matter chưa chạy trên ESP32-H2 (xem log USB của H2): lệnh không được gửi.");
+        return false;
+    }
+    return true;
+}
+
 // Two-chip version: removes the Matter pairing of the ESP32-H2 (fabrics, Thread network, bridged devices), so it
 // can be commissioned again, without any console command. Explicit confirmation in the body, as /api/format.
 static esp_err_t h2_reset_post(httpd_req_t *req)
@@ -773,22 +866,35 @@ static esp_err_t h2_reset_post(httpd_req_t *req)
     if (!confirmed) {
         return send_message(req, "400 Bad Request", false, "Thiếu xác nhận");
     }
-    presence_link_stats_t link;
-    presence_link_get_stats(&link);
-    const int64_t ago_ms = esp_timer_get_time() / 1000 - link.last_rx_ms;
-    if (!link.have_peer_status || ago_ms > 10000) {
-        return send_message(req, "409 Conflict", false,
-                            "Không có tín hiệu từ ESP32-H2 qua UART: lệnh không được gửi. Kiểm tra dây nối và nguồn.");
-    }
-    if (!(link.peer_status.flags & PLINK_STATUS_MATTER_STARTED)) {
-        return send_message(req, "409 Conflict", false,
-                            "Matter chưa chạy trên ESP32-H2 (xem log USB của H2): lệnh không được gửi.");
+    if (!h2_reachable(req)) {
+        return ESP_OK;
     }
     presence_link_request_command(PLINK_CMD_FACTORY_RESET);
     ESP_LOGW(TAG, "Matter factory reset of the ESP32-H2 asked on the page");
     return send_message(req, "200 OK", true,
-                        "Đã gửi lệnh tới ESP32-H2: H2 xóa ghép Matter và mạng Thread rồi khởi động lại, chờ ghép mới "
-                        "(mã ghép không đổi). Thiết bị con được tạo lại theo cấu hình đã lưu.");
+                        "Đã gửi lệnh tới ESP32-H2: H2 xóa ghép Matter và mạng Thread rồi khởi động lại (đèn H2 nháy đỏ "
+                        "3 lần), chờ ghép mới (mã ghép không đổi). Thiết bị con được tạo lại theo cấu hình đã lưu.");
+}
+
+// Two-chip version: pairing mode of the ESP32-H2, as a double click on its BOOT button
+static esp_err_t h2_pair_post(httpd_req_t *req)
+{
+    if (!request_allowed(req)) {
+        return ESP_FAIL;
+    }
+    app_mode_note_activity();
+    size_t len = 0;
+    if (read_body(req, s_body, kMaxSmallBody, &len) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    if (!h2_reachable(req)) {
+        return ESP_OK;
+    }
+    presence_link_request_command(PLINK_CMD_OPEN_WINDOW);
+    ESP_LOGI(TAG, "Pairing mode of the ESP32-H2 asked on the page");
+    return send_message(req, "200 OK", true,
+                        "Đã gửi lệnh: ESP32-H2 mở chế độ ghép (đèn nháy xanh dương). Thêm phụ kiện trong ứng dụng "
+                        "Nhà bằng mã ghép hiện ở trên.");
 }
 #endif
 
@@ -804,13 +910,14 @@ esp_err_t web_server_start(const web_server_info_t *info)
     }
     s_body = static_cast<char *>(malloc(kMaxConfigBody + 1));
     s_beacons = static_cast<scan_entry_t *>(calloc(CONFIG_PRESENCE_SCAN_CACHE_SIZE, sizeof(scan_entry_t)));
-    if (s_body == nullptr || s_beacons == nullptr) {
+    s_cfg = static_cast<presence_config_t *>(calloc(1, sizeof(presence_config_t)));
+    if (s_body == nullptr || s_beacons == nullptr || s_cfg == nullptr) {
         return ESP_ERR_NO_MEM;
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192;
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 14;
     config.max_open_sockets = 4;
     config.lru_purge_enable = true;
     config.recv_wait_timeout = 10;
@@ -835,6 +942,7 @@ esp_err_t web_server_start(const web_server_info_t *info)
         { .uri = "/api/format", .method = HTTP_POST, .handler = format_post, .user_ctx = nullptr },
 #if CONFIG_PRESENCE_ROLE_SCANNER
         { .uri = "/api/h2/reset", .method = HTTP_POST, .handler = h2_reset_post, .user_ctx = nullptr },
+        { .uri = "/api/h2/pair", .method = HTTP_POST, .handler = h2_pair_post, .user_ctx = nullptr },
 #endif
     };
     for (const httpd_uri_t &uri : uris) {

@@ -20,7 +20,7 @@ void click_detector_init(click_detector_t *cd, const click_detector_config_t *cf
     cd->armed = !pressed_now;
 }
 
-bool click_detector_update(click_detector_t *cd, bool pressed, uint32_t now_ms)
+click_event_t click_detector_update(click_detector_t *cd, bool pressed, uint32_t now_ms)
 {
     // Debounce
     if (pressed != cd->raw) {
@@ -28,7 +28,14 @@ bool click_detector_update(click_detector_t *cd, bool pressed, uint32_t now_ms)
         cd->raw_since_ms = now_ms;
     }
     if (cd->raw == cd->pressed || now_ms - cd->raw_since_ms < cd->cfg.debounce_ms) {
-        return false;
+        // No new level: a press may reach the hold time
+        if (cd->pressed && cd->armed && cd->cfg.hold_ms > 0 && !cd->held &&
+            now_ms - cd->press_start_ms >= cd->cfg.hold_ms) {
+            cd->held = true;
+            cd->clicks = 0; // a hold ends any sequence
+            return CLICK_EVENT_HOLD;
+        }
+        return CLICK_EVENT_NONE;
     }
     cd->pressed = cd->raw;
     const uint32_t edge_ms = cd->raw_since_ms; // when the level changed, not when the debounce confirmed it
@@ -39,22 +46,28 @@ bool click_detector_update(click_detector_t *cd, bool pressed, uint32_t now_ms)
             cd->clicks = 0;
         }
         cd->press_start_ms = edge_ms;
-        return false;
+        cd->held = false;
+        return CLICK_EVENT_NONE;
     }
 
     if (!cd->armed) {
         cd->armed = true; // first release after start-up: the press began before the detector
-        return false;
+        return CLICK_EVENT_NONE;
+    }
+    if (cd->held) {
+        cd->held = false;
+        cd->clicks = 0;
+        return CLICK_EVENT_HOLD_RELEASED;
     }
     if (edge_ms - cd->press_start_ms > cd->cfg.max_press_ms) {
-        cd->clicks = 0; // a hold: neither a click nor part of a sequence
-        return false;
+        cd->clicks = 0; // a long press: neither a click nor part of a sequence
+        return CLICK_EVENT_NONE;
     }
     cd->clicks++;
     cd->release_ms = edge_ms;
     if (cd->clicks < cd->cfg.clicks_needed) {
-        return false;
+        return CLICK_EVENT_NONE;
     }
     cd->clicks = 0;
-    return true;
+    return CLICK_EVENT_CLICKS;
 }

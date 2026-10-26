@@ -47,9 +47,11 @@ label.f{display:block;font-size:13px;color:var(--muted);margin:8px 0 3px}
 .beacon .top{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .rssi{display:inline-block;width:60px;height:7px;background:var(--chip);border-radius:4px;vertical-align:middle;overflow:hidden}
 .rssi i{display:block;height:100%;background:var(--accent)}
-.slot{border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0}
+.slot{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0}
 .slot.dis{opacity:.75}
 .slot h3{margin:0;font-size:15px}
+.slot .sum{font-weight:400;color:var(--muted);font-size:13px}
+.slot details.body>summary{margin-top:4px}
 details summary{cursor:pointer;color:var(--accent);font-size:14px;margin-top:8px}
 .actions{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:10px 12px;z-index:6}
 .actions .row{max-width:860px;margin:0 auto;justify-content:flex-end}
@@ -70,11 +72,15 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px;margin-top:8px
     <div id="storageBox" style="display:none">
       <div class="banner warn show" id="storageMsg"></div>
       <button class="danger" id="btnFormat">Định dạng phân vùng cấu hình beacon</button>
-      <div class="small">Chỉ xóa phân vùng app_cfg (cấu hình 5 slot và mật khẩu Wi-Fi cấu hình). Dữ liệu ghép Matter (cả mạng Thread/Wi-Fi đã lưu) không bị ảnh hưởng.</div>
+      <div class="small">Chỉ xóa phân vùng app_cfg (cấu hình các slot và mật khẩu Wi-Fi cấu hình). Dữ liệu ghép Matter (cả mạng Thread/Wi-Fi đã lưu) không bị ảnh hưởng.</div>
+    </div>
+    <div id="h2PairBox" style="display:none;margin-top:8px">
+      <button id="btnH2Pair">Mở chế độ ghép trên ESP32-H2</button>
+      <div class="small">Như bấm BOOT của H2 hai lần: đèn H2 nháy xanh dương trong lúc chờ ghép. Dùng để thêm iBeacon Bridge vào một ứng dụng nữa (Home Assistant, Google…) hoặc khi lần ghép đầu đã hết giờ.</div>
     </div>
     <details id="h2ResetBox" style="display:none;margin-top:8px">
       <summary>Xóa ghép Matter của ESP32-H2</summary>
-      <div class="small" style="margin:6px 0">Chỉ dùng khi không ghép lại được (ví dụ đã xóa thiết bị khỏi ứng dụng Nhà lúc H2 đang tắt). H2 xóa ghép Matter và mạng Thread, khởi động lại rồi chờ ghép mới bằng mã ghép ở trên. Cấu hình beacon trên chip này giữ nguyên; thiết bị con được tạo lại theo cấu hình đã lưu. Bình thường chỉ cần xóa thiết bị trong ứng dụng Nhà: H2 tự khởi động lại và chờ ghép.</div>
+      <div class="small" style="margin:6px 0">Chỉ dùng khi không ghép lại được (ví dụ đã xóa thiết bị khỏi ứng dụng Nhà lúc H2 đang tắt). H2 xóa ghép Matter và mạng Thread, khởi động lại (đèn nháy đỏ 3 lần) rồi chờ ghép mới bằng mã ghép ở trên. Giữ BOOT của H2 5 giây (đèn đỏ) rồi thả cũng làm việc này. Cấu hình beacon trên chip này giữ nguyên; thiết bị con được tạo lại theo cấu hình đã lưu. Bình thường chỉ cần xóa thiết bị trong ứng dụng Nhà: H2 tự khởi động lại và chờ ghép.</div>
       <button class="danger" id="btnH2Reset">Xóa ghép Matter của ESP32-H2</button>
     </details>
   </section>
@@ -93,7 +99,7 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px;margin-top:8px
   </section>
 
   <section id="secSlots">
-    <h2>Presence 1–5</h2>
+    <h2 id="slotsTitle">Presence</h2>
     <div class="small" id="slotsNote">Mỗi slot là một endpoint Occupancy Sensor cố định trong Matter. Slot tắt hoặc chưa có MAC luôn báo "không hiện diện". Tên chỉ là nhãn nội bộ, ứng dụng Matter có thể không hiển thị.</div>
     <div id="slots"></div>
   </section>
@@ -118,8 +124,8 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px;margin-top:8px
 
 <script>
 "use strict";
-const SLOTS = 5;
-let cfg = null, limits = {}, defaults = {}, allowDup = false, net = null;
+let SLOTS = 0; // from the device: 5 (one-chip versions) or 20 (two-chip version)
+let cfg = null, limits = {}, defaults = {}, allowDup = false, net = null, isBridge = false;
 let beacons = [], dirty = false, stopped = false, restarting = false;
 let idleLeft = null, lastKeepalive = 0, userStopped = false, beaconsStale = false, lastH2 = null;
 
@@ -191,6 +197,12 @@ function typesConflict(a, b) { return a === b || a === "any" || b === "any"; }
 function utf8Bytes(s) { return new TextEncoder().encode(s).length; }
 const kindText = {public: "Public", static: "Random tĩnh", rpa: "Random riêng tư (đổi theo thời gian)", nrpa: "Random không phân giải (đổi theo thời gian)", reserved: "Random (không rõ)"};
 
+// Battery of a beacon of the list: from its Eddystone-TLM frames, sent from the same address as its iBeacon frames
+function fmtBattery(b) {
+  if (!b.battery_mv) return "chưa thấy gói Eddystone-TLM (beacon không gửi, hoặc gửi từ địa chỉ khác)";
+  return (b.battery_pct >= 0 ? b.battery_pct + "% · " : "") + b.battery_mv + " mV";
+}
+
 function fmtAge(ms) {
   const s = Math.round(ms / 1000);
   return s < 60 ? s + " giây trước" : Math.floor(s / 60) + " phút " + (s % 60) + " giây trước";
@@ -232,15 +244,20 @@ async function fetchStatus() {
   kv("Firmware", s.firmware + " · ESP-IDF " + s.idf);
   kv("Thời gian chạy", Math.floor(s.uptime_s / 60) + " phút " + (s.uptime_s % 60) + " giây");
   if (s.h2) {
-    kv("ESP32-H2 (Matter bridge)", !s.h2.seen ? "chưa nhận được tín hiệu qua UART (kiểm tra dây nối)" :
+    kv("ESP32-H2 (iBeacon Bridge)", !s.h2.seen ? "chưa nhận được tín hiệu qua UART (kiểm tra dây nối)" :
       (s.h2.ago_s > 5 ? "mất tín hiệu " + s.h2.ago_s + " s" : "đang kết nối") + " · " + (s.h2.commissioned ? "đã ghép (" + s.h2.fabrics + " fabric)" : "chưa ghép") +
-      " · Thread " + (s.h2.network_up ? "đã kết nối" : "chưa kết nối"));
+      " · Thread " + (s.h2.network_up ? "đã kết nối" : "chưa kết nối") + (s.h2.window_open ? " · đang ở chế độ ghép" : ""));
+    if (s.h2.seen) {
+      const n = (s.h2.bridged || []).filter(e => e > 0).length, w = (s.h2.waiting || []).filter(x => x).length;
+      kv("Thiết bị con trên bridge", n + "/" + SLOTS + (w ? " · " + w + " đang chờ" : "") + " · bộ nhớ H2 trống " + s.h2.heap_kb + " KB (thấp nhất " + s.h2.heap_min_kb + " KB)");
+    }
     if (s.h2.pairing) kv("Mã ghép Matter", fmtPairing(s.h2.pairing.manual) + " (nhập trong ứng dụng Nhà khi thêm phụ kiện; không đổi)");
-    else if (s.h2.seen && s.h2.commissioned) kv("Mã ghép Matter", "ẩn vì H2 đã ghép (hiện lại khi H2 chờ ghép)");
+    else if (s.h2.seen && s.h2.commissioned) kv("Mã ghép Matter", "ẩn vì H2 đã ghép (hiện lại khi H2 ở chế độ ghép)");
     lastH2 = s.h2;
     renderHome();
   }
   $("h2ResetBox").style.display = s.h2 ? "block" : "none";
+  $("h2PairBox").style.display = s.h2 ? "block" : "none";
   kv("Bộ nhớ trống", Math.round(s.heap.free / 1024) + " KB (thấp nhất " + Math.round(s.heap.min / 1024) + " KB)");
   kv("Điện thoại kết nối", s.ap.stations + " · kênh " + s.ap.channel);
   kv("Quét BLE", (s.scan.active ? "chủ động" : "thụ động") + " " + s.scan.window_ms + "/" + s.scan.interval_ms + " ms · " + s.scan.adv_reports + " gói, " + s.scan.ibeacon_reports + " iBeacon");
@@ -289,7 +306,7 @@ function renderBeacons() {
     const assigned = slotOfMac(b.mac, b.addr_type);
     const sel = el("select", {"aria-label": "Gán beacon vào slot"});
     sel.append(el("option", {value: "", text: assigned >= 0 ? "Đã gán: Presence " + (assigned + 1) : "Gán vào…"}));
-    for (let i = 0; i < SLOTS; i++) sel.append(el("option", {value: String(i), text: "Presence " + (i + 1)}));
+    for (let i = 0; i < SLOTS; i++) sel.append(el("option", {value: String(i), text: "Presence " + (i + 1) + (readSlot(i).mac ? "" : " (trống)")}));
     sel.addEventListener("change", () => { if (sel.value !== "") assignBeacon(Number(sel.value), b); sel.value = ""; sel.blur(); });
     const warn = [];
     if (!b.stable) warn.push(el("div", {class: "warnt", text: "⚠ Địa chỉ ngẫu nhiên thay đổi theo thời gian: nhận diện theo MAC sẽ không bền vững."}));
@@ -299,6 +316,7 @@ function renderBeacons() {
         el("div", null, el("span", {class: "mono", text: b.mac}), " ", el("span", {class: "chip", text: kindText[b.kind] || b.kind})),
         el("div", {class: "small"}, el("span", {class: "rssi"}, el("i", {style: "width:" + pct + "%"})), " " + b.rssi + " dBm · " + fmtAge(b.age_ms))),
       el("div", {class: "small"}, "Tên: ", el("b", {text: b.name || "(không có)"}), " · Major ", el("b", {text: String(b.major)}), " · Minor ", el("b", {text: String(b.minor)}), " · Tx " + b.tx_power + " dBm · " + b.count + " gói"),
+      el("div", {class: "small"}, "Pin: ", el("b", {text: fmtBattery(b)})),
       el("div", {class: "small mono", text: "UUID " + b.uuid}),
       ...warn,
       el("div", {class: "row", style: "margin-top:6px"}, sel)));
@@ -314,9 +332,12 @@ function assignBeacon(i, b) {
   $("mac" + i).value = b.mac;
   $("type" + i).value = b.addr_type;
   $("en" + i).checked = true;
-  if (!$("label" + i).value.trim() || /^Presence \d$/.test($("label" + i).value.trim())) {
+  if (!$("label" + i).value.trim() || /^Presence \d+$/.test($("label" + i).value.trim())) {
     if (b.name) $("label" + i).value = b.name.slice(0, 40);
   }
+  // Model of the bridged device: the name the beacon advertises (editable)
+  $("model" + i).value = b.name ? b.name.slice(0, 32) : "";
+  $("det" + i).open = true;
   markDirty();
   validateAll(false);
   renderSeen();
@@ -329,6 +350,8 @@ function field(label, input, errId, hint) {
     hint ? el("div", {class: "small", text: hint}) : null, el("div", {class: "err", id: errId}));
 }
 
+// One card per slot: the header (name, MAC, state) always shown, the fields in a collapsible part, open for the slots
+// in use (20 slots in the two-chip version)
 function buildSlots() {
   const root = $("slots");
   root.replaceChildren();
@@ -340,36 +363,42 @@ function buildSlots() {
       el("option", {value: "any", text: "Tự động (public hoặc random)"}),
       el("option", {value: "public", text: "Public"}),
       el("option", {value: "random", text: "Random"}));
+    const model = el("input", {id: "model" + i, maxlength: "32", autocomplete: "off", placeholder: "tên beacon quảng bá"});
     const to = el("input", {id: "to" + i, type: "number", inputmode: "numeric"});
     const rf = el("input", {type: "checkbox", id: "rf" + i});
     const rt = el("input", {id: "rt" + i, type: "number", inputmode: "numeric"});
     const rh = el("input", {id: "rh" + i, type: "number", inputmode: "numeric"});
     const clear = el("button", {type: "button", text: "Xóa MAC", onclick: () => { mac.value = ""; type.value = "any"; markDirty(); validateAll(false); renderSeen(); }});
+    const modelBox = el("div", {id: "modelBox" + i}, field("Model (hiện trong ứng dụng Nhà)", model, "emodel" + i,
+      "Tên thiết bị trong gói tin của beacon, tự điền khi gán từ danh sách. Để trống: H2 dùng tên beacon quảng bá khi nghe thấy."));
     const card = el("div", {class: "slot", id: "slot" + i},
       el("div", {class: "row", style: "justify-content:space-between"},
-        el("h3", {text: "Presence " + (i + 1)}),
+        el("h3", null, "Presence " + (i + 1) + " ", el("span", {class: "sum", id: "sum" + i})),
         el("label", {class: "chk"}, en, "Bật")),
       el("div", {class: "small", id: "seen" + i}),
       el("div", {class: "small home", id: "home" + i}),
-      el("div", {class: "grid"},
-        field("Tên (nhãn nội bộ)", label, "elabel" + i),
-        field("Thời gian vắng mặt (giây)", to, "eto" + i, "Phải gấp nhiều lần chu kỳ phát của beacon: beacon 1 s → 45 s là dư; beacon 10 s cần 60 s trở lên và tỉ lệ quét cao hơn."),
-        field("Địa chỉ MAC", mac, "emac" + i),
-        field("Loại địa chỉ", type, "etype" + i)),
-      el("div", {class: "row", style: "margin-top:6px"}, clear),
-      el("div", {class: "warnt", id: "wslot" + i}),
-      el("details", null, el("summary", {text: "Lọc RSSI (nâng cao, mặc định tắt)"}),
-        el("label", {class: "chk", style: "margin-top:6px"}, rf, "Chỉ tính gói đủ mạnh"),
+      el("details", {class: "body", id: "det" + i}, el("summary", {text: "Cài đặt"}),
         el("div", {class: "grid"},
-          field("Ngưỡng bật (dBm)", rt, "ert" + i),
-          field("Độ trễ (dB)", rh, "erh" + i)),
-        el("div", {class: "small", text: "Khi đang vắng: cần RSSI ≥ ngưỡng để báo hiện diện. Khi đang hiện diện: gói ≥ (ngưỡng − độ trễ) vẫn giữ trạng thái. RSSI dao động ±10 dB theo người, hướng, tường; không phải khoảng cách chính xác."})));
+          field("Tên (nhãn nội bộ)", label, "elabel" + i),
+          field("Thời gian vắng mặt (giây)", to, "eto" + i, "Phải gấp nhiều lần chu kỳ phát của beacon: beacon 1 s → 45 s là dư; beacon 10 s cần 60 s trở lên và tỉ lệ quét cao hơn."),
+          field("Địa chỉ MAC", mac, "emac" + i),
+          field("Loại địa chỉ", type, "etype" + i),
+          modelBox),
+        el("div", {class: "row", style: "margin-top:6px"}, clear),
+        el("div", {class: "warnt", id: "wslot" + i}),
+        el("details", null, el("summary", {text: "Lọc RSSI (nâng cao, mặc định tắt)"}),
+          el("label", {class: "chk", style: "margin-top:6px"}, rf, "Chỉ tính gói đủ mạnh"),
+          el("div", {class: "grid"},
+            field("Ngưỡng bật (dBm)", rt, "ert" + i),
+            field("Độ trễ (dB)", rh, "erh" + i)),
+          el("div", {class: "small", text: "Khi đang vắng: cần RSSI ≥ ngưỡng để báo hiện diện. Khi đang hiện diện: gói ≥ (ngưỡng − độ trễ) vẫn giữ trạng thái. RSSI dao động ±10 dB theo người, hướng, tường; không phải khoảng cách chính xác."}))));
     root.append(card);
-    for (const inp of [en, label, mac, type, to, rf, rt, rh]) {
-      inp.addEventListener("input", () => { markDirty(); validateAll(false); if (inp === mac || inp === type) renderSeen(); });
+    for (const inp of [en, label, mac, type, model, to, rf, rt, rh]) {
+      inp.addEventListener("input", () => { markDirty(); validateAll(false); if (inp === mac || inp === type || inp === label || inp === en) renderSeen(); });
       inp.addEventListener("change", () => { markDirty(); validateAll(false); });
     }
     mac.addEventListener("blur", () => { const n = normalizeMac(mac.value); if (n) mac.value = n; });
+    en.addEventListener("change", () => { if (en.checked) $("det" + i).open = true; });
   }
 }
 
@@ -384,6 +413,9 @@ function fillForm(c) {
     $("rf" + i).checked = s.rssi_filter;
     $("rt" + i).value = s.rssi_threshold;
     $("rh" + i).value = s.rssi_hysteresis;
+    $("model" + i).value = s.model || "";
+    $("modelBox" + i).style.display = isBridge ? "" : "none";
+    $("det" + i).open = s.enabled || s.mac !== "";
   }
   $("scanItvl").value = c.scan.interval_ms;
   $("scanWin").value = c.scan.window_ms;
@@ -404,6 +436,7 @@ function readSlot(i) {
     rssi_filter: $("rf" + i).checked,
     rssi_threshold: Number($("rt" + i).value),
     rssi_hysteresis: Number($("rh" + i).value),
+    model: $("model" + i).value.trim(),
   };
 }
 
@@ -413,10 +446,12 @@ function renderSeen() {
     const box = $("seen" + i);
     const w = $("wslot" + i);
     $("slot" + i).classList.toggle("dis", !s.enabled);
+    $("sum" + i).textContent = s.mac ? "· " + (s.label || "") + " · " + s.mac : (s.enabled ? "· chưa có MAC" : "· trống");
     w.textContent = "";
     if (!s.mac) { box.textContent = s.enabled ? "Chưa có MAC: slot luôn báo không hiện diện." : "Slot tắt."; continue; }
     const b = beacons.find(x => x.mac === s.mac && typesConflict(s.addr_type, x.addr_type));
-    box.textContent = b ? "Đang nghe thấy: " + b.rssi + " dBm, " + fmtAge(b.age_ms) + (b.name ? " · " + b.name : "") : "Chưa nghe thấy beacon này trong danh sách quét.";
+    box.textContent = b ? "Đang nghe thấy: " + b.rssi + " dBm, " + fmtAge(b.age_ms) + (b.name ? " · " + b.name : "") +
+      (b.battery_mv ? " · pin " + fmtBattery(b) : "") : "Chưa nghe thấy beacon này trong danh sách quét.";
     if (b && (!b.stable || b.same_id_other_mac)) w.textContent = "⚠ Beacon này có địa chỉ thay đổi: slot có thể mất dấu khi địa chỉ đổi.";
     if (!s.enabled) box.textContent += " (slot tắt)";
   }
@@ -445,6 +480,10 @@ function validateAll(showAll) {
     if (utf8Bytes(s.label) > limits.label_max_bytes) e = "Tên quá dài (tối đa " + limits.label_max_bytes + " byte UTF-8)";
     else if (/[\u0000-\u001f\u007f]/.test(s.label)) e = "Tên chứa ký tự không hợp lệ";
     setErr("elabel" + i, "label" + i, e); ok = ok && !e;
+    e = "";
+    if (utf8Bytes(s.model) > limits.model_max_bytes) e = "Model quá dài (tối đa " + limits.model_max_bytes + " byte UTF-8)";
+    else if (/[\u0000-\u001f\u007f]/.test(s.model)) e = "Model chứa ký tự không hợp lệ";
+    setErr("emodel" + i, "model" + i, e); ok = ok && !e;
     e = (s.mac === null) ? "MAC không hợp lệ, dạng AA:BB:CC:DD:EE:FF" : "";
     setErr("emac" + i, "mac" + i, e); ok = ok && !e;
     e = (!Number.isInteger(s.timeout_s) || s.timeout_s < limits.timeout_min || s.timeout_s > limits.timeout_max) ? "Từ " + limits.timeout_min + " đến " + limits.timeout_max + " giây" : "";
@@ -483,16 +522,17 @@ function collect() {
   return {ok: v.ok, body: {
     scan: {interval_ms: v.itvl, window_ms: v.win},
     slots: v.slots.map(s => ({enabled: s.enabled, label: s.label, mac: s.mac || "", addr_type: s.addr_type,
-      timeout_s: s.timeout_s, rssi_filter: s.rssi_filter, rssi_threshold: s.rssi_threshold, rssi_hysteresis: s.rssi_hysteresis}))
+      timeout_s: s.timeout_s, rssi_filter: s.rssi_filter, rssi_threshold: s.rssi_threshold, rssi_hysteresis: s.rssi_hysteresis,
+      model: s.model}))
   }};
 }
 
-const fieldIds = {label: "label", mac: "mac", addr_type: "type", timeout_s: "to", rssi_threshold: "rt", rssi_hysteresis: "rh"};
-const errIds = {label: "elabel", mac: "emac", addr_type: "etype", timeout_s: "eto", rssi_threshold: "ert", rssi_hysteresis: "erh"};
+const fieldIds = {label: "label", mac: "mac", addr_type: "type", timeout_s: "to", rssi_threshold: "rt", rssi_hysteresis: "rh", model: "model"};
+const errIds = {label: "elabel", mac: "emac", addr_type: "etype", timeout_s: "eto", rssi_threshold: "ert", rssi_hysteresis: "erh", model: "emodel"};
 
 async function save() {
   const c = collect();
-  if (!c.ok) { banner("err", "Chưa lưu: còn ô không hợp lệ (đánh dấu đỏ)."); return; }
+  if (!c.ok) { openInvalid(); banner("err", "Chưa lưu: còn ô không hợp lệ (đánh dấu đỏ)."); return; }
   $("btnSave").disabled = true;
   const r = await api("POST", "/api/config", c.body);
   $("btnSave").disabled = false;
@@ -506,8 +546,14 @@ async function save() {
       if (e.slot >= 0 && errIds[e.field]) setErr(errIds[e.field] + e.slot, fieldIds[e.field] + e.slot, e.message);
       else setErr("scanErr", null, e.message);
     }
+    openInvalid();
   }
   banner("err", (r.data && r.data.message) || ("Lưu thất bại (HTTP " + r.status + "). Thiết bị vẫn ở trang cấu hình."));
+}
+
+// The settings of every slot with a field marked invalid are opened, so the error is seen
+function openInvalid() {
+  for (let i = 0; i < SLOTS; i++) if ($("slot" + i).querySelector(".invalid")) $("det" + i).open = true;
 }
 
 async function loadConfig() {
@@ -515,9 +561,12 @@ async function loadConfig() {
   if (!r.ok || !r.data) { banner("err", "Không đọc được cấu hình từ thiết bị."); return; }
   cfg = r.data; limits = cfg.limits; defaults = cfg.defaults; allowDup = cfg.allow_duplicates;
   if (netText[cfg.network]) net = netText[cfg.network];
+  isBridge = cfg.network === "h2";
+  if (cfg.slots.length !== SLOTS) { SLOTS = cfg.slots.length; buildSlots(); }
+  $("slotsTitle").textContent = "Presence 1–" + SLOTS;
   $("coexNote").textContent = "Bộ thu nghe trong \"cửa sổ\" ms mỗi \"chu kỳ\" ms. " + (net ? net.coex + " " : "") +
     "Mặc định " + defaults.window_ms + "/" + defaults.interval_ms + " ms (" + Math.round(defaults.window_ms * 100 / defaults.interval_ms) + "%).";
-  if (cfg.network === "h2") $("slotsNote").textContent = "Bản hai chip: mỗi Presence đã bật và có MAC là một thiết bị con của Matter bridge (ESP32-H2), tên trên ứng dụng Nhà là địa chỉ MAC của beacon. Thêm: gán MAC, bật slot, bấm Lưu – H2 thêm thiết bị ngay. Tắt slot hoặc xóa MAC rồi Lưu – thiết bị bị gỡ khỏi Nhà. Gán beacon khác vào slot – thiết bị cũ bị gỡ, thiết bị mới được thêm.";
+  if (isBridge) $("slotsNote").textContent = "Bản hai chip: mỗi Presence đã bật và có MAC là một thiết bị con của Matter bridge \"iBeacon Bridge\" (ESP32-H2). Trên ứng dụng Nhà: tên và số sê-ri là địa chỉ MAC của beacon, nhà sản xuất Haxeko, model là tên thiết bị trong gói tin của beacon, pin theo gói Eddystone-TLM. Thêm: gán MAC, bật slot, bấm Lưu – H2 thêm thiết bị ngay. Tắt slot hoặc xóa MAC rồi Lưu – thiết bị bị gỡ khỏi Nhà. Gán beacon khác vào slot – thiết bị cũ bị gỡ, thiết bị mới được thêm.";
   fillForm(cfg);
   renderHome();
 }
@@ -531,11 +580,15 @@ function renderHome() {
     const saved = cfg.slots[i];
     const active = saved.enabled && saved.mac !== "";
     const ep = lastH2 && lastH2.bridged ? lastH2.bridged[i] : 0;
+    const waiting = lastH2 && lastH2.waiting ? lastH2.waiting[i] : false;
     let text;
     if (ep > 0 && !active) text = "Đang gỡ thiết bị con khỏi Nhà (endpoint " + ep + ")…";
     else if (ep > 0) text = "Trên Nhà: thiết bị con " + saved.mac + " (endpoint " + ep + ")";
     else if (!active) text = "Chưa có trên Nhà: gán MAC, bật slot rồi Lưu để thêm";
     else if (!lastH2 || !lastH2.seen) text = "Chờ ESP32-H2 (chưa nhận được tín hiệu qua UART)";
+    else if (waiting && lastH2.wait_reason === "commissioning") text = "Chờ ghép Matter xong: H2 giữ bộ nhớ cho việc ghép, thiết bị " + saved.mac + " được thêm ngay sau đó";
+    else if (waiting && lastH2.wait_reason === "memory") text = "Chờ: H2 không đủ bộ nhớ để thêm " + saved.mac + " lúc này (thêm khi đủ)";
+    else if (waiting && lastH2.wait_reason === "error") text = "H2 không thêm được " + saved.mac + " (xem log USB của H2), thử lại sau 30 giây";
     else text = "Đang chờ ESP32-H2 thêm thiết bị con " + saved.mac + "…";
     line.textContent = text;
   }
@@ -570,6 +623,12 @@ async function clearList() {
   refreshScan();
 }
 
+async function pairH2() {
+  const r = await api("POST", "/api/h2/pair", {});
+  banner(r.ok && r.data && r.data.ok ? "ok" : "err", (r.data && r.data.message) || ("Lỗi (HTTP " + r.status + ")"));
+  refreshStatus();
+}
+
 async function resetH2() {
   if (!confirm("Xóa ghép Matter của ESP32-H2? H2 xóa ghép và mạng Thread, khởi động lại rồi chờ ghép mới. Nên xóa thiết bị khỏi ứng dụng Nhà trước.")) return;
   const r = await api("POST", "/api/h2/reset", {confirm: "RESET-MATTER"});
@@ -577,7 +636,7 @@ async function resetH2() {
 }
 
 async function formatCfg() {
-  if (!confirm("Xóa phân vùng cấu hình beacon (5 slot và mật khẩu Wi-Fi cấu hình)? Dữ liệu ghép Matter/" + netName() + " không bị ảnh hưởng.")) return;
+  if (!confirm("Xóa phân vùng cấu hình beacon (" + SLOTS + " slot và mật khẩu Wi-Fi cấu hình)? Dữ liệu ghép Matter/" + netName() + " không bị ảnh hưởng.")) return;
   const r = await api("POST", "/api/format", {confirm: "FORMAT"});
   banner(r.ok ? "ok" : "err", (r.data && r.data.message) || "Lỗi");
   await loadConfig();
@@ -600,13 +659,13 @@ $("btnScan").addEventListener("click", toggleScan);
 $("btnClear").addEventListener("click", clearList);
 $("btnFormat").addEventListener("click", formatCfg);
 $("btnH2Reset").addEventListener("click", resetH2);
+$("btnH2Pair").addEventListener("click", pairH2);
 $("btnExtend").addEventListener("click", () => { lastKeepalive = 0; keepalive(); });
 $("scanItvl").addEventListener("input", () => { markDirty(); validateAll(false); });
 $("scanWin").addEventListener("input", () => { markDirty(); validateAll(false); });
 for (const ev of ["click", "keydown", "input", "touchstart"]) document.addEventListener(ev, keepalive, {passive: true});
 window.addEventListener("beforeunload", e => { if (dirty && !restarting) { e.preventDefault(); e.returnValue = ""; } });
 
-buildSlots();
 loadConfig().then(() => { refreshStatus(); refreshScan(); });
 // Polls: the next request starts ms after the previous one finished
 function poll(fn, ms) {

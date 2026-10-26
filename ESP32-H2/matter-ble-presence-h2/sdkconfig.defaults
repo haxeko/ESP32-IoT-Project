@@ -16,15 +16,33 @@ CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
 # Own product ID (0x8000 H2 LD2410, 0x8001 C3 LD2410, 0x8002 C6 Thread, 0x8003 C3 Wi-Fi versions)
 CONFIG_DEVICE_PRODUCT_ID=0x8004
+# Name of the bridge in the controllers (Basic Information ProductName) and before commissioning (DNS-SD)
+CONFIG_PRESENCE_PRODUCT_NAME="iBeacon Bridge"
+CONFIG_PRESENCE_DISCOVERY_NAME="iBeacon Bridge"
 
 # BLE only for commissioning: the scanning is the ESP32-C3's, so NimBLE is released (and its RAM freed) once
 # commissioned
 CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y
 
 # Matter bridge (matter_bridge.cpp): root node, Aggregator on endpoint 1, one bridged device per presence slot
-# (5), named after the beacon's MAC by the Bridged Device Basic Information cluster
-CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=7
+# (20): Bridged Node + Occupancy Sensor + Power Source (battery), named after the beacon's MAC by the Bridged Device
+# Basic Information cluster. Each dynamic endpoint of the count costs static RAM in every cluster server (about
+# 0.5 KB), each device type slot 8 bytes per endpoint: the counts are those the bridge uses, no more.
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=22
+CONFIG_ESP_MATTER_MAX_DEVICE_TYPE_COUNT=4
 CONFIG_SUPPORT_BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER=y
+CONFIG_SUPPORT_POWER_SOURCE_CLUSTER=y
+# Clusters no endpoint of the bridge has, kept by the one-chip versions: their servers size static tables by the 22
+# dynamic endpoints (Color Control alone 5.8 KB of RAM, plus the On/Off, Level and Color scene handlers), RAM the
+# bridged devices need as heap
+CONFIG_SUPPORT_COLOR_CONTROL_CLUSTER=n
+CONFIG_SUPPORT_LEVEL_CONTROL_CLUSTER=n
+CONFIG_SUPPORT_ON_OFF_CLUSTER=n
+CONFIG_SUPPORT_SCENES_CLUSTER=n
+CONFIG_SUPPORT_WIFI_NETWORK_DIAGNOSTICS_CLUSTER=n
+# Critical events (StartUp, ShutDown, Leave...) are few: 1 KB of buffer instead of 4; debug events are not used
+CONFIG_EVENT_LOGGING_CRIT_BUFFER_SIZE=1024
+CONFIG_EVENT_LOGGING_DEBUG_BUFFER_SIZE=256
 # Device type in commissionable discovery (DNS-SD "DT"): 14 = 0x000E Aggregator
 CONFIG_DEVICE_TYPE=14
 
@@ -37,7 +55,7 @@ CONFIG_OPENTHREAD_SRP_CLIENT=y
 CONFIG_OPENTHREAD_DNS_CLIENT=y
 CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
 CONFIG_OPENTHREAD_LOG_LEVEL_NOTE=y
-CONFIG_OPENTHREAD_CLI=y
+CONFIG_OPENTHREAD_CLI=n
 CONFIG_LWIP_IPV6_AUTOCONFIG=n
 CONFIG_LWIP_IPV6_NUM_ADDRESSES=8
 CONFIG_LWIP_MULTICAST_PING=y
@@ -45,6 +63,7 @@ CONFIG_USE_MINIMAL_MDNS=n
 CONFIG_ENABLE_EXTENDED_DISCOVERY=y
 CONFIG_SUPPORT_THREAD_NETWORK_DIAGNOSTICS_CLUSTER=y
 
-# Matter console on USB-Serial-JTAG, for diagnostics only (diagnostics, OpenThread CLI): nothing needs it, the pairing
-# code and the factory reset are on the scanner's configuration page
-CONFIG_ENABLE_CHIP_SHELL=y
+# No Matter console: nothing needs it (the pairing code and the factory reset are on the scanner's page and the BOOT
+# button), and without it the heap has about 10 KB more for the bridged devices (esp-matter docs, "Disable the
+# chip-shell", ESP32-H2). The log stays on USB-Serial-JTAG.
+CONFIG_ENABLE_CHIP_SHELL=n

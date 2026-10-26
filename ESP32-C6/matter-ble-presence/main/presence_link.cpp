@@ -21,9 +21,11 @@
 
 #include "sdkconfig.h"
 
+#include "json_util.h"
 #include "presence_config.h"
 #if CONFIG_PRESENCE_ROLE_SCANNER
 #include "ble_scanner.h"
+#include "presence_manager.h"
 #endif
 
 static const char *TAG = "link";
@@ -32,7 +34,8 @@ static_assert(PLINK_SLOT_COUNT == PRESENCE_SLOT_COUNT, "one link slot per presen
 
 static constexpr uart_port_t kUart = static_cast<uart_port_t>(CONFIG_PRESENCE_LINK_UART_NUM);
 static constexpr int64_t kSendPeriodMs = 1000;
-static constexpr int64_t kSlowPeriodMs = 5000; // SLOTS (scanner), PAIRING (Matter node)
+static constexpr int64_t kSlowPeriodMs = 5000; // each SLOT (scanner), PAIRING (Matter node)
+static constexpr int64_t kSlotPeriodMs = kSlowPeriodMs / PRESENCE_SLOT_COUNT;
 static constexpr TickType_t kReadTimeout = pdMS_TO_TICKS(100);
 #if CONFIG_PRESENCE_ROLE_SCANNER
 static constexpr uint32_t kTaskStack = 3584;
@@ -44,16 +47,25 @@ static constexpr uint32_t kTaskStack = 6144;
 static bool s_scanner;
 static TaskHandle_t s_task;
 #if CONFIG_PRESENCE_ROLE_SCANNER
+namespace {
+// A device of the bridge, from the saved configuration
+struct SlotConfig {
+    bool active;
+    uint8_t mac[PLINK_MAC_LEN];
+    char model[PLINK_MODEL_MAX + 1];
+};
+} // namespace
 static bool s_config_mode;
-static uint8_t s_active_mask;
+static uint32_t s_active_mask;
 static uint32_t s_timeout_ms[PRESENCE_SLOT_COUNT];
 static portMUX_TYPE s_mask_mux = portMUX_INITIALIZER_UNLOCKED;
-static uint8_t s_present_mask;  // s_mask_mux
-static uint8_t s_reported_mask; // s_mask_mux: slots reported since boot, present and known updated together
-static plink_slots_t s_slots;   // s_mask_mux
-static bool s_slots_send;       // s_mask_mux
+static uint32_t s_present_mask;  // s_mask_mux
+static uint32_t s_reported_mask; // s_mask_mux: slots reported since boot, present and known updated together
+static SlotConfig s_slot_config[PRESENCE_SLOT_COUNT]; // s_mask_mux
+static bool s_slots_send;                             // s_mask_mux
 static std::atomic<bool> s_dirty{ false };
-static std::atomic<bool> s_slots_dirty{ false };
+static std::atomic<int> s_slots_burst{ 0 }; // SLOT frames to send one per pass (after a save: every slot)
+static int s_next_slot;                     // link task
 static std::atomic<uint8_t> s_command{ 0 };
 static std::atomic<int> s_command_left{ 0 };
 #else
@@ -61,11 +73,10 @@ static presence_link_matter_ops_t s_ops;
 static bool s_applied[PRESENCE_SLOT_COUNT];
 static bool s_applied_valid[PRESENCE_SLOT_COUNT];
 static bool s_gone = false; // scanner declared gone: sensors off until it comes back
-static plink_slots_t s_want_slots;
-static bool s_have_want = false;
-static plink_slots_t s_synced_slots;
-static bool s_synced = false;
-static int64_t s_next_sync_ms = 0; // after a sync that could not complete
+static plink_slot_t s_want[PRESENCE_SLOT_COUNT];
+static bool s_want_valid[PRESENCE_SLOT_COUNT];
+static bool s_settled[PRESENCE_SLOT_COUNT]; // the bridge did everything for the current s_want
+static int s_next_step;
 static uint8_t s_last_command;
 static int64_t s_last_command_ms;
 #endif
@@ -96,8 +107,8 @@ static void send_state()
     ble_scanner_stats_t scan;
     ble_scanner_get_stats(&scan);
     portENTER_CRITICAL(&s_mask_mux);
-    const uint8_t present = s_present_mask;
-    const uint8_t reported = s_reported_mask;
+    const uint32_t present = s_present_mask;
+    const uint32_t reported = s_reported_mask;
     portEXIT_CRITICAL(&s_mask_mux);
     const int64_t now = now_ms();
     plink_state_t st = {};
@@ -113,16 +124,39 @@ static void send_state()
     send_frame(frame, plink_encode_state(&st, frame, sizeof(frame)));
 }
 
-static void send_slots()
+// The device of one slot: MAC from the configuration, model configured or else advertised by the beacon, battery
+// from its Eddystone-TLM frames (NORMAL mode; unknown in CONFIG mode, the Matter node keeps what it has)
+static void send_slot(int i)
 {
     portENTER_CRITICAL(&s_mask_mux);
     const bool send = s_slots_send;
-    const plink_slots_t slots = s_slots;
+    const SlotConfig cfg = s_slot_config[i];
     portEXIT_CRITICAL(&s_mask_mux);
-    if (send) {
-        uint8_t frame[PLINK_MAX_FRAME];
-        send_frame(frame, plink_encode_slots(&slots, frame, sizeof(frame)));
+    if (!send) {
+        return;
     }
+    plink_slot_t slot = {};
+    slot.slot = static_cast<uint8_t>(i);
+    slot.active = cfg.active;
+    slot.battery_pct = PLINK_BATTERY_UNKNOWN;
+    if (cfg.active) {
+        memcpy(slot.mac, cfg.mac, PLINK_MAC_LEN);
+        presence_slot_info_t info;
+        presence_manager_get_slot_info(i, &info);
+        if (info.battery_pct != PRESENCE_BATTERY_UNKNOWN) {
+            slot.battery_pct = info.battery_pct;
+            slot.battery_level = info.battery_level;
+            slot.battery_mv = info.battery_mv;
+        }
+        const char *model = cfg.model[0] != '\0' ? cfg.model : info.name;
+        const size_t len = strnlen(model, PLINK_MODEL_MAX + 1);
+        // Never a frame the Matter node would refuse (it takes the whole slot with it): no model rather than that
+        if (len <= PLINK_MODEL_MAX && utf8_is_valid_text(model, len)) {
+            memcpy(slot.model, model, len);
+        }
+    }
+    uint8_t frame[PLINK_MAX_FRAME];
+    send_frame(frame, plink_encode_slot(&slot, frame, sizeof(frame)));
 }
 
 static void on_frame(const plink_parser_t &p)
@@ -139,9 +173,9 @@ static void on_frame(const plink_parser_t &p)
         s_stats.last_rx_ms = now_ms();
         portEXIT_CRITICAL(&s_stats_mux);
         if (first) {
-            ESP_LOGI(TAG, "Matter node seen (commissioned %d, Thread up %d, bridged devices 0x%02x)",
+            ESP_LOGI(TAG, "Matter node seen (commissioned %d, Thread up %d, bridged devices 0x%05lx)",
                      (st.flags & PLINK_STATUS_COMMISSIONED) != 0, (st.flags & PLINK_STATUS_NETWORK_UP) != 0,
-                     st.bridged_mask);
+                     static_cast<unsigned long>(st.bridged_mask));
         }
     } else if (p.type == PLINK_TYPE_PAIRING) {
         plink_pairing_t pairing;
@@ -176,7 +210,7 @@ static void send_pairing()
 
 // Brings the sensors of known_mask to the wanted states, only the ones that differ (or were never applied). The
 // others keep their state: the scanner does not know yet (it just restarted).
-static void apply_states(uint8_t want_mask, uint8_t known_mask)
+static void apply_states(uint32_t want_mask, uint32_t known_mask)
 {
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
         const bool want = (want_mask >> i) & 1;
@@ -193,37 +227,38 @@ static void apply_states(uint8_t want_mask, uint8_t known_mask)
     }
 }
 
-// The bridged devices follow the scanner's list; tried again every 5 s until done (Matter not up yet, a device that
-// could not be added)
-static void sync_bridge(int64_t now)
+// One slot of the bridge per pass, round robin over the slots not settled yet: a device saved on the Matter node is
+// restored (before the scanner speaks), then each follows its SLOT frame. Unsettled slots (Matter not up, memory)
+// are tried again on later passes.
+static void step_bridge()
 {
-    const bool same = s_synced && memcmp(&s_synced_slots, &s_want_slots, sizeof(s_want_slots)) == 0;
-    if (!s_have_want || same || now < s_next_sync_ms) {
-        return;
-    }
-    uint8_t changed = 0;
-    const bool done = s_ops.sync(&s_want_slots, &changed);
-    for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
-        if (changed & (1u << i)) {
+    for (int n = 0; n < PRESENCE_SLOT_COUNT; n++) {
+        const int i = (s_next_step + n) % PRESENCE_SLOT_COUNT;
+        if (s_settled[i]) {
+            continue;
+        }
+        s_next_step = (i + 1) % PRESENCE_SLOT_COUNT;
+        bool added = false;
+        s_settled[i] = s_ops.bridge_step(i, s_want_valid[i] ? &s_want[i] : nullptr, &added);
+        if (added) {
             s_applied_valid[i] = false; // a new device starts unoccupied: set its state again
         }
-    }
-    if (done) {
-        s_synced_slots = s_want_slots;
-        s_synced = true;
-    } else {
-        s_synced = false;
-        s_next_sync_ms = now + kSlowPeriodMs;
+        return;
     }
 }
 
 static void on_frame(const plink_parser_t &p)
 {
-    if (p.type == PLINK_TYPE_SLOTS) {
-        plink_slots_t slots;
-        if (plink_decode_slots(p.payload, p.len, &slots)) {
-            s_want_slots = slots;
-            s_have_want = true;
+    if (p.type == PLINK_TYPE_SLOT) {
+        plink_slot_t slot;
+        if (plink_decode_slot(p.payload, p.len, &slot)) {
+            const int i = slot.slot;
+            // A slot frame repeats every 5 s: only a change wakes the bridge for this slot
+            if (!s_want_valid[i] || memcmp(&s_want[i], &slot, sizeof(slot)) != 0) {
+                memcpy(&s_want[i], &slot, sizeof(slot)); // padding included: plink_decode_slot() zeroed it
+                s_want_valid[i] = true;
+                s_settled[i] = false;
+            }
         }
         return;
     }
@@ -253,9 +288,10 @@ static void on_frame(const plink_parser_t &p)
     s_stats.last_rx_ms = now_ms();
     portEXIT_CRITICAL(&s_stats_mux);
     if (first || s_gone) {
-        ESP_LOGI(TAG, "Scanner %s (mode %s, %u slot(s) assigned, known 0x%02x)", first ? "seen" : "back",
+        ESP_LOGI(TAG, "Scanner %s (mode %s, %u slot(s) assigned, known 0x%05lx)", first ? "seen" : "back",
                  st.mode == PLINK_MODE_CONFIG ? "CONFIG" : "NORMAL",
-                 static_cast<unsigned>(__builtin_popcount(st.active_mask)), st.known_mask & 0x1F);
+                 static_cast<unsigned>(__builtin_popcount(st.active_mask)),
+                 static_cast<unsigned long>(st.known_mask));
         if (s_gone) {
             s_ops.reachable(true);
         }
@@ -278,7 +314,10 @@ static void link_task(void *)
     plink_parser_t parser;
     plink_parser_init(&parser);
     int64_t last_send = 0;
-    int64_t last_slow = -kSlowPeriodMs; // first SLOTS / PAIRING right away
+    int64_t last_slow = -kSlowPeriodMs; // first PAIRING right away
+#if CONFIG_PRESENCE_ROLE_SCANNER
+    int64_t last_slot = 0;
+#endif
     uint8_t buf[64];
     for (;;) {
         // What is buffered now, or else the first byte to come within kReadTimeout. uart_read_bytes() only returns
@@ -305,9 +344,14 @@ static void link_task(void *)
             send_state();
             last_send = now;
         }
-        if (now - last_slow >= kSlowPeriodMs || s_slots_dirty.exchange(false)) {
-            send_slots();
-            last_slow = now;
+        // One SLOT frame per pass after a save, else one every kSlotPeriodMs: each slot every 5 s
+        int burst = s_slots_burst.load();
+        while (burst > 0 && !s_slots_burst.compare_exchange_weak(burst, burst - 1)) {
+        }
+        if (burst > 0 || now - last_slot >= kSlotPeriodMs) {
+            send_slot(s_next_slot);
+            s_next_slot = (s_next_slot + 1) % PRESENCE_SLOT_COUNT;
+            last_slot = now;
         }
         // One frame of a requested command per pass (about 100 ms apart)
         int left = s_command_left.load();
@@ -318,6 +362,7 @@ static void link_task(void *)
             uint8_t frame[PLINK_MAX_FRAME];
             send_frame(frame, plink_encode_command(&cmd, frame, sizeof(frame)));
         }
+        (void)last_slow;
 #else
         if (now - last_send >= kSendPeriodMs) {
             send_status();
@@ -327,7 +372,7 @@ static void link_task(void *)
             send_pairing();
             last_slow = now;
         }
-        sync_bridge(now);
+        step_bridge();
         // Retry the states Matter did not take yet (it starts after the link)
         presence_link_stats_t snap;
         presence_link_get_stats(&snap);
@@ -349,7 +394,7 @@ static void link_task(void *)
             s_ops.reachable(false);
         }
         if (s_gone) {
-            apply_states(0, 0xFF);
+            apply_states(0, PLINK_SLOT_MASK);
         }
 #endif
 #endif
@@ -394,7 +439,7 @@ esp_err_t presence_link_start_scanner(bool config_mode, const presence_config_t 
     s_config_mode = config_mode;
     for (int i = 0; cfg != nullptr && i < PRESENCE_SLOT_COUNT; i++) {
         if (presence_slot_is_active(&cfg->slots[i])) {
-            s_active_mask |= static_cast<uint8_t>(1u << i);
+            s_active_mask |= 1u << i;
         }
         s_timeout_ms[i] = static_cast<uint32_t>(cfg->slots[i].timeout_s) * 1000;
     }
@@ -406,12 +451,12 @@ bool presence_link_report(int slot, bool present)
     if (slot < 0 || slot >= PRESENCE_SLOT_COUNT) {
         return true;
     }
-    const uint8_t bit = static_cast<uint8_t>(1u << slot);
+    const uint32_t bit = 1u << slot;
     portENTER_CRITICAL(&s_mask_mux);
     if (present) {
         s_present_mask |= bit;
     } else {
-        s_present_mask &= static_cast<uint8_t>(~bit);
+        s_present_mask &= ~bit;
     }
     s_reported_mask |= bit;
     portEXIT_CRITICAL(&s_mask_mux);
@@ -421,18 +466,22 @@ bool presence_link_report(int slot, bool present)
 
 void presence_link_set_slots(const presence_config_t *cfg, bool send)
 {
-    plink_slots_t slots = {};
+    static SlotConfig slots[PRESENCE_SLOT_COUNT]; // callers are serialised (start-up, then the web server task)
+    memset(slots, 0, sizeof(slots));
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
-        if (presence_slot_is_active(&cfg->slots[i])) {
-            slots.active_mask |= static_cast<uint8_t>(1u << i);
-            memcpy(slots.mac[i], cfg->slots[i].addr, PLINK_MAC_LEN);
+        const presence_slot_config_t &s = cfg->slots[i];
+        if (presence_slot_is_active(&s)) {
+            slots[i].active = true;
+            memcpy(slots[i].mac, s.addr, PLINK_MAC_LEN);
+            static_assert(PRESENCE_MODEL_MAX_BYTES <= PLINK_MODEL_MAX, "the model fits a SLOT frame");
+            memcpy(slots[i].model, s.model, sizeof(s.model));
         }
     }
     portENTER_CRITICAL(&s_mask_mux);
-    s_slots = slots;
+    memcpy(s_slot_config, slots, sizeof(s_slot_config));
     s_slots_send = send;
     portEXIT_CRITICAL(&s_mask_mux);
-    s_slots_dirty = true;
+    s_slots_burst = PRESENCE_SLOT_COUNT;
 }
 
 void presence_link_request_command(uint8_t command)
@@ -477,11 +526,15 @@ void presence_link_log_diagnostics(void)
             return;
         }
         ESP_LOGI(TAG,
-                 "Matter node %u s ago: commissioned %d, Thread up %d, %u fabric(s), bridged devices 0x%02x, up %u s; "
-                 "tx %u, rx %u, CRC errors %u, bad frames %u",
+                 "Matter node %u s ago: commissioned %d, Thread up %d, pairing window %d, %u fabric(s), bridged "
+                 "devices 0x%05lx, waiting 0x%05lx (reason %u), heap %u KB (min %u KB), up %u s; tx %u, rx %u, CRC "
+                 "errors %u, bad frames %u",
                  ago, (st.peer_status.flags & PLINK_STATUS_COMMISSIONED) != 0,
-                 (st.peer_status.flags & PLINK_STATUS_NETWORK_UP) != 0, st.peer_status.fabrics,
-                 st.peer_status.bridged_mask, static_cast<unsigned>(st.peer_status.uptime_s),
+                 (st.peer_status.flags & PLINK_STATUS_NETWORK_UP) != 0,
+                 (st.peer_status.flags & PLINK_STATUS_WINDOW_OPEN) != 0, st.peer_status.fabrics,
+                 static_cast<unsigned long>(st.peer_status.bridged_mask),
+                 static_cast<unsigned long>(st.peer_status.waiting_mask), st.peer_status.wait_reason,
+                 st.peer_status.heap_free_kb, st.peer_status.heap_min_kb, static_cast<unsigned>(st.peer_status.uptime_s),
                  static_cast<unsigned>(st.tx_frames), static_cast<unsigned>(st.rx_frames),
                  static_cast<unsigned>(st.crc_errors), static_cast<unsigned>(st.bad_frames));
         return;
@@ -494,11 +547,12 @@ void presence_link_log_diagnostics(void)
         return;
     }
     ESP_LOGI(TAG,
-             "Scanner %u s ago: %s, scanning %d, assigned 0x%02x, present 0x%02x, known 0x%02x, up %u s; tx %u, rx %u, "
-             "CRC errors %u, bad frames %u, losses %u",
+             "Scanner %u s ago: %s, scanning %d, assigned 0x%05lx, present 0x%05lx, known 0x%05lx, up %u s; tx %u, "
+             "rx %u, CRC errors %u, bad frames %u, losses %u",
              ago, st.peer_state.mode == PLINK_MODE_CONFIG ? "CONFIG" : "NORMAL",
-             (st.peer_state.flags & PLINK_STATE_SCANNING) != 0, st.peer_state.active_mask, st.peer_state.present_mask,
-             st.peer_state.known_mask & 0x1F, static_cast<unsigned>(st.peer_state.uptime_s),
+             (st.peer_state.flags & PLINK_STATE_SCANNING) != 0, static_cast<unsigned long>(st.peer_state.active_mask),
+             static_cast<unsigned long>(st.peer_state.present_mask),
+             static_cast<unsigned long>(st.peer_state.known_mask), static_cast<unsigned>(st.peer_state.uptime_s),
              static_cast<unsigned>(st.tx_frames), static_cast<unsigned>(st.rx_frames),
              static_cast<unsigned>(st.crc_errors), static_cast<unsigned>(st.bad_frames),
              static_cast<unsigned>(st.link_losses));

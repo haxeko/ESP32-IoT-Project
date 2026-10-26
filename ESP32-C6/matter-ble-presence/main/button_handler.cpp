@@ -48,7 +48,7 @@ static uint32_t now_ms()
 // esp_timer task: sample, debounce, count. Only hands the triple click over.
 static void poll_cb(void *)
 {
-    const bool fired = click_detector_update(&s_detector, read_pressed(), now_ms());
+    const bool fired = click_detector_update(&s_detector, read_pressed(), now_ms()) == CLICK_EVENT_CLICKS;
     if (s_detector.clicks != s_clicks_logged) {
         s_clicks_logged = s_detector.clicks;
         if (s_clicks_logged > 0) {
@@ -93,6 +93,7 @@ esp_err_t button_handler_start(void (*on_triple_click)(void))
         .gap_ms = CONFIG_PRESENCE_BOOT_CLICK_GAP_MS,
         .max_press_ms = CONFIG_PRESENCE_BOOT_CLICK_MAX_PRESS_MS,
         .clicks_needed = 3,
+        .hold_ms = 0,
     };
     // A button already held now (it was not held at reset: that would have been the download mode) is ignored
     // until released.

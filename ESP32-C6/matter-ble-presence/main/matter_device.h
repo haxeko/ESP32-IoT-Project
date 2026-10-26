@@ -16,8 +16,9 @@
 // absence timeout is the firmware's, per slot), and a Descriptor TagList (Common Number namespace, tag 1-5) that
 // tells the five sibling endpoints apart.
 //
-// Two-chip version (CONFIG_PRESENCE_ROLE_MATTER_UART): a Matter bridge instead, endpoint 1 Aggregator and one bridged
-// Occupancy Sensor per active slot of the scanner, named after the beacon's MAC (matter_bridge.h).
+// Two-chip version (CONFIG_PRESENCE_ROLE_MATTER_UART): a Matter bridge instead ("iBeacon Bridge"), endpoint 1
+// Aggregator and one bridged Occupancy Sensor with its battery per active slot of the scanner, named after the
+// beacon's MAC (matter_bridge.h).
 //
 // Thread: MTD build, set to Minimal End Device (receiver on when idle, mains powered): never a router.
 // Wi-Fi: station of the network given at commissioning (credentials kept by the Wi-Fi driver in "nvs").
@@ -61,15 +62,21 @@ void matter_device_log_diagnostics(void);
 #if CONFIG_PRESENCE_ROLE_MATTER_UART
 #include "presence_link_proto.h"
 
-// Link task. The bridged devices to show (matter_bridge_sync()); false while Matter is not up or when a device could
-// not be added.
-bool matter_device_sync_bridge(const plink_slots_t *want, uint8_t *changed);
-// Link task: which slots have a bridged device, and its endpoint
-void matter_device_get_bridge(uint8_t *bridged_mask, uint16_t endpoint[PLINK_SLOT_COUNT]);
+// Link task: one step of the bridge for a slot (matter_bridge_step()); false while Matter is not up
+bool matter_device_bridge_step(int slot, const plink_slot_t *want, bool *added);
+// Link task: bridged, waiting and endpoints of the STATUS frame
+void matter_device_get_bridge(plink_status_t *status);
 // Link task: Reachable of every bridged device
 void matter_device_set_reachable(bool reachable);
 // Any task: the onboarding codes (manual pairing code, QR code), false until Matter has started
 bool matter_device_get_pairing(plink_pairing_t *out);
-// Any task: forgets the pairing (fabrics, Thread network) and the bridged devices, then restarts
-void matter_device_factory_reset(void);
+// Any task: a commissioning window is open (pairing mode)
+bool matter_device_window_open(void);
+// Any task: opens the commissioning window (pairing mode) for CONFIG_PRESENCE_PAIRING_WINDOW_SEC, over BLE while
+// BLE is still there (not commissioned yet), else over the Thread network (DNS-SD) to add the bridge to another
+// controller. Nothing if one is already open.
+void matter_device_open_pairing_window(void);
+// Any task: forgets the pairing (fabrics, Thread network) and the bridged devices, then restarts. false if it could
+// not be started (Matter not running).
+bool matter_device_factory_reset(void);
 #endif

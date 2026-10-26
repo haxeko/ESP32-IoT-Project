@@ -193,5 +193,5 @@ int main()
     RUN(unusable_partition_is_not_erased);
     RUN(format_failure_reported);
     RUN(ap_password);
-    return test_summary("config_store");
+    return test_summary(PRESENCE_SLOT_COUNT == 5 ? "config_store" : "config_store 20");
 }

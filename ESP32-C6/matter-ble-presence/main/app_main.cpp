@@ -18,9 +18,9 @@
 //           Back to NORMAL by the page, another triple click, or after CONFIG_PRESENCE_CONFIG_IDLE_TIMEOUT_MIN
 //           without interaction.
 //
-// Two-chip version, scanner (CONFIG_PRESENCE_ROLE_SCANNER, ESP32-C3): the same two modes without Matter. In NORMAL
-// the scanner has the radio to itself (own NimBLE host, no Wi-Fi) and the presence goes to the ESP32-H2 over the
-// UART link (presence_link.h); the Matter node is app_main_h2.cpp.
+// Two-chip version, scanner (CONFIG_PRESENCE_ROLE_SCANNER, ESP32-C3): the same two modes without Matter, 20 slots.
+// In NORMAL the scanner has the radio to itself (own NimBLE host, no Wi-Fi) and the presence, battery and model of
+// each beacon go to the ESP32-H2 over the UART link (presence_link.h); the Matter node is app_main_h2.cpp.
 
 #include <esp_app_desc.h>
 #include <esp_idf_version.h>
@@ -62,22 +62,25 @@ static void check(esp_err_t err, const char *what)
     }
 }
 
-static uint8_t active_mask(const presence_config_t &cfg)
+static uint32_t active_mask(const presence_config_t &cfg)
 {
-    uint8_t mask = 0;
+    uint32_t mask = 0;
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
-        mask |= presence_slot_is_active(&cfg.slots[i]) ? static_cast<uint8_t>(1u << i) : 0;
+        mask |= presence_slot_is_active(&cfg.slots[i]) ? 1u << i : 0;
     }
     return mask;
 }
+
+// The configuration the presence runs with, read once at boot: off the main task's stack (2 KB with 20 slots)
+static presence_config_t s_cfg;
 
 #if CONFIG_PRESENCE_ROLE_SCANNER
 
 static void run_normal(esp_err_t)
 {
-    presence_config_t cfg;
+    presence_config_t &cfg = s_cfg;
     config_store_get(&cfg);
-    const uint8_t mask = active_mask(cfg);
+    const uint32_t mask = active_mask(cfg);
 
     // Presence first: its queue exists before the scanner can deliver anything. The link always runs, so the
     // Matter node knows this chip is alive even with no beacon assigned.
@@ -94,7 +97,7 @@ static void run_normal(esp_err_t)
     scan.active = false;  // passive: never transmits
     scan.interval_ms = cfg.scan_interval_ms;
     scan.window_ms = cfg.scan_window_ms;
-    scan.parse_names = false;
+    scan.parse_names = true; // the model of a bridged device without one configured: the name the beacon advertises
     scan.initial_pause = 0;
     scan.watchdog_s = CONFIG_PRESENCE_SCAN_WATCHDOG_SEC;
     scan.filter = presence_manager_filter;
@@ -115,7 +118,7 @@ static void run_normal(esp_err_t nvs_err)
                  esp_err_to_name(nvs_err));
         return;
     }
-    presence_config_t cfg;
+    presence_config_t &cfg = s_cfg;
     config_store_get(&cfg);
 
     // Presence first: its queue exists before the scanner can deliver anything
@@ -175,9 +178,8 @@ static void run_config(const char *ap_password, esp_err_t nvs_err)
     check(ble_scanner_start(&scan), "BLE scanner");
 
 #if CONFIG_PRESENCE_ROLE_SCANNER
-    presence_config_t saved;
-    config_store_get(&saved);
-    presence_link_set_slots(&saved, config_store_status() == CONFIG_STORE_OK); // updated again by every save
+    config_store_get(&s_cfg);
+    presence_link_set_slots(&s_cfg, config_store_status() == CONFIG_STORE_OK); // updated again by every save
     check(presence_link_start_scanner(true, nullptr), "UART link"); // tells the Matter node to keep its states
 #endif
     check(wifi_config_start(ap_password, on_ap_stations), "SoftAP");

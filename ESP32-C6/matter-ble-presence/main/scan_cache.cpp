@@ -35,13 +35,45 @@ static uint32_t s_evictions;
 
 static std::atomic<uint32_t> s_queue_drops{ 0 };
 
+// NimBLE host task only: addresses of the iBeacons heard lately, oldest replaced first
+namespace {
+struct KnownAddr {
+    uint8_t addr[BLE_ADDR_LEN];
+    uint8_t addr_type;
+    bool used;
+};
+} // namespace
+static KnownAddr s_known[CONFIG_PRESENCE_SCAN_CACHE_SIZE];
+static size_t s_known_next;
+
 static int64_t now_ms()
 {
     return esp_timer_get_time() / 1000;
 }
 
+static bool is_known(const uint8_t addr[BLE_ADDR_LEN], uint8_t addr_type)
+{
+    for (const KnownAddr &k : s_known) {
+        if (k.used && k.addr_type == addr_type && memcmp(k.addr, addr, BLE_ADDR_LEN) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void scan_cache_sink(const ble_adv_report_t *report)
 {
+    if (report->has_ibeacon) {
+        if (!is_known(report->addr, report->addr_type)) {
+            KnownAddr &k = s_known[s_known_next];
+            memcpy(k.addr, report->addr, BLE_ADDR_LEN);
+            k.addr_type = report->addr_type;
+            k.used = true;
+            s_known_next = (s_known_next + 1) % CONFIG_PRESENCE_SCAN_CACHE_SIZE;
+        }
+    } else if (!is_known(report->addr, report->addr_type)) {
+        return; // a name or TLM frame of a device that sends no iBeacon: not listed
+    }
     if (xQueueSend(s_queue, report, 0) != pdTRUE) {
         s_queue_drops.fetch_add(1, std::memory_order_relaxed);
     }
@@ -79,8 +111,15 @@ static void merge(const ble_adv_report_t &r)
 {
     scan_entry_t *e = find(r.addr, r.addr_type);
     if (!r.has_ibeacon) {
-        // Scan response with a name: only for a beacon already in the list
-        if (e != nullptr && r.name[0] != '\0') {
+        // TLM frame or name (scan response or another advertisement of the beacon): only for a beacon in the list
+        if (e == nullptr) {
+            return;
+        }
+        if (r.has_tlm && r.tlm.battery_mv != 0) {
+            e->battery_mv = r.tlm.battery_mv;
+            e->battery_ms = r.time_ms;
+        }
+        if (r.name[0] != '\0') {
             memcpy(e->name, r.name, sizeof(e->name));
         }
         return;

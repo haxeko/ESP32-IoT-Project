@@ -11,11 +11,13 @@
 //   scanner (ESP32-C3)      sends a STATE frame every second and within 100 ms of a presence change; in the CONFIG
 //                           mode it keeps sending (mode CONFIG) so the Matter node knows it is alive. After a
 //                           restart a slot is "unknown" until its beacon is heard or a whole absence timeout of
-//                           scanning has passed (plink_known_mask()). Every 5 s and after a save it sends the list
-//                           of devices of the bridge (SLOTS), and once asked, a command (three times).
+//                           scanning has passed (plink_known_mask()). It sends the device of each slot (SLOT: MAC,
+//                           model, battery), one slot every 250 ms so each one every 5 s, all of them within 2 s
+//                           after a save, and once asked, a command (three times).
 //   Matter node (ESP32-H2)  applies the known states of the STATE frames to the bridged Occupancy Sensors (only
-//                           changes, and again until Matter accepts them) and keeps the others, adds and removes the
-//                           bridged devices from the SLOTS frames, sends a STATUS frame every second and its
+//                           changes, and again until Matter accepts them) and keeps the others, brings each bridged
+//                           device to its SLOT frame (added, removed, replaced, model and battery updated: one slot
+//                           per 100 ms pass, again until done), sends a STATUS frame every second and its
 //                           onboarding codes every 5 s, and when the scanner stays silent for
 //                           CONFIG_PRESENCE_LINK_TIMEOUT_SEC turns every sensor off and marks the devices unreachable.
 //
@@ -59,12 +61,15 @@ void presence_link_request_command(uint8_t command);
 
 // Matter node side, all called from the link task
 typedef struct {
-    bool (*apply)(int slot, bool occupied);                    // false: Matter cannot take it yet (retried)
-    void (*status)(plink_status_t *status);                    // fills the STATUS frame
-    bool (*sync)(const plink_slots_t *want, uint8_t *changed); // the bridged devices; false: not ready (retried)
-    void (*reachable)(bool reachable);                         // the scanner went silent or came back
-    bool (*pairing)(plink_pairing_t *out);                     // onboarding codes; false: not known yet
-    void (*command)(uint8_t command);                          // PLINK_CMD_*, once per request
+    bool (*apply)(int slot, bool occupied); // false: Matter cannot take it yet (retried)
+    void (*status)(plink_status_t *status); // fills the STATUS frame
+    // Brings the slot's bridged device to want (nullptr: the scanner's wish is not known yet, only a device saved
+    // on the Matter node is restored). true: done for this want; false: called again later (not ready, memory).
+    // *added: a device was created, its occupancy is to be set again.
+    bool (*bridge_step)(int slot, const plink_slot_t *want, bool *added);
+    void (*reachable)(bool reachable);     // the scanner went silent or came back
+    bool (*pairing)(plink_pairing_t *out); // onboarding codes; false: not known yet
+    void (*command)(uint8_t command);      // PLINK_CMD_*, once per request
 } presence_link_matter_ops_t;
 esp_err_t presence_link_start_matter(const presence_link_matter_ops_t *ops);
 

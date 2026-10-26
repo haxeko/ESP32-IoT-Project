@@ -1,6 +1,9 @@
 // Beacon configuration (main/presence_config.cpp): defaults, validation of every field, duplicate beacons, and
-// the stored blob (round trip, corruption, unknown version).
+// the stored blob (round trip, corruption, unknown version, the five-slot version 1 read by every build).
+// Built twice by run.sh: five slots (one-chip versions) and 20 (-DCONFIG_PRESENCE_ROLE_SCANNER=1, two-chip).
 #include "test.h"
+
+#include <stdlib.h>
 
 #include "crc32.h"
 #include "presence_config.h"
@@ -18,6 +21,7 @@ static presence_config_t valid_config()
         s.addr_type = i % 2 ? BEACON_ADDR_RANDOM : BEACON_ADDR_PUBLIC;
     }
     strcpy(cfg.slots[0].label, "Phòng khách"); // UTF-8
+    strcpy(cfg.slots[1].model, "CP101");
     return cfg;
 }
 
@@ -44,6 +48,7 @@ static void defaults()
         CHECK(!presence_slot_is_active(&cfg.slots[i]));
     }
     CHECK_STR(cfg.slots[2].label, "Presence 3");
+    CHECK_STR(cfg.slots[PRESENCE_SLOT_COUNT - 1].model, "");
     CHECK(presence_config_validate(&cfg, false, nullptr, 0) == 0);
 }
 
@@ -207,7 +212,11 @@ static void blob_values_checked_and_versions()
     CHECK(presence_config_decode(copy, len, &out) == PRESENCE_DECODE_BAD_VALUE);
 
     memcpy(copy, blob, len);
-    patch(copy, len, 4, 2); // format version 2, written by a newer firmware
+    patch(copy, len, 8 + 6 + 61, PRESENCE_MODEL_MAX_BYTES + 1); // slot 0 model length too big
+    CHECK(presence_config_decode(copy, len, &out) == PRESENCE_DECODE_BAD_VALUE);
+
+    memcpy(copy, blob, len);
+    patch(copy, len, 4, 3); // format version 3, written by a newer firmware
     CHECK(presence_config_decode(copy, len, &out) == PRESENCE_DECODE_UNSUPPORTED_VERSION);
 
     memcpy(copy, blob, len);
@@ -215,9 +224,126 @@ static void blob_values_checked_and_versions()
     CHECK(presence_config_decode(copy, len, &out) == PRESENCE_DECODE_BAD_MAGIC);
 }
 
+static void models()
+{
+    presence_config_t cfg = valid_config();
+    memset(cfg.slots[2].model, 'm', PRESENCE_MODEL_MAX_BYTES); // exactly the maximum: fine
+    cfg.slots[2].model[PRESENCE_MODEL_MAX_BYTES] = '\0';
+    strcpy(cfg.slots[3].model, "Bếp"); // UTF-8
+    CHECK(presence_config_validate(&cfg, false, nullptr, 0) == 0);
+    strcpy(cfg.slots[3].model, "bad\x02");
+    memset(cfg.slots[4].model, 'z', sizeof(cfg.slots[4].model)); // no NUL within the buffer
+    presence_config_error_t errs[4];
+    const size_t n = presence_config_validate(&cfg, false, errs, 4);
+    CHECK(n == 2);
+    CHECK(has_error(errs, n, 3, PRESENCE_FIELD_MODEL, PRESENCE_ERR_MODEL_INVALID));
+    CHECK(has_error(errs, n, 4, PRESENCE_FIELD_MODEL, PRESENCE_ERR_MODEL_TOO_LONG));
+    CHECK_STR(presence_field_name(PRESENCE_FIELD_MODEL), "model");
+}
+
+static void put16(uint8_t *p, uint16_t v)
+{
+    p[0] = static_cast<uint8_t>(v);
+    p[1] = static_cast<uint8_t>(v >> 8);
+}
+
+static void seal(uint8_t *blob, size_t len)
+{
+    const uint32_t crc = crc32_ieee(blob, len - 4);
+    for (int i = 0; i < 4; i++) {
+        blob[len - 4 + i] = static_cast<uint8_t>(crc >> (8 * i));
+    }
+}
+
+// Version 1 blob as the five-slot firmware wrote it (no model)
+static size_t make_v1(uint8_t *blob)
+{
+    const size_t slot_size = 61;
+    const size_t payload = 6 + 5 * slot_size;
+    const size_t len = 8 + payload + 4;
+    memset(blob, 0, len);
+    memcpy(blob, "BPRC", 4);
+    put16(&blob[4], 1);
+    put16(&blob[6], static_cast<uint16_t>(payload));
+    uint8_t *p = &blob[8];
+    put16(p, 320);
+    put16(p + 2, 64);
+    p[4] = 5;
+    p += 6;
+    for (int i = 0; i < 5; i++, p += slot_size) {
+        p[0] = i == 1 ? 0x03 : 0x00; // slot 1: enabled with an address
+        p[1] = BEACON_ADDR_RANDOM;
+        const uint8_t addr[6] = { 0xC0, 0x11, 0x22, 0x33, 0x44, static_cast<uint8_t>(0x50 + i) };
+        memcpy(&p[2], addr, 6);
+        put16(&p[8], static_cast<uint16_t>(60 + i));
+        p[10] = static_cast<uint8_t>(-70);
+        p[11] = 3;
+        const char *label = i == 1 ? "Ví" : "";
+        p[12] = static_cast<uint8_t>(strlen(label));
+        memcpy(&p[13], label, strlen(label));
+    }
+    seal(blob, len);
+    return len;
+}
+
+static void version_1_migrates()
+{
+    uint8_t blob[PRESENCE_CONFIG_BLOB_MAX_SIZE];
+    const size_t len = make_v1(blob);
+    presence_config_t out;
+    CHECK(presence_config_decode(blob, len, &out) == PRESENCE_DECODE_OK);
+    CHECK(out.scan_interval_ms == 320 && out.scan_window_ms == 64);
+    CHECK(out.slots[1].enabled && out.slots[1].has_addr && presence_slot_is_active(&out.slots[1]));
+    CHECK(out.slots[1].addr[5] == 0x51 && out.slots[1].addr_type == BEACON_ADDR_RANDOM);
+    CHECK(out.slots[1].timeout_s == 61 && out.slots[1].rssi_threshold == -70 && out.slots[1].rssi_hysteresis == 3);
+    CHECK_STR(out.slots[1].label, "Ví");
+    CHECK_STR(out.slots[1].model, ""); // version 1 has none
+    CHECK(!out.slots[0].enabled && out.slots[0].timeout_s == 60);
+    for (int i = 5; i < PRESENCE_SLOT_COUNT; i++) {
+        // Slots the old firmware did not have: defaults
+        CHECK(!out.slots[i].enabled && !out.slots[i].has_addr && out.slots[i].timeout_s == 45);
+    }
+    // Saved again: version 2, the same configuration
+    uint8_t blob2[PRESENCE_CONFIG_BLOB_MAX_SIZE];
+    const size_t len2 = presence_config_encode(&out, blob2, sizeof(blob2));
+    CHECK(len2 > 0 && blob2[4] == 2);
+    presence_config_t again;
+    CHECK(presence_config_decode(blob2, len2, &again) == PRESENCE_DECODE_OK);
+    CHECK(presence_config_equal(&out, &again));
+
+    // Payload length that does not match the slot count
+    blob[8 + 4] = 4;
+    seal(blob, len);
+    CHECK(presence_config_decode(blob, len, &out) == PRESENCE_DECODE_BAD_LENGTH);
+}
+
+static void more_slots_than_this_firmware()
+{
+    // A version 2 blob with one slot more than this build: written by another product, refused
+    const size_t slot_size = 61 + 1 + PRESENCE_MODEL_MAX_BYTES;
+    const size_t count = PRESENCE_SLOT_COUNT + 1;
+    const size_t payload = 6 + count * slot_size;
+    const size_t len = 8 + payload + 4;
+    uint8_t *blob = static_cast<uint8_t *>(calloc(1, len));
+    memcpy(blob, "BPRC", 4);
+    put16(&blob[4], 2);
+    put16(&blob[6], static_cast<uint16_t>(payload));
+    put16(&blob[8], 160);
+    put16(&blob[10], 40);
+    blob[12] = static_cast<uint8_t>(count);
+    for (size_t i = 0; i < count; i++) {
+        put16(&blob[8 + 6 + i * slot_size + 8], 45); // valid timeout
+        blob[8 + 6 + i * slot_size + 1] = BEACON_ADDR_ANY;
+    }
+    seal(blob, len);
+    presence_config_t out;
+    CHECK(presence_config_decode(blob, len, &out) == PRESENCE_DECODE_BAD_VALUE);
+    free(blob);
+}
+
 static void error_texts()
 {
-    for (int code = PRESENCE_ERR_LABEL_TOO_LONG; code <= PRESENCE_ERR_TYPE; code++) {
+    for (int code = PRESENCE_ERR_LABEL_TOO_LONG; code <= PRESENCE_ERR_MODEL_INVALID; code++) {
         CHECK(strcmp(presence_error_text(code), "Lỗi không xác định") != 0);
     }
     CHECK_STR(presence_field_name(PRESENCE_FIELD_ADDR), "mac");
@@ -234,6 +360,9 @@ int main()
     RUN(blob_round_trip);
     RUN(blob_corruption);
     RUN(blob_values_checked_and_versions);
+    RUN(models);
+    RUN(version_1_migrates);
+    RUN(more_slots_than_this_firmware);
     RUN(error_texts);
-    return test_summary("presence_config");
+    return test_summary(PRESENCE_SLOT_COUNT == 5 ? "presence_config" : "presence_config 20");
 }

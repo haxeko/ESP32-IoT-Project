@@ -1,5 +1,6 @@
-// iBeacon parser (main/ibeacon_parser.cpp): valid frames, frames that are not iBeacons, and truncated or
-// malformed advertising data that must never be read past its end (run under AddressSanitizer by run.sh).
+// iBeacon and Eddystone-TLM parser (main/ibeacon_parser.cpp): valid frames, frames that are not iBeacons or TLM,
+// and truncated or malformed advertising data that must never be read past its end (run under AddressSanitizer by
+// run.sh).
 #include "test.h"
 
 #include <stdlib.h>
@@ -173,6 +174,73 @@ static void names()
     CHECK(adv_parse_name(bad.data(), bad.size(), name, sizeof(name)) == 0);
 }
 
+// Flags + Eddystone-TLM, as a beacon sends it between its iBeacon frames
+static Bytes tlm_frame(uint16_t mv, uint16_t temp = 0x1A80, uint8_t version = 0x00)
+{
+    Bytes b = { 0x02, 0x01, 0x06, 0x03, 0x03, 0xAA, 0xFE, 0x11, 0x16, 0xAA, 0xFE, 0x20, version };
+    b.push_back(static_cast<uint8_t>(mv >> 8));
+    b.push_back(static_cast<uint8_t>(mv));
+    b.push_back(static_cast<uint8_t>(temp >> 8));
+    b.push_back(static_cast<uint8_t>(temp));
+    b.insert(b.end(), { 0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0x10, 0x00 });
+    return b;
+}
+
+static bool parse_tlm_exact(const Bytes &b, size_t len, eddystone_tlm_t *out)
+{
+    uint8_t *copy = static_cast<uint8_t *>(malloc(len ? len : 1));
+    if (len > 0) {
+        memcpy(copy, b.data(), len);
+    }
+    const bool ok = eddystone_tlm_parse(copy, len, out);
+    free(copy);
+    return ok;
+}
+
+static void tlm()
+{
+    eddystone_tlm_t t = {};
+    Bytes f = tlm_frame(2987);
+    CHECK(f.size() == 25);
+    CHECK(parse_tlm_exact(f, f.size(), &t));
+    CHECK(t.battery_mv == 2987);
+    CHECK(t.temperature_q8 == 0x1A80); // 26.5 degrees
+    CHECK(t.adv_count == 0x00010203);
+    CHECK(t.uptime_ds == 0x1000);
+
+    // Battery not measured, temperature not measured
+    f = tlm_frame(0, 0x8000);
+    CHECK(parse_tlm_exact(f, f.size(), &t) && t.battery_mv == 0 && t.temperature_q8 == EDDYSTONE_TLM_TEMP_UNKNOWN);
+
+    // Encrypted TLM (version 1), other Eddystone frames (UID 0x00), another service UUID: not TLM
+    f = tlm_frame(3000, 0, 0x01);
+    t.battery_mv = 1234;
+    CHECK(!parse_tlm_exact(f, f.size(), &t) && t.battery_mv == 1234); // out untouched
+    f = tlm_frame(3000);
+    f[11] = 0x00;
+    CHECK(!parse_tlm_exact(f, f.size(), &t));
+    f = tlm_frame(3000);
+    f[9] = 0xAB;
+    CHECK(!parse_tlm_exact(f, f.size(), &t));
+
+    // Wrong structure length, truncated anywhere
+    f = tlm_frame(3000);
+    f[7] = 0x12;
+    f.push_back(0x00);
+    CHECK(!parse_tlm_exact(f, f.size(), &t));
+    f = tlm_frame(3000);
+    for (size_t len = 0; len < f.size(); len++) {
+        CHECK(!parse_tlm_exact(f, len, &t));
+    }
+
+    // An iBeacon frame is not TLM, a TLM frame is not an iBeacon
+    ibeacon_t ib;
+    const Bytes ibf = ibeacon_frame(1, 2, -59);
+    CHECK(!parse_tlm_exact(ibf, ibf.size(), &t));
+    f = tlm_frame(3000);
+    CHECK(!parse_exact(f, f.size(), &ib));
+}
+
 static void fuzz()
 {
     // Random data and random mutations of a valid frame: no crash, no out of bounds read (ASan), and a frame that
@@ -195,8 +263,10 @@ static void fuzz()
             b.resize(rand() % (b.size() + 1));
         }
         ibeacon_t ib;
+        eddystone_tlm_t tl;
         char name[32];
         const bool ok = parse_exact(b, b.size(), &ib);
+        const bool tlm_ok = parse_tlm_exact(b, b.size(), &tl);
         uint8_t *copy = static_cast<uint8_t *>(malloc(b.size() ? b.size() : 1));
         if (!b.empty()) {
             memcpy(copy, b.data(), b.size());
@@ -211,6 +281,25 @@ static void fuzz()
             }
             CHECK(found);
         }
+        if (tlm_ok) {
+            bool found = false;
+            for (size_t i = 0; i + 5 < b.size() && !found; i++) {
+                found = b[i] == 0x16 && b[i + 1] == 0xAA && b[i + 2] == 0xFE && b[i + 3] == 0x20 && b[i + 4] == 0x00;
+            }
+            CHECK(found);
+        }
+    }
+    // Mutations of a TLM frame
+    const Bytes tf = tlm_frame(2900);
+    for (int iter = 0; iter < 50000; iter++) {
+        Bytes b = tf;
+        const int flips = 1 + rand() % 3;
+        for (int f = 0; f < flips; f++) {
+            b[rand() % b.size()] = static_cast<uint8_t>(rand());
+        }
+        b.resize(rand() % (b.size() + 1));
+        eddystone_tlm_t tl;
+        parse_tlm_exact(b, b.size(), &tl);
     }
 }
 
@@ -222,6 +311,7 @@ int main()
     RUN(truncated_and_malformed);
     RUN(two_manufacturer_structures);
     RUN(names);
+    RUN(tlm);
     RUN(fuzz);
     return test_summary("ibeacon_parser");
 }

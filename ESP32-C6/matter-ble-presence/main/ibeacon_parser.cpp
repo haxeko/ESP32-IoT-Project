@@ -15,8 +15,10 @@
 
 static constexpr uint8_t kAdTypeShortName = 0x08;
 static constexpr uint8_t kAdTypeCompleteName = 0x09;
+static constexpr uint8_t kAdTypeServiceData16 = 0x16;
 static constexpr uint8_t kAdTypeManufacturerData = 0xFF;
 static constexpr size_t kIBeaconDataLen = 25; // company id 2 + type 1 + length 1 + 21
+static constexpr size_t kTlmDataLen = 16;     // UUID 2 + frame type 1 + version 1 + 12
 
 // Calls fn(type, payload, payload_len) for every AD structure until fn returns true. Returns false when the data
 // ends (or is malformed) before that.
@@ -56,6 +58,35 @@ bool ibeacon_parse(const uint8_t *data, size_t len, ibeacon_t *out)
         out->major = static_cast<uint16_t>((p[20] << 8) | p[21]);
         out->minor = static_cast<uint16_t>((p[22] << 8) | p[23]);
         out->tx_power = static_cast<int8_t>(p[24]);
+        return true;
+    });
+}
+
+static uint16_t get_be16(const uint8_t *p)
+{
+    return static_cast<uint16_t>((p[0] << 8) | p[1]);
+}
+
+static uint32_t get_be32(const uint8_t *p)
+{
+    return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+           (static_cast<uint32_t>(p[2]) << 8) | p[3];
+}
+
+bool eddystone_tlm_parse(const uint8_t *data, size_t len, eddystone_tlm_t *out)
+{
+    return for_each_ad(data, len, [out](uint8_t type, const uint8_t *p, size_t plen) {
+        // A longer structure is not the unencrypted TLM of the specification (its length is fixed)
+        if (type != kAdTypeServiceData16 || plen != kTlmDataLen) {
+            return false;
+        }
+        if (p[0] != 0xAA || p[1] != 0xFE || p[2] != 0x20 || p[3] != 0x00) {
+            return false;
+        }
+        out->battery_mv = get_be16(&p[4]);
+        out->temperature_q8 = static_cast<int16_t>(get_be16(&p[6]));
+        out->adv_count = get_be32(&p[8]);
+        out->uptime_ds = get_be32(&p[12]);
         return true;
     });
 }

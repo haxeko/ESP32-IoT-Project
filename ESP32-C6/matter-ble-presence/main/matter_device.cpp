@@ -84,8 +84,12 @@ using chip::DeviceLayer::ConnectivityMgr;
 
 // Window reopened after the last fabric is removed
 static constexpr uint32_t kRecommissioningWindowSec = 300;
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+static std::atomic<bool> s_window_open{ false };
+#endif
 
 static std::atomic<bool> s_started{ false };
+static std::atomic<bool> s_initialized{ false }; // on_matter_started() done: the status below is the real one
 static std::atomic<uint32_t> s_network_ups{ 0 };
 static std::atomic<uint32_t> s_network_downs{ 0 };
 // For matter_device_get_status() (any task)
@@ -134,6 +138,9 @@ static void update_commissioning_gate()
     const uint8_t fabrics = chip::Server::GetInstance().GetFabricTable().FabricCount();
     s_fabrics = fabrics;
     s_commissioned = fabrics > 0;
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+    matter_bridge_set_commissioned(fabrics > 0); // memory reserve of the bridge
+#endif
     if (fabrics > 0) {
         gate_resume(SCAN_PAUSE_NOT_COMMISSIONED);
     } else {
@@ -249,9 +256,11 @@ static void on_matter_started(intptr_t)
     update_commissioning_gate();
     set_network_up(network_up);
 #if CONFIG_PRESENCE_ROLE_MATTER_UART
-    matter_bridge_restore();
+    s_window_open = chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen();
+    matter_bridge_load();
     store_pairing_codes();
 #endif
+    s_initialized = true;
     if (!is_commissioned()) {
         ESP_LOGI(TAG, "Not commissioned: commissioning window open (BLE), beacon scanning paused until done");
         PrintOnboardingCodes(chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE));
@@ -369,10 +378,16 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t)
 
     case DeviceEventType::kCommissioningWindowOpened:
         ESP_LOGI(TAG, "Commissioning window opened");
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+        s_window_open = true;
+#endif
         break;
 
     case DeviceEventType::kCommissioningWindowClosed:
         ESP_LOGI(TAG, "Commissioning window closed");
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+        s_window_open = false;
+#endif
         break;
 
     case DeviceEventType::kFabricRemoved:
@@ -553,7 +568,7 @@ esp_err_t matter_device_start(void)
 
 void matter_device_get_status(bool *started, bool *commissioned, bool *network_up, uint8_t *fabrics)
 {
-    *started = s_started;
+    *started = s_initialized;
     *commissioned = s_commissioned;
     *network_up = s_network_up;
     *fabrics = s_fabrics;
@@ -586,25 +601,27 @@ bool matter_device_set_occupancy(int slot, bool occupied)
 
 #if CONFIG_PRESENCE_ROLE_MATTER_UART
 
-bool matter_device_sync_bridge(const plink_slots_t *want, uint8_t *changed)
+bool matter_device_bridge_step(int slot, const plink_slot_t *want, bool *added)
 {
-    *changed = 0;
+    *added = false;
     if (!s_started) {
         return false;
     }
     lock::ScopedChipStackLock lock(portMAX_DELAY);
-    return matter_bridge_sync(want, changed);
+    return matter_bridge_step(slot, want, added);
 }
 
-void matter_device_get_bridge(uint8_t *bridged_mask, uint16_t endpoint[PLINK_SLOT_COUNT])
+void matter_device_get_bridge(plink_status_t *status)
 {
     if (!s_started) {
-        *bridged_mask = 0;
-        memset(endpoint, 0, sizeof(uint16_t) * PLINK_SLOT_COUNT);
+        status->bridged_mask = 0;
+        status->waiting_mask = 0;
+        status->wait_reason = PLINK_WAIT_NONE;
+        memset(status->endpoint, 0, sizeof(status->endpoint));
         return;
     }
     lock::ScopedChipStackLock lock(portMAX_DELAY);
-    matter_bridge_get(bridged_mask, endpoint);
+    matter_bridge_get_status(status);
 }
 
 void matter_device_set_reachable(bool reachable)
@@ -625,23 +642,69 @@ bool matter_device_get_pairing(plink_pairing_t *out)
     return true;
 }
 
+bool matter_device_window_open(void)
+{
+    return s_window_open;
+}
+
+// Matter task
+static void open_pairing_window_work(intptr_t)
+{
+    chip::CommissioningWindowManager &mgr = chip::Server::GetInstance().GetCommissioningWindowManager();
+    if (mgr.IsCommissioningWindowOpen()) {
+        ESP_LOGI(TAG, "Pairing mode asked: the commissioning window is already open");
+        s_window_open = true;
+        return;
+    }
+    // BLE is released once commissioned (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING): the window is then announced on
+    // the Thread network only, where a second controller finds it (the bridge stays in the first one)
+    const auto advertisement = s_ble_released ? chip::CommissioningWindowAdvertisement::kDnssdOnly
+                                              : chip::CommissioningWindowAdvertisement::kAllSupported;
+    const CHIP_ERROR err = mgr.OpenBasicCommissioningWindow(
+        chip::System::Clock::Seconds32(CONFIG_PRESENCE_PAIRING_WINDOW_SEC), advertisement);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Failed to open the commissioning window: %" CHIP_ERROR_FORMAT, err.Format());
+        return;
+    }
+    ESP_LOGI(TAG, "Pairing mode: commissioning window open for %d s over %s", CONFIG_PRESENCE_PAIRING_WINDOW_SEC,
+             s_ble_released ? "the Thread network" : "BLE and the Thread network");
+    if (s_ble_released && !s_network_up) {
+        ESP_LOGW(TAG, "Thread is not attached: no controller can find the window until it is");
+    }
+    PrintOnboardingCodes(chip::RendezvousInformationFlags(
+        s_ble_released ? chip::RendezvousInformationFlag::kOnNetwork : chip::RendezvousInformationFlag::kBLE));
+}
+
+void matter_device_open_pairing_window(void)
+{
+    if (!s_started) {
+        ESP_LOGE(TAG, "Pairing mode asked while Matter is not running: not done");
+        return;
+    }
+    if (chip::DeviceLayer::PlatformMgr().ScheduleWork(open_pairing_window_work) != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Cannot schedule the opening of the commissioning window");
+    }
+}
+
 static void factory_reset_work(intptr_t)
 {
-    ESP_LOGW(TAG, "Factory reset asked on the configuration page: removing the pairing and the bridged devices");
+    ESP_LOGW(TAG, "Factory reset: removing the Matter pairing, the Thread network and the bridged devices");
     matter_bridge_erase();
     esp_matter::factory_reset(); // erases the Matter and Thread data, then restarts
 }
 
-void matter_device_factory_reset(void)
+bool matter_device_factory_reset(void)
 {
     if (!s_started) {
         // Matter could not start (e.g. "nvs" unusable): nothing is erased (the page refuses the request then)
         ESP_LOGE(TAG, "Factory reset asked while Matter is not running: not done");
-        return;
+        return false;
     }
     if (chip::DeviceLayer::PlatformMgr().ScheduleWork(factory_reset_work) != CHIP_NO_ERROR) {
         ESP_LOGE(TAG, "Cannot schedule the factory reset");
+        return false;
     }
+    return true;
 }
 
 #endif
@@ -672,6 +735,10 @@ void matter_device_log_diagnostics(void)
              " no-frame %" PRIu32 " fcs-err %" PRIu32 "; MLE detached %u child %u attach-attempts %u parent-changes %u",
              mac.mTxTotal, mac.mTxRetry, mac.mTxErrCca, mac.mTxDirectMaxRetryExpiry, mac.mRxTotal, mac.mRxErrNoFrame,
              mac.mRxErrFcs, mle.mDetachedRole, mle.mChildRole, mle.mAttachAttempts, mle.mParentChanges);
+#if CONFIG_PRESENCE_ROLE_MATTER_UART
+    lock::ScopedChipStackLock lock(portMAX_DELAY);
+    matter_bridge_log_diagnostics();
+#endif
 }
 
 #else // Wi-Fi station

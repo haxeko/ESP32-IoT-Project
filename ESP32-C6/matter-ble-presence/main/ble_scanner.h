@@ -24,8 +24,8 @@
 // with the scanner paused or stopped can never make a slot look absent (presence_logic.h).
 //
 // Every advertisement is reported (filter_duplicates = 0): identical repeated advertisements keep refreshing a
-// beacon. The callback runs in the NimBLE host task: it only parses the frame and hands it to the sink, which must
-// not block (queue with 0 timeout).
+// beacon. The callback runs in the NimBLE host task: it only parses the frame (iBeacon, Eddystone-TLM, name) and
+// hands it to the sink, which must not block (queue with 0 timeout).
 
 #pragma once
 
@@ -47,6 +47,8 @@ typedef struct {
     bool scan_response;
     bool has_ibeacon;
     ibeacon_t ibeacon;
+    bool has_tlm; // Eddystone-TLM frame (battery voltage of the beacon)
+    eddystone_tlm_t tlm;
     char name[BLE_SCANNER_NAME_SIZE]; // "" if absent or not parsed
     int64_t time_ms;                  // esp_timer milliseconds
 } ble_adv_report_t;
@@ -73,7 +75,7 @@ typedef struct {
     uint32_t initial_pause; // SCAN_PAUSE_* bits set from the start
     uint32_t watchdog_s;    // 0: off
     ble_scanner_filter_t filter; // optional: reports from other addresses are dropped before parsing
-    ble_scanner_sink_t sink;     // iBeacon frames, and scan responses with a name
+    ble_scanner_sink_t sink;     // reports with an iBeacon or Eddystone-TLM frame or a name
 } ble_scanner_config_t;
 
 typedef enum {
@@ -90,6 +92,7 @@ typedef struct {
     uint32_t pause_mask;
     uint32_t adv_reports;     // every advertising report received
     uint32_t ibeacon_reports; // well-formed iBeacon frames among them (after the filter)
+    uint32_t tlm_reports;     // Eddystone-TLM frames among them (after the filter)
     uint32_t starts;
     uint32_t start_failures;
     uint32_t unexpected_stops; // discovery ended by the stack (host reset)

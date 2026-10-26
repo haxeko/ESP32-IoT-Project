@@ -10,12 +10,14 @@ let failures = 0;
 function check(cond, msg) { if (!cond) { failures++; console.log('FAIL', msg); } else console.log('ok  ', msg); }
 
 const slot = (i, extra = {}) => Object.assign({ enabled: false, label: 'Presence ' + (i + 1), mac: '', addr_type: 'any',
-  timeout_s: 45, rssi_filter: false, rssi_threshold: -80, rssi_hysteresis: 5 }, extra);
+  timeout_s: 45, rssi_filter: false, rssi_threshold: -80, rssi_hysteresis: 5, model: '' }, extra);
+const slots = n => Array.from({ length: n }, (_, i) =>
+  i === 0 ? slot(0, { enabled: true, label: 'Ví của Bố', mac: 'C0:11:22:33:44:01', addr_type: 'public', model: 'CP101' }) : slot(i));
 const config = {
   scan: { interval_ms: 160, window_ms: 40 },
-  slots: [slot(0, { enabled: true, label: 'Ví của Bố', mac: 'C0:11:22:33:44:01', addr_type: 'public' }), slot(1), slot(2), slot(3), slot(4)],
-  limits: { label_max_bytes: 48, timeout_min: 10, timeout_max: 3600, rssi_min: -100, rssi_max: -20, hysteresis_max: 20,
-            interval_min: 20, interval_max: 10240, window_min: 10 },
+  slots: slots(5),
+  limits: { label_max_bytes: 48, model_max_bytes: 32, timeout_min: 10, timeout_max: 3600, rssi_min: -100, rssi_max: -20,
+            hysteresis_max: 20, interval_min: 20, interval_max: 10240, window_min: 10 },
   defaults: { timeout_s: 45, rssi_threshold: -80, rssi_hysteresis: 5, interval_ms: 160, window_ms: 40 },
   allow_duplicates: false, storage: { status: 'ok', detail: '' }, network: 'thread',
 };
@@ -30,11 +32,17 @@ const status = {
 const evil = '<img src=x onerror="window.__xss=1">';
 const beacons = [
   { mac: 'C0:11:22:33:44:01', addr_type: 'public', kind: 'public', stable: true, rssi: -58, uuid: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0',
-    major: 1, minor: 1, tx_power: -59, name: 'Ví', age_ms: 800, count: 120, same_id_other_mac: false },
+    major: 1, minor: 1, tx_power: -59, name: 'Ví', battery_mv: 2950, battery_pct: 94, battery_age_ms: 3000, age_ms: 800, count: 120,
+    same_id_other_mac: false },
   { mac: 'D4:AA:BB:CC:DD:02', addr_type: 'random', kind: 'static', stable: true, rssi: -71, uuid: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0',
-    major: 1, minor: 2, tx_power: -59, name: evil, age_ms: 2100, count: 40, same_id_other_mac: false },
+    major: 1, minor: 2, tx_power: -59, name: evil, battery_mv: 0, battery_pct: -1, battery_age_ms: -1, age_ms: 2100, count: 40,
+    same_id_other_mac: false },
   { mac: '5A:01:02:03:04:05', addr_type: 'random', kind: 'rpa', stable: false, rssi: -84, uuid: 'FDA50693-A4E2-4FB1-AFCF-C6EB07647825',
-    major: 10, minor: 7, tx_power: -60, name: '', age_ms: 9000, count: 5, same_id_other_mac: true },
+    major: 10, minor: 7, tx_power: -60, name: '', battery_mv: 0, battery_pct: -1, battery_age_ms: -1, age_ms: 9000, count: 5,
+    same_id_other_mac: true },
+  { mac: 'E1:22:33:44:55:66', addr_type: 'public', kind: 'public', stable: true, rssi: -64, uuid: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0',
+    major: 1, minor: 3, tx_power: -59, name: 'CP101', battery_mv: 2400, battery_pct: 25, battery_age_ms: 1000, age_ms: 500, count: 60,
+    same_id_other_mac: false },
 ];
 
 // A page of the device with the API answered by the mock; network: 'thread' (ESP32-C6) or 'wifi' (ESP32-C3).
@@ -48,8 +56,11 @@ async function openPage(browser, network, posts, opts = {}) {
     const json = (obj, code = 200) => route.fulfill({ status: code, contentType: 'application/json', body: JSON.stringify(obj) });
     if (url.pathname === '/') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
     if (url.pathname === '/api/status') return json(Object.assign({}, status, { network },
-      network === 'h2' ? { h2: { seen: true, ago_s: 1, commissioned: false, network_up: false, fabrics: 0,
-        bridged: [2, 0, 0, 0, 0], pairing: { manual: '34970112332', qr: 'MT:Y.K9042C00KA0648G00' } } } : {}));
+      network === 'h2' ? { h2: Object.assign({ seen: true, ago_s: 1, commissioned: false, network_up: false, window_open: true,
+        fabrics: 0, heap_kb: 52, heap_min_kb: 41, wait_reason: 'commissioning',
+        bridged: Array.from({ length: 20 }, (_, i) => (i === 0 ? 2 : 0)),
+        waiting: Array.from({ length: 20 }, (_, i) => i === 3),
+        pairing: { manual: '34970112332', qr: 'MT:Y.K9042C00KA0648G00' } }, opts.h2 || {}) } : {}));
     if (url.pathname === '/api/scan' && req.method() === 'GET') {
       const st = opts.stats || {};
       st.scanInFlight = (st.scanInFlight || 0) + 1;
@@ -59,7 +70,15 @@ async function openPage(browser, network, posts, opts = {}) {
       st.scanInFlight--;
       return json({ beacons });
     }
-    if (url.pathname === '/api/config' && req.method() === 'GET') return json(Object.assign({}, config, { network }));
+    if (url.pathname === '/api/config' && req.method() === 'GET') {
+      // The two-chip version has 20 slots; slot 4 has a saved beacon the H2 has not added yet
+      const c = Object.assign({}, config, { network });
+      if (network === 'h2') {
+        c.slots = slots(20);
+        c.slots[3] = slot(3, { enabled: true, mac: 'E1:22:33:44:55:66', addr_type: 'public', model: 'CP101' });
+      }
+      return json(c);
+    }
     if (req.method() === 'POST') {
       posts.push({ path: url.pathname, body: req.postData(), type: req.headers()['content-type'] || '' });
       if (url.pathname === '/api/config') return json({ ok: true, message: 'Đã lưu và đọc lại kiểm tra thành công.' });
@@ -135,6 +154,7 @@ async function openPage(browser, network, posts, opts = {}) {
   if (saves.length) {
     const body = JSON.parse(saves[0].body);
     check(body.slots.length === 5, 'save body has 5 slots');
+    check(body.slots[0].model === 'CP101', 'model sent with the slot');
     check(body.slots[2].mac === 'AA:BB:CC:DD:EE:FF', 'manual MAC normalised to AA:BB:CC:DD:EE:FF');
     check(body.slots[1].mac === 'D4:AA:BB:CC:DD:02' && body.slots[1].addr_type === 'random', 'assigned slot saved with type');
     check(body.slots[2].label === 'Phòng ngủ <b>x</b>', 'label sent as typed (escaped by the device on output)');
@@ -156,6 +176,12 @@ async function openPage(browser, network, posts, opts = {}) {
   await page.evaluate(() => document.activeElement.blur());
   await page.waitForTimeout(100);
   check(!(await picker.evaluate(e => e.isConnected)), 'beacon list refreshed once the picker is left');
+
+  // Battery of the beacons in the list (Eddystone-TLM), and the one-chip version shows no model field
+  check((await page.textContent('#beaconList')).includes('94% · 2950 mV'), 'battery of a beacon shown in the list');
+  check((await page.textContent('#beaconList')).includes('chưa thấy gói Eddystone-TLM'), 'beacon without TLM: no battery');
+  check((await page.textContent('#seen0')).includes('pin 94%'), 'slot shows the battery of its beacon');
+  check(!(await page.isVisible('#modelBox0')), 'one-chip version: no model field');
 
   if (out) await page.screenshot({ path: path.join(out, 'config_page_mobile.png'), fullPage: true });
 
@@ -183,10 +209,18 @@ async function openPage(browser, network, posts, opts = {}) {
   check((await h2.textContent('#scanChip')) === 'Sắp quét', 'scanning held off after the phone joined: "Sắp quét"');
   check((await h2.textContent('#statusGrid')).includes('Matter/Thread (ESP32-H2)'), 'two-chip: mode names the ESP32-H2');
   check((await h2.textContent('#statusGrid')).includes('3497-011-2332'), 'two-chip: Matter pairing code shown (no console needed)');
+  check((await h2.textContent('#statusGrid')).includes('đang ở chế độ ghép'), 'two-chip: pairing mode of the H2 shown');
+  check((await h2.textContent('#statusGrid')).includes('1/20 · 1 đang chờ · bộ nhớ H2 trống 52 KB'), 'two-chip: devices, waiting and H2 memory');
+  check((await h2.$$('.slot')).length === 20, 'two-chip: 20 slots');
+  check((await h2.textContent('#slotsTitle')) === 'Presence 1–20', 'two-chip: title with 20 slots');
+  check(await h2.evaluate(() => document.getElementById('det0').open && !document.getElementById('det5').open), 'two-chip: slots in use open, empty ones folded');
+  check((await h2.textContent('#sum5')).includes('trống'), 'two-chip: folded slot says it is empty');
   check((await h2.textContent('#home0')) === 'Trên Nhà: thiết bị con C0:11:22:33:44:01 (endpoint 2)', 'two-chip: slot 1 is a bridged device named by its MAC');
   check((await h2.textContent('#home1')).startsWith('Chưa có trên Nhà'), 'two-chip: inactive slot has no device');
-  check((await h2.textContent('#slotsNote')).includes('thiết bị con của Matter bridge'), 'two-chip: slots explained as bridged devices');
-  check(await h2.isVisible('#h2ResetBox'), 'two-chip: H2 reset offered');
+  check((await h2.textContent('#home3')).startsWith('Chờ ghép Matter xong'), 'two-chip: device waiting for commissioning explained');
+  check((await h2.textContent('#slotsNote')).includes('iBeacon Bridge') && (await h2.textContent('#slotsNote')).includes('Haxeko'), 'two-chip: slots explained as bridged devices');
+  check(await h2.isVisible('#modelBox0') && (await h2.inputValue('#model0')) === 'CP101', 'two-chip: model field with the saved model');
+  check(await h2.isVisible('#h2ResetBox') && await h2.isVisible('#btnH2Pair'), 'two-chip: H2 reset and pairing mode offered');
   const h2Posts = [];
   h2.on('request', r => { if (r.method() === 'POST') h2Posts.push({ path: new URL(r.url()).pathname, body: r.postData() }); });
   h2.on('dialog', async d => { await d.accept(); });
@@ -195,6 +229,35 @@ async function openPage(browser, network, posts, opts = {}) {
   await h2.waitForTimeout(300);
   const reset = h2Posts.find(p => p.path === '/api/h2/reset');
   check(reset && JSON.parse(reset.body).confirm === 'RESET-MATTER', 'two-chip: H2 reset sent with its confirmation word');
+  await h2.click('#btnH2Pair');
+  await h2.waitForTimeout(300);
+  check(h2Posts.some(p => p.path === '/api/h2/pair'), 'two-chip: pairing mode asked on the page');
+
+  // Assign the CP101 of the list to slot 6 (folded, empty): the model is its advertised name, 20 slots saved
+  const h2Selects = await h2.$$('.beacon select');
+  check((await h2Selects[3].$$('option')).length === 21, 'two-chip: the picker offers the 20 slots');
+  await h2.fill('#mac3', ''); // free the CP101 from slot 4 first
+  await h2Selects[3].selectOption('5');
+  check(await h2.evaluate(() => document.getElementById('det5').open), 'two-chip: assigned slot unfolds');
+  check((await h2.inputValue('#model5')) === 'CP101', 'two-chip: model taken from the advertised name');
+  await h2.fill('#model5', 'ệ'.repeat(12)); // 12 characters, 36 bytes of UTF-8 (the field limits characters)
+  check((await h2.textContent('#emodel5')).includes('32 byte'), 'two-chip: model longer than 32 bytes flagged');
+  await h2.fill('#model5', 'CP101 phòng khách');
+  await h2.click('#btnSave');
+  await h2.waitForTimeout(300);
+  const h2Save = h2Posts.find(p => p.path === '/api/config');
+  if (h2Save) {
+    const b = JSON.parse(h2Save.body);
+    check(b.slots.length === 20, 'two-chip: save body has 20 slots');
+    check(b.slots[5].mac === 'E1:22:33:44:55:66' && b.slots[5].model === 'CP101 phòng khách', 'two-chip: slot 6 saved with its model');
+  } else check(false, 'two-chip: save sent');
+  if (out) await h2.screenshot({ path: path.join(out, 'config_page_two_chip.png'), fullPage: true });
+
+  // Not enough memory on the H2: explained per slot
+  const h2mem = await openPage(browser, 'h2', [], { h2: { commissioned: true, fabrics: 1, network_up: true, window_open: false, wait_reason: 'memory', pairing: null } });
+  await h2mem.waitForTimeout(300);
+  check((await h2mem.textContent('#home3')).includes('không đủ bộ nhớ'), 'two-chip: device waiting for memory explained');
+  check((await h2mem.textContent('#statusGrid')).includes('ẩn vì H2 đã ghép'), 'two-chip: code hidden once paired and not in pairing mode');
   check((await h2.textContent('#statusGrid')).includes('chưa ghép · Thread chưa kết nối'), 'two-chip: H2 status shown');
   check((await h2.textContent('#coexNote')).includes('hai chip'), 'two-chip: scan note');
   await h2.fill('#scanWin', '120');

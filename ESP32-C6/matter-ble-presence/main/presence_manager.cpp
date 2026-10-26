@@ -13,6 +13,7 @@
 #include <atomic>
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -25,7 +26,17 @@ static const char *TAG = "presence";
 
 static constexpr int kQueueLength = 32;
 static constexpr int8_t kRssiUnavailable = 127;
+static constexpr int64_t kTlmMinPeriodMs = 1000; // per slot
 static_assert(PRESENCE_LOGIC_SLOTS == PRESENCE_SLOT_COUNT, "one presence rule per slot");
+
+static const presence_battery_config_t kBatteryConfig = {
+    .empty_mv = CONFIG_PRESENCE_BATTERY_EMPTY_MV,
+    .full_mv = CONFIG_PRESENCE_BATTERY_FULL_MV,
+    .warning_pct = CONFIG_PRESENCE_BATTERY_WARNING_PCT,
+    .critical_pct = CONFIG_PRESENCE_BATTERY_CRITICAL_PCT,
+    .step_pct = 2,
+    .replaced_pct = 15,
+};
 
 namespace {
 
@@ -35,9 +46,16 @@ struct SlotMatch {
     uint8_t addr_type;
 };
 
+enum PacketKind : uint8_t {
+    kPacketIBeacon,
+    kPacketTlm,
+};
+
 struct Packet {
     uint8_t slot;
+    PacketKind kind;
     int8_t rssi;
+    uint16_t battery_mv; // kPacketTlm
 };
 
 } // namespace
@@ -54,6 +72,13 @@ static int64_t s_last_post_ms[PRESENCE_SLOT_COUNT];
 static bool s_posted[PRESENCE_SLOT_COUNT];
 static bool s_pending[PRESENCE_SLOT_COUNT];
 static int8_t s_pending_rssi[PRESENCE_SLOT_COUNT];
+static int64_t s_last_tlm_ms[PRESENCE_SLOT_COUNT];
+static bool s_tlm_posted[PRESENCE_SLOT_COUNT];
+static char s_seen_name[PRESENCE_SLOT_COUNT][BLE_SCANNER_NAME_SIZE];
+
+// Advertised names, written by the host task, read by any task
+static portMUX_TYPE s_name_mux = portMUX_INITIALIZER_UNLOCKED;
+static char s_names[PRESENCE_SLOT_COUNT][BLE_SCANNER_NAME_SIZE];
 
 static std::atomic<uint32_t> s_matched[PRESENCE_SLOT_COUNT];
 static std::atomic<uint32_t> s_queue_drops{ 0 };
@@ -87,14 +112,48 @@ static bool stronger(int8_t rssi, int8_t than)
     return than == kRssiUnavailable || rssi > than;
 }
 
+// Host task: the name a slot's beacon advertises, published when it changes
+static void note_name(int slot, const char *name)
+{
+    if (strcmp(s_seen_name[slot], name) == 0) {
+        return;
+    }
+    memcpy(s_seen_name[slot], name, sizeof(s_seen_name[slot]));
+    portENTER_CRITICAL(&s_name_mux);
+    memcpy(s_names[slot], name, sizeof(s_names[slot]));
+    portEXIT_CRITICAL(&s_name_mux);
+}
+
+// Host task: a TLM frame of the slot's beacon, at most one per second (it carries the battery only)
+static void post_tlm(int slot, const ble_adv_report_t *report)
+{
+    if (report->tlm.battery_mv == 0 ||
+        (s_tlm_posted[slot] && report->time_ms - s_last_tlm_ms[slot] < kTlmMinPeriodMs)) {
+        return;
+    }
+    const Packet packet = { static_cast<uint8_t>(slot), kPacketTlm, report->rssi, report->tlm.battery_mv };
+    if (xQueueSend(s_queue, &packet, 0) == pdTRUE) {
+        s_tlm_posted[slot] = true;
+        s_last_tlm_ms[slot] = report->time_ms;
+    } else {
+        s_queue_drops.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 void presence_manager_sink(const ble_adv_report_t *report)
 {
     // Only a well-formed iBeacon frame refreshes a slot; the advertised name is never used to identify a beacon.
-    if (!report->has_ibeacon) {
-        return;
-    }
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
         if (!slot_matches(i, report->addr, report->addr_type)) {
+            continue;
+        }
+        if (report->name[0] != '\0') {
+            note_name(i, report->name);
+        }
+        if (report->has_tlm) {
+            post_tlm(i, report);
+        }
+        if (!report->has_ibeacon) {
             continue;
         }
         s_matched[i].fetch_add(1, std::memory_order_relaxed);
@@ -105,7 +164,7 @@ void presence_manager_sink(const ble_adv_report_t *report)
         if (s_posted[i] && report->time_ms - s_last_post_ms[i] < CONFIG_PRESENCE_REPORT_THROTTLE_MS) {
             continue;
         }
-        const Packet packet = { static_cast<uint8_t>(i), s_pending_rssi[i] };
+        const Packet packet = { static_cast<uint8_t>(i), kPacketIBeacon, s_pending_rssi[i], 0 };
         if (xQueueSend(s_queue, &packet, 0) == pdTRUE) {
             s_posted[i] = true;
             s_pending[i] = false;
@@ -116,9 +175,16 @@ void presence_manager_sink(const ble_adv_report_t *report)
     }
 }
 
+// Presence task only
+static presence_battery_t s_battery[PRESENCE_SLOT_COUNT];
+static uint32_t s_tlm_count[PRESENCE_SLOT_COUNT];
+static int64_t s_tlm_time_ms[PRESENCE_SLOT_COUNT];
+
 static void publish_stats(const presence_logic_t &logic, const bool reported[PRESENCE_SLOT_COUNT], uint64_t now)
 {
-    presence_manager_stats_t st = {};
+    const int64_t now_ms = esp_timer_get_time() / 1000;
+    static presence_manager_stats_t st; // presence task only: off its stack (20 slots)
+    memset(&st, 0, sizeof(st));
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
         presence_slot_stats_t &s = st.slots[i];
         s.active = s_rules[i].active;
@@ -129,12 +195,37 @@ static void publish_stats(const presence_logic_t &logic, const bool reported[PRE
         s.matched = s_matched[i].load(std::memory_order_relaxed);
         s.accepted = logic.state[i].accepted;
         s.rssi_rejected = logic.state[i].rssi_rejected;
+        s.tlm = s_tlm_count[i];
+        s.battery_mv = s_battery[i].median_mv;
+        s.battery_pct = s_battery[i].published;
+        s.battery_level = presence_battery_level(&kBatteryConfig, s_battery[i].published);
+        s.battery_age_s = s_tlm_count[i] > 0 ? static_cast<uint32_t>((now_ms - s_tlm_time_ms[i]) / 1000) : 0;
     }
     st.queue_drops = s_queue_drops.load();
     st.report_retries = s_report_retries.load();
     portENTER_CRITICAL(&s_stats_mux);
     s_stats = st;
     portEXIT_CRITICAL(&s_stats_mux);
+}
+
+// Presence task: a battery reading of the slot's beacon
+static void on_battery(int slot, uint16_t mv)
+{
+    if (slot < 0 || slot >= PRESENCE_SLOT_COUNT) {
+        return;
+    }
+    s_tlm_count[slot]++;
+    s_tlm_time_ms[slot] = esp_timer_get_time() / 1000;
+    const uint8_t before = s_battery[slot].published;
+    if (presence_battery_add(&s_battery[slot], &kBatteryConfig, mv)) {
+        const uint8_t pct = s_battery[slot].published;
+        ESP_LOGI(TAG, "Presence %d \"%s\": battery %u%% (%u mV)%s", slot + 1, s_labels[slot], pct,
+                 s_battery[slot].median_mv,
+                 before == PRESENCE_BATTERY_UNKNOWN ? ""
+                 : presence_battery_level(&kBatteryConfig, pct) == PRESENCE_BATTERY_CRITICAL ? ": replace it"
+                 : presence_battery_level(&kBatteryConfig, pct) == PRESENCE_BATTERY_WARNING ? ": low"
+                                                                                            : "");
+    }
 }
 
 static void presence_task(void *)
@@ -150,6 +241,10 @@ static void presence_task(void *)
         Packet packet;
         if (xQueueReceive(s_queue, &packet, pdMS_TO_TICKS(250)) == pdTRUE) {
             do {
+                if (packet.kind == kPacketTlm) {
+                    on_battery(packet.slot, packet.battery_mv);
+                    continue;
+                }
                 const uint64_t now = ble_scanner_scan_clock_ms();
                 if (presence_logic_on_packet(&logic, packet.slot, packet.rssi, now)) {
                     ESP_LOGI(TAG, "Presence %d \"%s\": ON (RSSI %d dBm)", packet.slot + 1, s_labels[packet.slot],
@@ -192,6 +287,9 @@ esp_err_t presence_manager_start(const presence_config_t *cfg, presence_report_f
 {
     s_report = report;
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
+        presence_battery_init(&s_battery[i]);
+    }
+    for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
         const presence_slot_config_t &s = cfg->slots[i];
         s_match[i].active = presence_slot_is_active(&s);
         memcpy(s_match[i].addr, s.addr, BLE_ADDR_LEN);
@@ -229,4 +327,29 @@ void presence_manager_get_stats(presence_manager_stats_t *out)
     portENTER_CRITICAL(&s_stats_mux);
     *out = s_stats;
     portEXIT_CRITICAL(&s_stats_mux);
+}
+
+void presence_manager_get_slot_info(int slot, presence_slot_info_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->battery_pct = PRESENCE_BATTERY_UNKNOWN;
+    if (slot < 0 || slot >= PRESENCE_SLOT_COUNT || s_queue == nullptr) {
+        return; // not started (CONFIG mode)
+    }
+    portENTER_CRITICAL(&s_stats_mux);
+    const presence_slot_stats_t &s = s_stats.slots[slot];
+    if (s.tlm > 0 && s.battery_pct != PRESENCE_BATTERY_UNKNOWN) { // tlm 0: nothing read (or not published yet)
+        out->battery_pct = s.battery_pct;
+        out->battery_level = s.battery_level;
+        out->battery_mv = s.battery_mv;
+    }
+    portEXIT_CRITICAL(&s_stats_mux);
+    portENTER_CRITICAL(&s_name_mux);
+    memcpy(out->name, s_names[slot], sizeof(out->name));
+    portEXIT_CRITICAL(&s_name_mux);
+}
+
+const presence_battery_config_t *presence_battery_kconfig(void)
+{
+    return &kBatteryConfig;
 }

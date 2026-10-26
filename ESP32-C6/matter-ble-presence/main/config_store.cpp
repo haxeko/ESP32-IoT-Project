@@ -9,6 +9,7 @@
 #include "config_store.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <bootloader_random.h>
@@ -45,6 +46,25 @@ public:
     ~Locked() { xSemaphoreGive(s_lock); }
 };
 
+// The blob and a decoded configuration take about 2 KB each with 20 slots: on the heap, not on the stack of the
+// task that loads (main task) or saves (web server)
+struct Scratch {
+    uint8_t blob[PRESENCE_CONFIG_BLOB_MAX_SIZE];
+    uint8_t check[PRESENCE_CONFIG_BLOB_MAX_SIZE];
+    presence_config_t cfg;
+};
+
+class ScratchBuffer
+{
+public:
+    ScratchBuffer() : mScratch(static_cast<Scratch *>(malloc(sizeof(Scratch)))) {}
+    ~ScratchBuffer() { free(mScratch); }
+    Scratch *get() { return mScratch; }
+
+private:
+    Scratch *mScratch;
+};
+
 } // namespace
 
 static void set_state(config_store_status_t status, const char *detail)
@@ -66,9 +86,15 @@ static void load()
         set_state(CONFIG_STORE_UNAVAILABLE, esp_err_to_name(err));
         return;
     }
-    uint8_t blob[PRESENCE_CONFIG_BLOB_MAX_SIZE];
-    size_t len = sizeof(blob);
-    err = nvs_get_blob(handle, kKeyConfig, blob, &len);
+    ScratchBuffer buffer;
+    Scratch *sc = buffer.get();
+    if (sc == nullptr) {
+        nvs_close(handle);
+        set_state(CONFIG_STORE_INVALID, esp_err_to_name(ESP_ERR_NO_MEM));
+        return;
+    }
+    size_t len = sizeof(sc->blob);
+    err = nvs_get_blob(handle, kKeyConfig, sc->blob, &len);
     nvs_close(handle);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         set_state(CONFIG_STORE_DEFAULTS, "");
@@ -79,15 +105,14 @@ static void load()
         set_state(CONFIG_STORE_INVALID, esp_err_to_name(err));
         return;
     }
-    presence_config_t cfg;
-    const presence_decode_result_t result = presence_config_decode(blob, len, &cfg);
+    const presence_decode_result_t result = presence_config_decode(sc->blob, len, &sc->cfg);
     if (result != PRESENCE_DECODE_OK) {
         set_state(CONFIG_STORE_INVALID, presence_decode_result_name(result));
         return;
     }
     {
         Locked lock;
-        s_config = cfg;
+        s_config = sc->cfg;
     }
     set_state(CONFIG_STORE_OK, "");
 }
@@ -168,8 +193,12 @@ esp_err_t config_store_save(const presence_config_t *cfg)
     if (config_store_status() == CONFIG_STORE_UNAVAILABLE) {
         return ESP_ERR_INVALID_STATE;
     }
-    uint8_t blob[PRESENCE_CONFIG_BLOB_MAX_SIZE];
-    const size_t len = presence_config_encode(cfg, blob, sizeof(blob));
+    ScratchBuffer buffer;
+    Scratch *sc = buffer.get();
+    if (sc == nullptr) {
+        return ESP_ERR_NO_MEM;
+    }
+    const size_t len = presence_config_encode(cfg, sc->blob, sizeof(sc->blob));
     if (len == 0) {
         return ESP_ERR_INVALID_SIZE;
     }
@@ -180,7 +209,7 @@ esp_err_t config_store_save(const presence_config_t *cfg)
         ESP_LOGE(TAG, "Save failed: cannot open '%s' (%s)", kPartition, esp_err_to_name(err));
         return err;
     }
-    err = nvs_set_blob(handle, kKeyConfig, blob, len);
+    err = nvs_set_blob(handle, kKeyConfig, sc->blob, len);
     if (err == ESP_OK) {
         err = nvs_commit(handle);
     }
@@ -191,14 +220,12 @@ esp_err_t config_store_save(const presence_config_t *cfg)
     }
 
     // Read back what NVS now returns and check it is exactly what was written
-    uint8_t check[PRESENCE_CONFIG_BLOB_MAX_SIZE];
-    size_t check_len = sizeof(check);
-    err = nvs_get_blob(handle, kKeyConfig, check, &check_len);
+    size_t check_len = sizeof(sc->check);
+    err = nvs_get_blob(handle, kKeyConfig, sc->check, &check_len);
     nvs_close(handle);
-    presence_config_t verified;
     if (err == ESP_OK &&
-        (check_len != len || memcmp(check, blob, len) != 0 ||
-         presence_config_decode(check, check_len, &verified) != PRESENCE_DECODE_OK)) {
+        (check_len != len || memcmp(sc->check, sc->blob, len) != 0 ||
+         presence_config_decode(sc->check, check_len, &sc->cfg) != PRESENCE_DECODE_OK)) {
         err = ESP_ERR_INVALID_CRC;
     }
     if (err != ESP_OK) {
@@ -208,7 +235,7 @@ esp_err_t config_store_save(const presence_config_t *cfg)
 
     {
         Locked lock;
-        s_config = verified;
+        s_config = sc->cfg;
     }
     set_state(CONFIG_STORE_OK, "");
     ESP_LOGI(TAG, "Beacon configuration saved and verified (%u bytes)", static_cast<unsigned>(len));

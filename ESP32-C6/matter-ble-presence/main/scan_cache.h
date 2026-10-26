@@ -8,9 +8,11 @@
 
 // CONFIG mode list of the iBeacons heard around the device, for the web page.
 //
-// The NimBLE host task only queues reports (bounded queue, 0 timeout, drops counted). The cache task merges them:
-// one entry per address and type, RSSI / data / last seen updated by every report, the name filled in from a scan
-// response when the beacon sends one. At most CONFIG_PRESENCE_SCAN_CACHE_SIZE entries (allocated when the CONFIG
+// The NimBLE host task only queues reports (bounded queue, 0 timeout, drops counted): iBeacon frames, and the
+// Eddystone-TLM frames and names of the addresses that sent one lately (the names of every other device around are
+// dropped right there). The cache task merges them: one entry per address and type, RSSI / data / last seen updated
+// by every iBeacon frame, the name filled in from a scan response or an advertisement of the same address, the
+// battery voltage from its TLM frames. At most CONFIG_PRESENCE_SCAN_CACHE_SIZE entries (allocated when the CONFIG
 // mode starts, nothing in NORMAL mode): a new beacon replaces the one heard least recently, and beacons not heard
 // for CONFIG_PRESENCE_SCAN_CACHE_EXPIRE_SEC are removed.
 
@@ -29,6 +31,8 @@ typedef struct {
     int8_t rssi;       // last report
     ibeacon_t ibeacon;
     char name[BLE_SCANNER_NAME_SIZE];
+    uint16_t battery_mv; // last Eddystone-TLM frame, 0 if none (or the beacon does not measure)
+    int64_t battery_ms;  // time of that frame
     int64_t first_seen_ms;
     int64_t last_seen_ms;
     uint32_t count; // iBeacon reports

@@ -8,6 +8,8 @@
 
 #include "diag.h"
 
+#include <stdio.h>
+
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_system.h>
@@ -41,28 +43,34 @@ static void log_scanner(uint32_t *last_reports, int64_t *last_ms)
     *last_ms = now;
     char why[96];
     ESP_LOGI(TAG,
-             "Scanner %s%s%s, %u adv/s, %u reports, %u iBeacon, scanned %u s, starts %u, start failures %u (last %d), "
-             "unexpected stops %u, watchdog restarts %u",
+             "Scanner %s%s%s, %u adv/s, %u reports, %u iBeacon, %u TLM, scanned %u s, starts %u, start failures %u "
+             "(last %d), unexpected stops %u, watchdog restarts %u",
              ble_scanner_state_name(st.state), st.pause_mask ? " by " : "",
              ble_scanner_pause_text(st.pause_mask, why, sizeof(why)), rate, static_cast<unsigned>(st.adv_reports),
-             static_cast<unsigned>(st.ibeacon_reports), static_cast<unsigned>(st.scan_clock_ms / 1000),
+             static_cast<unsigned>(st.ibeacon_reports), static_cast<unsigned>(st.tlm_reports),
+             static_cast<unsigned>(st.scan_clock_ms / 1000),
              static_cast<unsigned>(st.starts), static_cast<unsigned>(st.start_failures), st.last_error,
              static_cast<unsigned>(st.unexpected_stops), static_cast<unsigned>(st.watchdog_restarts));
 }
 
 static void log_presence()
 {
-    presence_manager_stats_t st;
+    static presence_manager_stats_t st; // diag task only: 20 slots kept off its stack
     presence_manager_get_stats(&st);
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
         const presence_slot_stats_t &s = st.slots[i];
         if (!s.active) {
             continue;
         }
-        ESP_LOGI(TAG, "Presence %d: %s%s, RSSI %d dBm, %u s ago, matched %u, accepted %u, RSSI-rejected %u", i + 1,
+        char battery[72] = "no TLM frame";
+        if (s.tlm > 0) {
+            snprintf(battery, sizeof(battery), "battery %u%% (%u mV, %u s ago, %u TLM)", s.battery_pct, s.battery_mv,
+                     static_cast<unsigned>(s.battery_age_s), static_cast<unsigned>(s.tlm));
+        }
+        ESP_LOGI(TAG, "Presence %d: %s%s, RSSI %d dBm, %u s ago, matched %u, accepted %u, RSSI-rejected %u, %s", i + 1,
                  s.present ? "ON" : "OFF", s.reported ? "" : " (not reported yet)", s.last_rssi,
                  static_cast<unsigned>(s.age_s), static_cast<unsigned>(s.matched), static_cast<unsigned>(s.accepted),
-                 static_cast<unsigned>(s.rssi_rejected));
+                 static_cast<unsigned>(s.rssi_rejected), battery);
     }
     ESP_LOGI(TAG, "Presence queue drops %u, Matter report retries %u", static_cast<unsigned>(st.queue_drops),
              static_cast<unsigned>(st.report_retries));
