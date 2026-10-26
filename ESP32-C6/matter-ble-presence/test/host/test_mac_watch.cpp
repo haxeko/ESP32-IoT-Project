@@ -141,16 +141,61 @@ static void candidate_table()
         a[5] = i;
         mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 2000 + i, 0);
     }
-    // Table full of live candidates: a fifth address is ignored
+    // Table full of live addresses: a further one is ignored
     a[5] = 9;
     mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 2500, 0);
     CHECK(mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 200000, 0) == MAC_WATCH_EV_NONE);
-    // All of them look-alikes after an own frame: a new address takes the place of one
+    // All of them look-alikes after an own frame: their marks are kept, a new address finds no place (more look-alikes
+    // around than entries: nothing can be told apart, no warning)
     mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 3000);
     a[5] = 10;
     CHECK(mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 3500, 0) == MAC_WATCH_EV_NONE);
-    CHECK(mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 64000, 0) == MAC_WATCH_EV_STATE);
-    CHECK(w.new_mac[5] == 10);
+    CHECK(mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 64000, 0) == MAC_WATCH_EV_NONE);
+    for (uint8_t i = 1; i <= MAC_WATCH_CANDIDATES; i++) {
+        a[5] = i; // the look-alikes, still heard long after the slot's beacon left
+        CHECK(mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 500000 + i, 0) == MAC_WATCH_EV_NONE);
+    }
+    CHECK(w.state == MAC_WATCH_RUNNING);
+}
+
+// A beacon changing its address every 30 s, faster than the 60 s confirmation: the chain of addresses is followed
+static void fast_changing_chain()
+{
+    mac_watch_t w = assigned();
+    const ibeacon_t b = id();
+    mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 1000);
+    mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 10000); // last own frame
+    uint8_t a[6] = { 0x5A, 0, 0, 0, 0, 1 };
+    mac_watch_event_t ev = MAC_WATCH_EV_NONE;
+    int64_t t = 11000;
+    for (int k = 0; k < 6 && ev == MAC_WATCH_EV_NONE; k++) {
+        a[5] = static_cast<uint8_t>(k + 1);
+        for (int64_t end = t + 30000; t < end && ev == MAC_WATCH_EV_NONE; t += 1000) {
+            ev = mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, t, 0);
+        }
+    }
+    CHECK(ev == MAC_WATCH_EV_STATE && w.state == MAC_WATCH_CHANGED);
+    CHECK(t - 1000 >= 11000 + MAC_WATCH_CONFIRM_MS && t - 1000 <= 11000 + MAC_WATCH_CONFIRM_MS + 1000);
+    CHECK(w.new_mac[5] == 3); // the third address of the chain
+}
+
+// A beacon sending two identities in turn from its address, with a look-alike of one of them: the mark is kept
+static void two_identities_keep_marks()
+{
+    mac_watch_t w = assigned();
+    const ibeacon_t b = id();
+    const ibeacon_t c = id(7);
+    mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 1000);
+    mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 1500, 0);
+    int64_t t = 2000;
+    for (int k = 0; k < 20; k++, t += 1000) {
+        mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, k % 2 ? &b : &c, t); // identities in turn
+    }
+    mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, t); // leaves on identity b
+    for (int64_t u = t + 1000; u < t + 600000; u += 1000) {
+        CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, u, 0) == MAC_WATCH_EV_NONE);
+    }
+    CHECK(w.state == MAC_WATCH_RUNNING);
 }
 
 static void restart_does_not_count_as_silence()
@@ -184,11 +229,11 @@ static void identity_needed_first()
     mac_watch_t none = {};
     CHECK(mac_watch_own(&none, BLE_OTA_ADDR_RANDOM, &b, 1000) == MAC_WATCH_EV_NONE && none.state == MAC_WATCH_NONE);
     CHECK(!mac_watch_seed(&none, &b));
-    // The beacon given another identity: taken over, its candidates forgotten
+    // The beacon given another identity: taken over
     mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 1000);
     mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 1500, 0);
     const ibeacon_t c = id(9);
-    CHECK(mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &c, 2000) == MAC_WATCH_EV_PROGRESS && w.minor == 9 && !w.cand[0].used);
+    CHECK(mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &c, 2000) == MAC_WATCH_EV_PROGRESS && w.minor == 9);
 }
 
 // Identity from the scan list when the configuration is saved: a beacon that changes its MAC before the NORMAL mode
@@ -257,6 +302,8 @@ int main()
     RUN(lookalike_heard_together);
     RUN(lookalike_arriving_late);
     RUN(candidate_table);
+    RUN(fast_changing_chain);
+    RUN(two_identities_keep_marks);
     RUN(restart_does_not_count_as_silence);
     RUN(identity_needed_first);
     RUN(seeded_identity);

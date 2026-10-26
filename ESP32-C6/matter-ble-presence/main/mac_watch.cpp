@@ -45,7 +45,7 @@ static void set_id(mac_watch_t *w, const ibeacon_t *id)
     w->major = id->major;
     w->minor = id->minor;
     w->has_id = true;
-    memset(w->cand, 0, sizeof(w->cand)); // addresses of another identity
+    // The candidates stay: a beacon sending two identities in turn keeps its look-alikes marked
 }
 
 bool mac_watch_seed(mac_watch_t *w, const ibeacon_t *id)
@@ -111,7 +111,8 @@ mac_watch_event_t mac_watch_other(mac_watch_t *w, const uint8_t addr[BLE_ADDR_LE
         }
     }
     if (c == nullptr) {
-        // A new address: a free entry, else the place of a look-alike (a full table of live candidates: ignored)
+        // A new address: a free entry, else that of an earlier address of a chain gone silent. A look-alike's entry is
+        // never reused (its mark would be lost); a table full of them and of live addresses: ignored.
         for (mac_watch_candidate_t &k : w->cand) {
             if (!k.used) {
                 c = &k;
@@ -119,21 +120,30 @@ mac_watch_event_t mac_watch_other(mac_watch_t *w, const uint8_t addr[BLE_ADDR_LE
             }
         }
         for (mac_watch_candidate_t &k : w->cand) {
-            if (c == nullptr && k.lookalike) {
+            if (c == nullptr && !k.lookalike && now_ms - k.last_ms > MAC_WATCH_GONE_MS) {
                 c = &k;
             }
         }
         if (c == nullptr) {
             return MAC_WATCH_EV_NONE;
         }
+        // The address it would follow on from: the own one, or the live candidate heard last (a fast changing beacon)
+        int64_t before = own;
+        int64_t chain = now_ms;
+        for (const mac_watch_candidate_t &k : w->cand) {
+            if (&k != c && k.used && !k.lookalike && k.last_ms > before) {
+                before = k.last_ms;
+                chain = k.chain_ms;
+            }
+        }
         memcpy(c->addr, addr, BLE_ADDR_LEN);
         c->used = true;
-        c->first_ms = now_ms;
-        // A changed address takes over at once; one appearing long after the own address went silent is another
-        // beacon coming into range
-        c->lookalike = now_ms - own > MAC_WATCH_SEAMLESS_MS;
+        c->chain_ms = chain;
+        // A changed address takes over at once; one appearing long after is another beacon coming into range
+        c->lookalike = now_ms - before > MAC_WATCH_SEAMLESS_MS;
     }
-    if (c->lookalike || now_ms - c->first_ms < MAC_WATCH_CONFIRM_MS || now_ms - own <= MAC_WATCH_GONE_MS) {
+    c->last_ms = now_ms;
+    if (c->lookalike || now_ms - c->chain_ms < MAC_WATCH_CONFIRM_MS || now_ms - own <= MAC_WATCH_GONE_MS) {
         return MAC_WATCH_EV_NONE;
     }
     w->state = MAC_WATCH_CHANGED;

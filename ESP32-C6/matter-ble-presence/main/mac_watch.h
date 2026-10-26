@@ -14,11 +14,12 @@
 //   - Its iBeacon identity (UUID, major, minor) is taken from the scan list when the configuration is saved, or from
 //     its first frame.
 //   - Changed: that identity comes from another random address that appeared right when the slot's address went
-//     silent (within MAC_WATCH_SEAMLESS_MS), was heard for MAC_WATCH_CONFIRM_MS, and the slot's address stayed silent
-//     for MAC_WATCH_GONE_MS. A beacon that changes its address never uses both addresses: an address heard before a
-//     frame of the slot's own address, or appearing long after it went silent, is another beacon with the same
-//     identity and never counts (the caller also leaves out the addresses of the other slots). The own address heard
-//     again after a change: not a change after all, the watch goes on.
+//     silent (within MAC_WATCH_SEAMLESS_MS; or right when the previous such address went silent, for a beacon that
+//     changes its address faster than the confirmation), the chain of them was heard for MAC_WATCH_CONFIRM_MS, and
+//     the slot's address stayed silent for MAC_WATCH_GONE_MS. A beacon that changes its address never uses two at
+//     once: an address heard before a frame of the slot's own address, or appearing long after the address before it
+//     went silent, is another beacon with the same identity and never counts (the caller also leaves out the addresses
+//     of the other slots). The own address heard again after a change: not a change after all, the watch goes on.
 //   - Fixed: its address heard for MAC_WATCH_TIME_MS (gaps longer than MAC_WATCH_GONE_MS not counted) without a
 //     change, or a public address (fixed by definition). The verdict is kept: the warning never shows again for this
 //     MAC in this slot. A new MAC in the slot starts a new watch.
@@ -53,8 +54,10 @@ typedef enum {
 typedef struct {
     uint8_t addr[BLE_ADDR_LEN];
     bool used;
-    bool lookalike; // another beacon: heard before an own frame, or appeared long after the own address went silent
-    int64_t first_ms;
+    bool lookalike; // another beacon: heard before an own frame, or appeared long after the address before it went
+                    // silent. Kept for the whole boot (its entry is never reused).
+    int64_t last_ms;
+    int64_t chain_ms; // first frame of the first address of its chain (each one following on from the one before)
 } mac_watch_candidate_t;
 
 typedef struct {

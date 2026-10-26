@@ -465,7 +465,7 @@ ESP32-C6/matter-ble-presence/test/host/run.sh      # g++ ≥ 9, chạy với Add
 | `test_click_detector` | 3 lần bấm, 2 lần, **bấm thong thả** (nghỉ đúng 2 s, bấm 1,5 s), nghỉ quá 2 s thì đếm lại, dội phím (cả khi bấm chậm), nhiễu ngắn, **giữ lâu không thành nhiều lần bấm**, nút đang giữ lúc khởi động, 4 lần, tràn bộ đếm ms; H2: bấm 2 lần, **giữ 5 s báo một lần lúc còn giữ rồi lúc nhả**, bấm trước khi giữ không cộng, giữ 2 s không làm gì, dội phím trong lúc giữ |
 | `test_app_mode` | cờ RTC chỉ hợp lệ sau reset phần mềm, một lần, bị hỏng → NORMAL, 100 000 mẫu RTC ngẫu nhiên không bao giờ vào CONFIG |
 | `test_presence_config` | (5 và 20 slot) mặc định (cửa sổ < chu kỳ), mọi lỗi trường, trùng beacon (any/public/random, slot tắt), nhãn và model UTF-8, blob round-trip, **mọi bit lật bị phát hiện**, version mới hơn, magic sai, **blob định dạng 1 của bản 5 slot đọc được** (slot thêm lấy mặc định, lưu lại thành định dạng 2), blob nhiều slot hơn firmware (20 slot đọc bằng bản 5 slot): slot thừa không có beacon thì bỏ, có beacon (kể cả slot tắt) hoặc giá trị sai thì từ chối và không ghi gì, định dạng 3 (1.0.201) đọc theo MAC |
-| `test_mac_watch` | cố định sau đúng 30 phút nghe thấy, khoảng vắng > 60 s không tính, địa chỉ public cố định ngay, đổi MAC (cùng UUID/Major/Minor từ địa chỉ random mới xuất hiện khi địa chỉ cũ im lặng, nghe 60 s), beacon trùng nhận diện nghe cùng lúc hoặc đến muộn không bị coi là đổi (cả khi người mang beacon đi vắng 1 giờ), bảng địa chỉ đầy, nghe lại địa chỉ cũ thì hủy cảnh báo và không lặp lại, khởi động lại, nhận diện lấy từ danh sách khi lưu, dạng lưu (mọi bit lật bị phát hiện, số slot khác) |
+| `test_mac_watch` | cố định sau đúng 30 phút nghe thấy, khoảng vắng > 60 s không tính, địa chỉ public cố định ngay, đổi MAC (cùng UUID/Major/Minor từ địa chỉ random mới xuất hiện khi địa chỉ cũ im lặng, nghe 60 s), beacon trùng nhận diện nghe cùng lúc hoặc đến muộn không bị coi là đổi (cả khi người mang beacon đi vắng 1 giờ), bảng địa chỉ đầy, beacon đổi địa chỉ nhanh hơn 60 s (chuỗi địa chỉ), beacon phát xen hai bộ UUID/Major/Minor, nghe lại địa chỉ cũ thì hủy cảnh báo và không lặp lại, khởi động lại, nhận diện lấy từ danh sách khi lưu, dạng lưu (mọi bit lật bị phát hiện, số slot khác) |
 | `test_presence_link` | giao thức UART v5: khung đúng, mặt nạ 20 bit, khung SLOT (model UTF-8, pin, slot ngoài khoảng, ký tự điều khiển, độ dài sai), STATUS (thiết bị chờ, thiết bị lỗi, heap), **mọi bit lật bị loại**, mọi kiểu cắt cụt, rác giống log ROM, khung phiên bản 1–4 bị loại, slot "chưa biết" sau khi C3 khởi động lại |
 | `test_json_util` | escape JSON/HTML (`<script>`), UTF-8 hợp lệ/không hợp lệ, cắt không vỡ chuỗi |
 | `test_http_guard` | chỉ nhận `Host` = địa chỉ SoftAP (có/không `:80`; từ chối tên miền khác, `192.168.4.10`, `:8080`), POST phải là `application/json` (từ chối `text/plain`, form, `application/jsonp`…) |
@@ -530,7 +530,7 @@ config_store 20     119 checks, 0 failed
 http_guard           26 checks, 0 failed
 ibeacon_parser     333131 checks, 0 failed
 json_util            22 checks, 0 failed
-mac_watch          12429 checks, 0 failed
+mac_watch          13040 checks, 0 failed
 presence_battery   4037 checks, 0 failed
 presence_config     598 checks, 0 failed
 presence_config 20 2083 checks, 0 failed

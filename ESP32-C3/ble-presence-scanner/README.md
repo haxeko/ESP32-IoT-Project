@@ -140,7 +140,12 @@ thì slot sẽ mất dấu, nên C3 **theo dõi mỗi beacon 30 phút** sau khi 
   <MAC mới>"**, log C3 có `beacon changes its MAC`. Beacon đổi MAC không bao giờ dùng cả hai địa chỉ, nên **không bị
   coi là đổi**: địa chỉ của slot khác, địa chỉ nghe thấy trước một gói của chính địa chỉ slot (hai beacon trùng
   UUID/Major/Minor, ví dụ khi người mang beacon đi vắng còn beacon kia ở nhà), địa chỉ xuất hiện lâu sau khi beacon của
-  slot im lặng (beacon khác đi vào vùng phủ). Địa chỉ cũ phát lại thì cảnh báo tự hủy và việc theo dõi tiếp tục.
+  slot im lặng (beacon khác đi vào vùng phủ). Beacon đổi địa chỉ nhanh hơn 60 s vẫn được theo dấu (chuỗi địa chỉ nối
+  tiếp nhau). Địa chỉ cũ phát lại thì cảnh báo tự hủy và việc theo dõi tiếp tục.
+* Giới hạn đã biết (hiếm): khởi động lại C3 khi beacon của slot đang vắng mà có một beacon khác trùng UUID/Major/Minor
+  (chưa gán vào slot nào) ở gần, hoặc beacon trùng đó vào vùng phủ trong vòng 60 s sau khi beacon của slot rời đi:
+  cảnh báo "đổi MAC" hiện tạm, tự hủy khi beacon của slot quay lại. Beacon đổi MAC và không nghe thấy suốt hơn 2 phút
+  trước khi bấm Lưu thì không lấy được UUID/Major/Minor từ danh sách, nên không phát hiện được việc đổi MAC.
 * Flash: tiến độ ghi 5 phút một lần, trạng thái mới nhiều nhất mỗi phút một lần; ghi xong kết luận thì thôi.
 * **Không đổi:** nghe đủ 30 phút mà MAC không đổi (hoặc beacon dùng địa chỉ public, theo chuẩn không bao giờ đổi):
   **tắt cảnh báo và không hiện lại** cho MAC đó ở slot đó. Gán MAC khác vào slot thì theo dõi lại từ đầu.
