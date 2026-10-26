@@ -110,6 +110,13 @@ static endpoint_t *build_device(int slot, const uint8_t mac[PLINK_MAC_LEN], uint
         ? bridged_node::create(s_node, &config, flags, nullptr)
         : bridged_node::resume(s_node, &config, flags, resume_id, nullptr);
     if (ep == nullptr) {
+        // bridged_node::resume() can fail after the endpoint was added to the node (cluster allocation): drop it
+        if (resume_id != chip::kInvalidEndpointId) {
+            endpoint_t *left = endpoint::get(s_node, resume_id);
+            if (left != nullptr) {
+                endpoint::destroy(s_node, left);
+            }
+        }
         return nullptr;
     }
     char name[PLINK_MAC_STR_SIZE];
@@ -241,6 +248,11 @@ bool matter_bridge_sync(const plink_slots_t *want, uint8_t *changed)
         save_table();
     }
     return complete;
+}
+
+bool matter_bridge_ready(void)
+{
+    return s_ready;
 }
 
 uint16_t matter_bridge_endpoint(int slot)

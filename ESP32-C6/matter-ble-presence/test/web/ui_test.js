@@ -48,7 +48,7 @@ async function openPage(browser, network, posts, opts = {}) {
     const json = (obj, code = 200) => route.fulfill({ status: code, contentType: 'application/json', body: JSON.stringify(obj) });
     if (url.pathname === '/') return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
     if (url.pathname === '/api/status') return json(Object.assign({}, status, { network },
-      network === 'h2' ? { h2: { seen: true, ago_s: 1, commissioned: true, network_up: false, fabrics: 1,
+      network === 'h2' ? { h2: { seen: true, ago_s: 1, commissioned: false, network_up: false, fabrics: 0,
         bridged: [2, 0, 0, 0, 0], pairing: { manual: '34970112332', qr: 'MT:Y.K9042C00KA0648G00' } } } : {}));
     if (url.pathname === '/api/scan' && req.method() === 'GET') {
       const st = opts.stats || {};
@@ -195,7 +195,7 @@ async function openPage(browser, network, posts, opts = {}) {
   await h2.waitForTimeout(300);
   const reset = h2Posts.find(p => p.path === '/api/h2/reset');
   check(reset && JSON.parse(reset.body).confirm === 'RESET-MATTER', 'two-chip: H2 reset sent with its confirmation word');
-  check((await h2.textContent('#statusGrid')).includes('đã ghép (1 fabric) · Thread chưa kết nối'), 'two-chip: H2 status shown');
+  check((await h2.textContent('#statusGrid')).includes('chưa ghép · Thread chưa kết nối'), 'two-chip: H2 status shown');
   check((await h2.textContent('#coexNote')).includes('hai chip'), 'two-chip: scan note');
   await h2.fill('#scanWin', '120');
   check(!(await h2.textContent('#scanInfo')).includes('⚠'), 'two-chip: no warning above 50 % (own radio)');

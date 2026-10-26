@@ -236,6 +236,7 @@ async function fetchStatus() {
       (s.h2.ago_s > 5 ? "mất tín hiệu " + s.h2.ago_s + " s" : "đang kết nối") + " · " + (s.h2.commissioned ? "đã ghép (" + s.h2.fabrics + " fabric)" : "chưa ghép") +
       " · Thread " + (s.h2.network_up ? "đã kết nối" : "chưa kết nối"));
     if (s.h2.pairing) kv("Mã ghép Matter", fmtPairing(s.h2.pairing.manual) + " (nhập trong ứng dụng Nhà khi thêm phụ kiện; không đổi)");
+    else if (s.h2.seen && s.h2.commissioned) kv("Mã ghép Matter", "ẩn vì H2 đã ghép (hiện lại khi H2 chờ ghép)");
     lastH2 = s.h2;
     renderHome();
   }
@@ -531,7 +532,8 @@ function renderHome() {
     const active = saved.enabled && saved.mac !== "";
     const ep = lastH2 && lastH2.bridged ? lastH2.bridged[i] : 0;
     let text;
-    if (ep > 0) text = "Trên Nhà: thiết bị con " + saved.mac + " (endpoint " + ep + ")";
+    if (ep > 0 && !active) text = "Đang gỡ thiết bị con khỏi Nhà (endpoint " + ep + ")…";
+    else if (ep > 0) text = "Trên Nhà: thiết bị con " + saved.mac + " (endpoint " + ep + ")";
     else if (!active) text = "Chưa có trên Nhà: gán MAC, bật slot rồi Lưu để thêm";
     else if (!lastH2 || !lastH2.seen) text = "Chờ ESP32-H2 (chưa nhận được tín hiệu qua UART)";
     else text = "Đang chờ ESP32-H2 thêm thiết bị con " + saved.mac + "…";

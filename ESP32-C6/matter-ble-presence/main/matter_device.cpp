@@ -566,6 +566,9 @@ bool matter_device_set_occupancy(int slot, bool occupied)
     }
     lock::ScopedChipStackLock lock(portMAX_DELAY);
 #if CONFIG_PRESENCE_ROLE_MATTER_UART
+    if (!matter_bridge_ready()) {
+        return false; // the restored devices are not back yet: retried
+    }
     const uint16_t endpoint_id = matter_bridge_endpoint(slot);
     if (endpoint_id == 0) {
         return true; // no device for this slot on the bridge: nothing to show (set again when it is added)
@@ -632,7 +635,7 @@ static void factory_reset_work(intptr_t)
 void matter_device_factory_reset(void)
 {
     if (!s_started) {
-        // Matter could not start (e.g. "nvs" unusable): nothing scheduled can run, so only the bridge table goes
+        // Matter could not start (e.g. "nvs" unusable): nothing is erased (the page refuses the request then)
         ESP_LOGE(TAG, "Factory reset asked while Matter is not running: not done");
         return;
     }

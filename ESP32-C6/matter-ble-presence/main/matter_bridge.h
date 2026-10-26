@@ -38,6 +38,9 @@ void matter_bridge_restore(void);
 // is returned (their occupancy is to be set again).
 bool matter_bridge_sync(const plink_slots_t *want, uint8_t *changed);
 
+// matter_bridge_restore() done: until then a slot without endpoint may still get one back
+bool matter_bridge_ready(void);
+
 // Endpoint of the slot's device, 0 if none
 uint16_t matter_bridge_endpoint(int slot);
 

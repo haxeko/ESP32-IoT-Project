@@ -324,8 +324,9 @@ static esp_err_t status_get(httpd_req_t *req)
     for (int i = 0; i < PLINK_SLOT_COUNT; i++) {
         out.fmt("%s%u", i ? "," : "", static_cast<unsigned>(link.have_peer_status ? link.peer_status.endpoint[i] : 0));
     }
+    // The code only while the H2 can be commissioned: once paired it opens nothing, and the SoftAP password is shared
     out.raw("],\"pairing\":");
-    if (link.have_pairing) {
+    if (link.have_pairing && !(link.peer_status.flags & PLINK_STATUS_COMMISSIONED)) {
         out.raw("{\"manual\":");
         out.str(link.pairing.manual_code);
         out.raw(",\"qr\":");
@@ -778,6 +779,10 @@ static esp_err_t h2_reset_post(httpd_req_t *req)
     if (!link.have_peer_status || ago_ms > 10000) {
         return send_message(req, "409 Conflict", false,
                             "Không có tín hiệu từ ESP32-H2 qua UART: lệnh không được gửi. Kiểm tra dây nối và nguồn.");
+    }
+    if (!(link.peer_status.flags & PLINK_STATUS_MATTER_STARTED)) {
+        return send_message(req, "409 Conflict", false,
+                            "Matter chưa chạy trên ESP32-H2 (xem log USB của H2): lệnh không được gửi.");
     }
     presence_link_request_command(PLINK_CMD_FACTORY_RESET);
     ESP_LOGW(TAG, "Matter factory reset of the ESP32-H2 asked on the page");
