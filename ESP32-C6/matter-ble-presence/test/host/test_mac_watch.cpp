@@ -84,7 +84,7 @@ static void changed_address()
     const ibeacon_t b = id();
     mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 1000);
     mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 300000);
-    // The identity from another random address at the moment of the change: not yet (own heard 1 s ago)
+    // The identity from a new random address 1 s after the last own frame: a candidate, not confirmed yet
     CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 301000, 0) == MAC_WATCH_EV_NONE);
     // Other identity, public address, own address: never a change
     const ibeacon_t c = id(7);
@@ -92,13 +92,65 @@ static void changed_address()
     CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_PUBLIC, &b, 500000, 0) == MAC_WATCH_EV_NONE);
     CHECK(mac_watch_other(&w, kMac, BLE_OTA_ADDR_RANDOM, &b, 500000, 0) == MAC_WATCH_EV_NONE);
     CHECK(w.state == MAC_WATCH_RUNNING);
-    // Own address silent more than 60 s, the identity still comes from the new address: changed
-    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 360001, 0) == MAC_WATCH_EV_STATE);
+    // Heard 59.999 s: not yet; 60 s and the own address silent more than 60 s: changed
+    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 360999, 0) == MAC_WATCH_EV_NONE);
+    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 361001, 0) == MAC_WATCH_EV_STATE);
     CHECK(w.state == MAC_WATCH_CHANGED && memcmp(w.new_mac, kOther, 6) == 0 && !mac_watch_needs_all(&w));
     CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 400000, 0) == MAC_WATCH_EV_NONE);
     // The own address heard again: it was another beacon with the same identity, watched on
     CHECK(mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 900000) == MAC_WATCH_EV_STATE);
     CHECK(w.state == MAC_WATCH_RUNNING && w.new_mac[0] == 0);
+    // That address can never make it change again (no flip-flop, no flash writes in a loop)
+    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 2000000, 0) == MAC_WATCH_EV_NONE);
+    CHECK(w.state == MAC_WATCH_RUNNING);
+}
+
+// Another beacon with the same identity, heard together with the slot's beacon, then the slot's beacon leaves (the
+// person goes out): no change
+static void lookalike_heard_together()
+{
+    mac_watch_t w = assigned();
+    const ibeacon_t b = id();
+    mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 1000);
+    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 2000, 0) == MAC_WATCH_EV_NONE);
+    mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 3000); // own frame after it: another beacon
+    for (int64_t t = 4000; t < 3600000; t += 1000) {
+        CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, t, 0) == MAC_WATCH_EV_NONE);
+    }
+    CHECK(w.state == MAC_WATCH_RUNNING);
+}
+
+// Another beacon with the same identity coming into range long after the slot's beacon left: no change
+static void lookalike_arriving_late()
+{
+    mac_watch_t w = assigned();
+    const ibeacon_t b = id();
+    mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 1000);
+    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 1000 + 60001, 0) == MAC_WATCH_EV_NONE);
+    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 500000, 0) == MAC_WATCH_EV_NONE);
+    CHECK(w.state == MAC_WATCH_RUNNING);
+}
+
+static void candidate_table()
+{
+    mac_watch_t w = assigned();
+    const ibeacon_t b = id();
+    mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 1000);
+    uint8_t a[6] = { 0x5A, 0, 0, 0, 0, 0 };
+    for (uint8_t i = 1; i <= MAC_WATCH_CANDIDATES; i++) {
+        a[5] = i;
+        mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 2000 + i, 0);
+    }
+    // Table full of live candidates: a fifth address is ignored
+    a[5] = 9;
+    mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 2500, 0);
+    CHECK(mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 200000, 0) == MAC_WATCH_EV_NONE);
+    // All of them look-alikes after an own frame: a new address takes the place of one
+    mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 3000);
+    a[5] = 10;
+    CHECK(mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 3500, 0) == MAC_WATCH_EV_NONE);
+    CHECK(mac_watch_other(&w, a, BLE_OTA_ADDR_RANDOM, &b, 64000, 0) == MAC_WATCH_EV_STATE);
+    CHECK(w.new_mac[5] == 10);
 }
 
 static void restart_does_not_count_as_silence()
@@ -107,26 +159,49 @@ static void restart_does_not_count_as_silence()
     const ibeacon_t b = id();
     mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 1000);
     w.last_own_ms = 0; // restart: this boot has not heard it yet
+    memset(w.cand, 0, sizeof(w.cand));
     const int64_t since = 5000;
+    // A new address right after the start, nothing from the own address: changed once confirmed
+    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, since + 2000, since) == MAC_WATCH_EV_NONE);
     CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, since + 30000, since) == MAC_WATCH_EV_NONE);
-    // Nothing from the own address for 60 s since the start, the identity elsewhere: changed
-    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, since + 60001, since) == MAC_WATCH_EV_STATE);
+    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, since + 62000, since) == MAC_WATCH_EV_STATE);
+    // Appearing more than 60 s after the start instead: another beacon
+    mac_watch_t v = assigned();
+    mac_watch_own(&v, BLE_OTA_ADDR_RANDOM, &b, 1000);
+    v.last_own_ms = 0;
+    CHECK(mac_watch_other(&v, kOther, BLE_OTA_ADDR_RANDOM, &b, since + 61000, since) == MAC_WATCH_EV_NONE);
+    CHECK(mac_watch_other(&v, kOther, BLE_OTA_ADDR_RANDOM, &b, since + 500000, since) == MAC_WATCH_EV_NONE);
 }
 
 static void identity_needed_first()
 {
     mac_watch_t w = assigned();
     const ibeacon_t b = id();
-    // Never heard from its own address: its identity is unknown, nothing can be compared
+    // Never heard from its own address, nothing seeded: its identity is unknown, nothing can be compared
     CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 10000000, 0) == MAC_WATCH_EV_NONE);
     CHECK(!mac_watch_needs_all(&w) && w.state == MAC_WATCH_RUNNING);
     // Nothing assigned: no event
     mac_watch_t none = {};
     CHECK(mac_watch_own(&none, BLE_OTA_ADDR_RANDOM, &b, 1000) == MAC_WATCH_EV_NONE && none.state == MAC_WATCH_NONE);
-    // The beacon given another identity: taken over
+    CHECK(!mac_watch_seed(&none, &b));
+    // The beacon given another identity: taken over, its candidates forgotten
     mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &b, 1000);
+    mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 1500, 0);
     const ibeacon_t c = id(9);
-    CHECK(mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &c, 2000) == MAC_WATCH_EV_PROGRESS && w.minor == 9);
+    CHECK(mac_watch_own(&w, BLE_OTA_ADDR_RANDOM, &c, 2000) == MAC_WATCH_EV_PROGRESS && w.minor == 9 && !w.cand[0].used);
+}
+
+// Identity from the scan list when the configuration is saved: a beacon that changes its MAC before the NORMAL mode
+// ever hears it is still caught
+static void seeded_identity()
+{
+    mac_watch_t w = assigned();
+    const ibeacon_t b = id();
+    CHECK(mac_watch_seed(&w, &b) && w.has_id && mac_watch_needs_all(&w));
+    CHECK(!mac_watch_seed(&w, &b)); // only once
+    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 1000, 0) == MAC_WATCH_EV_NONE);
+    CHECK(mac_watch_other(&w, kOther, BLE_OTA_ADDR_RANDOM, &b, 61001, 0) == MAC_WATCH_EV_STATE);
+    CHECK(w.state == MAC_WATCH_CHANGED);
 }
 
 static void stored_form()
@@ -179,8 +254,12 @@ int main()
     RUN(gaps_not_counted);
     RUN(public_address_fixed_at_once);
     RUN(changed_address);
+    RUN(lookalike_heard_together);
+    RUN(lookalike_arriving_late);
+    RUN(candidate_table);
     RUN(restart_does_not_count_as_silence);
     RUN(identity_needed_first);
+    RUN(seeded_identity);
     RUN(stored_form);
     return test_summary("mac_watch");
 }

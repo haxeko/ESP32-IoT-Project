@@ -39,10 +39,32 @@ bool mac_watch_assign(mac_watch_t *w, const uint8_t mac[BLE_ADDR_LEN])
     return true;
 }
 
+static void set_id(mac_watch_t *w, const ibeacon_t *id)
+{
+    memcpy(w->uuid, id->uuid, IBEACON_UUID_LEN);
+    w->major = id->major;
+    w->minor = id->minor;
+    w->has_id = true;
+    memset(w->cand, 0, sizeof(w->cand)); // addresses of another identity
+}
+
+bool mac_watch_seed(mac_watch_t *w, const ibeacon_t *id)
+{
+    if (w->state != MAC_WATCH_RUNNING || w->has_id) {
+        return false;
+    }
+    set_id(w, id);
+    return true;
+}
+
 mac_watch_event_t mac_watch_own(mac_watch_t *w, uint8_t addr_type, const ibeacon_t *id, int64_t now_ms)
 {
     const int64_t last = w->last_own_ms;
     w->last_own_ms = now_ms;
+    // Every other address heard so far with its identity was heard while this one is still in use: other beacons
+    for (mac_watch_candidate_t &c : w->cand) {
+        c.lookalike = c.lookalike || c.used;
+    }
     if (w->state == MAC_WATCH_NONE || w->state == MAC_WATCH_FIXED) {
         return MAC_WATCH_EV_NONE;
     }
@@ -54,11 +76,7 @@ mac_watch_event_t mac_watch_own(mac_watch_t *w, uint8_t addr_type, const ibeacon
         ev = MAC_WATCH_EV_STATE;
     }
     if (!w->has_id || !same_id(w, id)) {
-        // First frame, or the beacon was given another identity
-        memcpy(w->uuid, id->uuid, IBEACON_UUID_LEN);
-        w->major = id->major;
-        w->minor = id->minor;
-        w->has_id = true;
+        set_id(w, id); // first frame, or the beacon was given another identity
         ev = ev == MAC_WATCH_EV_STATE ? ev : MAC_WATCH_EV_PROGRESS;
     }
     if (!is_random(addr_type)) {
@@ -85,8 +103,38 @@ mac_watch_event_t mac_watch_other(mac_watch_t *w, const uint8_t addr[BLE_ADDR_LE
         return MAC_WATCH_EV_NONE;
     }
     const int64_t own = w->last_own_ms != 0 ? w->last_own_ms : since_ms;
-    if (now_ms - own <= MAC_WATCH_GONE_MS) {
-        return MAC_WATCH_EV_NONE; // both heard: two beacons with one identity, or the very moment of a change
+    mac_watch_candidate_t *c = nullptr;
+    for (mac_watch_candidate_t &k : w->cand) {
+        if (k.used && memcmp(k.addr, addr, BLE_ADDR_LEN) == 0) {
+            c = &k;
+            break;
+        }
+    }
+    if (c == nullptr) {
+        // A new address: a free entry, else the place of a look-alike (a full table of live candidates: ignored)
+        for (mac_watch_candidate_t &k : w->cand) {
+            if (!k.used) {
+                c = &k;
+                break;
+            }
+        }
+        for (mac_watch_candidate_t &k : w->cand) {
+            if (c == nullptr && k.lookalike) {
+                c = &k;
+            }
+        }
+        if (c == nullptr) {
+            return MAC_WATCH_EV_NONE;
+        }
+        memcpy(c->addr, addr, BLE_ADDR_LEN);
+        c->used = true;
+        c->first_ms = now_ms;
+        // A changed address takes over at once; one appearing long after the own address went silent is another
+        // beacon coming into range
+        c->lookalike = now_ms - own > MAC_WATCH_SEAMLESS_MS;
+    }
+    if (c->lookalike || now_ms - c->first_ms < MAC_WATCH_CONFIRM_MS || now_ms - own <= MAC_WATCH_GONE_MS) {
+        return MAC_WATCH_EV_NONE;
     }
     w->state = MAC_WATCH_CHANGED;
     memcpy(w->new_mac, addr, BLE_ADDR_LEN);

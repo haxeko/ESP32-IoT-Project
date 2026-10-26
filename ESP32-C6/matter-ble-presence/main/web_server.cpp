@@ -22,6 +22,7 @@
 #include <esp_log.h>
 #include <esp_system.h>
 #include <esp_timer.h>
+#include <nvs.h>
 
 #include "sdkconfig.h"
 
@@ -434,19 +435,42 @@ static esp_err_t scan_post(httpd_req_t *req)
 // Configuration
 
 // MAC watch records of the NORMAL mode (mac_watch.h), read from flash; all none when there are none yet
-static void load_watch(mac_watch_t *records)
+static mac_watch_t s_watch[PRESENCE_SLOT_COUNT]; // server task only: off its stack
+
+// Saved configuration: a new MAC in a slot starts a new watch, and the iBeacon identity of its beacon is taken from
+// the list now. So a beacon that changes its MAC before the NORMAL mode ever hears it is still caught.
+static void seed_watch(const presence_config_t &cfg)
 {
-    static uint8_t blob[MAC_WATCH_BLOB_SIZE(PRESENCE_SLOT_COUNT)];
-    size_t len = sizeof(blob);
-    if (config_store_load_watch(blob, &len) != ESP_OK || !mac_watch_decode(blob, len, records, PRESENCE_SLOT_COUNT)) {
-        memset(records, 0, PRESENCE_SLOT_COUNT * sizeof(*records));
+    const esp_err_t err = config_store_load_watch(s_watch, PRESENCE_SLOT_COUNT);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "MAC watch records not read (%s)", esp_err_to_name(err));
+    }
+    int64_t now = 0;
+    const size_t n = scan_cache_snapshot(s_beacons, CONFIG_PRESENCE_SCAN_CACHE_SIZE, &now);
+    bool changed = false;
+    for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
+        const presence_slot_config_t &s = cfg.slots[i];
+        if (!presence_slot_is_active(&s)) {
+            continue; // its record is kept: the same MAC enabled again keeps its verdict
+        }
+        changed = mac_watch_assign(&s_watch[i], s.addr) || changed;
+        for (size_t j = 0; j < n; j++) {
+            if (memcmp(s_beacons[j].addr, s.addr, BLE_ADDR_LEN) == 0 &&
+                beacon_addr_type_matches(s.addr_type, s_beacons[j].addr_type)) {
+                changed = mac_watch_seed(&s_watch[i], &s_beacons[j].ibeacon) || changed;
+                break;
+            }
+        }
+    }
+    if (changed && config_store_save_watch(s_watch, PRESENCE_SLOT_COUNT) != ESP_OK) {
+        ESP_LOGW(TAG, "MAC watch records not saved: the NORMAL mode starts them");
     }
 }
 
 static void write_config(JsonOut &out, const presence_config_t &cfg)
 {
-    static mac_watch_t watch[PRESENCE_SLOT_COUNT]; // server task only: off its stack
-    load_watch(watch);
+    mac_watch_t *watch = s_watch;
+    config_store_load_watch(watch, PRESENCE_SLOT_COUNT); // all none when there are none (yet)
     out.fmt("{\"scan\":{\"interval_ms\":%u,\"window_ms\":%u},\"slots\":[", cfg.scan_interval_ms, cfg.scan_window_ms);
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
         const presence_slot_config_t &s = cfg.slots[i];
@@ -771,6 +795,7 @@ static esp_err_t config_post(httpd_req_t *req)
                  esp_err_to_name(err));
         return send_message(req, "500 Internal Server Error", false, message);
     }
+    seed_watch(cfg);
 #if CONFIG_PRESENCE_ROLE_SCANNER
     // The bridge of the ESP32-H2 adds and removes its devices now; the presence states follow after the restart
     presence_link_set_slots(&cfg, true);

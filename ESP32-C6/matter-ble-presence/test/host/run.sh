@@ -32,9 +32,10 @@ $CXX $FLAGS -o "$OUT/presence_link" test_presence_link_proto.cpp $MAIN/presence_
     $MAIN/json_util.cpp
 if [ -f test_config_store.cpp ]; then
     $CXX $FLAGS -o "$OUT/config_store" test_config_store.cpp fake_nvs.cpp $MAIN/config_store.cpp \
-        $MAIN/presence_config.cpp $MAIN/ble_addr.cpp $MAIN/json_util.cpp $MAIN/crc32.cpp
+        $MAIN/presence_config.cpp $MAIN/ble_addr.cpp $MAIN/json_util.cpp $MAIN/crc32.cpp $MAIN/mac_watch.cpp
     $CXX $FLAGS -DCONFIG_PRESENCE_ROLE_SCANNER=1 -o "$OUT/config_store_20" test_config_store.cpp fake_nvs.cpp \
-        $MAIN/config_store.cpp $MAIN/presence_config.cpp $MAIN/ble_addr.cpp $MAIN/json_util.cpp $MAIN/crc32.cpp
+        $MAIN/config_store.cpp $MAIN/presence_config.cpp $MAIN/ble_addr.cpp $MAIN/json_util.cpp $MAIN/crc32.cpp \
+        $MAIN/mac_watch.cpp
 fi
 
 status=0

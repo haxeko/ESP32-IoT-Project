@@ -142,6 +142,10 @@ esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key, void *out, size_t *
     if (v == nullptr) {
         return ESP_ERR_NVS_NOT_FOUND;
     }
+    if (out == nullptr) { // as NVS: the size only
+        *length = v->size();
+        return ESP_OK;
+    }
     if (*length < v->size()) {
         *length = v->size();
         return ESP_ERR_NVS_INVALID_LENGTH;

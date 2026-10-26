@@ -30,7 +30,8 @@ static const char *TAG = "presence";
 static constexpr int kQueueLength = 32;
 static constexpr int8_t kRssiUnavailable = 127;
 static constexpr int64_t kTlmMinPeriodMs = 1000; // per slot
-static constexpr int64_t kWatchSaveMs = 5 * 60 * 1000; // MAC watch progress written to flash this often
+static constexpr int64_t kWatchSaveMs = 5 * 60 * 1000;  // MAC watch progress written to flash this often
+static constexpr int64_t kWatchStateSaveMs = 60 * 1000; // and a new state at most this often
 static_assert(PRESENCE_LOGIC_SLOTS == PRESENCE_SLOT_COUNT, "one presence rule per slot");
 
 static const presence_battery_config_t kBatteryConfig = {
@@ -92,7 +93,7 @@ static std::atomic<uint32_t> s_report_retries{ 0 };
 // MAC watch of the slots' beacons (mac_watch.h): updated by the host task from the frames, saved by the presence task
 static portMUX_TYPE s_watch_mux = portMUX_INITIALIZER_UNLOCKED;
 static mac_watch_t s_watch[PRESENCE_SLOT_COUNT]; // s_watch_mux
-static int64_t s_watch_since_ms;                 // this boot's watching started (esp_timer ms)
+static int64_t s_watch_since_ms;                 // this boot's watching started (scan clock)
 static std::atomic<bool> s_watch_all{ false };     // a watch needs the iBeacon frames of every address
 static std::atomic<uint32_t> s_watch_changed{ 0 }; // slots whose watch changed state: logged and saved
 static std::atomic<bool> s_watch_progress{ false };
@@ -160,9 +161,16 @@ static void post_tlm(int slot, const ble_adv_report_t *report)
     }
 }
 
-// Host task: an iBeacon frame for the MAC watch of every active slot
+// Host task: an iBeacon frame for the MAC watch of every active slot. Times in scanning time: a paused scanner
+// (network down, commissioning) hears nothing, which is no silence of the beacon.
 static void watch_frame(const ble_adv_report_t *report)
 {
+    const int64_t now = static_cast<int64_t>(ble_scanner_scan_clock_ms());
+    // The address of a slot's beacon is never another slot's beacon changing its address
+    bool slot_address = false;
+    for (int i = 0; i < PRESENCE_SLOT_COUNT && !slot_address; i++) {
+        slot_address = slot_matches(i, report->addr, report->addr_type);
+    }
     uint32_t changed = 0;
     bool progress = false;
     bool all = false;
@@ -172,11 +180,12 @@ static void watch_frame(const ble_adv_report_t *report)
             continue;
         }
         mac_watch_t &w = s_watch[i];
-        const mac_watch_event_t ev =
-            slot_matches(i, report->addr, report->addr_type)
-                ? mac_watch_own(&w, report->addr_type, &report->ibeacon, report->time_ms)
-                : mac_watch_other(&w, report->addr, report->addr_type, &report->ibeacon, report->time_ms,
-                                  s_watch_since_ms);
+        mac_watch_event_t ev = MAC_WATCH_EV_NONE;
+        if (slot_matches(i, report->addr, report->addr_type)) {
+            ev = mac_watch_own(&w, report->addr_type, &report->ibeacon, now);
+        } else if (!slot_address) {
+            ev = mac_watch_other(&w, report->addr, report->addr_type, &report->ibeacon, now, s_watch_since_ms);
+        }
         changed |= ev == MAC_WATCH_EV_STATE ? 1u << i : 0;
         progress = progress || ev == MAC_WATCH_EV_PROGRESS;
         all = all || mac_watch_needs_all(&w);
@@ -289,9 +298,7 @@ static void on_battery(int slot, uint16_t mv)
 // Presence task (and start-up): the records to flash
 static void watch_save(const mac_watch_t *records)
 {
-    static uint8_t blob[MAC_WATCH_BLOB_SIZE(PRESENCE_SLOT_COUNT)];
-    const size_t len = mac_watch_encode(records, PRESENCE_SLOT_COUNT, blob, sizeof(blob));
-    const esp_err_t err = config_store_save_watch(blob, len);
+    const esp_err_t err = config_store_save_watch(records, PRESENCE_SLOT_COUNT);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "MAC watch not saved (%s): it goes on in memory", esp_err_to_name(err));
     }
@@ -323,25 +330,37 @@ static void watch_log(int slot, const mac_watch_t &w)
     }
 }
 
-// Presence task: new states logged and saved at once, progress every kWatchSaveMs
+// Presence task: new states logged at once and saved within kWatchStateSaveMs, progress every kWatchSaveMs (flash
+// writes stay rare whatever the frames do)
 static void watch_service()
 {
     static mac_watch_t copy[PRESENCE_SLOT_COUNT];
     static int64_t last_save_ms;
+    static bool state_pending;
     const int64_t now = esp_timer_get_time() / 1000;
     const uint32_t changed = s_watch_changed.exchange(0);
-    if (changed == 0 && !(s_watch_progress.load(std::memory_order_relaxed) && now - last_save_ms >= kWatchSaveMs)) {
+    if (changed != 0) {
+        portENTER_CRITICAL(&s_watch_mux);
+        memcpy(copy, s_watch, sizeof(copy));
+        portEXIT_CRITICAL(&s_watch_mux);
+        for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
+            if (changed & (1u << i)) {
+                watch_log(i, copy[i]);
+            }
+        }
+        state_pending = true;
+    }
+    const bool progress = s_watch_progress.load(std::memory_order_relaxed);
+    const bool due = (state_pending && now - last_save_ms >= kWatchStateSaveMs) ||
+                     (progress && now - last_save_ms >= kWatchSaveMs);
+    if (!due) {
         return;
     }
     s_watch_progress.store(false, std::memory_order_relaxed);
+    state_pending = false;
     portENTER_CRITICAL(&s_watch_mux);
     memcpy(copy, s_watch, sizeof(copy));
     portEXIT_CRITICAL(&s_watch_mux);
-    for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
-        if (changed & (1u << i)) {
-            watch_log(i, copy[i]);
-        }
-    }
     watch_save(copy);
     last_save_ms = now;
 }
@@ -349,16 +368,9 @@ static void watch_service()
 // Start-up: the records of the last boot; a slot with another MAC than its record starts a new watch
 static void watch_start(const presence_config_t *cfg)
 {
-    static uint8_t blob[MAC_WATCH_BLOB_SIZE(PRESENCE_SLOT_COUNT)];
-    size_t len = sizeof(blob);
-    const esp_err_t err = config_store_load_watch(blob, &len);
-    const bool read = err == ESP_OK && mac_watch_decode(blob, len, s_watch, PRESENCE_SLOT_COUNT);
-    if (!read) {
-        memset(s_watch, 0, sizeof(s_watch));
-        if (err != ESP_ERR_NVS_NOT_FOUND) {
-            ESP_LOGW(TAG, "MAC watch records not read (%s): every beacon watched again",
-                     err == ESP_OK ? "bad CRC or format" : esp_err_to_name(err));
-        }
+    const esp_err_t err = config_store_load_watch(s_watch, PRESENCE_SLOT_COUNT);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "MAC watch records not read (%s): every beacon watched again", esp_err_to_name(err));
     }
     bool reset = false;
     bool all = false;
@@ -370,7 +382,7 @@ static void watch_start(const presence_config_t *cfg)
         all = all || mac_watch_needs_all(&s_watch[i]);
         watch_log(i, s_watch[i]);
     }
-    s_watch_since_ms = esp_timer_get_time() / 1000;
+    s_watch_since_ms = static_cast<int64_t>(ble_scanner_scan_clock_ms());
     s_watch_all.store(all);
     if (reset) {
         watch_save(s_watch);

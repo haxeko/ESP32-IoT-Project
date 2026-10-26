@@ -131,12 +131,17 @@ này **khi nó đến từ đúng địa chỉ MAC của beacon** (gói TLM khô
 Mỗi slot nhận diện beacon **chỉ theo địa chỉ MAC**. Beacon nào tự đổi MAC (chế độ riêng tư, thường ~15 phút một lần)
 thì slot sẽ mất dấu, nên C3 **theo dõi mỗi beacon 30 phút** sau khi nó được gán vào slot:
 
-* Thời gian tính khi C3 ở **chế độ thường** và **nghe thấy beacon** (khoảng vắng quá 60 s không tính); tiến độ lưu vào
-  flash nên khởi động lại hay vào chế độ cấu hình không làm mất.
-* **Đổi MAC:** UUID/Major/Minor của beacon (đọc từ gói đầu tiên) phát ra từ một địa chỉ random khác trong khi địa chỉ
-  của slot im lặng quá 60 s. Trang cấu hình hiện **"⚠ Beacon đổi địa chỉ MAC: … phát từ <MAC mới>"**, log C3 có
-  `beacon changes its MAC`. Nghe thấy cả hai địa chỉ cùng lúc (hai beacon trùng UUID/Major/Minor) không bị coi là đổi;
-  địa chỉ cũ phát lại thì cảnh báo tự hủy và việc theo dõi tiếp tục.
+* Thời gian tính khi C3 ở **chế độ thường**, đang quét và **nghe thấy beacon** (khoảng vắng quá 60 s không tính); tiến
+  độ lưu vào flash nên khởi động lại hay vào chế độ cấu hình không làm mất.
+* UUID/Major/Minor của beacon lấy từ danh sách quét **ngay lúc bấm Lưu** (hoặc từ gói đầu tiên nghe được), nên beacon
+  đổi MAC trước khi chế độ thường kịp nghe vẫn bị phát hiện.
+* **Đổi MAC:** UUID/Major/Minor đó phát ra từ một địa chỉ random mới **xuất hiện ngay khi địa chỉ của slot im lặng**,
+  nghe được 60 s, và địa chỉ của slot im lặng quá 60 s. Trang cấu hình hiện **"⚠ Beacon đổi địa chỉ MAC: … phát từ
+  <MAC mới>"**, log C3 có `beacon changes its MAC`. Beacon đổi MAC không bao giờ dùng cả hai địa chỉ, nên **không bị
+  coi là đổi**: địa chỉ của slot khác, địa chỉ nghe thấy trước một gói của chính địa chỉ slot (hai beacon trùng
+  UUID/Major/Minor, ví dụ khi người mang beacon đi vắng còn beacon kia ở nhà), địa chỉ xuất hiện lâu sau khi beacon của
+  slot im lặng (beacon khác đi vào vùng phủ). Địa chỉ cũ phát lại thì cảnh báo tự hủy và việc theo dõi tiếp tục.
+* Flash: tiến độ ghi 5 phút một lần, trạng thái mới nhiều nhất mỗi phút một lần; ghi xong kết luận thì thôi.
 * **Không đổi:** nghe đủ 30 phút mà MAC không đổi (hoặc beacon dùng địa chỉ public, theo chuẩn không bao giờ đổi):
   **tắt cảnh báo và không hiện lại** cho MAC đó ở slot đó. Gán MAC khác vào slot thì theo dõi lại từ đầu.
 * Trong lúc theo dõi, trang ghi "Đang theo dõi địa chỉ MAC: N/30 phút"; log mỗi phút có `MAC running 12/30 min`.

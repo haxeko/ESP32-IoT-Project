@@ -71,7 +71,8 @@ static void log_presence()
             snprintf(battery, sizeof(battery), "battery %u%% (%u mV, %u s ago, %u TLM)", s.battery_pct, s.battery_mv,
                      static_cast<unsigned>(s.battery_age_s), static_cast<unsigned>(s.tlm));
         }
-        ESP_LOGI(TAG, "Presence %d: %s%s, RSSI %d dBm, %u s ago, matched %u, accepted %u, RSSI-rejected %u, %s, MAC %s%s",
+        ESP_LOGI(TAG,
+                 "Presence %d: %s%s, RSSI %d dBm, %u s ago, matched %u, accepted %u, RSSI-rejected %u, %s, MAC %s%s",
                  i + 1, s.present ? "ON" : "OFF", s.reported ? "" : " (not reported yet)", s.last_rssi,
                  static_cast<unsigned>(s.age_s), static_cast<unsigned>(s.matched), static_cast<unsigned>(s.accepted),
                  static_cast<unsigned>(s.rssi_rejected), battery, mac_watch_state_name(s.watch_state),

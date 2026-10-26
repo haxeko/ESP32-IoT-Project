@@ -183,22 +183,32 @@ static void ap_password()
     never_erases_or_touches_matter();
 }
 
-// MAC watch records: their own blob, kept across a reboot and a configuration save
+// MAC watch records: their own blob, kept across a reboot and a configuration save; another slot count; corrupt
 static void mac_watch_records()
 {
     fake_nvs_reset();
     config_store_init();
-    uint8_t buf[64];
-    size_t len = sizeof(buf);
-    CHECK(config_store_load_watch(buf, &len) != ESP_OK); // nothing saved yet
-    const uint8_t blob[5] = { 'M', 'W', 'A', 'T', 1 };
-    CHECK(config_store_save_watch(blob, sizeof(blob)) == ESP_OK);
+    mac_watch_t w[20];
+    CHECK(config_store_load_watch(w, 20) == ESP_ERR_NVS_NOT_FOUND && w[0].state == MAC_WATCH_NONE);
+    const uint8_t mac[6] = { 0x48, 0x87, 0x2D, 0x9D, 0xC1, 0xDF };
+    mac_watch_assign(&w[0], mac);
+    mac_watch_assign(&w[19], mac);
+    w[19].state = MAC_WATCH_FIXED;
+    CHECK(config_store_save_watch(w, 20) == ESP_OK);
     const presence_config_t cfg = sample_config(0x56);
     CHECK(config_store_save(&cfg) == ESP_OK);
     CHECK(config_store_init() == ESP_OK);
-    len = sizeof(buf);
-    CHECK(config_store_load_watch(buf, &len) == ESP_OK && len == sizeof(blob) && memcmp(buf, blob, len) == 0);
+    mac_watch_t r[20];
+    CHECK(config_store_load_watch(r, 20) == ESP_OK && r[0].state == MAC_WATCH_RUNNING && r[19].state == MAC_WATCH_FIXED);
+    CHECK(memcmp(r[0].mac, mac, 6) == 0);
     CHECK(current_equals(cfg));
+    // A five-slot build reads the first five of the 20 records (the blob is larger than its own)
+    mac_watch_t five[5];
+    CHECK(config_store_load_watch(five, 5) == ESP_OK && five[0].state == MAC_WATCH_RUNNING);
+    // Unreadable: all reset, nothing erased
+    g_nvs.corrupt_read = true;
+    CHECK(config_store_load_watch(r, 20) == ESP_ERR_INVALID_CRC && r[0].state == MAC_WATCH_NONE);
+    g_nvs.corrupt_read = false;
     never_erases_or_touches_matter();
 }
 

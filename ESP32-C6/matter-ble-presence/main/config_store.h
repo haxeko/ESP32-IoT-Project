@@ -21,6 +21,7 @@
 
 #include <esp_err.h>
 
+#include "mac_watch.h"
 #include "presence_config.h"
 
 typedef enum {
@@ -51,11 +52,12 @@ esp_err_t config_store_save(const presence_config_t *cfg);
 // the SoftAP password of this boot. For an unusable or unreadable partition, on explicit request from the page.
 esp_err_t config_store_format(void);
 
-// MAC watch records of the slots (mac_watch.h), a blob of their own beside the configuration (the NORMAL mode updates
-// them, the configuration page shows them). load: *len in = buffer size, out = blob size; ESP_ERR_NVS_NOT_FOUND when
-// none was saved yet. Never erased on error.
-esp_err_t config_store_load_watch(uint8_t *buf, size_t *len);
-esp_err_t config_store_save_watch(const uint8_t *buf, size_t len);
+// MAC watch records of n slots (mac_watch.h), a blob of their own beside the configuration (the NORMAL mode updates
+// them, the configuration page shows them and seeds them). load: ESP_ERR_NVS_NOT_FOUND when none was saved yet,
+// ESP_ERR_INVALID_CRC when unreadable; the records are all reset then. A blob of another slot count gives its first
+// records. Never erased on error.
+esp_err_t config_store_load_watch(mac_watch_t *records, size_t n);
+esp_err_t config_store_save_watch(const mac_watch_t *records, size_t n);
 
 // SoftAP password: CONFIG_PRESENCE_AP_PASSWORD when set, else a random per-device password created once and kept
 // in the app_cfg partition. Call before any radio starts (it may enable the RNG entropy source).

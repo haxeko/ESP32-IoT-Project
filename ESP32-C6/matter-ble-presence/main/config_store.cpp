@@ -243,8 +243,9 @@ esp_err_t config_store_save(const presence_config_t *cfg)
     return ESP_OK;
 }
 
-esp_err_t config_store_load_watch(uint8_t *buf, size_t *len)
+esp_err_t config_store_load_watch(mac_watch_t *records, size_t n)
 {
+    memset(records, 0, n * sizeof(*records));
     if (config_store_status() == CONFIG_STORE_UNAVAILABLE) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -253,26 +254,44 @@ esp_err_t config_store_load_watch(uint8_t *buf, size_t *len)
     if (err != ESP_OK) {
         return err; // ESP_ERR_NVS_NOT_FOUND: namespace not created yet
     }
-    err = nvs_get_blob(handle, kKeyWatch, buf, len);
+    // Its size first: written by a build with more slots, it is larger than this build's own
+    size_t len = 0;
+    err = nvs_get_blob(handle, kKeyWatch, nullptr, &len);
+    uint8_t *buf = err == ESP_OK && len > 0 && len <= MAC_WATCH_BLOB_SIZE(255) ? static_cast<uint8_t *>(malloc(len))
+                                                                              : nullptr;
+    if (err == ESP_OK) {
+        err = buf == nullptr ? ESP_ERR_NO_MEM : nvs_get_blob(handle, kKeyWatch, buf, &len);
+    }
     nvs_close(handle);
+    if (err == ESP_OK && !mac_watch_decode(buf, len, records, n)) {
+        err = ESP_ERR_INVALID_CRC;
+    }
+    free(buf);
     return err;
 }
 
-esp_err_t config_store_save_watch(const uint8_t *buf, size_t len)
+esp_err_t config_store_save_watch(const mac_watch_t *records, size_t n)
 {
     if (config_store_status() == CONFIG_STORE_UNAVAILABLE) {
         return ESP_ERR_INVALID_STATE;
     }
+    const size_t size = MAC_WATCH_BLOB_SIZE(n);
+    uint8_t *buf = static_cast<uint8_t *>(malloc(size));
+    if (buf == nullptr) {
+        return ESP_ERR_NO_MEM;
+    }
+    const size_t len = mac_watch_encode(records, n, buf, size);
     nvs_handle_t handle;
-    esp_err_t err = nvs_open_from_partition(kPartition, kNamespace, NVS_READWRITE, &handle);
-    if (err != ESP_OK) {
-        return err;
-    }
-    err = nvs_set_blob(handle, kKeyWatch, buf, len);
+    esp_err_t err =
+        len == 0 ? ESP_ERR_INVALID_SIZE : nvs_open_from_partition(kPartition, kNamespace, NVS_READWRITE, &handle);
     if (err == ESP_OK) {
-        err = nvs_commit(handle);
+        err = nvs_set_blob(handle, kKeyWatch, buf, len);
+        if (err == ESP_OK) {
+            err = nvs_commit(handle);
+        }
+        nvs_close(handle);
     }
-    nvs_close(handle);
+    free(buf);
     return err;
 }
 
