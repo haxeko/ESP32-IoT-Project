@@ -203,19 +203,19 @@ static void tlm()
     Bytes f = tlm_frame(2987);
     CHECK(f.size() == 25);
     CHECK(parse_tlm_exact(f, f.size(), &t));
-    CHECK(t.battery_mv == 2987);
+    CHECK(t.battery_raw == 2987);
     CHECK(t.temperature_q8 == 0x1A80); // 26.5 degrees
     CHECK(t.adv_count == 0x00010203);
     CHECK(t.uptime_ds == 0x1000);
 
     // Battery not measured, temperature not measured
     f = tlm_frame(0, 0x8000);
-    CHECK(parse_tlm_exact(f, f.size(), &t) && t.battery_mv == 0 && t.temperature_q8 == EDDYSTONE_TLM_TEMP_UNKNOWN);
+    CHECK(parse_tlm_exact(f, f.size(), &t) && t.battery_raw == 0 && t.temperature_q8 == EDDYSTONE_TLM_TEMP_UNKNOWN);
 
     // Encrypted TLM (version 1), other Eddystone frames (UID 0x00), another service UUID: not TLM
     f = tlm_frame(3000, 0, 0x01);
-    t.battery_mv = 1234;
-    CHECK(!parse_tlm_exact(f, f.size(), &t) && t.battery_mv == 1234); // out untouched
+    t.battery_raw = 1234;
+    CHECK(!parse_tlm_exact(f, f.size(), &t) && t.battery_raw == 1234); // out untouched
     f = tlm_frame(3000);
     f[11] = 0x00;
     CHECK(!parse_tlm_exact(f, f.size(), &t));
@@ -223,10 +223,14 @@ static void tlm()
     f[9] = 0xAB;
     CHECK(!parse_tlm_exact(f, f.size(), &t));
 
-    // Wrong structure length, truncated anywhere
+    // Longer structure (extra bytes after the 12 specified: ignored), shorter one (refused), truncated anywhere
     f = tlm_frame(3000);
     f[7] = 0x12;
     f.push_back(0x00);
+    CHECK(parse_tlm_exact(f, f.size(), &t) && t.battery_raw == 3000);
+    f = tlm_frame(3000);
+    f[7] = 0x10;
+    f.pop_back();
     CHECK(!parse_tlm_exact(f, f.size(), &t));
     f = tlm_frame(3000);
     for (size_t len = 0; len < f.size(); len++) {
@@ -239,6 +243,54 @@ static void tlm()
     CHECK(!parse_tlm_exact(ibf, ibf.size(), &t));
     f = tlm_frame(3000);
     CHECK(!parse_exact(f, f.size(), &ib));
+}
+
+// DX-SMART CP101 (frame captured with nRF Connect): 22 bytes of service data, the voltage little endian
+static void tlm_dx_smart()
+{
+    const Bytes f = { 0x02, 0x01, 0x06, 0x03, 0x03, 0xAA, 0xFE, 0x17, 0x16, 0xAA, 0xFE, 0x20, 0x00, 0xDC, 0x0B, 0x22,
+                      0x00, 0x39, 0x02, 0x00, 0x00, 0x22, 0x02, 0x00, 0x00, 0x4C, 0x29, 0x19, 0x1A, 0x00, 0x00 };
+    CHECK(f.size() == 31);
+    eddystone_tlm_t t = {};
+    CHECK(parse_tlm_exact(f, f.size(), &t));
+    CHECK(t.battery_raw == 0xDC0B && t.temperature_q8 == 0x2200); // 34 degrees
+    uint8_t order = TLM_ORDER_UNKNOWN;
+    CHECK(eddystone_tlm_battery_mv(&t, &order) == 3036 && order == TLM_ORDER_LITTLE);
+    // From then on: little endian, even for a value plausible both ways (0x0C0B: 3083 big endian, 2828 little)
+    t.battery_raw = 0x0C0B;
+    CHECK(eddystone_tlm_battery_mv(&t, &order) == 2828);
+    t.battery_raw = 0x0BDC; // 56 331 mV little endian: not believed
+    CHECK(eddystone_tlm_battery_mv(&t, &order) == 0 && order == TLM_ORDER_LITTLE);
+}
+
+static void tlm_byte_order()
+{
+    eddystone_tlm_t t = {};
+    uint8_t order = TLM_ORDER_UNKNOWN;
+    t.battery_raw = 0x0C0B; // plausible both ways, order unknown: no value yet
+    CHECK(eddystone_tlm_battery_mv(&t, &order) == 0 && order == TLM_ORDER_UNKNOWN);
+    t.battery_raw = 0x0C0C; // the same both ways
+    CHECK(eddystone_tlm_battery_mv(&t, &order) == 0x0C0C && order == TLM_ORDER_UNKNOWN);
+    t.battery_raw = 0; // not measured
+    CHECK(eddystone_tlm_battery_mv(&t, &order) == 0 && order == TLM_ORDER_UNKNOWN);
+    t.battery_raw = 0xFFFF; // garbage
+    CHECK(eddystone_tlm_battery_mv(&t, &order) == 0 && order == TLM_ORDER_UNKNOWN);
+    t.battery_raw = 2987; // specification: big endian
+    CHECK(eddystone_tlm_battery_mv(&t, &order) == 2987 && order == TLM_ORDER_BIG);
+    t.battery_raw = 0x0C0B;
+    CHECK(eddystone_tlm_battery_mv(&t, &order) == 3083);
+    t.battery_raw = 900; // below the plausible range
+    CHECK(eddystone_tlm_battery_mv(&t, &order) == 0 && order == TLM_ORDER_BIG);
+    // Every value: never outside the range, order never changes once known
+    for (uint32_t v = 0; v <= 0xFFFF; v++) {
+        t.battery_raw = static_cast<uint16_t>(v);
+        uint8_t o = TLM_ORDER_UNKNOWN;
+        const uint16_t mv = eddystone_tlm_battery_mv(&t, &o);
+        CHECK(mv == 0 || (mv >= EDDYSTONE_TLM_MV_MIN && mv <= EDDYSTONE_TLM_MV_MAX));
+        uint8_t big = TLM_ORDER_BIG;
+        eddystone_tlm_battery_mv(&t, &big);
+        CHECK(big == TLM_ORDER_BIG);
+    }
 }
 
 static void fuzz()
@@ -312,6 +364,8 @@ int main()
     RUN(two_manufacturer_structures);
     RUN(names);
     RUN(tlm);
+    RUN(tlm_dx_smart);
+    RUN(tlm_byte_order);
     RUN(fuzz);
     return test_summary("ibeacon_parser");
 }

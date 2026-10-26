@@ -134,8 +134,9 @@ static void merge(const ble_adv_report_t &r)
         if (e == nullptr) {
             return;
         }
-        if (r.has_tlm && r.tlm.battery_mv != 0) {
-            e->battery_mv = r.tlm.battery_mv;
+        const uint16_t mv = r.has_tlm ? eddystone_tlm_battery_mv(&r.tlm, &e->tlm_order) : 0;
+        if (mv != 0) {
+            e->battery_mv = mv;
             e->battery_ms = r.time_ms;
         }
         if (r.name[0] != '\0') {

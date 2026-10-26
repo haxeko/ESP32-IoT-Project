@@ -76,19 +76,52 @@ static uint32_t get_be32(const uint8_t *p)
 bool eddystone_tlm_parse(const uint8_t *data, size_t len, eddystone_tlm_t *out)
 {
     return for_each_ad(data, len, [out](uint8_t type, const uint8_t *p, size_t plen) {
-        // A longer structure is not the unencrypted TLM of the specification (its length is fixed)
-        if (type != kAdTypeServiceData16 || plen != kTlmDataLen) {
+        // Longer: DX-SMART beacons append 6 bytes (ignored). Shorter: truncated, refused.
+        if (type != kAdTypeServiceData16 || plen < kTlmDataLen) {
             return false;
         }
         if (p[0] != 0xAA || p[1] != 0xFE || p[2] != 0x20 || p[3] != 0x00) {
             return false;
         }
-        out->battery_mv = get_be16(&p[4]);
+        out->battery_raw = get_be16(&p[4]);
         out->temperature_q8 = static_cast<int16_t>(get_be16(&p[6]));
         out->adv_count = get_be32(&p[8]);
         out->uptime_ds = get_be32(&p[12]);
         return true;
     });
+}
+
+static bool plausible_mv(uint16_t mv)
+{
+    return mv >= EDDYSTONE_TLM_MV_MIN && mv <= EDDYSTONE_TLM_MV_MAX;
+}
+
+uint16_t eddystone_tlm_battery_mv(const eddystone_tlm_t *tlm, uint8_t *order)
+{
+    const uint16_t big = tlm->battery_raw;
+    const uint16_t little = static_cast<uint16_t>((big >> 8) | (big << 8));
+    switch (*order) {
+    case TLM_ORDER_BIG:
+        return plausible_mv(big) ? big : 0;
+    case TLM_ORDER_LITTLE:
+        return plausible_mv(little) ? little : 0;
+    default:
+        break;
+    }
+    const bool big_ok = plausible_mv(big);
+    const bool little_ok = plausible_mv(little);
+    if (big_ok && little_ok) {
+        return big == little ? big : 0; // e.g. 0x0B0C or 0x0C0B: wait for a reading that tells
+    }
+    if (big_ok) {
+        *order = TLM_ORDER_BIG;
+        return big;
+    }
+    if (little_ok) {
+        *order = TLM_ORDER_LITTLE;
+        return little;
+    }
+    return 0;
 }
 
 size_t adv_parse_name(const uint8_t *data, size_t len, char *out, size_t out_size)

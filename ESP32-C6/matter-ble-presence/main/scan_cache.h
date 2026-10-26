@@ -32,6 +32,7 @@ typedef struct {
     ibeacon_t ibeacon;
     char name[BLE_SCANNER_NAME_SIZE];
     uint16_t battery_mv; // last Eddystone-TLM frame, 0 if none (or the beacon does not measure)
+    uint8_t tlm_order;   // tlm_byte_order_t of the beacon's voltage field
     int64_t battery_ms;  // time of that frame
     int64_t first_seen_ms;
     int64_t last_seen_ms;

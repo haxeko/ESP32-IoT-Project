@@ -74,6 +74,7 @@ static bool s_pending[PRESENCE_SLOT_COUNT];
 static int8_t s_pending_rssi[PRESENCE_SLOT_COUNT];
 static int64_t s_last_tlm_ms[PRESENCE_SLOT_COUNT];
 static bool s_tlm_posted[PRESENCE_SLOT_COUNT];
+static uint8_t s_tlm_order[PRESENCE_SLOT_COUNT]; // tlm_byte_order_t of the slot's beacon
 static char s_seen_name[PRESENCE_SLOT_COUNT][BLE_SCANNER_NAME_SIZE];
 
 // Advertised names, written by the host task, read by any task
@@ -127,11 +128,14 @@ static void note_name(int slot, const char *name)
 // Host task: a TLM frame of the slot's beacon, at most one per second (it carries the battery only)
 static void post_tlm(int slot, const ble_adv_report_t *report)
 {
-    if (report->tlm.battery_mv == 0 ||
-        (s_tlm_posted[slot] && report->time_ms - s_last_tlm_ms[slot] < kTlmMinPeriodMs)) {
+    if (s_tlm_posted[slot] && report->time_ms - s_last_tlm_ms[slot] < kTlmMinPeriodMs) {
         return;
     }
-    const Packet packet = { static_cast<uint8_t>(slot), kPacketTlm, report->rssi, report->tlm.battery_mv };
+    const uint16_t mv = eddystone_tlm_battery_mv(&report->tlm, &s_tlm_order[slot]);
+    if (mv == 0) {
+        return;
+    }
+    const Packet packet = { static_cast<uint8_t>(slot), kPacketTlm, report->rssi, mv };
     if (xQueueSend(s_queue, &packet, 0) == pdTRUE) {
         s_tlm_posted[slot] = true;
         s_last_tlm_ms[slot] = report->time_ms;

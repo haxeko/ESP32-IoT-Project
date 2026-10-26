@@ -107,6 +107,9 @@ Theo cách bạn đã nối:
 Beacon như CP101 phát xen giữa các gói iBeacon một gói **Eddystone-TLM** (telemetry) có **điện áp pin** (mV). C3 đọc gói
 này **khi nó đến từ đúng địa chỉ MAC của beacon** (gói TLM không chứa mã nhận diện nào khác) và gửi % pin sang H2:
 
+* **DX-SMART (CP101) lệch chuẩn Eddystone:** khung TLM dài thêm 6 byte và điện áp ghi **byte thấp trước** (ví dụ
+  `20 00 DC 0B …` = 0x0BDC = 3036 mV; đọc theo chuẩn sẽ ra 56 331 mV). C3 nhận khung dài hơn chuẩn và tự nhận ra thứ tự
+  byte của từng beacon từ lần đọc đầu tiên chỉ hợp lý theo một chiều (1,5–4,5 V); giá trị vô lý bị bỏ, không báo 100 %.
 * % pin tuyến tính từ **2200 mV = 0 %** đến **3000 mV = 100 %** (`PRESENCE_BATTERY_EMPTY_MV`, `PRESENCE_BATTERY_FULL_MV`;
   pin cúc áo CR2032/CR2477 và 2 pin AA/AAA mới đều khoảng 3 V và giữ gần 3 V gần hết đời rồi tụt nhanh, nên % đọc cao
   trong nhiều tháng rồi giảm). **≤ 20 %**: BatChargeLevel = Warning (ứng dụng báo pin yếu); **≤ 10 %**: Critical và
