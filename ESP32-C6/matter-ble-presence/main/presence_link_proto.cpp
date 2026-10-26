@@ -8,6 +8,7 @@
 
 #include "presence_link_proto.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "crc32.h"
@@ -24,6 +25,7 @@ static constexpr size_t kCommandLen = 5;
 static constexpr uint8_t kCommandCheck[4] = { 'P', 'L', 'C', 'M' };
 static constexpr uint8_t kSlotFlagActive = 0x01;
 static constexpr uint8_t kSlotFlagModelConfigured = 0x02;
+static constexpr uint8_t kSlotFlagIbeaconId = 0x04;
 
 static_assert(PLINK_SLOT_COUNT <= 32, "slot masks are 32 bits");
 static_assert(kStateLen <= PLINK_MAX_PAYLOAD && kStatusLen <= PLINK_MAX_PAYLOAD &&
@@ -131,6 +133,7 @@ size_t plink_encode_slot(const plink_slot_t *slot, uint8_t *out, size_t out_size
     }
     p[8] = PLINK_BATTERY_UNKNOWN;
     if (slot->active) {
+        p[1] |= slot->ibeacon_id ? kSlotFlagIbeaconId : 0;
         memcpy(&p[2], slot->mac, PLINK_MAC_LEN);
         p[8] = slot->battery_pct;
         p[9] = slot->battery_level;
@@ -201,14 +204,14 @@ bool plink_decode_status(const uint8_t *payload, size_t len, plink_status_t *sta
 bool plink_decode_slot(const uint8_t *payload, size_t len, plink_slot_t *slot)
 {
     if (len < kSlotMinLen || payload[0] >= PLINK_SLOT_COUNT ||
-        (payload[1] & ~(kSlotFlagActive | kSlotFlagModelConfigured)) != 0) {
+        (payload[1] & ~(kSlotFlagActive | kSlotFlagModelConfigured | kSlotFlagIbeaconId)) != 0) {
         return false;
     }
     const size_t model_len = payload[12];
     const bool active = payload[1] & kSlotFlagActive;
     const uint8_t pct = payload[8];
     if (model_len > PLINK_MODEL_MAX || len != kSlotMinLen + model_len || (pct > 100 && pct != PLINK_BATTERY_UNKNOWN) ||
-        payload[9] > 2 || (!active && model_len > 0)) {
+        payload[9] > 2 || (!active && (model_len > 0 || (payload[1] & kSlotFlagIbeaconId) != 0))) {
         return false;
     }
     // The model becomes a Matter string (ProductName): UTF-8 text only
@@ -221,6 +224,7 @@ bool plink_decode_slot(const uint8_t *payload, size_t len, plink_slot_t *slot)
     slot->battery_pct = PLINK_BATTERY_UNKNOWN;
     if (active) {
         slot->model_configured = (payload[1] & kSlotFlagModelConfigured) != 0 && model_len > 0;
+        slot->ibeacon_id = (payload[1] & kSlotFlagIbeaconId) != 0;
         memcpy(slot->mac, &payload[2], PLINK_MAC_LEN);
         slot->battery_pct = pct;
         slot->battery_level = payload[9];
@@ -287,6 +291,26 @@ plink_slot_action_t plink_slot_action(bool have, const uint8_t have_mac[PLINK_MA
         return PLINK_SLOT_ADD;
     }
     return memcmp(have_mac, want_mac, PLINK_MAC_LEN) == 0 ? PLINK_SLOT_KEEP : PLINK_SLOT_REPLACE;
+}
+
+void plink_ibeacon_key(const uint8_t uuid[16], uint16_t major, uint16_t minor, uint8_t out[PLINK_MAC_LEN])
+{
+    out[0] = uuid[0];
+    out[1] = uuid[1];
+    out[2] = static_cast<uint8_t>(major >> 8);
+    out[3] = static_cast<uint8_t>(major);
+    out[4] = static_cast<uint8_t>(minor >> 8);
+    out[5] = static_cast<uint8_t>(minor);
+}
+
+void plink_identity_string(const uint8_t mac[PLINK_MAC_LEN], bool ibeacon_id, char out[PLINK_MAC_STR_SIZE])
+{
+    if (!ibeacon_id) {
+        plink_mac_string(mac, out);
+        return;
+    }
+    snprintf(out, PLINK_MAC_STR_SIZE, "%02X%02X/%u/%u", mac[0], mac[1], static_cast<unsigned>((mac[2] << 8) | mac[3]),
+             static_cast<unsigned>((mac[4] << 8) | mac[5]));
 }
 
 void plink_mac_string(const uint8_t mac[PLINK_MAC_LEN], char out[PLINK_MAC_STR_SIZE])

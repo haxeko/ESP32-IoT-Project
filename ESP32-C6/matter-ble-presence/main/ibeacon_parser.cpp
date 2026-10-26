@@ -155,6 +155,49 @@ size_t adv_parse_name(const uint8_t *data, size_t len, char *out, size_t out_siz
     return 0;
 }
 
+static int hex_digit(char c)
+{
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
+
+bool ibeacon_uuid_parse(const char *text, uint8_t uuid[IBEACON_UUID_LEN])
+{
+    if (text == nullptr) {
+        return false;
+    }
+    const bool dashed = strlen(text) == IBEACON_UUID_STR_SIZE - 1;
+    uint8_t out[IBEACON_UUID_LEN];
+    size_t digits = 0;
+    for (size_t i = 0; text[i] != '\0'; i++) {
+        if (dashed && (i == 8 || i == 13 || i == 18 || i == 23)) {
+            if (text[i] != '-') {
+                return false;
+            }
+            continue;
+        }
+        const int v = hex_digit(text[i]);
+        if (v < 0 || digits >= 2 * IBEACON_UUID_LEN) {
+            return false;
+        }
+        out[digits / 2] = static_cast<uint8_t>(digits % 2 == 0 ? v << 4 : out[digits / 2] | v);
+        digits++;
+    }
+    if (digits != 2 * IBEACON_UUID_LEN) {
+        return false;
+    }
+    memcpy(uuid, out, IBEACON_UUID_LEN);
+    return true;
+}
+
 void ibeacon_uuid_format(const uint8_t uuid[IBEACON_UUID_LEN], char out[IBEACON_UUID_STR_SIZE])
 {
     snprintf(out, IBEACON_UUID_STR_SIZE,

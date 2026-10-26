@@ -28,7 +28,7 @@
 // 4: 20 slots (32-bit masks), one SLOT frame per slot with the model and battery of its beacon, STATUS with the
 // waiting devices, commissioning window and heap of the Matter node.
 // Both chips need firmware of the same version: frames of another version are counted as bad frames and ignored.
-#define PLINK_VERSION 5
+#define PLINK_VERSION 6
 #define PLINK_MAX_PAYLOAD 64
 #define PLINK_MAX_FRAME (2 + 3 + PLINK_MAX_PAYLOAD + 4)
 #define PLINK_SLOT_COUNT 20 // = PRESENCE_SLOT_COUNT of the two-chip version (checked where both are known)
@@ -91,6 +91,9 @@ typedef struct {
     // model typed on the configuration page; else it is the name the beacon advertises (or "": not known yet), and
     // an empty one only clears a model that was typed before
     bool model_configured;
+    // The slot follows its beacon by iBeacon identity: mac holds UUID bytes 0-1, major and minor (big endian), shown
+    // as "E2C5/5/6" (plink_identity_string())
+    bool ibeacon_id;
     uint8_t mac[PLINK_MAC_LEN];      // display order; zero for an inactive slot
     uint8_t battery_pct;             // 0-100, PLINK_BATTERY_UNKNOWN (no Eddystone-TLM frame heard yet)
     uint8_t battery_level;           // Matter BatChargeLevel: 0 OK, 1 warning, 2 critical
@@ -128,6 +131,10 @@ plink_slot_action_t plink_slot_action(bool have, const uint8_t have_mac[PLINK_MA
 // "C0:11:22:33:44:01" (18 bytes with the NUL): the name and serial number of a bridged device
 #define PLINK_MAC_STR_SIZE 18
 void plink_mac_string(const uint8_t mac[PLINK_MAC_LEN], char out[PLINK_MAC_STR_SIZE]);
+// The identity of a slot's beacon: its MAC, or "E2C5/65535/65535" for an iBeacon identity (at most 16 characters)
+void plink_identity_string(const uint8_t mac[PLINK_MAC_LEN], bool ibeacon_id, char out[PLINK_MAC_STR_SIZE]);
+// The 6 bytes standing for an iBeacon identity in the mac field
+void plink_ibeacon_key(const uint8_t uuid[16], uint16_t major, uint16_t minor, uint8_t out[PLINK_MAC_LEN]);
 
 // Scanner: the known_mask of its STATE frames. A slot's state is known once it was reported (it turned on, or off
 // after being on: reported_mask) or once the scanner listened for the slot's whole absence timeout (scan clock, ms)

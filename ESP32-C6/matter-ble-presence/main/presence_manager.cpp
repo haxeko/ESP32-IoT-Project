@@ -28,6 +28,7 @@ static constexpr int kQueueLength = 32;
 static constexpr int8_t kRssiUnavailable = 127;
 static constexpr int64_t kTlmMinPeriodMs = 1000; // per slot
 static_assert(PRESENCE_LOGIC_SLOTS == PRESENCE_SLOT_COUNT, "one presence rule per slot");
+static_assert(PRESENCE_UUID_LEN == IBEACON_UUID_LEN, "iBeacon identity of the configuration");
 
 static const presence_battery_config_t kBatteryConfig = {
     .empty_mv = CONFIG_PRESENCE_BATTERY_EMPTY_MV,
@@ -42,8 +43,12 @@ namespace {
 
 struct SlotMatch {
     bool active;
+    bool by_ibeacon; // PRESENCE_MATCH_IBEACON: the identity below, else the address
     uint8_t addr[BLE_ADDR_LEN];
     uint8_t addr_type;
+    uint8_t uuid[IBEACON_UUID_LEN];
+    uint16_t major;
+    uint16_t minor;
 };
 
 enum PacketKind : uint8_t {
@@ -62,6 +67,7 @@ struct Packet {
 
 // Built before the scanner starts, read-only afterwards (also from the host task)
 static SlotMatch s_match[PRESENCE_SLOT_COUNT];
+static bool s_any_by_ibeacon; // a slot follows an iBeacon identity: every address goes to the sink
 static char s_labels[PRESENCE_SLOT_COUNT][PRESENCE_LABEL_MAX_BYTES + 1];
 static presence_rule_t s_rules[PRESENCE_SLOT_COUNT];
 static presence_report_fn_t s_report;
@@ -76,6 +82,9 @@ static int64_t s_last_tlm_ms[PRESENCE_SLOT_COUNT];
 static bool s_tlm_posted[PRESENCE_SLOT_COUNT];
 static uint8_t s_tlm_order[PRESENCE_SLOT_COUNT]; // tlm_byte_order_t of the slot's beacon
 static char s_seen_name[PRESENCE_SLOT_COUNT][BLE_SCANNER_NAME_SIZE];
+// Slot followed by iBeacon identity: the address its identity came from last (its TLM and name frames come from it)
+static bool s_id_addr_known[PRESENCE_SLOT_COUNT];
+static uint8_t s_id_addr[PRESENCE_SLOT_COUNT][BLE_ADDR_LEN];
 
 // Advertised names, written by the host task, read by any task
 static portMUX_TYPE s_name_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -92,11 +101,38 @@ static presence_manager_stats_t s_stats;
 static bool slot_matches(int slot, const uint8_t addr[BLE_ADDR_LEN], uint8_t addr_type)
 {
     const SlotMatch &m = s_match[slot];
-    return m.active && memcmp(m.addr, addr, BLE_ADDR_LEN) == 0 && beacon_addr_type_matches(m.addr_type, addr_type);
+    return m.active && !m.by_ibeacon && memcmp(m.addr, addr, BLE_ADDR_LEN) == 0 &&
+           beacon_addr_type_matches(m.addr_type, addr_type);
+}
+
+// Host task: a report of the slot's beacon. By identity: its iBeacon frames, then the TLM and name frames of the
+// address that sent the last one.
+static bool report_matches(int slot, const ble_adv_report_t *report)
+{
+    const SlotMatch &m = s_match[slot];
+    if (!m.active) {
+        return false;
+    }
+    if (!m.by_ibeacon) {
+        return slot_matches(slot, report->addr, report->addr_type);
+    }
+    if (report->has_ibeacon) {
+        if (memcmp(report->ibeacon.uuid, m.uuid, IBEACON_UUID_LEN) != 0 || report->ibeacon.major != m.major ||
+            report->ibeacon.minor != m.minor) {
+            return false;
+        }
+        memcpy(s_id_addr[slot], report->addr, BLE_ADDR_LEN);
+        s_id_addr_known[slot] = true;
+        return true;
+    }
+    return s_id_addr_known[slot] && memcmp(s_id_addr[slot], report->addr, BLE_ADDR_LEN) == 0;
 }
 
 bool presence_manager_filter(const uint8_t addr[BLE_ADDR_LEN], uint8_t addr_type)
 {
+    if (s_any_by_ibeacon) {
+        return true;
+    }
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
         if (slot_matches(i, addr, addr_type)) {
             return true;
@@ -148,7 +184,7 @@ void presence_manager_sink(const ble_adv_report_t *report)
 {
     // Only a well-formed iBeacon frame refreshes a slot; the advertised name is never used to identify a beacon.
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
-        if (!slot_matches(i, report->addr, report->addr_type)) {
+        if (!report_matches(i, report)) {
             continue;
         }
         if (report->name[0] != '\0') {
@@ -298,6 +334,11 @@ esp_err_t presence_manager_start(const presence_config_t *cfg, presence_report_f
         s_match[i].active = presence_slot_is_active(&s);
         memcpy(s_match[i].addr, s.addr, BLE_ADDR_LEN);
         s_match[i].addr_type = s.addr_type;
+        s_match[i].by_ibeacon = s.match == PRESENCE_MATCH_IBEACON;
+        memcpy(s_match[i].uuid, s.uuid, IBEACON_UUID_LEN);
+        s_match[i].major = s.major;
+        s_match[i].minor = s.minor;
+        s_any_by_ibeacon = s_any_by_ibeacon || (s_match[i].active && s_match[i].by_ibeacon);
         s_rules[i].active = s_match[i].active;
         s_rules[i].timeout_ms = static_cast<uint32_t>(s.timeout_s) * 1000;
         s_rules[i].rssi_filter = s.rssi_filter;
@@ -311,7 +352,12 @@ esp_err_t presence_manager_start(const presence_config_t *cfg, presence_report_f
 
         char addr[BLE_ADDR_STR_SIZE];
         ble_addr_format(s.addr, addr);
-        if (s_match[i].active) {
+        if (s_match[i].active && s_match[i].by_ibeacon) {
+            char uuid[IBEACON_UUID_STR_SIZE];
+            ibeacon_uuid_format(s.uuid, uuid);
+            ESP_LOGI(TAG, "Presence %d \"%s\": iBeacon %s major %u minor %u (any address), absent after %u s%s", i + 1,
+                     s_labels[i], uuid, s.major, s.minor, s.timeout_s, s.rssi_filter ? ", RSSI filter" : "");
+        } else if (s_match[i].active) {
             ESP_LOGI(TAG, "Presence %d \"%s\": %s (%s), absent after %u s%s", i + 1, s_labels[i], addr,
                      beacon_addr_type_name(s.addr_type), s.timeout_s, s.rssi_filter ? ", RSSI filter" : "");
         } else {

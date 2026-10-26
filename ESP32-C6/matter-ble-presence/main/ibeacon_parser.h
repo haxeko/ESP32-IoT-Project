@@ -86,3 +86,5 @@ size_t adv_parse_name(const uint8_t *data, size_t len, char *out, size_t out_siz
 
 // "E2C56DB5-DFFB-48D2-B060-D0F5A71096E0"
 void ibeacon_uuid_format(const uint8_t uuid[IBEACON_UUID_LEN], char out[IBEACON_UUID_STR_SIZE]);
+// 32 hexadecimal digits, upper or lower case, with or without the dashes (only where the format above has them)
+bool ibeacon_uuid_parse(const char *text, uint8_t uuid[IBEACON_UUID_LEN]);

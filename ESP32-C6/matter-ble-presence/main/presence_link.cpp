@@ -51,6 +51,7 @@ namespace {
 // A device of the bridge, from the saved configuration
 struct SlotConfig {
     bool active;
+    bool ibeacon_id; // mac: plink_ibeacon_key() of the slot's iBeacon identity
     uint8_t mac[PLINK_MAC_LEN];
     char model[PLINK_MODEL_MAX + 1];
 };
@@ -124,7 +125,7 @@ static void send_state()
     send_frame(frame, plink_encode_state(&st, frame, sizeof(frame)));
 }
 
-// The device of one slot: MAC from the configuration, model configured or else advertised by the beacon, battery
+// The device of one slot: MAC (or iBeacon identity) from the configuration, model configured or else advertised by the beacon, battery
 // from its Eddystone-TLM frames (NORMAL mode; unknown in CONFIG mode, the Matter node keeps what it has)
 static void send_slot(int i)
 {
@@ -141,6 +142,7 @@ static void send_slot(int i)
     slot.battery_pct = PLINK_BATTERY_UNKNOWN;
     if (cfg.active) {
         memcpy(slot.mac, cfg.mac, PLINK_MAC_LEN);
+        slot.ibeacon_id = cfg.ibeacon_id;
         presence_slot_info_t info;
         presence_manager_get_slot_info(i, &info);
         if (info.battery_pct != PRESENCE_BATTERY_UNKNOWN) {
@@ -473,7 +475,12 @@ void presence_link_set_slots(const presence_config_t *cfg, bool send)
         const presence_slot_config_t &s = cfg->slots[i];
         if (presence_slot_is_active(&s)) {
             slots[i].active = true;
-            memcpy(slots[i].mac, s.addr, PLINK_MAC_LEN);
+            slots[i].ibeacon_id = s.match == PRESENCE_MATCH_IBEACON;
+            if (slots[i].ibeacon_id) {
+                plink_ibeacon_key(s.uuid, s.major, s.minor, slots[i].mac);
+            } else {
+                memcpy(slots[i].mac, s.addr, PLINK_MAC_LEN);
+            }
             static_assert(PRESENCE_MODEL_MAX_BYTES <= PLINK_MODEL_MAX, "the model fits a SLOT frame");
             memcpy(slots[i].model, s.model, sizeof(s.model));
         }

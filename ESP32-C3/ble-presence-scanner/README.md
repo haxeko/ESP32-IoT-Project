@@ -97,7 +97,7 @@ Theo cách bạn đã nối:
   slot đó hoặc đã quét đủ thời gian vắng mặt của slot (ví dụ 45 s) mà không nghe thấy. Trong lúc đó **H2 giữ nguyên
   trạng thái** cảm biến: không còn cảnh cảm biến tắt rồi bật lại mỗi lần C3 khởi động lại. (Trước bản này, khung đầu
   tiên sau khi C3 khởi động báo "không ai" và H2 tắt ngay mọi cảm biến.)
-* **Hai chip phải cùng phiên bản giao thức UART** (bản này: **5**, 20 slot, model, pin): khi cập nhật, **nạp lại cả C3
+* **Hai chip phải cùng phiên bản giao thức UART** (bản này: **6**, 20 slot, model, pin, nhận diện theo iBeacon): khi cập nhật, **nạp lại cả C3
   và H2**. Lệch phiên bản thì khung của chip kia bị loại (log `bad frames` tăng), và sau 120 s H2 tắt mọi cảm biến.
 * Mật khẩu cố định giống nhau trên mọi thiết bị: ai biết mật khẩu và ở gần đều vào được SoftAP **trong lúc thiết bị ở
   chế độ cấu hình** (tối đa 10 phút không thao tác). Trang vẫn chỉ nhận request đúng địa chỉ 192.168.4.1 và POST JSON.
@@ -125,6 +125,25 @@ này **khi nó đến từ đúng địa chỉ MAC của beacon** (gói TLM khô
   bằng **địa chỉ khác** với iBeacon: bật khung TLM trong ứng dụng cấu hình của beacon và cho mọi khung dùng chung một MAC.
 * Log C3 khi % đổi: `presence: Presence N "...": battery 94% (2950 mV)`; mỗi phút `diag: Presence N: ..., battery 94%
   (2950 mV, 3 s ago, 120 TLM)`. Log H2: `bridge: Presence N: battery 94%`.
+
+## Nhận diện beacon: theo MAC hay theo iBeacon
+
+* **Loại địa chỉ trong danh sách beacon:** "Public", "Random tĩnh", hoặc với địa chỉ random mà 2 bit đầu là `01`/`00`
+  (theo chuẩn là địa chỉ riêng tư, thường đổi ~15 phút một lần): **"Random (chưa rõ có đổi không, đã thấy N phút)"**.
+  Nhiều beacon (DX-SMART CP101: `48:87:2D:…`) gắn cờ "random" cho một địa chỉ cố định, nên trang **không còn cảnh báo
+  chỉ vì 2 bit đầu**. Nghe thấy cùng một địa chỉ liên tục 15 phút thì ghi **"Địa chỉ cố định (đã kiểm N phút)"**.
+* **Cảnh báo chỉ khi có bằng chứng:** cùng UUID/Major/Minor đang phát từ một MAC khác; trang ghi rõ MAC đó. Nghĩa là
+  beacon đổi địa chỉ, hoặc hai beacon dùng chung UUID/Major/Minor (UUID `E2C56DB5-DFFB-48D2-B060-D0F5A71096E0` là UUID
+  mẫu của Apple, nhiều beacon để mặc định).
+* **"Nhận diện beacon" của từng slot:**
+  * **Theo địa chỉ MAC** (mặc định, khuyên dùng khi MAC cố định): chỉ đúng beacon có địa chỉ đó.
+  * **Theo iBeacon UUID + Major + Minor:** mọi địa chỉ phát đúng ba giá trị này, cho beacon đổi MAC (điện thoại làm
+    beacon, beacon bật chế độ riêng tư). Ai cũng đặt được các số này: đặt Major/Minor riêng cho từng beacon. Pin (TLM)
+    và tên lấy từ địa chỉ vừa phát gói iBeacon đó. Trên Nhà, tên và số sê-ri của thiết bị con là `E2C5/5/6` (4 chữ số
+    đầu UUID / Major / Minor).
+  * Gán từ danh sách điền cả MAC lẫn UUID/Major/Minor; đổi cách nhận diện không phải gán lại. Đổi cách nhận diện của
+    một slot đã có trên Nhà: H2 gỡ thiết bị con cũ và thêm thiết bị mới.
+* Cấu hình lưu định dạng 3 (cấu hình cũ đọc được, mọi slot cũ nhận diện theo MAC).
 
 ## Nút BOOT và đèn của ESP32-H2
 
@@ -282,7 +301,7 @@ Nạp mới hoàn toàn (xóa sạch, dùng file gộp; **xóa cả ghép Matter
 Không nạp file gộp lên chip đang dùng mà không xóa: file gộp ghi đè cả vùng `nvs` (0x10000–0x1FFFF), mất ghép Matter.
 
 **Lên bản này (20 slot, pin, model, "iBeacon Bridge") từ bản bridge trước (1.0.19x):**
-1. **Nạp cả hai chip** (giao thức UART đổi sang phiên bản 5). C3: nạp 3 file, **cấu hình beacon được giữ** (5 slot cũ
+1. **Nạp cả hai chip** (giao thức UART đổi sang phiên bản 6). C3: nạp 3 file, **cấu hình beacon được giữ** (5 slot cũ
    thành Presence 1–5, Presence 6–20 trống, model trống). H2: nạp 3 file cũng chạy được (bảng thiết bị con được chuyển,
    giữ endpoint cũ), **nhưng nên ghép lại từ đầu** để ứng dụng Nhà đọc tên bridge mới, cụm pin và thông tin phụ kiện
    (Apple Home thường không đọc lại cấu trúc của phụ kiện đã thêm):
@@ -338,14 +357,14 @@ chân UART và console (cả hai chip log qua USB-Serial-JTAG), cấu hình theo
 ## Kiểm thử
 
 * Host test (`ESP32-C6/matter-ble-presence/test/host/run.sh`, 14 bộ, ASan/UBSan; các bộ cấu hình, trạng thái và lưu
-  trữ chạy cả với 5 và 20 slot), gồm bộ `presence_link` (giao thức v5): khung đúng, **mọi bit lật bị loại**, mọi kiểu
+  trữ chạy cả với 5 và 20 slot), gồm bộ `presence_link` (giao thức v6): khung đúng, **mọi bit lật bị loại**, mọi kiểu
   cắt cụt, bắt lại nhịp sau rác giống log ROM, 200 000 byte nhiễu ngẫu nhiên không tạo ra khung giả, khung của giao thức
-  1–4 bị loại, khung SLOT (MAC, model UTF-8, model gõ tay hay tên quảng bá, pin), STATUS (thiết bị chờ, thiết bị lỗi
+  1–5 bị loại, khung SLOT (MAC hoặc danh tính iBeacon, model UTF-8, model gõ tay hay tên quảng bá, pin), STATUS (thiết bị chờ, thiết bị lỗi
   từng slot, heap), **slot "chưa biết" sau khi C3 khởi động lại**; `presence_battery`: mV → %, trung vị 5 lần đọc, bước
   2 %, thay pin; `test_ibeacon`: gói Eddystone-TLM (mọi độ dài cắt cụt, TLM mã hóa bị loại); `presence_config`: định
   dạng 2 có model, đọc định dạng 1 của bản 5 slot, blob 20 slot đọc bằng bản 5 slot (slot thừa trống thì bỏ, có beacon
   thì từ chối và giữ nguyên trong flash); `click_detector`: bấm 2 lần, giữ 5 s rồi thả.
-* Test trang web (Playwright, `test/web/ui_test.js`): 79 kiểm tra, gồm trang của bản hai chip: 20 slot, model (giới hạn
+* Test trang web (Playwright, `test/web/ui_test.js`): 89 kiểm tra, gồm trang của bản hai chip: 20 slot, model (giới hạn
   32 byte UTF-8, tự điền tên beacon khi gán), pin, dòng tình trạng H2 và từng thiết bị con (trên Nhà, chờ ghép, thiếu bộ
   nhớ, H2 không tạo được), mã ghép chỉ hiện khi H2 ghép được, ô lỗi nằm trong mục "Lọc RSSI" đang gập được mở ra; Wi-Fi
   chậm (thiết bị trả lời sau 3 s: chỉ một request mỗi loại một lúc).

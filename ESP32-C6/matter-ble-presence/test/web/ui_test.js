@@ -10,7 +10,8 @@ let failures = 0;
 function check(cond, msg) { if (!cond) { failures++; console.log('FAIL', msg); } else console.log('ok  ', msg); }
 
 const slot = (i, extra = {}) => Object.assign({ enabled: false, label: 'Presence ' + (i + 1), mac: '', addr_type: 'any',
-  timeout_s: 45, rssi_filter: false, rssi_threshold: -80, rssi_hysteresis: 5, model: '' }, extra);
+  timeout_s: 45, rssi_filter: false, rssi_threshold: -80, rssi_hysteresis: 5, model: '', match: 'mac', uuid: '', major: 0,
+  minor: 0 }, extra);
 const slots = n => Array.from({ length: n }, (_, i) =>
   i === 0 ? slot(0, { enabled: true, label: 'Ví của Bố', mac: 'C0:11:22:33:44:01', addr_type: 'public', model: 'CP101' }) : slot(i));
 const config = {
@@ -33,16 +34,20 @@ const evil = '<img src=x onerror="window.__xss=1">';
 const beacons = [
   { mac: 'C0:11:22:33:44:01', addr_type: 'public', kind: 'public', stable: true, rssi: -58, uuid: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0',
     major: 1, minor: 1, tx_power: -59, name: 'Ví', battery_mv: 2950, battery_pct: 94, battery_age_ms: 3000, age_ms: 800, count: 120,
-    same_id_other_mac: false },
+    same_id_other_mac: false, other_mac: '', seen_s: 300 },
   { mac: 'D4:AA:BB:CC:DD:02', addr_type: 'random', kind: 'static', stable: true, rssi: -71, uuid: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0',
     major: 1, minor: 2, tx_power: -59, name: evil, battery_mv: 0, battery_pct: -1, battery_age_ms: -1, age_ms: 2100, count: 40,
-    same_id_other_mac: false },
+    same_id_other_mac: false, other_mac: '', seen_s: 300 },
   { mac: '5A:01:02:03:04:05', addr_type: 'random', kind: 'rpa', stable: false, rssi: -84, uuid: 'FDA50693-A4E2-4FB1-AFCF-C6EB07647825',
     major: 10, minor: 7, tx_power: -60, name: '', battery_mv: 0, battery_pct: -1, battery_age_ms: -1, age_ms: 9000, count: 5,
-    same_id_other_mac: true },
+    same_id_other_mac: true, other_mac: '6B:01:02:03:04:06', seen_s: 40 },
   { mac: 'E1:22:33:44:55:66', addr_type: 'public', kind: 'public', stable: true, rssi: -64, uuid: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0',
     major: 1, minor: 3, tx_power: -59, name: 'CP101', battery_mv: 2400, battery_pct: 25, battery_age_ms: 1000, age_ms: 500, count: 60,
-    same_id_other_mac: false },
+    same_id_other_mac: false, other_mac: '', seen_s: 300 },
+  // A fixed address flagged random with "private" bits (DX-SMART CP101), heard for 20 minutes
+  { mac: '48:87:2D:9D:C1:DF', addr_type: 'random', kind: 'rpa', stable: false, rssi: -70, uuid: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0',
+    major: 5, minor: 6, tx_power: -57, name: 'CP101-C1DF', battery_mv: 3036, battery_pct: 100, battery_age_ms: 900, age_ms: 300,
+    count: 900, same_id_other_mac: false, other_mac: '', seen_s: 1200 },
 ];
 
 // A page of the device with the API answered by the mock; network: 'thread' (ESP32-C6) or 'wifi' (ESP32-C3).
@@ -110,7 +115,11 @@ async function openPage(browser, network, posts, opts = {}) {
   check(names.includes(evil), 'malicious beacon name shown as plain text');
   check(await page.evaluate(() => window.__xss === undefined), 'no script from a beacon name ran');
   check((await page.$$('.beacon img')).length === 0, 'no <img> element injected');
-  check((await page.textContent('#beaconList')).includes('đổi theo thời gian'), 'RPA warning shown');
+  const list0 = await page.textContent('#beaconList');
+  check(!list0.includes('thay đổi theo thời gian'), 'no address warning from the address bits alone');
+  check(list0.includes('Random (chưa rõ có đổi không, đã thấy 0 phút)'), 'random private-looking address: not known yet');
+  check(list0.includes('Địa chỉ cố định (đã kiểm 20 phút)'), 'address heard 20 minutes without a break: checked');
+  check(list0.includes('đang phát từ MAC khác (6B:01:02:03:04:06)'), 'same identity under another address: warned, with that address');
   check((await page.inputValue('#mac0')) === 'C0:11:22:33:44:01', 'stored MAC loaded into slot 1');
   check((await page.textContent('#seen0')).includes('-58 dBm'), 'slot 1 shows its beacon is heard');
   check((await page.textContent('#hdrSsid')).includes('VN-Presence-3A7C'), 'SSID in header');
@@ -143,6 +152,28 @@ async function openPage(browser, network, posts, opts = {}) {
   check(await page.isVisible('#rt1') && (await page.textContent('#ert1')).length > 0, 'invalid RSSI threshold: its sections opened');
   await setRt1('-80');
 
+  // Recognised by iBeacon identity: fields, validation, duplicate identity
+  await page.evaluate(() => { document.getElementById('det3').open = true; document.getElementById('det4').open = true; });
+  await page.selectOption('#match3', 'ibeacon');
+  check(await page.isVisible('#uuid3') && !(await page.isVisible('#mac3')), 'identity mode shows UUID/Major/Minor instead of MAC');
+  await page.check('#en3');
+  await page.fill('#uuid3', 'not-a-uuid');
+  check((await page.textContent('#euuid3')).includes('32 chữ số hex'), 'invalid UUID flagged');
+  await page.fill('#uuid3', 'fda50693a4e24fb1afcfc6eb07647825');
+  await page.fill('#maj3', '10');
+  await page.fill('#min3', '70000');
+  check((await page.textContent('#emin3')).includes('65535'), 'minor above 65535 flagged');
+  await page.fill('#min3', '7');
+  check((await page.textContent('#seen3')).includes('5A:01:02:03:04:05'), 'identity slot: heard from the address sending it');
+  await page.selectOption('#match4', 'ibeacon');
+  await page.check('#en4');
+  await page.fill('#uuid4', 'FDA50693-A4E2-4FB1-AFCF-C6EB07647825');
+  await page.fill('#maj4', '10');
+  await page.fill('#min4', '7');
+  check((await page.textContent('#euuid4')).includes('Presence 4'), 'duplicate identity flagged');
+  await page.uncheck('#en4');
+  await page.selectOption('#match4', 'mac');
+
   // Manual duplicate (same MAC as slot 1, "any") is an error too
   await page.fill('#mac2', 'c0-11-22-33-44-01');
   check((await page.textContent('#emac2')).includes('Presence 1'), 'manual duplicate MAC flagged');
@@ -169,6 +200,10 @@ async function openPage(browser, network, posts, opts = {}) {
     check(body.slots[2].label === 'Phòng ngủ <b>x</b>', 'label sent as typed (escaped by the device on output)');
     check(body.scan.interval_ms === 160 && body.scan.window_ms === 40, 'scan settings sent');
     check(body.slots[2].timeout_s === 60, 'timeout sent as number');
+    check(body.slots[3].match === 'ibeacon' && body.slots[3].uuid === 'FDA50693-A4E2-4FB1-AFCF-C6EB07647825' &&
+      body.slots[3].major === 10 && body.slots[3].minor === 7, 'identity slot sent with its UUID/Major/Minor (normalised)');
+    check(body.slots[1].match === 'mac' && body.slots[1].uuid === 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0' && body.slots[1].minor === 2,
+      'assigning from the list also fills the identity');
   }
   check((await page.textContent('#banner')).includes('Đã lưu'), 'save result shown');
 

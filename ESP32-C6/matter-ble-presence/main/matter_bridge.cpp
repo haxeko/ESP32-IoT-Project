@@ -66,6 +66,7 @@ struct Entry {
     uint8_t flags;                   // kEntryModelConfigured
 };
 constexpr uint8_t kEntryModelConfigured = 0x01; // model typed on the scanner's page (else its advertised name)
+constexpr uint8_t kEntryIbeaconId = 0x02;       // mac holds an iBeacon identity (plink_ibeacon_key())
 static_assert(sizeof(Entry) == 44, "stored entry layout");
 
 struct Table {
@@ -230,6 +231,17 @@ static void refresh_endpoint_lists()
     }
 }
 
+// Name and serial number of the entry's device: the beacon's MAC, or its iBeacon identity "E2C5/5/6"
+static void identity_string(const Entry &e, char out[PLINK_MAC_STR_SIZE])
+{
+    plink_identity_string(e.mac, (e.flags & kEntryIbeaconId) != 0, out);
+}
+
+static bool same_identity(const Entry &e, const plink_slot_t &want)
+{
+    return memcmp(e.mac, want.mac, PLINK_MAC_LEN) == 0 && ((e.flags & kEntryIbeaconId) != 0) == want.ibeacon_id;
+}
+
 // The endpoint of a bridged device, child of the Aggregator. resume_id: the endpoint ID it had before the restart,
 // or kInvalidEndpointId for a new one.
 static endpoint_t *build_device(int slot, const Entry &e, uint16_t resume_id)
@@ -256,7 +268,7 @@ static endpoint_t *build_device(int slot, const Entry &e, uint16_t resume_id)
         return nullptr;
     }
     char mac[PLINK_MAC_STR_SIZE];
-    plink_mac_string(e.mac, mac);
+    identity_string(e, mac);
     char vendor[] = CONFIG_PRESENCE_VENDOR_NAME;
     char model[PLINK_MODEL_MAX + 1];
     snprintf(model, sizeof(model), "%s", shown_model(e));
@@ -324,7 +336,7 @@ static bool build_entry(int slot, uint16_t resume_id)
     s_last_cost = before > after ? before - after : 0;
     s_max_cost = s_last_cost > s_max_cost ? s_last_cost : s_max_cost;
     char mac[PLINK_MAC_STR_SIZE];
-    plink_mac_string(e.mac, mac);
+    identity_string(e, mac);
     ESP_LOGI(TAG, "Presence %d: device %s \"%s\" %s on endpoint %u (%u bytes of heap, %u left)", slot + 1, mac,
              shown_model(e), resume_id == chip::kInvalidEndpointId ? "added" : "restored", e.endpoint,
              static_cast<unsigned>(s_last_cost), static_cast<unsigned>(after));
@@ -335,7 +347,7 @@ static void remove_device(int slot)
 {
     Entry &e = s_entries[slot];
     char mac[PLINK_MAC_STR_SIZE];
-    plink_mac_string(e.mac, mac);
+    identity_string(e, mac);
     endpoint_t *ep = s_built[slot] ? endpoint::get(s_node, e.endpoint) : nullptr;
     if (ep != nullptr && endpoint::destroy(s_node, ep) != ESP_OK) {
         ESP_LOGE(TAG, "Presence %d: endpoint %u could not be removed", slot + 1, e.endpoint);
@@ -439,8 +451,8 @@ static bool restore(int slot, const plink_slot_t *want, bool *added)
 {
     Entry &e = s_entries[slot];
     char mac[PLINK_MAC_STR_SIZE];
-    plink_mac_string(e.mac, mac);
-    if (want != nullptr && (!want->active || memcmp(want->mac, e.mac, PLINK_MAC_LEN) != 0)) {
+    identity_string(e, mac);
+    if (want != nullptr && (!want->active || !same_identity(e, *want))) {
         // The slot changed while this chip was off: the saved device is not brought back
         ESP_LOGI(TAG, "Presence %d: saved device %s (endpoint %u) no longer in the scanner's list", slot + 1, mac,
                  e.endpoint);
@@ -530,7 +542,11 @@ bool matter_bridge_step(int slot, const plink_slot_t *want, bool *added)
         return true; // nothing known from the scanner yet: restoring was all there was to do
     }
     const bool have = e.endpoint != 0 && s_built[slot];
-    switch (plink_slot_action(have, e.mac, want->active, want->mac)) {
+    plink_slot_action_t action = plink_slot_action(have, e.mac, want->active, want->mac);
+    if (action == PLINK_SLOT_KEEP && have && !same_identity(e, *want)) {
+        action = PLINK_SLOT_REPLACE; // same 6 bytes, but a MAC became an iBeacon identity or the reverse
+    }
+    switch (action) {
     case PLINK_SLOT_KEEP:
         if (have) {
             update_device(slot, *want);
@@ -554,6 +570,7 @@ bool matter_bridge_step(int slot, const plink_slot_t *want, bool *added)
     }
     Entry fresh = {};
     memcpy(fresh.mac, want->mac, PLINK_MAC_LEN);
+    fresh.flags = want->ibeacon_id ? kEntryIbeaconId : 0;
     fresh.battery_pct = PLINK_BATTERY_UNKNOWN;
     merge(fresh, *want);
     e = fresh;
@@ -561,7 +578,7 @@ bool matter_bridge_step(int slot, const plink_slot_t *want, bool *added)
         memset(&e, 0, sizeof(e));
         retry_later(slot); // each attempt uses up an endpoint ID
         char mac[PLINK_MAC_STR_SIZE];
-        plink_mac_string(want->mac, mac);
+        plink_identity_string(want->mac, want->ibeacon_id, mac);
         ESP_LOGE(TAG, "Presence %d: device %s could not be added (endpoints or memory), tried again in %d s", slot + 1,
                  mac, static_cast<int>(s_retry_delay_ms[slot] / 1000));
         return false;

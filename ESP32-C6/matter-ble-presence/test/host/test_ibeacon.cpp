@@ -293,6 +293,22 @@ static void tlm_byte_order()
     }
 }
 
+static void uuid_parse()
+{
+    uint8_t u[IBEACON_UUID_LEN] = {};
+    char text[IBEACON_UUID_STR_SIZE];
+    CHECK(ibeacon_uuid_parse("E2C56DB5-DFFB-48D2-B060-D0F5A71096E0", u));
+    ibeacon_uuid_format(u, text);
+    CHECK_STR(text, "E2C56DB5-DFFB-48D2-B060-D0F5A71096E0");
+    CHECK(ibeacon_uuid_parse("e2c56db5dffb48d2b060d0f5a71096e1", u) && u[15] == 0xE1 && u[0] == 0xE2);
+    const uint8_t before = u[0];
+    CHECK(!ibeacon_uuid_parse("E2C56DB5-DFFB-48D2-B060-D0F5A71096E", u));   // a digit short
+    CHECK(!ibeacon_uuid_parse("E2C56DB5-DFFB-48D2-B060-D0F5A71096E00", u)); // a digit more
+    CHECK(!ibeacon_uuid_parse("E2C56DB5DFFB-48D2-B060-D0F5A71096E0", u));   // dashes elsewhere
+    CHECK(!ibeacon_uuid_parse("G2C56DB5-DFFB-48D2-B060-D0F5A71096E0", u));
+    CHECK(!ibeacon_uuid_parse("", u) && !ibeacon_uuid_parse(nullptr, u) && u[0] == before);
+}
+
 static void fuzz()
 {
     // Random data and random mutations of a valid frame: no crash, no out of bounds read (ASan), and a frame that
@@ -363,6 +379,7 @@ int main()
     RUN(truncated_and_malformed);
     RUN(two_manufacturer_structures);
     RUN(names);
+    RUN(uuid_parse);
     RUN(tlm);
     RUN(tlm_dx_smart);
     RUN(tlm_byte_order);
