@@ -31,6 +31,7 @@
 #include "config_store.h"
 #include "http_guard.h"
 #include "json_util.h"
+#include "mac_watch.h"
 #include "matter_device.h"
 #include "presence_battery.h"
 #include "presence_config.h"
@@ -52,12 +53,11 @@ static const char *TAG = "web";
 extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t index_html_end[] asm("_binary_index_html_end");
 
-// The page sends about 350 bytes per slot (48-byte label, 32-byte model, iBeacon identity), up to about 450 with
-// every character of them escaped: 20 slots fit in 10 KB. Each JSON value costs cJSON about 50 bytes of heap while
-// parsing: the number of values is checked before (too_many_values()), so a body of thousands of tiny values is
-// refused unparsed.
-static constexpr size_t kMaxConfigBody = 10240;
-static constexpr size_t kMaxConfigValues = 48 * PRESENCE_SLOT_COUNT + 32; // the page sends about 29 per slot
+// The page sends about 260 bytes per slot (48-byte label, 32-byte model), up to about 360 with every character of
+// them escaped: 20 slots fit in 8 KB. Each JSON value costs cJSON about 50 bytes of heap while parsing: the number of
+// values is checked before (too_many_values()), so a body of thousands of tiny values is refused unparsed.
+static constexpr size_t kMaxConfigBody = 8192;
+static constexpr size_t kMaxConfigValues = 40 * PRESENCE_SLOT_COUNT + 32; // the page sends about 21 per slot
 static constexpr size_t kMaxSmallBody = 256;
 static constexpr size_t kMaxErrors = 64;
 #if CONFIG_PRESENCE_ALLOW_DUPLICATE_BEACON
@@ -363,11 +363,6 @@ static esp_err_t status_get(httpd_req_t *req)
 // ---------------------------------------------------------------------------------------------------------------------
 // Scan list
 
-static bool same_ibeacon_id(const ibeacon_t &a, const ibeacon_t &b)
-{
-    return memcmp(a.uuid, b.uuid, IBEACON_UUID_LEN) == 0 && a.major == b.major && a.minor == b.minor;
-}
-
 static esp_err_t scan_get(httpd_req_t *req)
 {
     if (!request_allowed(req)) {
@@ -386,20 +381,11 @@ static esp_err_t scan_get(httpd_req_t *req)
         char uuid[IBEACON_UUID_STR_SIZE];
         ble_addr_format(e.addr, addr);
         ibeacon_uuid_format(e.ibeacon.uuid, uuid);
+        // The address bits say nothing reliable about a change (many beacons flag a fixed address as random with
+        // "private" bits): a slot's beacon is watched in the NORMAL mode instead (mac_watch.h)
         const ble_addr_kind_t kind = ble_addr_kind(e.addr_type, e.addr);
-        // The same UUID/major/minor under another address (heard within the expiry time): the beacon changes its
-        // address, or two beacons share an identity. The only evidence used: the address bits alone are not (many
-        // beacons flag a fixed address as random with bits that read "resolvable private").
-        char other[BLE_ADDR_STR_SIZE] = "";
-        for (size_t j = 0; j < n && other[0] == '\0'; j++) {
-            if (j != i && same_ibeacon_id(e.ibeacon, s_beacons[j].ibeacon) &&
-                memcmp(e.addr, s_beacons[j].addr, BLE_ADDR_LEN) != 0) {
-                ble_addr_format(s_beacons[j].addr, other);
-            }
-        }
-        out.fmt("%s{\"mac\":\"%s\",\"addr_type\":\"%s\",\"kind\":\"%s\",\"stable\":%s,\"rssi\":%d,", i ? "," : "",
-                addr, beacon_addr_type_name(beacon_addr_type_from_ota(e.addr_type)), ble_addr_kind_name(kind),
-                ble_addr_kind_is_stable(kind) ? "true" : "false", e.rssi);
+        out.fmt("%s{\"mac\":\"%s\",\"addr_type\":\"%s\",\"kind\":\"%s\",\"rssi\":%d,", i ? "," : "", addr,
+                beacon_addr_type_name(beacon_addr_type_from_ota(e.addr_type)), ble_addr_kind_name(kind), e.rssi);
         out.fmt("\"uuid\":\"%s\",\"major\":%u,\"minor\":%u,\"tx_power\":%d,\"name\":", uuid, e.ibeacon.major,
                 e.ibeacon.minor, e.ibeacon.tx_power);
         out.str(e.name);
@@ -407,11 +393,7 @@ static esp_err_t scan_get(httpd_req_t *req)
         const uint8_t pct = presence_battery_percent(presence_battery_kconfig(), e.battery_mv);
         out.fmt(",\"battery_mv\":%u,\"battery_pct\":%d,\"battery_age_ms\":%lld", e.battery_mv,
                 pct == PRESENCE_BATTERY_UNKNOWN ? -1 : pct, e.battery_mv ? now - e.battery_ms : -1LL);
-        // seen_s: this address heard without a gap longer than the expiry time for so long (a resolvable private
-        // address changes about every 15 minutes)
-        out.fmt(",\"age_ms\":%lld,\"seen_s\":%lld,\"count\":%u,\"same_id_other_mac\":%s,\"other_mac\":\"%s\"}",
-                now - e.last_seen_ms, (e.last_seen_ms - e.first_seen_ms) / 1000, static_cast<unsigned>(e.count),
-                other[0] != '\0' ? "true" : "false", other);
+        out.fmt(",\"age_ms\":%lld,\"count\":%u}", now - e.last_seen_ms, static_cast<unsigned>(e.count));
     }
     out.raw("]}");
     return out.finish();
@@ -451,8 +433,20 @@ static esp_err_t scan_post(httpd_req_t *req)
 // ---------------------------------------------------------------------------------------------------------------------
 // Configuration
 
+// MAC watch records of the NORMAL mode (mac_watch.h), read from flash; all none when there are none yet
+static void load_watch(mac_watch_t *records)
+{
+    static uint8_t blob[MAC_WATCH_BLOB_SIZE(PRESENCE_SLOT_COUNT)];
+    size_t len = sizeof(blob);
+    if (config_store_load_watch(blob, &len) != ESP_OK || !mac_watch_decode(blob, len, records, PRESENCE_SLOT_COUNT)) {
+        memset(records, 0, PRESENCE_SLOT_COUNT * sizeof(*records));
+    }
+}
+
 static void write_config(JsonOut &out, const presence_config_t &cfg)
 {
+    static mac_watch_t watch[PRESENCE_SLOT_COUNT]; // server task only: off its stack
+    load_watch(watch);
     out.fmt("{\"scan\":{\"interval_ms\":%u,\"window_ms\":%u},\"slots\":[", cfg.scan_interval_ms, cfg.scan_window_ms);
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
         const presence_slot_config_t &s = cfg.slots[i];
@@ -466,12 +460,19 @@ static void write_config(JsonOut &out, const presence_config_t &cfg)
                 beacon_addr_type_name(s.addr_type), s.timeout_s, s.rssi_filter ? "true" : "false");
         out.fmt("\"rssi_threshold\":%d,\"rssi_hysteresis\":%u,\"model\":", s.rssi_threshold, s.rssi_hysteresis);
         out.str(s.model);
-        char uuid[IBEACON_UUID_STR_SIZE] = "";
-        if (s.has_id) {
-            ibeacon_uuid_format(s.uuid, uuid);
+        // The MAC watch of the beacon assigned when the NORMAL mode last ran (its mac may differ from the slot's)
+        const mac_watch_t &w = watch[i];
+        char wmac[BLE_ADDR_STR_SIZE] = "";
+        char wnew[BLE_ADDR_STR_SIZE] = "";
+        if (w.state != MAC_WATCH_NONE) {
+            ble_addr_format(w.mac, wmac);
         }
-        out.fmt(",\"match\":\"%s\",\"uuid\":\"%s\",\"major\":%u,\"minor\":%u}",
-                s.match == PRESENCE_MATCH_IBEACON ? "ibeacon" : "mac", uuid, s.major, s.minor);
+        if (w.state == MAC_WATCH_CHANGED) {
+            ble_addr_format(w.new_mac, wnew);
+        }
+        out.fmt(",\"watch\":{\"mac\":\"%s\",\"state\":\"%s\",\"watched_s\":%u,\"total_s\":%u,\"new_mac\":\"%s\"}}",
+                wmac, mac_watch_state_name(w.state), static_cast<unsigned>(w.watched_ms / 1000),
+                static_cast<unsigned>(MAC_WATCH_TIME_MS / 1000), wnew);
     }
     out.raw("]");
 }
@@ -574,45 +575,6 @@ static void parse_label(int slot, const char *text, presence_slot_config_t *s, E
 }
 
 // Model without surrounding blanks; empty: unknown (the bridge shows the beacon's advertised name)
-// How the slot recognises its beacon, and its iBeacon identity (uuid "" = none; then major and minor are 0)
-static void parse_identity(int slot, const cJSON *o, presence_slot_config_t *s, Errors *errors)
-{
-    const char *match = json_string(o, "match");
-    if (match != nullptr && strcmp(match, "mac") == 0) {
-        s->match = PRESENCE_MATCH_ADDR;
-    } else if (match != nullptr && strcmp(match, "ibeacon") == 0) {
-        s->match = PRESENCE_MATCH_IBEACON;
-    } else {
-        errors->add(slot, PRESENCE_FIELD_MATCH, PRESENCE_ERR_MATCH);
-    }
-    const char *uuid = json_string(o, "uuid");
-    if (uuid == nullptr) {
-        errors->add(slot, PRESENCE_FIELD_UUID, PRESENCE_ERR_TYPE);
-    } else if (uuid[0] == '\0') {
-        s->has_id = false;
-        memset(s->uuid, 0, sizeof(s->uuid));
-    } else if (ibeacon_uuid_parse(uuid, s->uuid)) {
-        s->has_id = true;
-    } else {
-        errors->add(slot, PRESENCE_FIELD_UUID, PRESENCE_ERR_UUID_INVALID);
-    }
-    long v = 0;
-    if (json_int(o, "major", 0, 65535, &v)) {
-        s->major = static_cast<uint16_t>(v);
-    } else {
-        errors->add(slot, PRESENCE_FIELD_MAJOR, PRESENCE_ERR_MAJOR_MINOR_RANGE);
-    }
-    if (json_int(o, "minor", 0, 65535, &v)) {
-        s->minor = static_cast<uint16_t>(v);
-    } else {
-        errors->add(slot, PRESENCE_FIELD_MINOR, PRESENCE_ERR_MAJOR_MINOR_RANGE);
-    }
-    if (!s->has_id) {
-        s->major = 0;
-        s->minor = 0;
-    }
-}
-
 static void parse_model(int slot, const char *text, presence_slot_config_t *s, Errors *errors)
 {
     while (*text == ' ' || *text == '\t') {
@@ -705,7 +667,6 @@ static void parse_config(const cJSON *root, presence_config_t *cfg, Errors *erro
         } else {
             errors->add(i, PRESENCE_FIELD_MODEL, PRESENCE_ERR_TYPE);
         }
-        parse_identity(i, o, &s, errors);
     }
 }
 

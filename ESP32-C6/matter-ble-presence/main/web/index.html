@@ -195,23 +195,9 @@ function normalizeMac(s) {
 }
 function typesConflict(a, b) { return a === b || a === "any" || b === "any"; }
 function utf8Bytes(s) { return new TextEncoder().encode(s).length; }
-const kindText = {public: "Public", static: "Random tĩnh"};
-const kVerifiedS = 900; // a resolvable private address changes about every 15 minutes
-// Type of a beacon's address. A random address whose bits read "private" is not assumed to change (many beacons flag
-// a fixed address that way): it is shown as checked once heard without a break for 15 minutes.
-function kindLabel(b) {
-  if (kindText[b.kind]) return kindText[b.kind];
-  if (b.seen_s >= kVerifiedS) return "Địa chỉ cố định (đã kiểm " + Math.floor(b.seen_s / 60) + " phút)";
-  return "Random (chưa rõ có đổi không, đã thấy " + Math.floor(b.seen_s / 60) + " phút)";
-}
-function normalizeUuid(v) {
-  const s = v.trim().toUpperCase();
-  if (!/^[0-9A-F]{32}$/.test(s.replace(/-/g, "")) || !/^([0-9A-F]{32}|[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})$/.test(s)) return null;
-  const h = s.replace(/-/g, "");
-  return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20);
-}
-function sameId(a, b) { return a.uuid === b.uuid && a.major === b.major && a.minor === b.minor; }
-function idText(x) { return x.uuid.slice(0, 8) + "… / " + x.major + " / " + x.minor; }
+// The address bits say nothing reliable about a change of MAC (many beacons flag a fixed address as random with
+// "private" bits): no warning here. A slot's beacon is watched for 30 minutes in the NORMAL mode instead.
+const kindText = {public: "Public", static: "Random tĩnh", rpa: "Random", nrpa: "Random", reserved: "Random"};
 
 // Battery of a beacon of the list: from its Eddystone-TLM frames, sent from the same address as its iBeacon frames
 function fmtBattery(b) {
@@ -290,13 +276,11 @@ async function fetchStatus() {
 }
 
 // ---- Beacons -----------------------------------------------------------------------------------------------------
-// The slot that follows this beacon: by its address, or by its iBeacon identity
-function slotOfBeacon(b) {
+function slotOfMac(mac, type) {
   if (!cfg) return -1;
   for (let i = 0; i < SLOTS; i++) {
     const s = readSlot(i);
-    if (s.match === "mac" && s.mac && s.mac === b.mac && typesConflict(s.addr_type, b.addr_type)) return i;
-    if (s.match === "ibeacon" && s.uuid && sameId(s, b)) return i;
+    if (s.mac && s.mac === mac && typesConflict(s.addr_type, type)) return i;
   }
   return -1;
 }
@@ -321,37 +305,30 @@ function renderBeacons() {
   }
   for (const b of beacons) {
     const pct = Math.max(0, Math.min(100, (b.rssi + 100) * 100 / 60));
-    const assigned = slotOfBeacon(b);
+    const assigned = slotOfMac(b.mac, b.addr_type);
     const sel = el("select", {"aria-label": "Gán beacon vào slot"});
     sel.append(el("option", {value: "", text: assigned >= 0 ? "Đã gán: Presence " + (assigned + 1) : "Gán vào…"}));
-    for (let i = 0; i < SLOTS; i++) { const t = readSlot(i); sel.append(el("option", {value: String(i), text: "Presence " + (i + 1) + (t.mac || t.uuid ? "" : " (trống)")})); }
+    for (let i = 0; i < SLOTS; i++) sel.append(el("option", {value: String(i), text: "Presence " + (i + 1) + (readSlot(i).mac ? "" : " (trống)")}));
     sel.addEventListener("change", () => { if (sel.value !== "") assignBeacon(Number(sel.value), b); sel.value = ""; sel.blur(); });
-    const warn = [];
-    if (b.same_id_other_mac) warn.push(el("div", {class: "warnt", text: "⚠ Cùng UUID/Major/Minor đang phát từ MAC khác (" + b.other_mac + "): beacon này đổi địa chỉ, hoặc hai beacon dùng chung UUID/Major/Minor."}));
     list.append(el("div", {class: "beacon"},
       el("div", {class: "top"},
-        el("div", null, el("span", {class: "mono", text: b.mac}), " ", el("span", {class: "chip", text: kindLabel(b)})),
+        el("div", null, el("span", {class: "mono", text: b.mac}), " ", el("span", {class: "chip", text: kindText[b.kind] || b.kind})),
         el("div", {class: "small"}, el("span", {class: "rssi"}, el("i", {style: "width:" + pct + "%"})), " " + b.rssi + " dBm · " + fmtAge(b.age_ms))),
       el("div", {class: "small"}, "Tên: ", el("b", {text: b.name || "(không có)"}), " · Major ", el("b", {text: String(b.major)}), " · Minor ", el("b", {text: String(b.minor)}), " · Tx " + b.tx_power + " dBm · " + b.count + " gói"),
       el("div", {class: "small"}, "Pin: ", el("b", {text: fmtBattery(b)})),
       el("div", {class: "small mono", text: "UUID " + b.uuid}),
-      ...warn,
       el("div", {class: "row", style: "margin-top:6px"}, sel)));
   }
 }
 
 function assignBeacon(i, b) {
-  const other = slotOfBeacon(b);
+  const other = slotOfMac(b.mac, b.addr_type);
   if (other >= 0 && other !== i && !allowDup && $("en" + other).checked) {
     banner("err", "Beacon " + b.mac + " đã được gán cho Presence " + (other + 1) + ". Xóa ở slot đó trước, hoặc tắt slot đó.");
     return;
   }
-  // Both identities are filled; the slot keeps its way of recognising the beacon
   $("mac" + i).value = b.mac;
   $("type" + i).value = b.addr_type;
-  $("uuid" + i).value = b.uuid;
-  $("maj" + i).value = b.major;
-  $("min" + i).value = b.minor;
   $("en" + i).checked = true;
   if (!$("label" + i).value.trim() || /^Presence \d+$/.test($("label" + i).value.trim())) {
     if (b.name) $("label" + i).value = b.name.slice(0, 40);
@@ -385,17 +362,11 @@ function buildSlots() {
       el("option", {value: "public", text: "Public"}),
       el("option", {value: "random", text: "Random"}));
     const model = el("input", {id: "model" + i, maxlength: "32", autocomplete: "off", placeholder: "tên beacon quảng bá"});
-    const match = el("select", {id: "match" + i},
-      el("option", {value: "mac", text: "Theo địa chỉ MAC (khuyên dùng khi MAC cố định)"}),
-      el("option", {value: "ibeacon", text: "Theo iBeacon UUID + Major + Minor (beacon đổi MAC)"}));
-    const uuid = el("input", {id: "uuid" + i, class: "mono", placeholder: "E2C56DB5-DFFB-48D2-B060-D0F5A71096E0", autocomplete: "off", autocapitalize: "characters", spellcheck: "false"});
-    const maj = el("input", {id: "maj" + i, type: "number", inputmode: "numeric"});
-    const mnr = el("input", {id: "min" + i, type: "number", inputmode: "numeric"});
     const to = el("input", {id: "to" + i, type: "number", inputmode: "numeric"});
     const rf = el("input", {type: "checkbox", id: "rf" + i});
     const rt = el("input", {id: "rt" + i, type: "number", inputmode: "numeric"});
     const rh = el("input", {id: "rh" + i, type: "number", inputmode: "numeric"});
-    const clear = el("button", {type: "button", text: "Xóa beacon", onclick: () => { mac.value = ""; type.value = "any"; uuid.value = ""; maj.value = "0"; mnr.value = "0"; markDirty(); validateAll(false); renderSeen(); }});
+    const clear = el("button", {type: "button", text: "Xóa MAC", onclick: () => { mac.value = ""; type.value = "any"; markDirty(); validateAll(false); renderSeen(); }});
     const modelBox = el("div", {id: "modelBox" + i}, field("Model (hiện trong ứng dụng Nhà)", model, "emodel" + i,
       "Tên thiết bị trong gói tin của beacon, tự điền khi gán từ danh sách. Để trống: H2 dùng tên beacon quảng bá khi nghe thấy."));
     const card = el("div", {class: "slot", id: "slot" + i},
@@ -408,14 +379,8 @@ function buildSlots() {
         el("div", {class: "grid"},
           field("Tên (nhãn nội bộ)", label, "elabel" + i),
           field("Thời gian vắng mặt (giây)", to, "eto" + i, "Phải gấp nhiều lần chu kỳ phát của beacon: beacon 1 s → 45 s là dư; beacon 10 s cần 60 s trở lên và tỉ lệ quét cao hơn."),
-          field("Nhận diện beacon", match, "ematch" + i, "Theo MAC: chỉ đúng beacon có địa chỉ này. Theo iBeacon: mọi địa chỉ phát đúng UUID + Major + Minor (ai cũng đặt được các số này, nên chọn giá trị riêng)."),
-          el("div", {id: "macBox" + i, class: "grid", style: "grid-column:1/-1"},
-            field("Địa chỉ MAC", mac, "emac" + i),
-            field("Loại địa chỉ", type, "etype" + i)),
-          el("div", {id: "idBox" + i, class: "grid", style: "grid-column:1/-1"},
-            field("UUID", uuid, "euuid" + i),
-            field("Major", maj, "emaj" + i),
-            field("Minor", mnr, "emin" + i)),
+          field("Địa chỉ MAC", mac, "emac" + i),
+          field("Loại địa chỉ", type, "etype" + i),
           modelBox),
         el("div", {class: "row", style: "margin-top:6px"}, clear),
         el("div", {class: "warnt", id: "wslot" + i}),
@@ -426,22 +391,13 @@ function buildSlots() {
             field("Độ trễ (dB)", rh, "erh" + i)),
           el("div", {class: "small", text: "Khi đang vắng: cần RSSI ≥ ngưỡng để báo hiện diện. Khi đang hiện diện: gói ≥ (ngưỡng − độ trễ) vẫn giữ trạng thái. RSSI dao động ±10 dB theo người, hướng, tường; không phải khoảng cách chính xác."}))));
     root.append(card);
-    match.addEventListener("change", () => showIdentity(i));
-    for (const inp of [en, label, mac, type, model, to, rf, rt, rh, match, uuid, maj, mnr]) {
-      inp.addEventListener("input", () => { markDirty(); validateAll(false); if (inp !== to && inp !== rf && inp !== rt && inp !== rh && inp !== model) renderSeen(); });
+    for (const inp of [en, label, mac, type, model, to, rf, rt, rh]) {
+      inp.addEventListener("input", () => { markDirty(); validateAll(false); if (inp === mac || inp === type || inp === label || inp === en) renderSeen(); });
       inp.addEventListener("change", () => { markDirty(); validateAll(false); });
     }
     mac.addEventListener("blur", () => { const n = normalizeMac(mac.value); if (n) mac.value = n; });
-    uuid.addEventListener("blur", () => { const n = normalizeUuid(uuid.value); if (n) uuid.value = n; });
     en.addEventListener("change", () => { if (en.checked) $("det" + i).open = true; });
   }
-}
-
-// The fields of the slot's way of recognising its beacon
-function showIdentity(i) {
-  const byId = $("match" + i).value === "ibeacon";
-  $("macBox" + i).style.display = byId ? "none" : "";
-  $("idBox" + i).style.display = byId ? "" : "none";
 }
 
 function fillForm(c) {
@@ -456,13 +412,8 @@ function fillForm(c) {
     $("rt" + i).value = s.rssi_threshold;
     $("rh" + i).value = s.rssi_hysteresis;
     $("model" + i).value = s.model || "";
-    $("match" + i).value = s.match === "ibeacon" ? "ibeacon" : "mac";
-    $("uuid" + i).value = s.uuid || "";
-    $("maj" + i).value = s.major || 0;
-    $("min" + i).value = s.minor || 0;
-    showIdentity(i);
     $("modelBox" + i).style.display = isBridge ? "" : "none";
-    $("det" + i).open = s.enabled || s.mac !== "" || !!s.uuid;
+    $("det" + i).open = s.enabled || s.mac !== "";
   }
   $("scanItvl").value = c.scan.interval_ms;
   $("scanWin").value = c.scan.window_ms;
@@ -484,15 +435,24 @@ function readSlot(i) {
     rssi_threshold: Number($("rt" + i).value),
     rssi_hysteresis: Number($("rh" + i).value),
     model: $("model" + i).value.trim(),
-    match: $("match" + i).value,
-    uuid: normalizeUuid($("uuid" + i).value),
-    rawUuid: $("uuid" + i).value.trim(),
-    major: Number($("maj" + i).value),
-    minor: Number($("min" + i).value),
   };
 }
-// Enabled with the identity its way of recognising needs
-function slotActive(s) { return s.enabled && (s.match === "ibeacon" ? !!s.uuid : !!s.mac); }
+
+// The MAC watch of the slot's beacon (NORMAL mode, 30 minutes of hearing it, mac_watch.h): null when nothing is to
+// be shown, in particular once the MAC was found fixed (never shown again)
+function watchText(i, s) {
+  if (!s.mac || !s.enabled || !cfg) return null;
+  const wt = cfg.slots[i] ? cfg.slots[i].watch : null;
+  if (!wt || wt.state === "none" || wt.mac !== s.mac)
+    return {cls: "small", text: "Sau khi lưu, ở chế độ thường thiết bị theo dõi 30 phút xem beacon có đổi địa chỉ MAC không (có thì cảnh báo ở đây)."};
+  if (wt.state === "changed")
+    return {cls: "warnt", text: "⚠ Beacon đổi địa chỉ MAC: " + s.mac + " im lặng trong khi cùng UUID/Major/Minor của nó phát từ " + wt.new_mac +
+      ". Slot nhận diện theo MAC sẽ mất dấu beacon này: tắt chế độ đổi địa chỉ (riêng tư) trong ứng dụng cấu hình của beacon rồi gán lại, hoặc dùng beacon khác."};
+  if (wt.state === "running")
+    return {cls: "small", text: "Đang theo dõi địa chỉ MAC: " + Math.floor(wt.watched_s / 60) + "/" + Math.round(wt.total_s / 60) +
+      " phút (tính khi nghe thấy beacon ở chế độ thường); cảnh báo nếu beacon đổi MAC."};
+  return null;
+}
 
 function renderSeen() {
   for (let i = 0; i < SLOTS; i++) {
@@ -500,18 +460,15 @@ function renderSeen() {
     const box = $("seen" + i);
     const w = $("wslot" + i);
     $("slot" + i).classList.toggle("dis", !s.enabled);
-    const byId = s.match === "ibeacon";
-    const ident = byId ? (s.uuid ? "iBeacon " + idText(s) : "") : (s.mac || "");
-    $("sum" + i).textContent = ident ? "· " + (s.label || "") + " · " + ident : (s.enabled ? (byId ? "· chưa có UUID" : "· chưa có MAC") : "· trống");
+    $("sum" + i).textContent = s.mac ? "· " + (s.label || "") + " · " + s.mac : (s.enabled ? "· chưa có MAC" : "· trống");
     w.textContent = "";
-    if (!ident) { box.textContent = s.enabled ? (byId ? "Chưa có UUID: slot luôn báo không hiện diện." : "Chưa có MAC: slot luôn báo không hiện diện.") : "Slot tắt."; continue; }
-    // By identity: every address sending it (the most recent first)
-    const heard = beacons.filter(x => byId ? sameId(s, x) : x.mac === s.mac && typesConflict(s.addr_type, x.addr_type)).sort((x, y) => x.age_ms - y.age_ms);
-    const b = heard[0];
-    box.textContent = b ? "Đang nghe thấy: " + (byId ? b.mac + ", " : "") + b.rssi + " dBm, " + fmtAge(b.age_ms) + (b.name ? " · " + b.name : "") +
+    w.className = "warnt";
+    if (!s.mac) { box.textContent = s.enabled ? "Chưa có MAC: slot luôn báo không hiện diện." : "Slot tắt."; continue; }
+    const b = beacons.find(x => x.mac === s.mac && typesConflict(s.addr_type, x.addr_type));
+    box.textContent = b ? "Đang nghe thấy: " + b.rssi + " dBm, " + fmtAge(b.age_ms) + (b.name ? " · " + b.name : "") +
       (b.battery_mv ? " · pin " + fmtBattery(b) : "") : "Chưa nghe thấy beacon này trong danh sách quét.";
-    if (byId && heard.length > 1) w.textContent = "⚠ " + heard.length + " địa chỉ đang phát cùng UUID/Major/Minor (" + heard.map(x => x.mac).join(", ") + "): nếu là các beacon khác nhau, slot nhận cả hai. Nếu là một beacon đổi địa chỉ thì bình thường.";
-    else if (!byId && b && b.same_id_other_mac) w.textContent = "⚠ Cùng UUID/Major/Minor đang phát từ MAC khác (" + b.other_mac + "). Nếu beacon này đổi địa chỉ, chọn \"Nhận diện beacon: theo iBeacon\".";
+    const wt = watchText(i, s);
+    if (wt) { w.className = wt.cls; w.textContent = wt.text; }
     if (!s.enabled) box.textContent += " (slot tắt)";
   }
 }
@@ -552,22 +509,12 @@ function validateAll(showAll) {
     e = (!Number.isInteger(s.rssi_hysteresis) || s.rssi_hysteresis < 0 || s.rssi_hysteresis > limits.hysteresis_max) ? "Từ 0 đến " + limits.hysteresis_max + " dB" : "";
     setErr("erh" + i, "rh" + i, e); ok = ok && !e;
     setErr("etype" + i, null, "");
-    e = (s.rawUuid && !s.uuid) ? "UUID: 32 chữ số hex, dạng E2C56DB5-DFFB-48D2-B060-D0F5A71096E0" : "";
-    setErr("euuid" + i, "uuid" + i, e); ok = ok && !e;
-    e = (!Number.isInteger(s.major) || s.major < 0 || s.major > 65535) ? "Từ 0 đến 65535" : "";
-    setErr("emaj" + i, "maj" + i, e); ok = ok && !e;
-    e = (!Number.isInteger(s.minor) || s.minor < 0 || s.minor > 65535) ? "Từ 0 đến 65535" : "";
-    setErr("emin" + i, "min" + i, e); ok = ok && !e;
   }
   if (!allowDup) {
     for (let i = 0; i < SLOTS; i++) for (let j = 0; j < i; j++) {
       const a = slots[j], b = slots[i];
-      if (!slotActive(a) || !slotActive(b) || a.match !== b.match) continue;
-      if (a.match === "mac" && a.mac === b.mac && typesConflict(a.addr_type, b.addr_type)) {
+      if (a.enabled && b.enabled && a.mac && b.mac && a.mac === b.mac && typesConflict(a.addr_type, b.addr_type)) {
         setErr("emac" + i, "mac" + i, "Beacon này đã được gán cho Presence " + (j + 1) + " (đang bật)");
-        ok = false;
-      } else if (a.match === "ibeacon" && sameId(a, b)) {
-        setErr("euuid" + i, "uuid" + i, "UUID + Major + Minor này đã được gán cho Presence " + (j + 1) + " (đang bật)");
         ok = false;
       }
     }
@@ -592,12 +539,12 @@ function collect() {
     scan: {interval_ms: v.itvl, window_ms: v.win},
     slots: v.slots.map(s => ({enabled: s.enabled, label: s.label, mac: s.mac || "", addr_type: s.addr_type,
       timeout_s: s.timeout_s, rssi_filter: s.rssi_filter, rssi_threshold: s.rssi_threshold, rssi_hysteresis: s.rssi_hysteresis,
-      model: s.model, match: s.match, uuid: s.uuid || "", major: s.uuid ? s.major : 0, minor: s.uuid ? s.minor : 0}))
+      model: s.model}))
   }};
 }
 
-const fieldIds = {label: "label", mac: "mac", addr_type: "type", timeout_s: "to", rssi_threshold: "rt", rssi_hysteresis: "rh", model: "model", match: "match", uuid: "uuid", major: "maj", minor: "min"};
-const errIds = {label: "elabel", mac: "emac", addr_type: "etype", timeout_s: "eto", rssi_threshold: "ert", rssi_hysteresis: "erh", model: "emodel", match: "ematch", uuid: "euuid", major: "emaj", minor: "emin"};
+const fieldIds = {label: "label", mac: "mac", addr_type: "type", timeout_s: "to", rssi_threshold: "rt", rssi_hysteresis: "rh", model: "model"};
+const errIds = {label: "elabel", mac: "emac", addr_type: "etype", timeout_s: "eto", rssi_threshold: "ert", rssi_hysteresis: "erh", model: "emodel"};
 
 async function save() {
   const c = collect();
@@ -636,7 +583,7 @@ async function loadConfig() {
   $("slotsTitle").textContent = "Presence 1–" + SLOTS;
   $("coexNote").textContent = "Bộ thu nghe trong \"cửa sổ\" ms mỗi \"chu kỳ\" ms. " + (net ? net.coex + " " : "") +
     "Mặc định " + defaults.window_ms + "/" + defaults.interval_ms + " ms (" + Math.round(defaults.window_ms * 100 / defaults.interval_ms) + "%).";
-  if (isBridge) $("slotsNote").textContent = "Bản hai chip: mỗi Presence đã bật và có MAC là một thiết bị con của Matter bridge \"iBeacon Bridge\" (ESP32-H2). Trên ứng dụng Nhà: tên và số sê-ri là địa chỉ MAC của beacon (slot nhận diện theo iBeacon: UUID/Major/Minor, ví dụ E2C5/5/6), nhà sản xuất Haxeko, model là tên thiết bị trong gói tin của beacon, pin theo gói Eddystone-TLM. Thêm: gán MAC, bật slot, bấm Lưu – H2 thêm thiết bị ngay. Tắt slot hoặc xóa MAC rồi Lưu – thiết bị bị gỡ khỏi Nhà. Gán beacon khác vào slot – thiết bị cũ bị gỡ, thiết bị mới được thêm.";
+  if (isBridge) $("slotsNote").textContent = "Bản hai chip: mỗi Presence đã bật và có MAC là một thiết bị con của Matter bridge \"iBeacon Bridge\" (ESP32-H2). Trên ứng dụng Nhà: tên và số sê-ri là địa chỉ MAC của beacon, nhà sản xuất Haxeko, model là tên thiết bị trong gói tin của beacon, pin theo gói Eddystone-TLM. Thêm: gán MAC, bật slot, bấm Lưu – H2 thêm thiết bị ngay. Tắt slot hoặc xóa MAC rồi Lưu – thiết bị bị gỡ khỏi Nhà. Gán beacon khác vào slot – thiết bị cũ bị gỡ, thiết bị mới được thêm.";
   fillForm(cfg);
   renderHome();
 }
@@ -648,21 +595,19 @@ function renderHome() {
     if (!line) continue;
     if (!cfg || cfg.network !== "h2") { line.textContent = ""; continue; }
     const saved = cfg.slots[i];
-    const byId = saved.match === "ibeacon";
-    const active = saved.enabled && (byId ? !!saved.uuid : saved.mac !== "");
-    const who = byId ? (saved.uuid ? "iBeacon " + idText(saved) : "") : saved.mac;
+    const active = saved.enabled && saved.mac !== "";
     const ep = lastH2 && lastH2.bridged ? lastH2.bridged[i] : 0;
     const waiting = lastH2 && lastH2.waiting ? lastH2.waiting[i] : false;
     const failed = waiting && lastH2.errors ? lastH2.errors[i] : false;
     let text;
     if (ep > 0 && !active) text = "Đang gỡ thiết bị con khỏi Nhà (endpoint " + ep + ")…";
-    else if (ep > 0) text = "Trên Nhà: thiết bị con " + who + " (endpoint " + ep + ")";
-    else if (!active) text = "Chưa có trên Nhà: gán beacon, bật slot rồi Lưu để thêm";
+    else if (ep > 0) text = "Trên Nhà: thiết bị con " + saved.mac + " (endpoint " + ep + ")";
+    else if (!active) text = "Chưa có trên Nhà: gán MAC, bật slot rồi Lưu để thêm";
     else if (!lastH2 || !lastH2.seen) text = "Chờ ESP32-H2 (chưa nhận được tín hiệu qua UART)";
-    else if (failed) text = "H2 không thêm được " + who + " (xem log USB của H2), tự thử lại sau 30 giây, lần sau giãn dần tới 1 giờ";
-    else if (waiting && !lastH2.commissioned) text = "Chờ ghép Matter xong: H2 giữ bộ nhớ cho việc ghép, thiết bị " + who + " được thêm ngay sau đó";
-    else if (waiting) text = "Chờ: H2 không đủ bộ nhớ để thêm " + who + " lúc này (thêm khi đủ)";
-    else text = "Đang chờ ESP32-H2 thêm thiết bị con " + who + "…";
+    else if (failed) text = "H2 không thêm được " + saved.mac + " (xem log USB của H2), tự thử lại sau 30 giây, lần sau giãn dần tới 1 giờ";
+    else if (waiting && !lastH2.commissioned) text = "Chờ ghép Matter xong: H2 giữ bộ nhớ cho việc ghép, thiết bị " + saved.mac + " được thêm ngay sau đó";
+    else if (waiting) text = "Chờ: H2 không đủ bộ nhớ để thêm " + saved.mac + " lúc này (thêm khi đủ)";
+    else text = "Đang chờ ESP32-H2 thêm thiết bị con " + saved.mac + "…";
     line.textContent = text;
   }
 }

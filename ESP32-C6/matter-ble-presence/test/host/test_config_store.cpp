@@ -183,6 +183,25 @@ static void ap_password()
     never_erases_or_touches_matter();
 }
 
+// MAC watch records: their own blob, kept across a reboot and a configuration save
+static void mac_watch_records()
+{
+    fake_nvs_reset();
+    config_store_init();
+    uint8_t buf[64];
+    size_t len = sizeof(buf);
+    CHECK(config_store_load_watch(buf, &len) != ESP_OK); // nothing saved yet
+    const uint8_t blob[5] = { 'M', 'W', 'A', 'T', 1 };
+    CHECK(config_store_save_watch(blob, sizeof(blob)) == ESP_OK);
+    const presence_config_t cfg = sample_config(0x56);
+    CHECK(config_store_save(&cfg) == ESP_OK);
+    CHECK(config_store_init() == ESP_OK);
+    len = sizeof(buf);
+    CHECK(config_store_load_watch(buf, &len) == ESP_OK && len == sizeof(blob) && memcmp(buf, blob, len) == 0);
+    CHECK(current_equals(cfg));
+    never_erases_or_touches_matter();
+}
+
 int main()
 {
     RUN(first_boot_defaults);
@@ -193,5 +212,6 @@ int main()
     RUN(unusable_partition_is_not_erased);
     RUN(format_failure_reported);
     RUN(ap_password);
+    RUN(mac_watch_records);
     return test_summary(PRESENCE_SLOT_COUNT == 5 ? "config_store" : "config_store 20");
 }

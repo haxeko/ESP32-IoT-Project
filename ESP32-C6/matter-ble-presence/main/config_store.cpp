@@ -28,6 +28,7 @@ static const char kPartition[] = CONFIG_PRESENCE_CFG_PARTITION;
 static const char kNamespace[] = "presence";
 static const char kKeyConfig[] = "cfg";
 static const char kKeyApPassword[] = "ap_pw";
+static const char kKeyWatch[] = "mac_watch";
 static constexpr size_t kGeneratedPasswordLen = 12;
 
 static SemaphoreHandle_t s_lock;
@@ -240,6 +241,39 @@ esp_err_t config_store_save(const presence_config_t *cfg)
     set_state(CONFIG_STORE_OK, "");
     ESP_LOGI(TAG, "Beacon configuration saved and verified (%u bytes)", static_cast<unsigned>(len));
     return ESP_OK;
+}
+
+esp_err_t config_store_load_watch(uint8_t *buf, size_t *len)
+{
+    if (config_store_status() == CONFIG_STORE_UNAVAILABLE) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open_from_partition(kPartition, kNamespace, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        return err; // ESP_ERR_NVS_NOT_FOUND: namespace not created yet
+    }
+    err = nvs_get_blob(handle, kKeyWatch, buf, len);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_store_save_watch(const uint8_t *buf, size_t len)
+{
+    if (config_store_status() == CONFIG_STORE_UNAVAILABLE) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open_from_partition(kPartition, kNamespace, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_blob(handle, kKeyWatch, buf, len);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return err;
 }
 
 static bool password_valid(const char *pw)

@@ -7,8 +7,7 @@ và đọc log: xem [README bản hai chip](../../ESP32-C3/ble-presence-scanner/
 
 * Thư mục mỏng: mã nguồn và bảng phân vùng của `ESP32-C6/matter-ble-presence`, vai trò `PRESENCE_ROLE_MATTER_UART`
   (`matter_bridge.cpp`, `matter_device.cpp`, `presence_link.cpp`, `status_ui.cpp`, `app_main_h2.cpp`).
-* Thiết bị con trên ứng dụng Nhà: **tên và số sê-ri = địa chỉ MAC** của beacon (slot nhận diện theo iBeacon: 4 chữ số
-  đầu UUID/Major/Minor, ví dụ `E2C5/5/6`), **nhà sản xuất `Haxeko`**, **model = tên
+* Thiết bị con trên ứng dụng Nhà: **tên và số sê-ri = địa chỉ MAC** của beacon, **nhà sản xuất `Haxeko`**, **model = tên
   thiết bị trong gói tin của beacon** (gõ hoặc tự điền trên trang của C3; để trống thì dùng tên beacon quảng bá),
   **pin** từ gói Eddystone-TLM của beacon (BatPercentRemaining, BatChargeLevel, BatReplacementNeeded).
 * Endpoint 0 Root Node, endpoint 1 Aggregator, từ endpoint 2 trở đi là thiết bị con
@@ -30,7 +29,7 @@ và đọc log: xem [README bản hai chip](../../ESP32-C3/ble-presence-scanner/
   * nút "Mở chế độ ghép" và "Xóa ghép Matter của ESP32-H2" trên trang của C3 làm đúng hai việc này.
 * Thread MTD, Minimal End Device (cắm điện), BLE chỉ dùng lúc ghép rồi giải phóng (`USE_BLE_ONLY_FOR_COMMISSIONING=y`).
   Controller cuối cùng xóa thiết bị → H2 tự khởi động lại sau 2 s để ghép lại được bằng BLE. Không xóa gì.
-* UART1: TX GPIO24, RX GPIO23 (chân TX/RX in trên board, RX có kéo lên nội), 115200 baud, giao thức **phiên bản 6**: nạp
+* UART1: TX GPIO24, RX GPIO23 (chân TX/RX in trên board, RX có kéo lên nội), 115200 baud, giao thức **phiên bản 5**: nạp
   C3 và H2 cùng đợt. Log qua USB-Serial-JTAG.
 * Không nhận được gì từ C3 trong 120 s → mọi cảm biến về "không hiện diện" và thiết bị con báo không truy cập được.
   Sau khi C3 khởi động lại, slot chưa biết (C3 chưa nghe thấy beacon, chưa quét đủ thời gian vắng mặt) giữ nguyên trạng

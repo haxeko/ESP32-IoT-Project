@@ -55,6 +55,8 @@ typedef struct {
     uint8_t battery_pct;   // published percent, PRESENCE_BATTERY_UNKNOWN if none
     uint8_t battery_level; // presence_battery_level_t
     uint32_t battery_age_s; // since the last TLM frame
+    uint8_t watch_state;    // mac_watch_state_t of the slot's beacon
+    uint32_t watch_s;       // heard so far by the MAC watch
 } presence_slot_stats_t;
 
 typedef struct {

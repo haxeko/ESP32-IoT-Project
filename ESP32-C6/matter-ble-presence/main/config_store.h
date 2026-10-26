@@ -51,6 +51,12 @@ esp_err_t config_store_save(const presence_config_t *cfg);
 // the SoftAP password of this boot. For an unusable or unreadable partition, on explicit request from the page.
 esp_err_t config_store_format(void);
 
+// MAC watch records of the slots (mac_watch.h), a blob of their own beside the configuration (the NORMAL mode updates
+// them, the configuration page shows them). load: *len in = buffer size, out = blob size; ESP_ERR_NVS_NOT_FOUND when
+// none was saved yet. Never erased on error.
+esp_err_t config_store_load_watch(uint8_t *buf, size_t *len);
+esp_err_t config_store_save_watch(const uint8_t *buf, size_t len);
+
 // SoftAP password: CONFIG_PRESENCE_AP_PASSWORD when set, else a random per-device password created once and kept
 // in the app_cfg partition. Call before any radio starts (it may enable the RNG entropy source).
 void config_store_ap_password(char out[CONFIG_STORE_AP_PASSWORD_SIZE]);

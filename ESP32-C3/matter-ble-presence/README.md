@@ -198,7 +198,7 @@ Riêng bản C3:
 
 ## Kiểm thử
 
-**Host test** (14 bộ, ASan/UBSan) và **test trang web** (Playwright, 89 kiểm tra, gồm phần chữ "Wi-Fi"/mức Y của bản
+**Host test** (15 bộ, ASan/UBSan) và **test trang web** (Playwright, 85 kiểm tra, gồm phần chữ "Wi-Fi"/mức Y của bản
 C3): chung với bản C6, xem mục *Kiểm thử* trong README bản C6. Kết quả trong phiên này: tất cả đạt.
 
 ### Kết quả build thực tế

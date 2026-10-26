@@ -22,15 +22,13 @@ static constexpr size_t kCrcSize = 4;
 static constexpr size_t kScanSize = 2 + 2 + 1 + 1;
 static constexpr size_t kSlotSizeV1 = 1 + 1 + BLE_ADDR_LEN + 2 + 1 + 1 + 1 + PRESENCE_LABEL_MAX_BYTES;
 static constexpr size_t kSlotSizeV2 = kSlotSizeV1 + 1 + PRESENCE_MODEL_MAX_BYTES;
-static constexpr size_t kSlotSizeV3 = kSlotSizeV2 + PRESENCE_UUID_LEN + 2 + 2;
-static constexpr size_t kPayloadSize = kScanSize + PRESENCE_SLOT_COUNT * kSlotSizeV3;
+static constexpr size_t kSlotSizeV3 = kSlotSizeV2 + 16 + 2 + 2; // read only: iBeacon UUID, major, minor ignored
+static constexpr size_t kPayloadSize = kScanSize + PRESENCE_SLOT_COUNT * kSlotSizeV2;
 static_assert(kHeaderSize + kPayloadSize + kCrcSize <= PRESENCE_CONFIG_BLOB_MAX_SIZE, "blob buffer too small");
 
 static constexpr uint8_t kFlagEnabled = 1u << 0;
 static constexpr uint8_t kFlagHasAddr = 1u << 1;
 static constexpr uint8_t kFlagRssiFilter = 1u << 2;
-static constexpr uint8_t kFlagHasId = 1u << 3;
-static constexpr uint8_t kFlagMatchIbeacon = 1u << 4;
 
 void presence_config_default_label(int slot, char *out, size_t size)
 {
@@ -52,7 +50,6 @@ void presence_config_set_defaults(presence_config_t *cfg)
         s.rssi_threshold = CONFIG_PRESENCE_DEFAULT_RSSI_THRESHOLD;
         s.rssi_hysteresis = CONFIG_PRESENCE_DEFAULT_RSSI_HYSTERESIS;
         presence_config_default_label(i, s.label, sizeof(s.label));
-        s.match = PRESENCE_MATCH_ADDR;
     }
 }
 
@@ -61,9 +58,7 @@ static bool slot_equal(const presence_slot_config_t &a, const presence_slot_conf
     return a.enabled == b.enabled && a.has_addr == b.has_addr && memcmp(a.addr, b.addr, BLE_ADDR_LEN) == 0 &&
            a.addr_type == b.addr_type && a.timeout_s == b.timeout_s && a.rssi_filter == b.rssi_filter &&
            a.rssi_threshold == b.rssi_threshold && a.rssi_hysteresis == b.rssi_hysteresis &&
-           strcmp(a.label, b.label) == 0 && strcmp(a.model, b.model) == 0 && a.match == b.match &&
-           a.has_id == b.has_id && memcmp(a.uuid, b.uuid, PRESENCE_UUID_LEN) == 0 && a.major == b.major &&
-           a.minor == b.minor;
+           strcmp(a.label, b.label) == 0 && strcmp(a.model, b.model) == 0;
 }
 
 bool presence_config_equal(const presence_config_t *a, const presence_config_t *b)
@@ -81,16 +76,13 @@ bool presence_config_equal(const presence_config_t *a, const presence_config_t *
 
 bool presence_slot_is_active(const presence_slot_config_t *slot)
 {
-    return slot->enabled && (slot->match == PRESENCE_MATCH_IBEACON ? slot->has_id : slot->has_addr);
+    return slot->enabled && slot->has_addr;
 }
 
 bool presence_slots_conflict(const presence_slot_config_t *a, const presence_slot_config_t *b)
 {
-    if (!presence_slot_is_active(a) || !presence_slot_is_active(b) || a->match != b->match) {
+    if (!presence_slot_is_active(a) || !presence_slot_is_active(b)) {
         return false;
-    }
-    if (a->match == PRESENCE_MATCH_IBEACON) {
-        return memcmp(a->uuid, b->uuid, PRESENCE_UUID_LEN) == 0 && a->major == b->major && a->minor == b->minor;
     }
     if (memcmp(a->addr, b->addr, BLE_ADDR_LEN) != 0) {
         return false;
@@ -164,9 +156,6 @@ static void check_slot(int i, const presence_slot_config_t &s, ErrorSink &sink)
     if (s.rssi_hysteresis > PRESENCE_RSSI_HYSTERESIS_MAX) {
         sink.add(i, PRESENCE_FIELD_RSSI_HYSTERESIS, PRESENCE_ERR_HYSTERESIS_RANGE);
     }
-    if (s.match != PRESENCE_MATCH_ADDR && s.match != PRESENCE_MATCH_IBEACON) {
-        sink.add(i, PRESENCE_FIELD_MATCH, PRESENCE_ERR_MATCH);
-    }
 }
 
 size_t presence_config_validate(const presence_config_t *cfg, bool allow_duplicate_beacons,
@@ -180,11 +169,7 @@ size_t presence_config_validate(const presence_config_t *cfg, bool allow_duplica
         if (!allow_duplicate_beacons) {
             for (int j = 0; j < i; j++) {
                 if (presence_slots_conflict(&cfg->slots[j], &s)) {
-                    if (s.match == PRESENCE_MATCH_IBEACON) {
-                        sink.add(i, PRESENCE_FIELD_UUID, PRESENCE_ERR_ID_DUPLICATE, j);
-                    } else {
-                        sink.add(i, PRESENCE_FIELD_ADDR, PRESENCE_ERR_ADDR_DUPLICATE, j);
-                    }
+                    sink.add(i, PRESENCE_FIELD_ADDR, PRESENCE_ERR_ADDR_DUPLICATE, j);
                     break;
                 }
             }
@@ -224,14 +209,6 @@ const char *presence_error_text(uint8_t code)
         return "Model quá dài (tối đa 32 byte UTF-8)";
     case PRESENCE_ERR_MODEL_INVALID:
         return "Model chứa ký tự không hợp lệ";
-    case PRESENCE_ERR_MATCH:
-        return "Cách nhận diện phải là theo MAC hoặc theo iBeacon";
-    case PRESENCE_ERR_UUID_INVALID:
-        return "UUID không hợp lệ (32 chữ số hex, dạng E2C56DB5-DFFB-48D2-B060-D0F5A71096E0)";
-    case PRESENCE_ERR_MAJOR_MINOR_RANGE:
-        return "Major và Minor phải từ 0 đến 65535";
-    case PRESENCE_ERR_ID_DUPLICATE:
-        return "UUID + Major + Minor này đã được gán cho một slot khác đang bật";
     default:
         return "Lỗi không xác định";
     }
@@ -262,14 +239,6 @@ const char *presence_field_name(uint8_t field)
         return "window_ms";
     case PRESENCE_FIELD_MODEL:
         return "model";
-    case PRESENCE_FIELD_MATCH:
-        return "match";
-    case PRESENCE_FIELD_UUID:
-        return "uuid";
-    case PRESENCE_FIELD_MAJOR:
-        return "major";
-    case PRESENCE_FIELD_MINOR:
-        return "minor";
     default:
         return "";
     }
@@ -323,8 +292,7 @@ size_t presence_config_encode(const presence_config_t *cfg, uint8_t *buf, size_t
         const presence_slot_config_t &s = cfg->slots[i];
         const size_t label_len = strnlen(s.label, PRESENCE_LABEL_MAX_BYTES);
         const size_t model_len = strnlen(s.model, PRESENCE_MODEL_MAX_BYTES);
-        p[0] = (s.enabled ? kFlagEnabled : 0) | (s.has_addr ? kFlagHasAddr : 0) | (s.rssi_filter ? kFlagRssiFilter : 0) |
-               (s.has_id ? kFlagHasId : 0) | (s.match == PRESENCE_MATCH_IBEACON ? kFlagMatchIbeacon : 0);
+        p[0] = (s.enabled ? kFlagEnabled : 0) | (s.has_addr ? kFlagHasAddr : 0) | (s.rssi_filter ? kFlagRssiFilter : 0);
         p[1] = s.addr_type;
         memcpy(&p[2], s.addr, BLE_ADDR_LEN);
         put_u16(&p[8], s.timeout_s);
@@ -334,10 +302,7 @@ size_t presence_config_encode(const presence_config_t *cfg, uint8_t *buf, size_t
         memcpy(&p[13], s.label, label_len);
         p[kSlotSizeV1] = static_cast<uint8_t>(model_len);
         memcpy(&p[kSlotSizeV1 + 1], s.model, model_len);
-        memcpy(&p[kSlotSizeV2], s.uuid, PRESENCE_UUID_LEN);
-        put_u16(&p[kSlotSizeV2 + PRESENCE_UUID_LEN], s.major);
-        put_u16(&p[kSlotSizeV2 + PRESENCE_UUID_LEN + 2], s.minor);
-        p += kSlotSizeV3;
+        p += kSlotSizeV2;
     }
     put_u32(&buf[total - kCrcSize], crc32_ieee(buf, total - kCrcSize));
     return total;
@@ -369,18 +334,6 @@ static bool parse_slot(const uint8_t *p, size_t slot_size, presence_slot_config_
     if (!get_text(&p[12], PRESENCE_LABEL_MAX_BYTES, s->label)) {
         return false;
     }
-    s->match = PRESENCE_MATCH_ADDR; // versions 1 and 2: by address only
-    s->has_id = false;
-    memset(s->uuid, 0, sizeof(s->uuid));
-    s->major = 0;
-    s->minor = 0;
-    if (slot_size >= kSlotSizeV3) {
-        s->has_id = (p[0] & kFlagHasId) != 0;
-        s->match = (p[0] & kFlagMatchIbeacon) != 0 ? PRESENCE_MATCH_IBEACON : PRESENCE_MATCH_ADDR;
-        memcpy(s->uuid, &p[kSlotSizeV2], PRESENCE_UUID_LEN);
-        s->major = get_u16(&p[kSlotSizeV2 + PRESENCE_UUID_LEN]);
-        s->minor = get_u16(&p[kSlotSizeV2 + PRESENCE_UUID_LEN + 2]);
-    }
     if (slot_size >= kSlotSizeV2) {
         return get_text(&p[kSlotSizeV1], PRESENCE_MODEL_MAX_BYTES, s->model);
     }
@@ -388,10 +341,10 @@ static bool parse_slot(const uint8_t *p, size_t slot_size, presence_slot_config_
     return true;
 }
 
-// Versions 1 (no model), 2 (no iBeacon identity) and 3. slot_size: kSlotSizeV1, V2 or V3. The blob may hold fewer
-// slots than this firmware (version 1: five): the others keep the defaults. More (the 20 slots of the two-chip scanner read by a
-// five-slot firmware): the extra ones are dropped if no beacon is assigned to them, else the blob is refused, so no
-// assigned beacon is lost without notice.
+// Versions 1 (no model), 2 and 3 (2 + iBeacon identity, ignored). slot_size: kSlotSizeV1, V2 or V3. The blob may
+// hold fewer slots than this firmware (version 1: five): the others keep the defaults. More (the 20 slots of the
+// two-chip scanner read by a five-slot firmware): the extra ones are dropped if no beacon is assigned to them, else
+// the blob is refused, so no assigned beacon is lost without notice.
 // Checked slot by slot first, then decoded into *out: no whole configuration (2 KB with 20 slots) on the stack.
 static presence_decode_result_t decode_slots(const uint8_t *payload, size_t payload_len, size_t slot_size,
                                              presence_config_t *out)
@@ -412,7 +365,7 @@ static presence_decode_result_t decode_slots(const uint8_t *payload, size_t payl
     presence_slot_config_t slot;
     for (size_t i = 0; i < count && sink.count == 0; i++) {
         if (!parse_slot(slots + i * slot_size, slot_size, &slot) ||
-            (i >= PRESENCE_SLOT_COUNT && (slot.has_addr || slot.has_id))) {
+            (i >= PRESENCE_SLOT_COUNT && slot.has_addr)) {
             return PRESENCE_DECODE_BAD_VALUE;
         }
         check_slot(static_cast<int>(i), slot, sink);

@@ -240,15 +240,8 @@ static void slot_decode_checks()
     b[0] = PLINK_SLOT_COUNT; // slot index out of range
     CHECK(!plink_decode_slot(b, len, &out));
     memcpy(b, good, len);
-    b[1] = 0x09; // unknown flag
+    b[1] = 0x05; // unknown flag
     CHECK(!plink_decode_slot(b, len, &out));
-    memcpy(b, good, len);
-    b[1] = 0x05; // active, iBeacon identity
-    CHECK(plink_decode_slot(b, len, &out) && out.ibeacon_id && !out.model_configured);
-    memcpy(b, good, len);
-    b[1] = 0x04; // iBeacon identity of an inactive slot
-    b[12] = 0;
-    CHECK(!plink_decode_slot(b, 13, &out));
     memcpy(b, good, len);
     b[1] = 0x03; // active, model configured
     CHECK(plink_decode_slot(b, len, &out) && out.model_configured);
@@ -471,33 +464,6 @@ static void encode_limits()
     CHECK(plink_encode(PLINK_TYPE_STATE, payload, 4, out, 8) == 0);
 }
 
-static void identity()
-{
-    const uint8_t uuid[16] = { 0xE2, 0xC5, 0x6D, 0xB5, 0xDF, 0xFB, 0x48, 0xD2, 0xB0, 0x60, 0xD0, 0xF5, 0xA7, 0x10, 0x96, 0xE0 };
-    plink_slot_t in = {};
-    in.slot = 4;
-    in.active = true;
-    in.ibeacon_id = true;
-    plink_ibeacon_key(uuid, 5, 6, in.mac);
-    in.battery_pct = PLINK_BATTERY_UNKNOWN;
-    char text[PLINK_MAC_STR_SIZE];
-    plink_identity_string(in.mac, true, text);
-    CHECK_STR(text, "E2C5/5/6");
-    plink_ibeacon_key(uuid, 65535, 65535, in.mac);
-    plink_identity_string(in.mac, true, text);
-    CHECK_STR(text, "E2C5/65535/65535");
-    plink_identity_string(in.mac, false, text);
-    CHECK_STR(text, "E2:C5:FF:FF:FF:FF");
-    uint8_t frame[PLINK_MAX_FRAME];
-    plink_parser_t p;
-    const int len = through_parser(frame, plink_encode_slot(&in, frame, sizeof(frame)), &p, PLINK_TYPE_SLOT);
-    plink_slot_t out;
-    CHECK(len > 0 && plink_decode_slot(p.payload, len, &out) && out.ibeacon_id && memcmp(out.mac, in.mac, 6) == 0);
-    in.active = false; // inactive: no identity flag sent
-    const int len2 = through_parser(frame, plink_encode_slot(&in, frame, sizeof(frame)), &p, PLINK_TYPE_SLOT);
-    CHECK(len2 > 0 && plink_decode_slot(p.payload, len2, &out) && !out.ibeacon_id && !out.active);
-}
-
 int main()
 {
     RUN(state_round_trip);
@@ -515,6 +481,5 @@ int main()
     RUN(truncation_then_resync);
     RUN(garbage_like_rom_messages);
     RUN(encode_limits);
-    RUN(identity);
     return test_summary("presence_link");
 }

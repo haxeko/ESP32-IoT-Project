@@ -24,6 +24,7 @@
 #if CONFIG_PRESENCE_ROLE_SCANNER
 #include "presence_link.h"
 #endif
+#include "mac_watch.h"
 #include "presence_manager.h"
 #include "scan_cache.h"
 #include "wifi_config.h"
@@ -63,14 +64,18 @@ static void log_presence()
             continue;
         }
         char battery[72] = "no TLM frame";
+        char watched[24];
+        snprintf(watched, sizeof(watched), " %u/%u min", static_cast<unsigned>(s.watch_s / 60),
+                 static_cast<unsigned>(MAC_WATCH_TIME_MS / 60000));
         if (s.tlm > 0) {
             snprintf(battery, sizeof(battery), "battery %u%% (%u mV, %u s ago, %u TLM)", s.battery_pct, s.battery_mv,
                      static_cast<unsigned>(s.battery_age_s), static_cast<unsigned>(s.tlm));
         }
-        ESP_LOGI(TAG, "Presence %d: %s%s, RSSI %d dBm, %u s ago, matched %u, accepted %u, RSSI-rejected %u, %s", i + 1,
-                 s.present ? "ON" : "OFF", s.reported ? "" : " (not reported yet)", s.last_rssi,
+        ESP_LOGI(TAG, "Presence %d: %s%s, RSSI %d dBm, %u s ago, matched %u, accepted %u, RSSI-rejected %u, %s, MAC %s%s",
+                 i + 1, s.present ? "ON" : "OFF", s.reported ? "" : " (not reported yet)", s.last_rssi,
                  static_cast<unsigned>(s.age_s), static_cast<unsigned>(s.matched), static_cast<unsigned>(s.accepted),
-                 static_cast<unsigned>(s.rssi_rejected), battery);
+                 static_cast<unsigned>(s.rssi_rejected), battery, mac_watch_state_name(s.watch_state),
+                 s.watch_state == MAC_WATCH_RUNNING ? watched : "");
     }
     ESP_LOGI(TAG, "Presence queue drops %u, Matter report retries %u", static_cast<unsigned>(st.queue_drops),
              static_cast<unsigned>(st.report_retries));

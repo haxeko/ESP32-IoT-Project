@@ -13,7 +13,7 @@ else()
         "app_main.cpp" "app_mode.cpp" "app_mode_logic.cpp" "button_handler.cpp" "click_detector.cpp"
         "ble_scanner.cpp" "ibeacon_parser.cpp" "presence_logic.cpp" "presence_manager.cpp" "presence_config.cpp"
         "presence_battery.cpp" "config_store.cpp" "scan_cache.cpp" "wifi_config.cpp" "web_server.cpp"
-        "http_guard.cpp" "diag.cpp")
+        "http_guard.cpp" "diag.cpp" "mac_watch.cpp")
     if(CONFIG_PRESENCE_ROLE_SCANNER)
         list(APPEND srcs "presence_link.cpp")
     else()

@@ -17,9 +17,12 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <nvs.h>
 
 #include "sdkconfig.h"
 
+#include "config_store.h"
+#include "mac_watch.h"
 #include "presence_logic.h"
 
 static const char *TAG = "presence";
@@ -27,8 +30,8 @@ static const char *TAG = "presence";
 static constexpr int kQueueLength = 32;
 static constexpr int8_t kRssiUnavailable = 127;
 static constexpr int64_t kTlmMinPeriodMs = 1000; // per slot
+static constexpr int64_t kWatchSaveMs = 5 * 60 * 1000; // MAC watch progress written to flash this often
 static_assert(PRESENCE_LOGIC_SLOTS == PRESENCE_SLOT_COUNT, "one presence rule per slot");
-static_assert(PRESENCE_UUID_LEN == IBEACON_UUID_LEN, "iBeacon identity of the configuration");
 
 static const presence_battery_config_t kBatteryConfig = {
     .empty_mv = CONFIG_PRESENCE_BATTERY_EMPTY_MV,
@@ -43,12 +46,8 @@ namespace {
 
 struct SlotMatch {
     bool active;
-    bool by_ibeacon; // PRESENCE_MATCH_IBEACON: the identity below, else the address
     uint8_t addr[BLE_ADDR_LEN];
     uint8_t addr_type;
-    uint8_t uuid[IBEACON_UUID_LEN];
-    uint16_t major;
-    uint16_t minor;
 };
 
 enum PacketKind : uint8_t {
@@ -67,7 +66,6 @@ struct Packet {
 
 // Built before the scanner starts, read-only afterwards (also from the host task)
 static SlotMatch s_match[PRESENCE_SLOT_COUNT];
-static bool s_any_by_ibeacon; // a slot follows an iBeacon identity: every address goes to the sink
 static char s_labels[PRESENCE_SLOT_COUNT][PRESENCE_LABEL_MAX_BYTES + 1];
 static presence_rule_t s_rules[PRESENCE_SLOT_COUNT];
 static presence_report_fn_t s_report;
@@ -82,9 +80,6 @@ static int64_t s_last_tlm_ms[PRESENCE_SLOT_COUNT];
 static bool s_tlm_posted[PRESENCE_SLOT_COUNT];
 static uint8_t s_tlm_order[PRESENCE_SLOT_COUNT]; // tlm_byte_order_t of the slot's beacon
 static char s_seen_name[PRESENCE_SLOT_COUNT][BLE_SCANNER_NAME_SIZE];
-// Slot followed by iBeacon identity: the address its identity came from last (its TLM and name frames come from it)
-static bool s_id_addr_known[PRESENCE_SLOT_COUNT];
-static uint8_t s_id_addr[PRESENCE_SLOT_COUNT][BLE_ADDR_LEN];
 
 // Advertised names, written by the host task, read by any task
 static portMUX_TYPE s_name_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -94,6 +89,14 @@ static std::atomic<uint32_t> s_matched[PRESENCE_SLOT_COUNT];
 static std::atomic<uint32_t> s_queue_drops{ 0 };
 static std::atomic<uint32_t> s_report_retries{ 0 };
 
+// MAC watch of the slots' beacons (mac_watch.h): updated by the host task from the frames, saved by the presence task
+static portMUX_TYPE s_watch_mux = portMUX_INITIALIZER_UNLOCKED;
+static mac_watch_t s_watch[PRESENCE_SLOT_COUNT]; // s_watch_mux
+static int64_t s_watch_since_ms;                 // this boot's watching started (esp_timer ms)
+static std::atomic<bool> s_watch_all{ false };     // a watch needs the iBeacon frames of every address
+static std::atomic<uint32_t> s_watch_changed{ 0 }; // slots whose watch changed state: logged and saved
+static std::atomic<bool> s_watch_progress{ false };
+
 // Snapshot for the diagnostics, written by the presence task
 static portMUX_TYPE s_stats_mux = portMUX_INITIALIZER_UNLOCKED;
 static presence_manager_stats_t s_stats;
@@ -101,36 +104,13 @@ static presence_manager_stats_t s_stats;
 static bool slot_matches(int slot, const uint8_t addr[BLE_ADDR_LEN], uint8_t addr_type)
 {
     const SlotMatch &m = s_match[slot];
-    return m.active && !m.by_ibeacon && memcmp(m.addr, addr, BLE_ADDR_LEN) == 0 &&
-           beacon_addr_type_matches(m.addr_type, addr_type);
-}
-
-// Host task: a report of the slot's beacon. By identity: its iBeacon frames, then the TLM and name frames of the
-// address that sent the last one.
-static bool report_matches(int slot, const ble_adv_report_t *report)
-{
-    const SlotMatch &m = s_match[slot];
-    if (!m.active) {
-        return false;
-    }
-    if (!m.by_ibeacon) {
-        return slot_matches(slot, report->addr, report->addr_type);
-    }
-    if (report->has_ibeacon) {
-        if (memcmp(report->ibeacon.uuid, m.uuid, IBEACON_UUID_LEN) != 0 || report->ibeacon.major != m.major ||
-            report->ibeacon.minor != m.minor) {
-            return false;
-        }
-        memcpy(s_id_addr[slot], report->addr, BLE_ADDR_LEN);
-        s_id_addr_known[slot] = true;
-        return true;
-    }
-    return s_id_addr_known[slot] && memcmp(s_id_addr[slot], report->addr, BLE_ADDR_LEN) == 0;
+    return m.active && memcmp(m.addr, addr, BLE_ADDR_LEN) == 0 && beacon_addr_type_matches(m.addr_type, addr_type);
 }
 
 bool presence_manager_filter(const uint8_t addr[BLE_ADDR_LEN], uint8_t addr_type)
 {
-    if (s_any_by_ibeacon) {
+    // A beacon being watched: its iBeacon identity may come from another address
+    if (s_watch_all.load(std::memory_order_relaxed)) {
         return true;
     }
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
@@ -180,11 +160,45 @@ static void post_tlm(int slot, const ble_adv_report_t *report)
     }
 }
 
+// Host task: an iBeacon frame for the MAC watch of every active slot
+static void watch_frame(const ble_adv_report_t *report)
+{
+    uint32_t changed = 0;
+    bool progress = false;
+    bool all = false;
+    portENTER_CRITICAL(&s_watch_mux);
+    for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
+        if (!s_match[i].active) {
+            continue;
+        }
+        mac_watch_t &w = s_watch[i];
+        const mac_watch_event_t ev =
+            slot_matches(i, report->addr, report->addr_type)
+                ? mac_watch_own(&w, report->addr_type, &report->ibeacon, report->time_ms)
+                : mac_watch_other(&w, report->addr, report->addr_type, &report->ibeacon, report->time_ms,
+                                  s_watch_since_ms);
+        changed |= ev == MAC_WATCH_EV_STATE ? 1u << i : 0;
+        progress = progress || ev == MAC_WATCH_EV_PROGRESS;
+        all = all || mac_watch_needs_all(&w);
+    }
+    portEXIT_CRITICAL(&s_watch_mux);
+    s_watch_all.store(all, std::memory_order_relaxed);
+    if (changed != 0) {
+        s_watch_changed.fetch_or(changed);
+    }
+    if (progress) {
+        s_watch_progress.store(true, std::memory_order_relaxed);
+    }
+}
+
 void presence_manager_sink(const ble_adv_report_t *report)
 {
+    if (report->has_ibeacon) {
+        watch_frame(report);
+    }
     // Only a well-formed iBeacon frame refreshes a slot; the advertised name is never used to identify a beacon.
     for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
-        if (!report_matches(i, report)) {
+        if (!slot_matches(i, report->addr, report->addr_type)) {
             continue;
         }
         if (report->name[0] != '\0') {
@@ -235,6 +249,10 @@ static void publish_stats(const presence_logic_t &logic, const bool reported[PRE
         s.matched = s_matched[i].load(std::memory_order_relaxed);
         s.accepted = logic.state[i].accepted;
         s.rssi_rejected = logic.state[i].rssi_rejected;
+        portENTER_CRITICAL(&s_watch_mux);
+        s.watch_state = s_watch[i].state;
+        s.watch_s = s_watch[i].watched_ms / 1000;
+        portEXIT_CRITICAL(&s_watch_mux);
         s.tlm = s_tlm_count[i];
         s.battery_mv = s_battery[i].median_mv;
         s.battery_pct = s_battery[i].published;
@@ -265,6 +283,97 @@ static void on_battery(int slot, uint16_t mv)
                  : presence_battery_level(&kBatteryConfig, pct) == PRESENCE_BATTERY_CRITICAL ? ": replace it"
                  : presence_battery_level(&kBatteryConfig, pct) == PRESENCE_BATTERY_WARNING ? ": low"
                                                                                             : "");
+    }
+}
+
+// Presence task (and start-up): the records to flash
+static void watch_save(const mac_watch_t *records)
+{
+    static uint8_t blob[MAC_WATCH_BLOB_SIZE(PRESENCE_SLOT_COUNT)];
+    const size_t len = mac_watch_encode(records, PRESENCE_SLOT_COUNT, blob, sizeof(blob));
+    const esp_err_t err = config_store_save_watch(blob, len);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "MAC watch not saved (%s): it goes on in memory", esp_err_to_name(err));
+    }
+}
+
+static void watch_log(int slot, const mac_watch_t &w)
+{
+    char mac[BLE_ADDR_STR_SIZE];
+    ble_addr_format(w.mac, mac);
+    switch (w.state) {
+    case MAC_WATCH_FIXED:
+        ESP_LOGI(TAG, "Presence %d \"%s\": %s keeps its MAC (heard %u min, or a public address): no warning", slot + 1,
+                 s_labels[slot], mac, static_cast<unsigned>(w.watched_ms / 60000));
+        break;
+    case MAC_WATCH_CHANGED: {
+        char other[BLE_ADDR_STR_SIZE];
+        ble_addr_format(w.new_mac, other);
+        ESP_LOGW(TAG, "Presence %d \"%s\": %s silent while its iBeacon identity comes from %s: the beacon changes its "
+                      "MAC, this slot will lose it",
+                 slot + 1, s_labels[slot], mac, other);
+        break;
+    }
+    case MAC_WATCH_RUNNING:
+        ESP_LOGI(TAG, "Presence %d \"%s\": MAC watch of %s: %u of %u min heard", slot + 1, s_labels[slot], mac,
+                 static_cast<unsigned>(w.watched_ms / 60000), static_cast<unsigned>(MAC_WATCH_TIME_MS / 60000));
+        break;
+    default:
+        break;
+    }
+}
+
+// Presence task: new states logged and saved at once, progress every kWatchSaveMs
+static void watch_service()
+{
+    static mac_watch_t copy[PRESENCE_SLOT_COUNT];
+    static int64_t last_save_ms;
+    const int64_t now = esp_timer_get_time() / 1000;
+    const uint32_t changed = s_watch_changed.exchange(0);
+    if (changed == 0 && !(s_watch_progress.load(std::memory_order_relaxed) && now - last_save_ms >= kWatchSaveMs)) {
+        return;
+    }
+    s_watch_progress.store(false, std::memory_order_relaxed);
+    portENTER_CRITICAL(&s_watch_mux);
+    memcpy(copy, s_watch, sizeof(copy));
+    portEXIT_CRITICAL(&s_watch_mux);
+    for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
+        if (changed & (1u << i)) {
+            watch_log(i, copy[i]);
+        }
+    }
+    watch_save(copy);
+    last_save_ms = now;
+}
+
+// Start-up: the records of the last boot; a slot with another MAC than its record starts a new watch
+static void watch_start(const presence_config_t *cfg)
+{
+    static uint8_t blob[MAC_WATCH_BLOB_SIZE(PRESENCE_SLOT_COUNT)];
+    size_t len = sizeof(blob);
+    const esp_err_t err = config_store_load_watch(blob, &len);
+    const bool read = err == ESP_OK && mac_watch_decode(blob, len, s_watch, PRESENCE_SLOT_COUNT);
+    if (!read) {
+        memset(s_watch, 0, sizeof(s_watch));
+        if (err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGW(TAG, "MAC watch records not read (%s): every beacon watched again",
+                     err == ESP_OK ? "bad CRC or format" : esp_err_to_name(err));
+        }
+    }
+    bool reset = false;
+    bool all = false;
+    for (int i = 0; i < PRESENCE_SLOT_COUNT; i++) {
+        if (!presence_slot_is_active(&cfg->slots[i])) {
+            continue; // its record is kept: the same MAC enabled again keeps its verdict
+        }
+        reset = mac_watch_assign(&s_watch[i], cfg->slots[i].addr) || reset;
+        all = all || mac_watch_needs_all(&s_watch[i]);
+        watch_log(i, s_watch[i]);
+    }
+    s_watch_since_ms = esp_timer_get_time() / 1000;
+    s_watch_all.store(all);
+    if (reset) {
+        watch_save(s_watch);
     }
 }
 
@@ -320,6 +429,7 @@ static void presence_task(void *)
             }
         }
         publish_stats(logic, reported, now);
+        watch_service();
     }
 }
 
@@ -334,11 +444,6 @@ esp_err_t presence_manager_start(const presence_config_t *cfg, presence_report_f
         s_match[i].active = presence_slot_is_active(&s);
         memcpy(s_match[i].addr, s.addr, BLE_ADDR_LEN);
         s_match[i].addr_type = s.addr_type;
-        s_match[i].by_ibeacon = s.match == PRESENCE_MATCH_IBEACON;
-        memcpy(s_match[i].uuid, s.uuid, IBEACON_UUID_LEN);
-        s_match[i].major = s.major;
-        s_match[i].minor = s.minor;
-        s_any_by_ibeacon = s_any_by_ibeacon || (s_match[i].active && s_match[i].by_ibeacon);
         s_rules[i].active = s_match[i].active;
         s_rules[i].timeout_ms = static_cast<uint32_t>(s.timeout_s) * 1000;
         s_rules[i].rssi_filter = s.rssi_filter;
@@ -352,12 +457,7 @@ esp_err_t presence_manager_start(const presence_config_t *cfg, presence_report_f
 
         char addr[BLE_ADDR_STR_SIZE];
         ble_addr_format(s.addr, addr);
-        if (s_match[i].active && s_match[i].by_ibeacon) {
-            char uuid[IBEACON_UUID_STR_SIZE];
-            ibeacon_uuid_format(s.uuid, uuid);
-            ESP_LOGI(TAG, "Presence %d \"%s\": iBeacon %s major %u minor %u (any address), absent after %u s%s", i + 1,
-                     s_labels[i], uuid, s.major, s.minor, s.timeout_s, s.rssi_filter ? ", RSSI filter" : "");
-        } else if (s_match[i].active) {
+        if (s_match[i].active) {
             ESP_LOGI(TAG, "Presence %d \"%s\": %s (%s), absent after %u s%s", i + 1, s_labels[i], addr,
                      beacon_addr_type_name(s.addr_type), s.timeout_s, s.rssi_filter ? ", RSSI filter" : "");
         } else {
@@ -365,6 +465,7 @@ esp_err_t presence_manager_start(const presence_config_t *cfg, presence_report_f
                      s.enabled ? "no beacon assigned" : "disabled");
         }
     }
+    watch_start(cfg);
     s_queue = xQueueCreate(kQueueLength, sizeof(Packet));
     if (s_queue == nullptr) {
         return ESP_ERR_NO_MEM;

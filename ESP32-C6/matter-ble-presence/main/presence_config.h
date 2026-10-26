@@ -12,7 +12,7 @@
 // Slots: 5 in the one-chip versions (the five fixed Occupancy Sensor endpoints), 20 in the two-chip version (one
 // bridged device each on the ESP32-H2, presence_link_proto.h).
 //
-// Stored format (one NVS blob, all integers little endian, version 3):
+// Stored format (one NVS blob, all integers little endian, version 2):
 //   0   4  magic "BPRC"
 //   4   2  format version
 //   6   2  payload length
@@ -20,13 +20,13 @@
 //              then per slot: flags (1: bit0 enabled, bit1 address set, bit2 RSSI filter), address type (1),
 //              address (6, display order), timeout s (2), RSSI threshold (1, signed), hysteresis (1),
 //              label length (1), label (PRESENCE_LABEL_MAX_BYTES, zero padded),
-//              model length (1), model (PRESENCE_MODEL_MAX_BYTES, zero padded),
-//              iBeacon UUID (16), major (2), minor (2)
-//          flags bit3: iBeacon identity set, bit4: the slot follows its beacon by that identity, not its address
+//              model length (1), model (PRESENCE_MODEL_MAX_BYTES, zero padded)
 //   end 4  CRC-32 of everything before it
-// Version 2 is the same without the iBeacon identity, version 1 also without the model (written by the firmware with
-// five slots): both still decode (their slots follow the address; version 1 slots become the first ones, the others
-// take the defaults) and are written as version 3 at the next save. A blob with more
+// Version 1 is the same without the model, written by the firmware with five slots: it still decodes (its slots
+// become the first ones, the others take the defaults) and is written as version 2 at the next save. Version 3
+// (firmware 1.0.201, beacons optionally recognised by iBeacon UUID + major + minor) is version 2 with 20 more bytes per
+// slot (UUID, major, minor) and two more flags: it decodes as version 2, every slot followed by its MAC (a slot that
+// had only an iBeacon identity has no MAC, so it is inactive until a MAC is assigned). A blob with more
 // slots than the firmware (the two-chip scanner's 20 read by a five-slot version) decodes when no beacon is assigned
 // to the extra ones (they are dropped), else it is refused and kept in flash until the configuration is saved.
 // The whole configuration is one blob written with one nvs_set_blob() + nvs_commit(): NVS keeps the old blob
@@ -62,13 +62,6 @@
 #define PRESENCE_SCAN_INTERVAL_MIN_MS 20
 #define PRESENCE_SCAN_INTERVAL_MAX_MS 10240
 #define PRESENCE_SCAN_WINDOW_MIN_MS 10
-#define PRESENCE_UUID_LEN 16
-
-// How a slot recognises its beacon
-typedef enum {
-    PRESENCE_MATCH_ADDR = 0,    // its address (MAC): one beacon, whatever its iBeacon identity
-    PRESENCE_MATCH_IBEACON = 1, // its iBeacon UUID + major + minor: for a beacon whose address changes
-} presence_match_t;
 
 typedef struct {
     bool enabled;
@@ -81,11 +74,6 @@ typedef struct {
     uint8_t rssi_hysteresis; // dB
     char label[PRESENCE_LABEL_MAX_BYTES + 1]; // internal name shown on the web page and in the logs
     char model[PRESENCE_MODEL_MAX_BYTES + 1]; // "" if unknown
-    uint8_t match;                            // presence_match_t
-    bool has_id;                              // iBeacon identity set (kept in both modes)
-    uint8_t uuid[PRESENCE_UUID_LEN];
-    uint16_t major;
-    uint16_t minor;
 } presence_slot_config_t;
 
 typedef struct {
@@ -97,11 +85,9 @@ typedef struct {
 void presence_config_set_defaults(presence_config_t *cfg);
 void presence_config_default_label(int slot, char *out, size_t size);
 bool presence_config_equal(const presence_config_t *a, const presence_config_t *b);
-// Enabled with the identity its mode needs (address, or iBeacon UUID + major + minor): the only slots that can ever
-// report presence
+// Enabled with an address: the only slots that can ever report presence
 bool presence_slot_is_active(const presence_slot_config_t *slot);
-// Two active slots that would both follow the same beacon: same address (types equal or one of them "any"), or same
-// iBeacon identity
+// Two active slots that would both follow the same beacon (same address, types equal or one of them "any")
 bool presence_slots_conflict(const presence_slot_config_t *a, const presence_slot_config_t *b);
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -120,10 +106,6 @@ typedef enum {
     PRESENCE_FIELD_SCAN_INTERVAL,
     PRESENCE_FIELD_SCAN_WINDOW,
     PRESENCE_FIELD_MODEL,
-    PRESENCE_FIELD_MATCH,
-    PRESENCE_FIELD_UUID,
-    PRESENCE_FIELD_MAJOR,
-    PRESENCE_FIELD_MINOR,
 } presence_field_t;
 
 typedef enum {
@@ -141,10 +123,6 @@ typedef enum {
     PRESENCE_ERR_TYPE, // wrong JSON type or missing field (web_server.cpp)
     PRESENCE_ERR_MODEL_TOO_LONG,
     PRESENCE_ERR_MODEL_INVALID,
-    PRESENCE_ERR_MATCH,
-    PRESENCE_ERR_UUID_INVALID,
-    PRESENCE_ERR_MAJOR_MINOR_RANGE,
-    PRESENCE_ERR_ID_DUPLICATE,
 } presence_error_code_t;
 
 typedef struct {
@@ -164,8 +142,8 @@ const char *presence_field_name(uint8_t field); // JSON field name
 // ---------------------------------------------------------------------------------------------------------------------
 // Stored format
 
-#define PRESENCE_CONFIG_FORMAT_VERSION 3
-#define PRESENCE_CONFIG_BLOB_MAX_SIZE 2560
+#define PRESENCE_CONFIG_FORMAT_VERSION 2
+#define PRESENCE_CONFIG_BLOB_MAX_SIZE 2560 // also a version 3 blob of 20 slots (2298 bytes)
 
 typedef enum {
     PRESENCE_DECODE_OK = 0,

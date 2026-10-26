@@ -303,10 +303,10 @@ static void version_1_migrates()
         // Slots the old firmware did not have: defaults
         CHECK(!out.slots[i].enabled && !out.slots[i].has_addr && out.slots[i].timeout_s == 45);
     }
-    // Saved again: version 3, the same configuration
+    // Saved again: version 2, the same configuration
     uint8_t blob2[PRESENCE_CONFIG_BLOB_MAX_SIZE];
     const size_t len2 = presence_config_encode(&out, blob2, sizeof(blob2));
-    CHECK(len2 > 0 && blob2[4] == 3);
+    CHECK(len2 > 0 && blob2[4] == 2);
     presence_config_t again;
     CHECK(presence_config_decode(blob2, len2, &again) == PRESENCE_DECODE_OK);
     CHECK(presence_config_equal(&out, &again));
@@ -373,61 +373,17 @@ static void more_slots_than_this_firmware()
     free(blob);
 }
 
-// iBeacon identity: active slot, duplicates, round trip, version 2 blobs follow the address
-static void ibeacon_identity()
+// Version 3 (firmware 1.0.201, beacons optionally recognised by iBeacon identity): read as version 2, every slot
+// followed by its MAC; a slot with only an identity has no MAC (inactive)
+static void version_3_read()
 {
-    presence_config_t cfg = valid_config();
-    const uint8_t uuid[PRESENCE_UUID_LEN] = { 0xE2, 0xC5, 0x6D, 0xB5, 0xDF, 0xFB, 0x48, 0xD2,
-                                              0xB0, 0x60, 0xD0, 0xF5, 0xA7, 0x10, 0x96, 0xE0 };
-    presence_slot_config_t &a = cfg.slots[2];
-    a.enabled = true;
-    a.has_addr = false;
-    a.match = PRESENCE_MATCH_IBEACON;
-    CHECK(!presence_slot_is_active(&a)); // no identity yet
-    a.has_id = true;
-    memcpy(a.uuid, uuid, sizeof(uuid));
-    a.major = 5;
-    a.minor = 6;
-    CHECK(presence_slot_is_active(&a));
-    CHECK(presence_config_validate(&cfg, false, nullptr, 0) == 0);
-
-    // Another slot with the same identity: duplicate; another minor: fine; same identity followed by address: fine
-    presence_slot_config_t &b = cfg.slots[3];
-    b = a;
-    presence_config_error_t errs[4];
-    size_t n = presence_config_validate(&cfg, false, errs, 4);
-    CHECK(n == 1 && has_error(errs, n, 3, PRESENCE_FIELD_UUID, PRESENCE_ERR_ID_DUPLICATE));
-    CHECK(presence_config_validate(&cfg, true, nullptr, 0) == 0);
-    b.minor = 7;
-    CHECK(presence_config_validate(&cfg, false, nullptr, 0) == 0);
-    b.match = 9;
-    n = presence_config_validate(&cfg, false, errs, 4);
-    CHECK(n == 1 && has_error(errs, n, 3, PRESENCE_FIELD_MATCH, PRESENCE_ERR_MATCH));
-    b.match = PRESENCE_MATCH_ADDR; // follows its address (has one in valid_config? not needed): no identity clash
-    b.minor = 6;
-    CHECK(presence_config_validate(&cfg, false, nullptr, 0) == 0);
-
-    // Round trip keeps everything
-    uint8_t blob[PRESENCE_CONFIG_BLOB_MAX_SIZE];
-    const size_t len = presence_config_encode(&cfg, blob, sizeof(blob));
-    CHECK(len > 0 && blob[4] == 3);
-    presence_config_t out;
-    CHECK(presence_config_decode(blob, len, &out) == PRESENCE_DECODE_OK);
-    CHECK(presence_config_equal(&out, &cfg));
-    CHECK(out.slots[2].match == PRESENCE_MATCH_IBEACON && out.slots[2].has_id && out.slots[2].major == 5 &&
-          out.slots[2].minor == 6 && memcmp(out.slots[2].uuid, uuid, sizeof(uuid)) == 0);
-    CHECK(out.slots[3].match == PRESENCE_MATCH_ADDR && out.slots[3].has_id);
-}
-
-// A version 2 blob (no identity): every slot follows its address
-static void version_2_migrates()
-{
-    const size_t slot_size = 61 + 1 + PRESENCE_MODEL_MAX_BYTES;
+    const size_t slot_size = 61 + 1 + PRESENCE_MODEL_MAX_BYTES + 16 + 2 + 2;
     const size_t payload = 6 + PRESENCE_SLOT_COUNT * slot_size;
     const size_t len = 8 + payload + 4;
+    CHECK(len <= PRESENCE_CONFIG_BLOB_MAX_SIZE);
     uint8_t *blob = static_cast<uint8_t *>(calloc(1, len));
     memcpy(blob, "BPRC", 4);
-    put16(&blob[4], 2);
+    put16(&blob[4], 3);
     put16(&blob[6], static_cast<uint16_t>(payload));
     put16(&blob[8], 160);
     put16(&blob[10], 40);
@@ -439,18 +395,28 @@ static void version_2_migrates()
         slots[i * slot_size + 10] = static_cast<uint8_t>(-80);
     }
     const uint8_t addr[6] = { 0x48, 0x87, 0x2D, 0x9D, 0xC1, 0xDF };
-    slots[0] = 0x1B; // enabled, address, bits 3 and 4 set by nothing in version 2: ignored
+    slots[0] = 0x1B; // enabled, MAC, identity, recognised by identity
     memcpy(&slots[2], addr, 6);
+    slots[61] = 5;
+    memcpy(&slots[62], "CP101", 5);
+    slots[61 + 1 + PRESENCE_MODEL_MAX_BYTES] = 0xE2; // identity: ignored
+    slots[slot_size] = 0x19; // enabled, identity only
     seal(blob, len);
     presence_config_t out;
     CHECK(presence_config_decode(blob, len, &out) == PRESENCE_DECODE_OK);
-    CHECK(out.slots[0].match == PRESENCE_MATCH_ADDR && !out.slots[0].has_id && presence_slot_is_active(&out.slots[0]));
+    CHECK(presence_slot_is_active(&out.slots[0]) && memcmp(out.slots[0].addr, addr, 6) == 0);
+    CHECK_STR(out.slots[0].model, "CP101");
+    CHECK(out.slots[1].enabled && !out.slots[1].has_addr && !presence_slot_is_active(&out.slots[1]));
+    // Saved again: version 2
+    uint8_t again[PRESENCE_CONFIG_BLOB_MAX_SIZE];
+    const size_t len2 = presence_config_encode(&out, again, sizeof(again));
+    CHECK(len2 > 0 && again[4] == 2);
     free(blob);
 }
 
 static void error_texts()
 {
-    for (int code = PRESENCE_ERR_LABEL_TOO_LONG; code <= PRESENCE_ERR_ID_DUPLICATE; code++) {
+    for (int code = PRESENCE_ERR_LABEL_TOO_LONG; code <= PRESENCE_ERR_MODEL_INVALID; code++) {
         CHECK(strcmp(presence_error_text(code), "Lỗi không xác định") != 0);
     }
     CHECK_STR(presence_field_name(PRESENCE_FIELD_ADDR), "mac");
@@ -465,13 +431,12 @@ int main()
     RUN(labels);
     RUN(duplicates);
     RUN(blob_round_trip);
-    RUN(ibeacon_identity);
-    RUN(version_2_migrates);
     RUN(blob_corruption);
     RUN(blob_values_checked_and_versions);
     RUN(models);
     RUN(version_1_migrates);
     RUN(more_slots_than_this_firmware);
+    RUN(version_3_read);
     RUN(error_texts);
     return test_summary(PRESENCE_SLOT_COUNT == 5 ? "presence_config" : "presence_config 20");
 }

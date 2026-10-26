@@ -25,6 +25,7 @@ $CXX $FLAGS -o "$OUT/presence_config" test_presence_config.cpp $MAIN/presence_co
 # Two-chip version: 20 slots
 $CXX $FLAGS -DCONFIG_PRESENCE_ROLE_SCANNER=1 -o "$OUT/presence_config_20" test_presence_config.cpp \
     $MAIN/presence_config.cpp $MAIN/ble_addr.cpp $MAIN/json_util.cpp $MAIN/crc32.cpp
+$CXX $FLAGS -o "$OUT/mac_watch" test_mac_watch.cpp $MAIN/mac_watch.cpp $MAIN/crc32.cpp
 $CXX $FLAGS -o "$OUT/json_util" test_json_util.cpp $MAIN/json_util.cpp
 $CXX $FLAGS -o "$OUT/http_guard" test_http_guard.cpp $MAIN/http_guard.cpp
 $CXX $FLAGS -o "$OUT/presence_link" test_presence_link_proto.cpp $MAIN/presence_link_proto.cpp $MAIN/crc32.cpp \
