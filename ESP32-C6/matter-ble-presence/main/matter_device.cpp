@@ -636,7 +636,9 @@ void matter_device_factory_reset(void)
         ESP_LOGE(TAG, "Factory reset asked while Matter is not running: not done");
         return;
     }
-    chip::DeviceLayer::PlatformMgr().ScheduleWork(factory_reset_work);
+    if (chip::DeviceLayer::PlatformMgr().ScheduleWork(factory_reset_work) != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Cannot schedule the factory reset");
+    }
 }
 
 #endif
