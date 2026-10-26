@@ -151,10 +151,11 @@ trên chân khác cũng chọn được).
 chuyển tự động), trạng thái mỗi slot vài chục byte, mỗi slot một so sánh MAC cho mỗi gói quảng bá. Khung UART: STATE
 27 byte/giây, STATUS 71 byte/giây, SLOT ≤ 54 byte mỗi 250 ms: khoảng 0,4 KB/s trên 11,5 KB/s của 115200 baud.
 
-**H2:** giới hạn thật là **heap**. ESP32-H2 có 320 KB SRAM; firmware dùng tĩnh khoảng 170 KB (`idf.py size`, DIRAM), còn lại là heap, BLE
-chiếm thêm khoảng 34 KB cho tới khi ghép xong (tài liệu esp-matter, ví dụ light trên ESP32-H2: 44 KB trống lúc khởi động,
-78 KB sau khi ghép). Mỗi thiết bị con (endpoint, Descriptor, Bridged Device Basic Information với 4 chuỗi, Identify,
-Occupancy Sensing, Power Source) tốn ước tính **2,5–4 KB heap**: 20 thiết bị ≈ 50–80 KB. Vì vậy:
+**H2:** giới hạn thật là **heap**. ESP32-H2 có 320 KB SRAM, vùng DIRAM cho ứng dụng 258 000 byte; firmware dùng tĩnh
+169 420 byte (`idf.py size`), còn 88 580 byte là heap lúc khởi động, BLE chiếm thêm khoảng 34 KB cho tới khi ghép xong
+(tài liệu esp-matter, ví dụ light trên ESP32-H2: 44 KB trống lúc khởi động, 78 KB sau khi ghép). Mỗi thiết bị con (endpoint,
+Descriptor, Bridged Device Basic Information với 4 chuỗi, Identify, Occupancy Sensing, Power Source) tốn ước tính
+**2,5–4 KB heap**: 20 thiết bị ≈ 50–80 KB. Vì vậy:
 
 * **Console Matter tắt** trên H2 (thêm ~10 KB heap theo tài liệu esp-matter cho ESP32-H2), số endpoint động = 22 (root +
   Aggregator + 20), số loại thiết bị mỗi endpoint = 4: không cấp RAM tĩnh thừa.
@@ -349,10 +350,11 @@ chân UART và console (cả hai chip log qua USB-Serial-JTAG), cấu hình theo
 
 | Firmware | App (phân vùng 3,6 MB) | RAM tĩnh → heap lúc khởi động |
 |---|---|---|
-| `ble_presence_scanner_c3.bin` (C3) | 1 092 064 byte, trống 71% | 126 795 / 321 296 byte → còn 194 501 byte (mã Wi-Fi trong IRAM: thêm ~19 KB) |
-| `matter_ble_presence_h2.bin` (H2) | 1 559 616 byte, trống 59% | 162 840 / 258 000 byte → còn 95 160 byte (BLE được giải phóng sau khi ghép) |
+| `ble_presence_scanner_c3.bin` (C3) | 1 107 600 byte, trống 71% | 138 185 / 321 296 byte → còn 183 111 byte (mã Wi-Fi trong IRAM: thêm ~19 KB) |
+| `matter_ble_presence_h2.bin` (H2) | 1 525 376 byte, trống 60% | 169 420 / 258 000 byte → còn 88 580 byte (.bss 82 496, IRAM .text 75 628, .data 11 292; BLE chiếm thêm cho tới khi ghép xong) |
 
-  Bản C6 và bản C3 Wi-Fi build lại sau thay đổi chung (`sdkconfig` sinh mới từ defaults): thành công, 0 cảnh báo.
+  Bản C6 và bản C3 Wi-Fi dùng chung mã nguồn: CI build lại cả hai ở mỗi lần đẩy (`matter-ble-presence-c6.yml`,
+  `matter-ble-presence-c3.yml`), cùng host test và test trang web.
 
 **Cần thử trên phần cứng:** đường UART thật (dây, chân H2, xung đột lúc reset), hiện diện ON/OFF qua H2, ghép Matter
 trên H2, ảnh hưởng của hai anten sát nhau (so `matched` mỗi phút khi H2 tắt và khi H2 chạy), độ ổn định SoftAP sau các
