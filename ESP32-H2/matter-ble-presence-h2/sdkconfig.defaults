@@ -32,14 +32,9 @@ CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=22
 CONFIG_ESP_MATTER_MAX_DEVICE_TYPE_COUNT=4
 CONFIG_SUPPORT_BRIDGED_DEVICE_BASIC_INFORMATION_CLUSTER=y
 CONFIG_SUPPORT_POWER_SOURCE_CLUSTER=y
-# Clusters no endpoint of the bridge has, kept by the one-chip versions: their servers size static tables by the 22
-# dynamic endpoints (Color Control alone 5.8 KB of RAM), RAM the bridged devices need as heap. Scenes stays: the
-# On/Off and Level Control code that esp-matter builds anyway links against it.
-CONFIG_SUPPORT_COLOR_CONTROL_CLUSTER=n
-CONFIG_SUPPORT_LEVEL_CONTROL_CLUSTER=n
-CONFIG_SUPPORT_ON_OFF_CLUSTER=n
-CONFIG_SUPPORT_WIFI_NETWORK_DIAGNOSTICS_CLUSTER=n
-# Critical events (StartUp, ShutDown, Leave...) are few: 1 KB of buffer instead of 4; debug events are not used
+# Critical events (StartUp, ShutDown, Leave...) are few: 1 KB of buffer instead of 4; debug events are not used.
+# 3.8 KB of RAM more for the heap of the bridged devices. (Turning the unused On/Off, Level and Color Control
+# clusters off saves nothing: esp-matter builds their servers anyway, sized by the 22 dynamic endpoints.)
 CONFIG_EVENT_LOGGING_CRIT_BUFFER_SIZE=1024
 CONFIG_EVENT_LOGGING_DEBUG_BUFFER_SIZE=256
 # Device type in commissionable discovery (DNS-SD "DT"): 14 = 0x000E Aggregator

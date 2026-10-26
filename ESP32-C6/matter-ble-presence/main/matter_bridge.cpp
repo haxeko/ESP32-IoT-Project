@@ -109,9 +109,12 @@ static uint32_t table_v1_crc(const TableV1 &t)
     return crc32_ieee(reinterpret_cast<const uint8_t *>(&t), offsetof(TableV1, crc));
 }
 
+// Buffer of save_table() and load_table(): both run with the CHIP lock held, one at a time
+static Table s_table;
+
 static void save_table()
 {
-    static Table t; // CHIP lock held: one caller at a time
+    Table &t = s_table;
     memset(&t, 0, sizeof(t));
     t.magic = kMagic;
     memcpy(t.entries, s_entries, sizeof(t.entries));
@@ -138,7 +141,7 @@ static bool load_table()
     if (nvs_open(kNamespace, NVS_READONLY, &h) != ESP_OK) {
         return false; // nothing saved yet
     }
-    static Table t;
+    Table &t = s_table;
     size_t len = 0;
     esp_err_t err = nvs_get_blob(h, kKey, nullptr, &len);
     bool ok = false;
