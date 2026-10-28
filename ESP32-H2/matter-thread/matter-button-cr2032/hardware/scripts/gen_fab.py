@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Check (ERC, DRC with schematic parity) and export the manufacturing files with kicad-cli.
 
-  fab/matter-button-cr2032-gerber.zip   Gerber X2 (copper, mask, paste, silk, outline) + Excellon drill + map
+  fab/matter-button-cr2032-gerber.zip   Gerber (Protel names, no X2/netlist attributes, as the JLCPCB KiCad guide)
+                                        + Excellon drill (mm) + drill map
   fab/bom.csv                           grouped bill of materials (MPN), not fitted parts marked DNP
-  fab/cpl.csv                           pick and place, JLCPCB column names (Designator, Mid X, Mid Y, Layer, ...)
+  fab/bom-jlcpcb.csv                    JLCPCB assembly BOM: Comment, Designator, Footprint, LCSC Part #, MPN
+  fab/cpl-jlcpcb.csv                    JLCPCB pick and place: Designator, Mid X, Mid Y, Layer, Rotation
   docs/schematic.pdf                    KiCad schematic
   docs/assembly-top.svg, -bottom.svg    assembly drawings (fab layers: outlines, designators, values)
   docs/pcb-top.png, docs/pcb-bottom.png 3D renders (no component models: pads, mask, silk)
@@ -57,7 +59,8 @@ def gerbers():
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(out)
     layers = "F.Cu,B.Cu,F.Paste,B.Paste,F.SilkS,B.SilkS,F.Mask,B.Mask,Edge.Cuts"
-    cli("pcb", "export", "gerbers", "--layers", layers, "--subtract-soldermask", "-o", out + "/", PCB)
+    cli("pcb", "export", "gerbers", "--layers", layers, "--subtract-soldermask", "--no-x2", "--no-netlist",
+        "-o", out + "/", PCB)
     cli("pcb", "export", "drill", "--format", "excellon", "--excellon-units", "mm", "--generate-map",
         "--map-format", "gerberx2", "-o", out + "/", PCB)
     os.makedirs(FAB, exist_ok=True)
@@ -77,19 +80,44 @@ def bom():
         "--labels", "Qty,Designator,Value,Footprint,MPN,Description,DNP",
         "--group-by", "Value,Footprint,MPN,${DNP}", "--ref-range-delimiter", "", "-o", path, SCH)
     print("bom:", path)
+    bom_jlcpcb()
+
+
+# Package names for the JLCPCB BOM (their parts matching reads Comment + Footprint)
+PACKAGE = [("R_0402", "0402"), ("C_0402", "0402"), ("C_0603", "0603"), ("C_1210", "1210"), ("LED_0603", "0603"),
+           ("L_1008", "1008"), ("SOT-23", "SOT-23"), ("WSON-10", "WSON-10 2.5x2.5mm"),
+           ("PTS810", "SMD 4.2x3.2mm tact switch"), ("WROOM-02C", "ESP32-H2-WROOM-02C module"),
+           ("Keystone_3034", "CR2032 holder SMD")]
+
+
+def bom_jlcpcb():
+    """Assembled parts only (no DNP, no test pads, no solder jumpers). LCSC Part # left empty: pick it in the
+    JLCPCB parts matching step from the MPN column."""
+    raw = os.path.join(BUILD, "bom-raw.csv")
+    cli("sch", "export", "bom", "--fields", "Value,Reference,Footprint,MPN", "--labels",
+        "Comment,Designator,Footprint,MPN", "--group-by", "Value,Footprint,MPN", "--ref-range-delimiter", "",
+        "--exclude-dnp", "-o", raw, SCH)
+    path = os.path.join(FAB, "bom-jlcpcb.csv")
+    with open(raw) as f, open(path, "w", newline="") as g:
+        w = csv.writer(g)
+        w.writerow(["Comment", "Designator", "Footprint", "LCSC Part #", "Manufacturer Part Number"])
+        for row in csv.DictReader(f):
+            fp = next(name for key, name in PACKAGE if key in row["Footprint"])
+            w.writerow([row["Comment"], row["Designator"], fp, "", row["MPN"]])
+    print("bom jlcpcb:", path)
 
 
 def cpl():
     raw = os.path.join(BUILD, "pos.csv")
     cli("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both", "--exclude-dnp", "-o", raw,
         PCB)
-    path = os.path.join(FAB, "cpl.csv")
+    path = os.path.join(FAB, "cpl-jlcpcb.csv")
     with open(raw) as f, open(path, "w", newline="") as g:
         w = csv.writer(g)
-        w.writerow(["Designator", "Val", "Package", "Mid X", "Mid Y", "Rotation", "Layer"])
+        w.writerow(["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
         for row in csv.DictReader(f):
-            w.writerow([row["Ref"], row["Val"], row["Package"], row["PosX"], row["PosY"], row["Rot"],
-                        row["Side"].capitalize()])
+            w.writerow([row["Ref"], f"{float(row['PosX']):.4f}mm", f"{float(row['PosY']):.4f}mm",
+                        row["Side"].capitalize(), f"{float(row['Rot']) % 360:g}"])
     print("cpl:", path)
 
 

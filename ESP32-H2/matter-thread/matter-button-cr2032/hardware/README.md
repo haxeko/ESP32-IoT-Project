@@ -23,7 +23,7 @@ Chưa đặt mạch, chưa đo trên bo thật: kiểm tra lại footprint modul
 | `lib/matter_button.kicad_sym`, `lib/matter_button.pretty/` | linh kiện riêng: symbol + footprint ESP32-H2-WROOM-02C, power symbol VBAT, đế Keystone 3034 (bản sửa) |
 | `fab/matter-button-cr2032-gerber.zip` | Gerber X2 + khoan Excellon: gửi thẳng cho nhà sản xuất PCB |
 | `fab/bom-vi.csv` | BOM theo tên và thông số linh kiện (tiếng Việt), kèm từ khóa tìm mua và linh kiện thay thế |
-| `fab/bom.csv`, `fab/cpl.csv` | BOM (theo MPN) và file vị trí linh kiện (tên cột theo JLCPCB) cho dịch vụ lắp ráp |
+| `fab/bom-jlcpcb.csv`, `fab/cpl-jlcpcb.csv` | BOM (theo MPN) và file vị trí linh kiện (tên cột theo JLCPCB) cho dịch vụ lắp ráp |
 | `docs/schematic.pdf` | schematic KiCad |
 | `docs/assembly-top.svg`, `docs/assembly-bottom.svg` | bản vẽ lắp ráp: viền linh kiện + ký hiệu (C7 gạch chéo: không lắp) |
 | `docs/pcb-*.png` | ảnh render 3D (không có model linh kiện) và layout 2D |
@@ -73,7 +73,7 @@ Chiều cao: module 3,2 mm trên bo 1,6 mm; chiều cao nút PTS810 và đế pi
 ## 4. Đặt mạch và lắp ráp
 
 1. **PCB**: tải `fab/matter-button-cr2032-gerber.zip` lên JLCPCB/PCBWay: 2 lớp, 1,6 mm, ENIG, các mục khác để mặc định.
-2. **Lắp ráp (tùy chọn)**: tải `fab/bom.csv` và `fab/cpl.csv`. File không có mã LCSC: chọn linh kiện theo cột MPN. Kiểm tra góc xoay ở bản xem trước của nhà sản xuất (thường phải chỉnh U1, U2, Q1, D1). BT1 nằm mặt dưới: chọn lắp hai mặt, hoặc tự hàn (2 tai lớn, dễ hàn tay). C7 không lắp (DNP).
+2. **Lắp ráp (tùy chọn)**: tải `fab/bom-jlcpcb.csv` và `fab/cpl-jlcpcb.csv`. File không có mã LCSC: chọn linh kiện theo cột MPN. Kiểm tra góc xoay ở bản xem trước của nhà sản xuất (thường phải chỉnh U1, U2, Q1, D1). BT1 nằm mặt dưới: chọn lắp hai mặt, hoặc tự hàn (2 tai lớn, dễ hàn tay). C7 không lắp (DNP).
 3. **JP1, JP2** là cầu hàn đã nối sẵn bằng đồng: cắt đường đồng nhỏ giữa hai pad để đo dòng (nối ampe kế vào hai pad), đo xong hàn nối lại.
 4. Cấp nguồn lần đầu, nạp firmware: [README chính mục 8.3](../README.md#83-nạp-firmware) và [checklist](../docs/test-checklist.md). Khi có pin, **không** cấp 3V3 vào pad 3V3.
 
