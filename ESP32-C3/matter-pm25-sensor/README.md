@@ -26,7 +26,7 @@ Màn hình OLED, đèn LED WS2812 và các nút nhấn (nếu lắp) chạy **t�
 - Một cảm biến bụi UART:
   - **Plantower PMS5003 / PMS7003 / PMSA003** (mặc định)
   - **Nova Fitness SDS011 / SDS021**
-- Màn hình OLED **SH1106 128x64** (I2C, địa chỉ 0x3C)
+- Màn hình OLED 128x64 I2C (địa chỉ 0x3C): **SSD1306 0.96"** trên PCB (mặc định), hoặc SH1106 1.3" (chọn trong `menuconfig` → *OLED controller*)
 - Dải LED **WS2812**, 6 bóng
 - Nút bật/tắt màn hình và nút factory reset: PCB không có, có thể lắp thêm (không bắt buộc)
 
@@ -44,8 +44,8 @@ Nếu luồng Matter hoặc một task của thiết bị (cảm biến PM, màn
 | PMS5003 | RX (chân 4) | J2B chân 4 | **GPIO7** (TX của ESP32) |
 | PMS5003 | VCC 5V (chân 1) | J2B chân 2 | 5V |
 | PMS5003 | GND (chân 2) | J2B chân 1 | GND |
-| OLED SH1106 | SDA / SCL | | **GPIO4** / **GPIO5** |
-| OLED SH1106 | VCC / GND | | 3.3V / GND |
+| OLED SSD1306 | SDA / SCL | | **GPIO4** / **GPIO5** |
+| OLED SSD1306 | VCC / GND | | 3.3V / GND |
 | WS2812 | DIN | | **GPIO3** |
 | WS2812 | VCC / GND | | 5V / GND |
 
@@ -140,7 +140,8 @@ File update chỉ ghi vùng chọn phân vùng OTA và firmware, nên vẫn ch�
 |---|---|
 | OLED SDA / SCL pin | 4 / 5 |
 | OLED I2C address | 0x3C |
-| Rotate OLED 180 degrees | bật |
+| OLED controller | SSD1306 (0.96"). Chọn sai loại thì hình lệch 2 điểm ảnh và một mép hiện cột rác |
+| Rotate OLED 180 degrees | tắt: hình đứng thẳng khi hàng chân của module ở trên, như trên PCB |
 | WS2812 data pin / số LED / độ sáng | 3 / 6 / 50% |
 | Display on/off button GPIO | `-1` (không có nút, màn hình luôn sáng) |
 
@@ -256,7 +257,7 @@ matter-pm25-sensor/
 │   ├── idf_component.yml
 │   ├── drivers/
 │   │   ├── pm_sensor.cpp     # PMS5003/7003/A003 và SDS011 (UART1)
-│   │   ├── sh1106.cpp        # OLED SH1106 I2C + vẽ chữ
+│   │   ├── sh1106.cpp        # OLED SH1106 / SSD1306 I2C + vẽ chữ
 │   │   ├── status_led.cpp    # WS2812
 │   │   └── button.cpp        # Nút nhấn: factory reset, bật/tắt màn hình
 │   └── ui/

@@ -6,8 +6,13 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
-// SH1106 128x64 OLED over I2C, 1-bit frame buffer and bitmap font rendering.
+// SH1106 or SSD1306 128x64 OLED over I2C, 1-bit frame buffer and bitmap font
+// rendering. Both take the same commands here; only the RAM column offset
+// differs (CONFIG_OLED_CONTROLLER_SSD1306).
 
+#if __has_include("sdkconfig.h")
+#include "sdkconfig.h"
+#endif
 #include <driver/i2c_master.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
@@ -20,8 +25,14 @@ static const char *TAG = "sh1106";
 
 #define SH1106_I2C_FREQ_HZ      400000
 #define SH1106_I2C_TIMEOUT_MS   100
+#if CONFIG_OLED_CONTROLLER_SSD1306
+// The SSD1306 has exactly 128 columns: an offset would shift the image and
+// wrap the last columns around to the first ones (garbage on one edge).
+#define SH1106_COLUMN_OFFSET    0
+#else
 // The SH1106 has 132 columns of RAM; a 128 px panel is centered on them.
 #define SH1106_COLUMN_OFFSET    2
+#endif
 #define SH1106_PAGES            (SH1106_HEIGHT / 8)
 
 static i2c_master_bus_handle_t s_bus;

@@ -104,6 +104,14 @@ int main()
 int main()
 {
     printf("local_ui:\n");
+    // Column offset of the controller: 0 on an SSD1306, 2 on an SH1106.
+    run(3000, [] {});
+#if CONFIG_OLED_CONTROLLER_SSD1306
+    CHECK(g_sim.oled_column == 0);
+#else
+    CHECK(g_sim.oled_column == 2);
+#endif
+
     // Start-up: on, then stays on (setting on when never saved); LED takes the level color.
     bool on_at_30 = false;
     run(60000, [&] {

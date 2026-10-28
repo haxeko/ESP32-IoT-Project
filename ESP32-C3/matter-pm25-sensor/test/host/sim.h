@@ -34,6 +34,7 @@ struct Sim {
     bool oled_present = true;                   // false: I2C writes fail (unplugged)
     bool panel_on = false;                      // last 0xAF/0xAE command
     bool panel_configured = false;              // settings (charge pump 0x8D 0x14) received
+    int oled_column = -1;                       // column address of the last page write
     std::vector<int> gpio_level = std::vector<int>(22, 1);     // per GPIO, 0 = button pressed
     std::vector<SimTimer> timers;               // esp_timers created, in order
     std::map<std::string, uint8_t> nvs;         // "<namespace>/<key>" -> u8 value

@@ -97,9 +97,27 @@ menu "Local Display and Indicators"
         hex "OLED I2C address"
         default 0x3C
 
+    choice OLED_CONTROLLER
+        prompt "OLED controller"
+        default OLED_CONTROLLER_SSD1306
+        help
+            0.96" modules are usually SSD1306, 1.3" modules SH1106. With the
+            wrong one, the image is shifted by 2 pixels and one edge shows
+            garbage columns.
+
+        config OLED_CONTROLLER_SSD1306
+            bool "SSD1306 (0.96\", the PCB)"
+
+        config OLED_CONTROLLER_SH1106
+            bool "SH1106 (1.3\")"
+    endchoice
+
     config OLED_ROTATE_180
         bool "Rotate OLED 180 degrees"
-        default y
+        default n
+        help
+            Off: upright with the module's pin header on top, as on the PCB.
+            On: for a module mounted with the pin header at the bottom.
 
     config STATUS_LED_GPIO
         int "WS2812 data pin"

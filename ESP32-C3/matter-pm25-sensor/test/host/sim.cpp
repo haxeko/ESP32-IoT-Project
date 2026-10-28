@@ -70,6 +70,9 @@ int sim_oled_write(const uint8_t *data, size_t len)
     if (len == 2 && data[0] == 0x00 && (data[1] == 0xAF || data[1] == 0xAE)) {
         g_sim.panel_on = data[1] == 0xAF;
     }
+    if (len == 4 && data[0] == 0x00 && (data[1] & 0xF0) == 0xB0) {     // page, column low, column high
+        g_sim.oled_column = (data[2] & 0x0F) | ((data[3] & 0x0F) << 4);
+    }
     for (size_t i = 1; data[0] == 0x00 && i + 1 < len; i++) {
         if (data[i] == 0x8D && data[i + 1] == 0x14) {
             g_sim.panel_configured = true;
