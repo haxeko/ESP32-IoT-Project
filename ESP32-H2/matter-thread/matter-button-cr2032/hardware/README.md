@@ -34,13 +34,13 @@ Chưa đặt mạch, chưa đo trên bo thật: kiểm tra lại footprint modul
 
 | Mục | Giá trị |
 |---|---|
-| Kích thước | **30 × 38 mm**, góc bo R1,5; anten module chìa ra 6 mm ở mép trên → cả cụm **30 × 44 mm** |
+| Kích thước | **25 × 27 mm**, góc bo R1; anten module chìa ra 6 mm ở mép trên → cả cụm **25 × 33 mm** |
 | Lớp | 2 lớp FR-4 1,6 mm, đồng 1 oz |
 | Đường mạch | 0,2 mm tín hiệu, 0,3 mm nguồn và GND, 0,4 mm cực + pin; khe hở 0,2 mm (tối thiểu 0,15 mm ở pad của linh kiện) |
 | Via | 0,6 / 0,3 mm, phủ mask; via nhiệt trong pad GND của module theo land pattern datasheet |
 | Cách mép bo | đồng ≥ 0,3 mm |
 | Bề mặt | **ENIG** khuyến nghị: pad tiếp xúc âm của pin là đồng trần, chân WSON bước 0,5 mm |
-| GND | phủ đồng cả hai mặt, mỗi pad GND có via riêng xuống mặt dưới, thêm ~40 via khâu |
+| GND | phủ đồng cả hai mặt (trừ vành quanh mép pin ở mặt dưới), mỗi pad GND có via riêng xuống pad tiếp xúc âm của pin hoặc mặt phẳng dưới; module nối mặt dưới qua 6 via nhiệt của pad 29 |
 | Linh kiện | mặt trên tất cả, trừ đế pin BT1 ở mặt dưới; 10 pad test ở mặt dưới |
 
 Các thông số nằm trong quy trình tiêu chuẩn của JLCPCB / PCBWay (track/space 0,127 mm, lỗ 0,3 mm), không cần tùy chọn đặc biệt.
@@ -50,26 +50,28 @@ Các thông số nằm trong quy trình tiêu chuẩn của JLCPCB / PCBWay (tra
 | Vùng | Linh kiện | Lý do |
 |---|---|---|
 | Mép trên | U1 ESP32-H2-WROOM-02C, vùng anten 6 mm **nhô ra ngoài mép bo** | không đồng, không FR-4 dưới anten (datasheet WROOM-02C mục 11, ESP32-H2 Hardware Design Guidelines); mặt phẳng GND chạy tới sát mép, đúng chân anten |
-| Trái module | C6 100 nF sát chân 1, C5 10 µF; R4 (+ C7 không lắp) ở EN; R5 kéo lên GPIO8 | trục 3V3 chạy dọc mép trái từ JP2 lên chân 1 |
-| Phải module | R9 1 MΩ + C9 100 nF đo pin ở GPIO1 | |
-| Dưới module | R1–R3 cấu hình TPS63900; LED D1 + R8 (GPIO22) | đặt ống dẫn sáng ở tọa độ D1 |
-| Giữa | chuỗi nguồn phải → trái: Q1 → JP1 → C2, C1 → C3 → U2 (L1 ngay dưới) → C4 → JP2 | vòng VIN (C3) và VOUT (C4) ngắn trên lớp trên, cuộn cảm sát LX1/LX2, pad tản nhiệt của U2 nối chân GND 8 và hai via |
-| Nửa dưới | SW1 PTS810 ở giữa; R7, C8 (lọc RC) và R6 (kéo lên 1 MΩ) cạnh nút | GPIO10 đi ở lớp dưới dọc mép trái |
-| Mặt dưới | đế pin Keystone 3034, tâm cách mép trên 26 mm | mép pin cách chân anten ~16 mm; pad tiếp xúc âm Ø17,8 mm là một phần mặt phẳng GND |
-| Mặt dưới, dưới module | 10 pad test Ø1,5 mm, 2 hàng × 5, bước 2,54 mm | kẹp pogo-pin; nhãn in ở mặt dưới |
+| Trái module | C6 100 nF sát chân 1; R4 (+ C7 không lắp) ở EN; R5 kéo lên GPIO8 | trục 3V3 chạy dọc mép trái từ JP2 lên chân 1; GPIO10 xuống mặt dưới một đoạn để vượt chân 7, 8 |
+| Phải module | R9 1 MΩ + C9 100 nF đo pin ở GPIO1; đường VBAT dọc mép phải | UART, USB và các đường xuống pad test đổi lớp ngay cạnh chân module |
+| Ngay dưới module | R7, C8, R6 (nút: lọc RC, kéo lên 1 MΩ) bên trái; SW1 PTS810 ở giữa; LED D1 + R8 (GPIO22) bên phải | đặt ống dẫn sáng ở tọa độ D1 |
+| Nửa dưới | TPS63900: R1–R3 phía trên, C4 (VOUT) bên trái, C3 (VIN) bên phải, L1 phía dưới; C5, JP2 ở góc trái; C2, C1, Q1, JP1 bên phải | chuỗi nguồn phải → trái: tai + của đế pin → Q1 → JP1 → C1, C2 → C3/U2 → C4 → JP2 → 3V3; vòng VIN và VOUT ngắn trên lớp trên, cuộn cảm sát LX1/LX2 |
+| Mặt dưới | đế pin Keystone 3034 nằm dưới module và mạch; mép pin cách mép dưới 0,5 mm, cách chân anten 6,5 mm | pad tiếp xúc âm Ø17,8 mm là một phần GND; vành 8,95–10,3 mm quanh tâm pin không có đồng (mép vỏ pin là cực +) |
+| Mặt dưới, dưới module | 10 pad test Ø1,5 mm, 2 hàng × 5, bước 2,54 mm ngang × 2,7 mm dọc | kẹp pogo-pin; nhãn in ở mặt dưới |
 
 Tọa độ (mm, gốc ở góc trên trái, nhìn từ mặt trên; nhìn từ mặt dưới thì thứ tự pad test ngược lại) để thiết kế vỏ và jig:
 
 | Vật | Tọa độ |
 |---|---|
-| Tâm nút SW1 (thân 4,2 × 3,2 mm) | (15,0; 31,0) |
-| Tâm LED D1 | (19,9; 16,4) |
-| Tâm đế pin BT1 (mặt dưới) | (15,0; 26,0) |
-| Pad test, hàng 1 (y = 3,5) | x = 9,92 3V3 · 12,46 EN · 15,00 GND · 17,54 USB D− · 20,08 USB D+ |
-| Pad test, hàng 2 (y = 9,5) | x = 9,92 BOOT · 12,46 VBAT · 15,00 VBAT_SENSE · 17,54 TXD0 · 20,08 RXD0 |
+| Tâm nút SW1 (thân 4,2 × 3,2 mm) | (12,0; 16,8) |
+| Tâm LED D1 | (19,0; 15,6) |
+| Tâm đế pin BT1 (mặt dưới) | (12,5; 16,46); pin Ø20 mm từ y = 6,46 tới 26,46 |
+| Pad test, hàng 1 (y = 1,3) | x = 7,42 3V3 · 9,96 GND · 12,50 USB D− · 15,04 USB D+ · 17,58 VBAT_SENSE |
+| Pad test, hàng 2 (y = 4,0) | x = 7,42 EN · 9,96 BOOT · 12,50 RXD0 · 15,04 TXD0 · 17,58 VBAT |
+| Cầu hàn đo dòng JP1 / JP2 | (20,6; 24,3) / (1,6; 22,6) |
 | Module: mép anten / chân anten | y = −6 / y = 0 (mép bo) |
 
 Chiều cao: module 3,2 mm trên bo 1,6 mm; chiều cao nút PTS810 và đế pin Keystone 3034 lấy theo datasheet của chúng. Trong vỏ: không đặt kim loại (vít, lò xo, tấm che) trong ~15 mm quanh anten; kiểm tra RSSI/LQI của parent khi đã đóng vỏ (checklist mục C).
+
+**Đánh đổi của bo nhỏ:** pin chỉ còn cách chân anten 6,5 mm (bố trí 30 × 38 mm trước đây: ~16 mm). Pin nằm sau mặt phẳng GND, không nằm dưới anten, nhưng Espressif khuyến nghị khoảng trống ~15 mm quanh anten, nên tầm phủ có thể giảm. Đo RSSI/LQI trước khi làm vỏ; nếu yếu, dùng lại bố trí 30 × 38 mm ở commit `6649456` (cùng schematic).
 
 ## 4. Đặt mạch và lắp ráp
 
@@ -84,8 +86,9 @@ Chiều cao: module 3,2 mm trên bo 1,6 mm; chiều cao nút PTS810 và đế pi
 - **Footprint ESP32-H2-WROOM-02C** tự vẽ theo land pattern datasheet v1.2 mục 11.1: pad 1,5 × 0,9 mm bước 1,5 mm; chân 1–9 trái, 10–19 dưới, 20–28 phải; pad GND 29 gồm hai phần 2,8 × 0,55 và 2,8 × 1,6 mm với 6 via nhiệt (phủ mask mặt dưới). Gốc tọa độ là tâm module, vùng anten y = −10 … −4 có keep-out mọi lớp đồng. Silkscreen chỉ vẽ góc dưới và chấm chân 1 (vùng anten nằm ngoài bo).
 - **TPS63900**: symbol chuẩn của KiCad đã có chân 11 (pad tản nhiệt) ẩn, chồng lên chân GND 8. Footprint WSON-10 không có via trong pad (TI: via là tùy chọn); pad tản nhiệt nối chân 8 bằng đường mạch, rồi ra hai via GND hai bên.
 - **Keystone 3034**: footprint chuẩn có hai pad cùng số "1" (hai tai của cùng một lá kim loại); KiCad 9 sẽ đòi nối đồng giữa chúng vòng qua pin. Bản trong `lib/` bỏ số của tai trái (nhìn từ trên), tai này chỉ để hàn giữ.
-- **Ký hiệu linh kiện** trên silkscreen chỉ có ở linh kiện lớn; điện trở, tụ 0402/0603 quá dày, xem `docs/assembly-*.svg`.
-- **Đi dây**: phần TPS63900 bước 0,5 mm, trục 3V3, nút nhấn, LED, đo pin, cực pin và mọi via GND được vẽ trong script (khóa); FreeRouting đi phần còn lại (các pad test, VBAT tới R9, UART/USB). GND không qua autorouter: phủ đồng hai mặt nối tất cả.
+- **Ký hiệu linh kiện** trên silkscreen chỉ có U1, JP1, JP2 (bo quá dày cho chữ); vị trí từng linh kiện xem `docs/assembly-*.svg`.
+- **Đi dây**: phần TPS63900 bước 0,5 mm, đường nguồn (cực + pin, VBAT, 3V3), nút nhấn, LED, đo pin, UART và mọi via GND được vẽ trong script (khóa); FreeRouting đi phần còn lại (từ các via xuống pad test ở mặt dưới, USB D+/D−). GND không qua autorouter: phủ đồng hai mặt nối tất cả.
+- **Dưới pin**: mặt dưới chỉ đi dây trong phần không bị pin che (dải dưới module và hai bên); vành quanh mép pin là vùng cấm (rule area: không đường mạch, không via, không phủ đồng) vì mép vỏ CR2032 là cực + và cọ vào bo khi lắp pin. Via GND chỉ đặt bên trong pad tiếp xúc âm hoặc ngoài pin.
 
 ## 6. Sinh lại dự án từ script
 
