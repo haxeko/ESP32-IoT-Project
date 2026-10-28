@@ -15,7 +15,7 @@ menu "Button"
         bool "Use the internal pull-up (~45 kOhm) instead of an external one"
         default n
         help
-            The reference board has a 470 kOhm pull-up to 3V3 (7 uA only while pressed) and
+            The reference board has a 1 MOhm pull-up to 3V3 (3.3 uA only while pressed) and
             1 kOhm + 1 nF in series for ESD / bounce filtering. The internal pull-up draws 73 uA
             while pressed and needs the pad to be held in sleep.
 

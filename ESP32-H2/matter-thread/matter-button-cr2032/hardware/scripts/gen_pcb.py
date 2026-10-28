@@ -5,6 +5,7 @@
   python3 gen_pcb.py route     FreeRouting (Specctra DSN/SES), GND pours both layers, stitching vias
   python3 gen_pcb.py pour      GND pours and stitching vias again (after a manual change)
   python3 gen_pcb.py all       place + route
+  python3 gen_pcb.py sync      values and part numbers from the schematic onto the routed board (no placement)
 
 The footprints, values, nets and symbol links come from the netlist that kicad-cli exports from the schematic,
 as "Update PCB from Schematic" would do, so DRC with --schematic-parity checks the board against the schematic.
@@ -287,6 +288,19 @@ def add_text(board, text, x, y, layer, size=0.8, thick=0.12, angle=0):
     board.Add(t)
 
 
+def set_fields(fp, c, side):
+    """Schematic fields kept on the footprint (hidden, on the fab layer): part numbers for the BOM and the CPL."""
+    for k in ("MPN", "LCSC", "Description"):
+        if c["fields"].get(k):
+            fp.SetField(k, c["fields"][k])
+            f = fp.GetFieldByName(k)
+            f.SetVisible(False)
+            f.SetLayer(pcbnew.B_Fab if side == "B" else pcbnew.F_Fab)
+        elif fp.HasField(k):
+            fp.RemoveField(k)
+    fp.SetDNP(c["dnp"])
+
+
 def place():
     comps, nets = read_netlist()
     board = pcbnew.NewBoard(PCB)
@@ -315,14 +329,7 @@ def place():
         fp.SetSheetname("/")
         fp.SetSheetfile(os.path.basename(SCH))
         x, y, rot, side = PLACE[ref]
-        for k in ("MPN", "Description"):
-            if c["fields"].get(k):
-                fp.SetField(k, c["fields"][k])
-                f = fp.GetFieldByName(k)
-                f.SetVisible(False)
-                f.SetLayer(pcbnew.B_Fab if side == "B" else pcbnew.F_Fab)
-        if c["dnp"]:
-            fp.SetDNP(True)
+        set_fields(fp, c, side)
         fp.Value().SetVisible(False)  # values are in the BOM; the assembly drawing shows the designators
         fp.SetPosition(pt(x, y))
         fp.SetOrientationDegrees(rot)
@@ -365,6 +372,29 @@ def place():
     pcbnew.SaveBoard(PCB, board)
     print("placed:", PCB)
     return board
+
+
+def sync():
+    """Values and part numbers changed in design.py (same footprints and nets): update the placed and routed board
+    in place, no new placement or routing."""
+    comps, _ = read_netlist()
+    pro = PCB.replace(".kicad_pcb", ".kicad_pro")
+    settings = open(pro).read()  # SaveBoard of a loaded board writes every default into the project file
+    board = pcbnew.LoadBoard(PCB)
+    board.GetTitleBlock().SetDate(design.DATE)
+    fps = {fp.GetReference(): fp for fp in board.GetFootprints()}
+    missing = set(comps) ^ set(fps)
+    assert not missing, f"board and schematic differ: {missing}, run the place and route stages"
+    for ref, c in sorted(comps.items()):
+        fp = fps[ref]
+        if fp.GetFPIDAsString() != c["footprint"]:
+            raise SystemExit(f"{ref}: footprint changed to {c['footprint']}, run the place and route stages")
+        fp.SetValue(c["value"])
+        set_fields(fp, c, "B" if fp.IsFlipped() else "F")
+    pcbnew.SaveBoard(PCB, board)
+    with open(pro, "w") as f:
+        f.write(settings)
+    print("synced:", PCB)
 
 
 # ------------------------------------------------------------------------------------------------- routing
@@ -573,5 +603,7 @@ if __name__ == "__main__":
         route()
     if stage == "pour":
         print(run_step("pour"))
+    if stage == "sync":
+        sync()
     sys.stdout.flush()
     os._exit(0)

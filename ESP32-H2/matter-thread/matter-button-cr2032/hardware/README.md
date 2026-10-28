@@ -21,9 +21,10 @@ Chưa đặt mạch, chưa đo trên bo thật: kiểm tra lại footprint modul
 |---|---|
 | `matter-button-cr2032.kicad_pro/.kicad_sch/.kicad_pcb` | dự án KiCad 9 (mở bằng KiCad ≥ 9.0) |
 | `lib/matter_button.kicad_sym`, `lib/matter_button.pretty/` | linh kiện riêng: symbol + footprint ESP32-H2-WROOM-02C, power symbol VBAT, đế Keystone 3034 (bản sửa) |
-| `fab/matter-button-cr2032-gerber.zip` | Gerber X2 + khoan Excellon: gửi thẳng cho nhà sản xuất PCB |
-| `fab/bom-vi.csv` | BOM theo tên và thông số linh kiện (tiếng Việt), kèm từ khóa tìm mua và linh kiện thay thế |
-| `fab/bom-jlcpcb.csv`, `fab/cpl-jlcpcb.csv` | BOM (theo MPN) và file vị trí linh kiện (tên cột theo JLCPCB) cho dịch vụ lắp ráp |
+| `fab/matter-button-cr2032-gerber.zip` | Gerber (RS-274X, không thuộc tính X2, theo hướng dẫn KiCad của JLCPCB) + khoan Excellon: gửi thẳng cho nhà sản xuất PCB |
+| `fab/bom-vi.csv` | BOM theo tên và thông số linh kiện (tiếng Việt), kèm từ khóa tìm mua, mã LCSC và linh kiện thay thế |
+| `fab/bom-jlcpcb.csv`, `fab/cpl-jlcpcb.csv` | BOM (mã LCSC + MPN) và file vị trí linh kiện (tên cột theo JLCPCB) cho dịch vụ lắp ráp; không có U1, BT1 (hàn tay) |
+| `fab/bom.csv` | BOM đầy đủ (MPN, mã LCSC, mô tả), C7 ghi DNP |
 | `docs/schematic.pdf` | schematic KiCad |
 | `docs/assembly-top.svg`, `docs/assembly-bottom.svg` | bản vẽ lắp ráp: viền linh kiện + ký hiệu (C7 gạch chéo: không lắp) |
 | `docs/pcb-*.png` | ảnh render 3D (không có model linh kiện) và layout 2D |
@@ -53,7 +54,7 @@ Các thông số nằm trong quy trình tiêu chuẩn của JLCPCB / PCBWay (tra
 | Phải module | R9 1 MΩ + C9 100 nF đo pin ở GPIO1 | |
 | Dưới module | R1–R3 cấu hình TPS63900; LED D1 + R8 (GPIO22) | đặt ống dẫn sáng ở tọa độ D1 |
 | Giữa | chuỗi nguồn phải → trái: Q1 → JP1 → C2, C1 → C3 → U2 (L1 ngay dưới) → C4 → JP2 | vòng VIN (C3) và VOUT (C4) ngắn trên lớp trên, cuộn cảm sát LX1/LX2, pad tản nhiệt của U2 nối chân GND 8 và hai via |
-| Nửa dưới | SW1 PTS810 ở giữa; R7, C8 (lọc RC) và R6 (kéo lên 470 kΩ) cạnh nút | GPIO10 đi ở lớp dưới dọc mép trái |
+| Nửa dưới | SW1 PTS810 ở giữa; R7, C8 (lọc RC) và R6 (kéo lên 1 MΩ) cạnh nút | GPIO10 đi ở lớp dưới dọc mép trái |
 | Mặt dưới | đế pin Keystone 3034, tâm cách mép trên 26 mm | mép pin cách chân anten ~16 mm; pad tiếp xúc âm Ø17,8 mm là một phần mặt phẳng GND |
 | Mặt dưới, dưới module | 10 pad test Ø1,5 mm, 2 hàng × 5, bước 2,54 mm | kẹp pogo-pin; nhãn in ở mặt dưới |
 
@@ -73,7 +74,8 @@ Chiều cao: module 3,2 mm trên bo 1,6 mm; chiều cao nút PTS810 và đế pi
 ## 4. Đặt mạch và lắp ráp
 
 1. **PCB**: tải `fab/matter-button-cr2032-gerber.zip` lên JLCPCB/PCBWay: 2 lớp, 1,6 mm, ENIG, các mục khác để mặc định.
-2. **Lắp ráp (tùy chọn)**: tải `fab/bom-jlcpcb.csv` và `fab/cpl-jlcpcb.csv`. File không có mã LCSC: chọn linh kiện theo cột MPN. Kiểm tra góc xoay ở bản xem trước của nhà sản xuất (thường phải chỉnh U1, U2, Q1, D1). BT1 nằm mặt dưới: chọn lắp hai mặt, hoặc tự hàn (2 tai lớn, dễ hàn tay). C7 không lắp (DNP).
+2. **Lắp ráp JLCPCB (tùy chọn)**: chọn lắp mặt trên (Top side), tải `fab/bom-jlcpcb.csv` và `fab/cpl-jlcpcb.csv`. Mỗi dòng BOM đã có mã LCSC nên được ghép tự động: 10 loại Basic, 5 loại Extended (U2 C1518762, L1 C391305, C1/C2 C469553, R1 C49010116, SW1 C116501; phí nạp tính theo loại). Nếu JLCPCB báo hết hàng: tụ C1/C2 thay bằng Samsung CL32A227MQVNNNE (C400951); SW1 phải là bản **SJM** (160 gf), đừng để trang ghép tự chọn bản SJG (C221895, 400 gf). Kiểm tra góc xoay ở bản xem trước (nhất là U2, Q1, D1, L1, SW1: chấm chân 1 và cực LED). C7 không lắp (DNP).
+   - **U1 và BT1 không có ở LCSC** nên không có trong hai file trên: hàn tay sau khi nhận bo. BT1: 2 tai lớn ở mặt dưới, dễ hàn. U1: pad ở mép module hàn bằng mỏ hàn; pad GND giữa (29) có 6 via nhiệt, hàn từ mặt dưới qua via (hoặc khò/bếp gia nhiệt với kem hàn). Muốn JLCPCB lắp U1 thì dùng Global Sourcing hoặc gửi linh kiện (consigned) rồi thêm dòng U1 vào BOM/CPL.
 3. **JP1, JP2** là cầu hàn đã nối sẵn bằng đồng: cắt đường đồng nhỏ giữa hai pad để đo dòng (nối ampe kế vào hai pad), đo xong hàn nối lại.
 4. Cấp nguồn lần đầu, nạp firmware: [README chính mục 8.3](../README.md#83-nạp-firmware) và [checklist](../docs/test-checklist.md). Khi có pin, **không** cấp 3V3 vào pad 3V3.
 
@@ -98,12 +100,14 @@ FREEROUTING_JAR=/đường/dẫn/freerouting-2.1.0.jar python3 scripts/gen_pcb.p
 python3 scripts/gen_fab.py              # ERC + DRC (dừng nếu có lỗi), fab/, docs/
 ```
 
+Chỉ đổi giá trị hoặc mã linh kiện (cùng footprint, cùng net) trong `design.py`: chạy `gen_sch.py`, rồi `python3 scripts/gen_pcb.py sync` (cập nhật giá trị và trường MPN/LCSC trên bo đã đi dây, không đặt hay đi dây lại), rồi `gen_fab.py`.
+
 | Script | Việc |
 |---|---|
-| `design.py` | dữ liệu duy nhất: linh kiện, giá trị, MPN, footprint, chân → net, vị trí trên schematic |
+| `design.py` | dữ liệu duy nhất: linh kiện, giá trị, MPN, mã LCSC, footprint, chân → net, vị trí trên schematic |
 | `gen_project.py` | file dự án (luật thiết kế, net class Default 0,2 mm / Power 0,3 mm / Ground), thư viện riêng |
 | `gen_sch.py` | schematic A3 một trang: mỗi chân có đoạn dây ngắn tới nhãn net hoặc ký hiệu nguồn |
-| `gen_pcb.py` | board từ netlist do `kicad-cli` xuất ra (giống "Update PCB from Schematic"); bảng `PLACE` (vị trí), `ROUTES`/`VIAS` (đi dây tay); bước `route` gọi FreeRouting, dọn đoạn thừa, phủ đồng GND, via khâu |
+| `gen_pcb.py` | board từ netlist do `kicad-cli` xuất ra (giống "Update PCB from Schematic"); bảng `PLACE` (vị trí), `ROUTES`/`VIAS` (đi dây tay); bước `route` gọi FreeRouting, dọn đoạn thừa, phủ đồng GND, via khâu; bước `sync` chỉ cập nhật giá trị và mã linh kiện |
 | `gen_fab.py` | kiểm tra và xuất file sản xuất (ảnh layout 2D cần thêm `pip install cairosvg pillow`) |
 
 FreeRouting không cho cùng một kết quả mỗi lần chạy: sau `route`, `gen_fab.py` chỉ xuất file khi DRC sạch. Sửa tay trong KiCad cũng được (sau đó không chạy lại `gen_pcb.py`, vì nó ghi đè `.kicad_pcb`); chạy `python3 scripts/gen_pcb.py pour` để phủ đồng và via khâu lại, rồi `gen_fab.py`.

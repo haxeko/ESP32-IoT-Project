@@ -3,9 +3,10 @@
 
   fab/matter-button-cr2032-gerber.zip   Gerber (Protel names, no X2/netlist attributes, as the JLCPCB KiCad guide)
                                         + Excellon drill (mm) + drill map
-  fab/bom.csv                           grouped bill of materials (MPN), not fitted parts marked DNP
+  fab/bom.csv                           grouped bill of materials (MPN, LCSC), not fitted parts marked DNP
   fab/bom-jlcpcb.csv                    JLCPCB assembly BOM: Comment, Designator, Footprint, LCSC Part #, MPN
   fab/cpl-jlcpcb.csv                    JLCPCB pick and place: Designator, Mid X, Mid Y, Layer, Rotation
+                                        (both without the hand soldered parts, no LCSC part number: U1, BT1)
   docs/schematic.pdf                    KiCad schematic
   docs/assembly-top.svg, -bottom.svg    assembly drawings (fab layers: outlines, designators, values)
   docs/pcb-top.png, docs/pcb-bottom.png 3D renders (no component models: pads, mask, silk)
@@ -76,8 +77,8 @@ def gerbers():
 
 def bom():
     path = os.path.join(FAB, "bom.csv")
-    cli("sch", "export", "bom", "--fields", "${QUANTITY},Reference,Value,Footprint,MPN,Description,${DNP}",
-        "--labels", "Qty,Designator,Value,Footprint,MPN,Description,DNP",
+    cli("sch", "export", "bom", "--fields", "${QUANTITY},Reference,Value,Footprint,MPN,LCSC,Description,${DNP}",
+        "--labels", "Qty,Designator,Value,Footprint,MPN,LCSC,Description,DNP",
         "--group-by", "Value,Footprint,MPN,${DNP}", "--ref-range-delimiter", "", "-o", path, SCH)
     print("bom:", path)
     bom_jlcpcb()
@@ -90,21 +91,26 @@ PACKAGE = [("R_0402", "0402"), ("C_0402", "0402"), ("C_0603", "0603"), ("C_1210"
            ("Keystone_3034", "CR2032 holder SMD")]
 
 
+# Fitted parts LCSC does not stock (no LCSC part number): left out of the JLCPCB BOM and CPL, soldered by hand
+HAND_SOLDERED = [p["ref"] for p in design.PARTS if p["bom"] and not p.get("dnp") and not p["lcsc"]]
+
+
 def bom_jlcpcb():
-    """Assembled parts only (no DNP, no test pads, no solder jumpers). LCSC Part # left empty: pick it in the
-    JLCPCB parts matching step from the MPN column."""
+    """Parts JLCPCB assembles: no DNP, no test pads, no solder jumpers, no HAND_SOLDERED part."""
     raw = os.path.join(BUILD, "bom-raw.csv")
-    cli("sch", "export", "bom", "--fields", "Value,Reference,Footprint,MPN", "--labels",
-        "Comment,Designator,Footprint,MPN", "--group-by", "Value,Footprint,MPN", "--ref-range-delimiter", "",
+    cli("sch", "export", "bom", "--fields", "Value,Reference,Footprint,LCSC,MPN", "--labels",
+        "Comment,Designator,Footprint,LCSC,MPN", "--group-by", "Value,Footprint,LCSC", "--ref-range-delimiter", "",
         "--exclude-dnp", "-o", raw, SCH)
     path = os.path.join(FAB, "bom-jlcpcb.csv")
     with open(raw) as f, open(path, "w", newline="") as g:
         w = csv.writer(g)
         w.writerow(["Comment", "Designator", "Footprint", "LCSC Part #", "Manufacturer Part Number"])
         for row in csv.DictReader(f):
+            if not row["LCSC"]:
+                continue
             fp = next(name for key, name in PACKAGE if key in row["Footprint"])
-            w.writerow([row["Comment"], row["Designator"], fp, "", row["MPN"]])
-    print("bom jlcpcb:", path)
+            w.writerow([row["Comment"], row["Designator"], fp, row["LCSC"], row["MPN"]])
+    print("bom jlcpcb:", path, "(hand soldered:", ", ".join(HAND_SOLDERED) + ")")
 
 
 def cpl():
@@ -116,6 +122,8 @@ def cpl():
         w = csv.writer(g)
         w.writerow(["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
         for row in csv.DictReader(f):
+            if row["Ref"] in HAND_SOLDERED:
+                continue
             w.writerow([row["Ref"], f"{float(row['PosX']):.4f}mm", f"{float(row['PosY']):.4f}mm",
                         row["Side"].capitalize(), f"{float(row['Rot']) % 360:g}"])
     print("cpl:", path)

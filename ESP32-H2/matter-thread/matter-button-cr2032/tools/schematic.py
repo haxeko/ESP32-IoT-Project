@@ -110,7 +110,7 @@ def draw(path):
         d += elm.Line().at((0.8, rail)).to((3.0, rail))
         q1 = elm.PFet().theta(-90).anchor("drain").at((3.0, rail))
         d += q1
-        text(d, (q1.gate[0], rail + 1.75), "Q1 DMG2305UX", halign="center")
+        text(d, (q1.gate[0], rail + 1.75), "Q1 AO3401A", halign="center")
         note(d, (q1.gate[0], rail + 1.15), "D ◄ pin    S ► tải", halign="center")
         d += elm.Line().at(q1.gate).toy(rail - 2.4)
         gnd(d, (q1.gate[0], rail - 2.4))
@@ -164,15 +164,15 @@ def draw(path):
         d += l1
         d += elm.Line().at((u2.LX2[0], top)).to(u2.LX2)
         text(d, (l1.center[0], top + 0.7), "L1 2,2 µH", halign="center")
-        note(d, (l1.center[0], top + 1.25), "DFE252012F-2R2M", halign="center")
+        note(d, (l1.center[0], top + 1.25), "DFE252012P-2R2M", halign="center")
         # CFG resistors, GND
-        for pin, ref, val in (("CFG1", "R1", "36,5 kΩ"), ("CFG2", "R2", "0 Ω"), ("CFG3", "R3", "16,2 kΩ")):
+        for pin, ref, val in (("CFG1", "R1", "36,5 kΩ"), ("CFG2", "R2", "0 Ω"), ("CFG3", "R3", "0 Ω")):
             pp = getattr(u2, pin)
             vpart(d, elm.Resistor, pp[0], pp[1], 1.6, ref, val)
         d += elm.Line().at(u2.GND).toy(u2.GND[1] - 1.6)
         gnd(d, (u2.GND[0], u2.GND[1] - 1.6))
         note(d, (u2.center[0], 11.1), "CFG1 36,5 kΩ + CFG2 0 Ω → VO(2) = 3,3 V, không giới hạn dòng vào\n"
-                                      "CFG3 16,2 kΩ → VO(1) = 3,3 V · EN, SEL nối VIN", halign="center")
+                                      "CFG3 0 Ω → VO(1) = 1,8 V, không dùng · EN, SEL nối VIN", halign="center")
         # VOUT -> C4 -> JP2 -> 3V3 rail with C5, C6 (a single pin on a side is centred: jog up to the rail)
         xb = u2.VOUT[0] + 1.0
         xj = u2.VOUT[0] + 0.5
@@ -268,7 +268,7 @@ def draw(path):
         d += elm.Dot().at((xsw, y))
         r6 = elm.Resistor().up().at((xsw, y)).length(2.0)
         d += r6
-        text(d, (xsw + 0.42, y + 1.0), "R6\n470 kΩ")
+        text(d, (xsw + 0.42, y + 1.0), "R6\n1 MΩ")
         vcc(d, r6.end)
         sw = elm.Button().right().at((xsw, y)).length(2.6)
         d += sw
@@ -276,7 +276,7 @@ def draw(path):
         d += elm.Line().at(sw.end).tox(sw.end[0] + 0.7)
         d += elm.Line().at((sw.end[0] + 0.7, y)).toy(y - 1.0)
         gnd(d, (sw.end[0] + 0.7, y - 1.0))
-        note(d, (sw.end[0] + 1.2, y + 0.75), "nút: GPIO10 (LP IO, đánh thức EXT1)\n7 µA khi đang nhấn, 0 khi nhả")
+        note(d, (sw.end[0] + 1.2, y + 0.75), "nút: GPIO10 (LP IO, đánh thức EXT1)\n3,3 µA khi đang nhấn, 0 khi nhả")
 
         # Right: IO22 LED
         y = u1.IO22[1]

@@ -9,7 +9,7 @@
 	(paper "A4")
 	(title_block
 		(title "ESP32-H2 Matter over Thread CR2032 button")
-		(date "2026-10-23")
+		(date "2026-10-28")
 		(rev "1.0")
 		(company "Haxeko")
 	)
@@ -707,11 +707,23 @@
 				)
 			)
 		)
-		(property "MPN" "RC0402JR-070RL"
+		(property "MPN" "0402WGF0000TCE"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "7eb46bbf-2741-467e-87e5-de1cdfec022c")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C17168"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "438e35ce-3b3e-49f3-90ae-e1e785870067")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -822,7 +834,7 @@
 				)
 			)
 		)
-		(property "Value" "DMG2305UX"
+		(property "Value" "AO3401A"
 			(at 0 2.4 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -846,7 +858,7 @@
 				)
 			)
 		)
-		(property "Description" "P-MOSFET -20 V, reverse polarity protection"
+		(property "Description" "P-MOSFET -30 V, reverse polarity protection"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -858,11 +870,23 @@
 				)
 			)
 		)
-		(property "MPN" "DMG2305UX-7"
+		(property "MPN" "AO3401A"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "bfe5075e-f96c-4a5c-8c54-2ab0d7500b76")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C15127"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "ca9fda14-dbbf-4094-a657-744c24839131")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1242,6 +1266,18 @@
 				)
 			)
 		)
+		(property "LCSC" "C469553"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "6437e9eb-7b3e-4ca0-81de-d41c5d99f0a6")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
 		(path "/75e4bd54-2c8a-5916-b521-30d92aa4a1df")
 		(sheetname "/")
 		(sheetfile "matter-button-cr2032.kicad_sch")
@@ -1394,6 +1430,18 @@
 				)
 			)
 		)
+		(property "LCSC" "C469553"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "91278d9d-4e25-4d13-841e-ed15bf212659")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
 		(path "/7d55f248-8621-52a0-9013-097db622aaa3")
 		(sheetname "/")
 		(sheetfile "matter-button-cr2032.kicad_sch")
@@ -1498,7 +1546,7 @@
 				)
 			)
 		)
-		(property "Value" "470k"
+		(property "Value" "1M"
 			(at 0 1.17 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -1534,11 +1582,23 @@
 				)
 			)
 		)
-		(property "MPN" "RC0402FR-07470KL"
+		(property "MPN" "0402WGF1004TCE"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "6a603e99-d8fa-4569-9c09-a70df4a9ff7a")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C26083"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "ea583c3f-83bd-4ede-a0fa-68f9534e52c4")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1686,11 +1746,23 @@
 				)
 			)
 		)
-		(property "MPN" "RC0402FR-071ML"
+		(property "MPN" "0402WGF1004TCE"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "efa8b7dc-08b9-4b76-9bbc-47a411546907")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C26083"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "e48d0436-53fa-4719-9626-40d43b4b1fda")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1838,11 +1910,23 @@
 				)
 			)
 		)
-		(property "MPN" "RC0402FR-0710KL"
+		(property "MPN" "0402WGF1002TCE"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "fa0dcaa5-df4d-4313-aa94-a70cd722c940")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C25744"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "66ec25f2-0a06-4923-a019-acf744c60b1f")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -1990,11 +2074,23 @@
 				)
 			)
 		)
-		(property "MPN" "RC0402FR-0736K5L"
+		(property "MPN" "FRC0402F3652TS"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "4ac9ace9-cb4e-4d00-9255-0be81a90b76d")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C49010116"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "01f6e1fa-0302-47d8-9b29-b245d7475ee6")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2146,6 +2242,18 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "592f905f-04c2-4eba-8ea2-e1543589cf2b")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C1518762"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "d0a38a5c-c908-4d32-991c-3adaeac6a429")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2480,7 +2588,7 @@
 				)
 			)
 		)
-		(property "Value" "16.2k"
+		(property "Value" "0R"
 			(at 0 1.17 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -2504,7 +2612,7 @@
 				)
 			)
 		)
-		(property "Description" "1 %, CFG3: VO(1) 3.3 V"
+		(property "Description" "CFG3: VO(1) 1.8 V, unused (SEL = VIN selects VO(2))"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -2516,11 +2624,23 @@
 				)
 			)
 		)
-		(property "MPN" "RC0402FR-0716K2L"
+		(property "MPN" "0402WGF0000TCE"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "8d4cf5c5-4513-4531-8055-c9c8e19243ea")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C17168"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "4e859a34-389f-4a6e-8269-5bc60df3820b")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2656,7 +2776,7 @@
 				)
 			)
 		)
-		(property "Description" "C&K 4.2x3.2 mm tact switch"
+		(property "Description" "C&K 4.2x3.2 mm tact switch, 160 gf"
 			(at 0 0 0)
 			(unlocked yes)
 			(layer "F.Fab")
@@ -2674,6 +2794,18 @@
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "b84be0c3-2c18-4ac2-a2b3-21d845184432")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C116501"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "f95fdd4a-44de-4bdc-bcfd-71f17ea39cfe")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2981,7 +3113,7 @@
 				)
 			)
 		)
-		(property "Description" "VBAT sense filter"
+		(property "Description" "16 V X7R, VBAT sense filter"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -2993,11 +3125,23 @@
 				)
 			)
 		)
-		(property "MPN" "GRM155R71C104KA88D"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "3010fd7f-7362-4027-84e1-26a96e1d21d6")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C1525"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "b15c7368-466d-49ce-98d9-b39298ae3af2")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3423,11 +3567,23 @@
 				)
 			)
 		)
-		(property "MPN" "GRM155R61A105KE15D"
+		(property "MPN" "CL05A105KA5NQNC"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "6eb9021d-da37-44bf-baa5-dafa3faa53c9")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C52923"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "2d03c455-27b8-4c7a-9e93-6478c4bb1197")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3563,7 +3719,7 @@
 				)
 			)
 		)
-		(property "Description" "button filter"
+		(property "Description" "50 V X7R, button filter"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
@@ -3575,11 +3731,23 @@
 				)
 			)
 		)
-		(property "MPN" "GRM155R71H102KA01D"
+		(property "MPN" "CL05B102KB5NNNC"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "d7de6621-9b7b-4c0b-a929-8d825d849fee")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C1523"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "9d604de8-ff7d-437e-b4ec-96428d87ac80")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4005,11 +4173,23 @@
 				)
 			)
 		)
-		(property "MPN" "GRM187R60J226ME15D"
+		(property "MPN" "CL10A226MQ8NRNC"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "5df853d0-2ee8-4167-889d-70181bbf100b")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C59461"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "d20a1370-2209-4087-9e0e-0ea85970cc4a")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4157,11 +4337,23 @@
 				)
 			)
 		)
-		(property "MPN" "RC0402FR-071KL"
+		(property "MPN" "0402WGF1001TCE"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "10d9ed2b-aefa-4623-814c-ec8591bfe117")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C11702"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "02c899cf-9db6-45c0-9467-74f64158ae1e")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4297,7 +4489,7 @@
 				)
 			)
 		)
-		(property "Description" "at U1 pin 1"
+		(property "Description" "10 V X5R, at U1 pin 1"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -4309,11 +4501,23 @@
 				)
 			)
 		)
-		(property "MPN" "GRM188R61A106ME69D"
+		(property "MPN" "CL10A106KP8NNNC"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "7d12ef3c-e7dd-4662-8c9c-c01cc3c193a7")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C19702"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "91115916-9274-45a9-8590-b9ef880f96cc")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4449,7 +4653,7 @@
 				)
 			)
 		)
-		(property "Description" "at U1 pin 1"
+		(property "Description" "16 V X7R, at U1 pin 1"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -4461,11 +4665,23 @@
 				)
 			)
 		)
-		(property "MPN" "GRM155R71C104KA88D"
+		(property "MPN" "CL05B104KO5NNNC"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "778be8f1-035c-4325-b460-42f14f7a693e")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C1525"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "06bee0ff-23ce-4d89-8b6a-bb1925e7bea3")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4600,7 +4816,7 @@
 				)
 			)
 		)
-		(property "Description" "Kingbright 0603 red"
+		(property "Description" "Hubei KENTO 0603 red"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
@@ -4612,11 +4828,23 @@
 				)
 			)
 		)
-		(property "MPN" "KP-1608SURCK"
+		(property "MPN" "KT-0603R"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "31a523c7-817b-42e4-91d9-15fd74f9ccfd")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C2286"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "3354069b-4c87-4228-aa7b-92868c9bbf6f")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4800,7 +5028,7 @@
 				)
 			)
 		)
-		(property "Description" "Murata 2.5x2.0 mm"
+		(property "Description" "Murata 2.5x2.0 mm, Isat 3 A"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
@@ -4812,11 +5040,23 @@
 				)
 			)
 		)
-		(property "MPN" "DFE252012F-2R2M=P2"
+		(property "MPN" "DFE252012P-2R2M=P2"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "9ccca4b2-9779-42bb-a30c-e18a15f33057")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C391305"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "1c4544c7-5614-4c1c-a143-8ad06c351e11")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4964,11 +5204,23 @@
 				)
 			)
 		)
-		(property "MPN" "RC0402FR-071KL"
+		(property "MPN" "0402WGF1001TCE"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "faa7171c-de4c-4fb7-acb6-e99f2466c224")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C11702"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "15795bd6-a724-4e07-9ef9-24d7512b92c9")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5116,11 +5368,23 @@
 				)
 			)
 		)
-		(property "MPN" "RC0402FR-0710KL"
+		(property "MPN" "0402WGF1002TCE"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "1e2fa132-ca30-484d-95a7-b7cbe15088d9")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C25744"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "efed769e-a72a-40fe-9e27-d84a0c328415")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5268,11 +5532,23 @@
 				)
 			)
 		)
-		(property "MPN" "GRM188R61A106ME69D"
+		(property "MPN" "CL10A106KP8NNNC"
 			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "4a61c9fe-bcdc-41a6-a1f7-33de09dce0c8")
+			(effects
+				(font
+					(size 1.27 1.27)
+					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C19702"
+			(at 0 0 0)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "7dedeac5-c30e-4297-83f9-b445bcb241fa")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5415,7 +5691,7 @@
 		(property "Description" "test pad"
 			(at 0 0 0)
 			(unlocked yes)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "bbf30b2d-8f68-43f5-9bea-c1a59b0155eb")
 			(effects
@@ -5522,7 +5798,7 @@
 		(property "Description" "test pad"
 			(at 0 0 0)
 			(unlocked yes)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "ef324b58-71d8-4114-8f94-3b603e05c68c")
 			(effects
@@ -5629,7 +5905,7 @@
 		(property "Description" "test pad"
 			(at 0 0 0)
 			(unlocked yes)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "8cf020dc-fb62-466d-b48f-2b193b26083e")
 			(effects
@@ -5735,7 +6011,7 @@
 		(property "Description" "CR2032 holder, SMT"
 			(at 0 0 0)
 			(unlocked yes)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "0a869fc9-9192-4673-b351-86370e323a40")
 			(effects
@@ -5748,7 +6024,7 @@
 		)
 		(property "MPN" "Keystone 3034"
 			(at 0 0 0)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "d00b20e7-73a7-4273-9de3-4593c913dd8a")
 			(effects
@@ -6298,7 +6574,7 @@
 		(property "Description" "test pad"
 			(at 0 0 0)
 			(unlocked yes)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "74738cc7-a5f9-4394-b25f-263985c9b1b3")
 			(effects
@@ -6405,7 +6681,7 @@
 		(property "Description" "test pad"
 			(at 0 0 0)
 			(unlocked yes)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "025c4b15-acfd-4009-8528-0636374f2445")
 			(effects
@@ -6512,7 +6788,7 @@
 		(property "Description" "test pad"
 			(at 0 0 0)
 			(unlocked yes)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "10750ab3-610a-480d-b41f-95ba5b08ff43")
 			(effects
@@ -6619,7 +6895,7 @@
 		(property "Description" "test pad"
 			(at 0 0 0)
 			(unlocked yes)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "3b171c1d-04f9-4f54-8ae4-2cc8f2e0bc19")
 			(effects
@@ -6726,7 +7002,7 @@
 		(property "Description" "test pad"
 			(at 0 0 0)
 			(unlocked yes)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "03427df4-f699-4c20-a272-744ccc236f66")
 			(effects
@@ -6833,7 +7109,7 @@
 		(property "Description" "test pad"
 			(at 0 0 0)
 			(unlocked yes)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "74399ec4-f207-440c-9b8d-b7070c3bc2ac")
 			(effects
@@ -6940,7 +7216,7 @@
 		(property "Description" "test pad"
 			(at 0 0 0)
 			(unlocked yes)
-			(layer "F.Fab")
+			(layer "B.Fab")
 			(hide yes)
 			(uuid "831c0f8c-d92b-42e2-8ed4-f961b973ab0e")
 			(effects

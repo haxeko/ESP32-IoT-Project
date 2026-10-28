@@ -147,18 +147,18 @@ Nếu bắt buộc CR2032 và ≥ 6 tháng: dùng LIT (chỉ với Home Assistan
 | C1, C2 | tụ bulk, cấp xung TX/RX ngắn, giảm sụt áp trên điện trở trong của pin (mục 1.4) |
 | TPS63900 | buck-boost 3,3 V, Iq 75 nA, chạy từ 1,8 V |
 | R9 + C9 | đo áp pin không tốn dòng (mục 2.5) |
-| SW1 + R6/R7/C8 | nút nhấn, lọc RC, kéo lên 470 kΩ (mục 2.4) |
+| SW1 + R6/R7/C8 | nút nhấn, lọc RC, kéo lên 1 MΩ (mục 2.4) |
 | D1 + R8 | LED trạng thái (ghép nối, Identify, xác nhận reset, pin yếu); chỉ nháy ngắn |
 
 ### 2.2 Đường nguồn
 
-- **Q1 DMG2305UX** nối kiểu "ideal diode": D về pin, S về VBAT, G xuống GND. Lắp đúng: diode thân dẫn trước, V_GS = −V_pin → FET mở. Lắp ngược: V_GS = 0, diode thân phân cực ngược → không có dòng. Cần thiết vì tay giữ (+) của đế Keystone 3034 chạm mặt trên của pin: lắp úp pin thì mặt (−) chạm tay giữ (+), mặt (+) chạm pad GND.
+- **Q1 AO3401A** nối kiểu "ideal diode": D về pin, S về VBAT, G xuống GND. Lắp đúng: diode thân dẫn trước, V_GS = −V_pin → FET mở. Lắp ngược: V_GS = 0, diode thân phân cực ngược → không có dòng. Cần thiết vì tay giữ (+) của đế Keystone 3034 chạm mặt trên của pin: lắp úp pin thì mặt (−) chạm tay giữ (+), mặt (+) chạm pad GND.
 - **TPS63900** (theo mạch điển hình 3,3 V của datasheet, Hình 8-1 / Bảng 8-5):
   - CFG1 = **36,5 kΩ** và CFG2 = **0 Ω** → VO(2) = 3,3 V, giới hạn dòng vào **không giới hạn** (Bảng 7-2). Không dùng giới hạn dòng vào: tụ bulk đặt trước bộ chuyển đổi đã gánh xung; giới hạn thấp hơn dòng cần lúc pin yếu (68 mA ở 2,0 V) sẽ làm sụt 3,3 V. Muốn thử giới hạn 100 mA thì đổi R2 (CFG2) thành 511 Ω.
-  - CFG3 = **16,2 kΩ** → VO(1) = 3,3 V (chân không được để hở; SEL nối VIN nên thực tế dùng VO(2)).
+  - CFG3 = **0 Ω** → VO(1) = 1,8 V (Bảng 7-3), không dùng tới: SEL nối VIN nên luôn chọn VO(2). Chân không được để hở; 0 Ω cũng là giá trị của mạch tham chiếu 3,3 V trong datasheet (Bảng 8-5), và R2, R3 dùng chung một mã linh kiện.
   - EN và SEL nối VIN (luôn chạy, chọn VO(2)).
   - Điện trở CFG: ±1 %, TCR ≤ ±200 ppm, đặt sát chân (điện dung chân CFG ≤ 10 pF). R2D chỉ đọc lúc khởi động.
-  - L1 2,2 µH DFE252012F-2R2M; C3 10 µF sát VIN; C4 22 µF sát VOUT.
+  - L1 2,2 µH DFE252012P-2R2M (Murata, I_sat 3 A, 70 mΩ; datasheet dùng DFE252012F-2R2M, cùng kích thước); C3 10 µF sát VIN; C4 22 µF sát VOUT.
 - **Vì sao 3,3 V:** đủ biên trên brownout 2,94 V khi tải đột biến 36 mA (TPS63900 dao động ra tầm chục mV). Có thể thử 3,1 V (VO(2) với CFG1 = 24,9 kΩ) để giảm ~6 % năng lượng, chỉ sau khi đo gợn sóng và sụt áp lúc phát.
 - **Không dùng tụ tantalum / siêu tụ** cho tụ bulk: dòng rò cỡ µA. MLCC X5R rò thấp nhất, nhưng tụ dung lượng lớn vẫn phải đo rò (mục 2.6).
 
@@ -179,15 +179,15 @@ GPIO8/GPIO9 cũng là LP IO nhưng là chân strapping: nút nối GND ở đó 
 ### 2.4 Nút nhấn
 
 ```
-3V3 ──R6 470 kΩ──┬──R7 1 kΩ──┬── GPIO10 (LP IO)
+3V3 ──R6 1 MΩ────┬──R7 1 kΩ──┬── GPIO10 (LP IO)
                  │           C8 1 nF
                SW1           │
                  │          GND
                 GND
 ```
 
-- **Kéo lên ngoài 470 kΩ** thay vì kéo lên trong (~45 kΩ): khi nhấn chỉ tốn 7 µA (thay vì 73 µA), và mức logic không phụ thuộc cấu hình pad lúc ngủ. Lúc nhả không tốn dòng (chỉ dòng rò chân ≤ 50 nA).
-- **R7 + C8**: lọc nhiễu/ESD, cạnh nhấn ~1 µs (1 kΩ × 1 nF), cạnh nhả ~0,5 ms (471 kΩ × 1 nF). Bật hysteresis đầu vào trong firmware vì cạnh nhả chậm.
+- **Kéo lên ngoài 1 MΩ** thay vì kéo lên trong (~45 kΩ): khi nhấn chỉ tốn 3,3 µA (thay vì 73 µA), và mức logic không phụ thuộc cấu hình pad lúc ngủ. Lúc nhả không tốn dòng (chỉ dòng rò chân ≤ 50 nA).
+- **R7 + C8**: lọc nhiễu/ESD, cạnh nhấn ~1 µs (1 kΩ × 1 nF), cạnh nhả ~1 ms (1 MΩ × 1 nF). Bật hysteresis đầu vào trong firmware vì cạnh nhả chậm.
 - Chống dội hoàn toàn bằng phần mềm (mục 6), không cần mạch RC lớn.
 
 ### 2.5 Đo pin gần như không tốn dòng
@@ -222,7 +222,7 @@ Ngoài ra `BatVoltage` (mV) và `BatPercentRemaining` (bảng áp nghỉ → %, 
 | Tụ bulk C1 + C2 (2 × 220 µF X5R) | **phải đo**; thường 0,05–0,5 µA sau vài phút có áp; spec chỉ cho điện trở cách điện tối thiểu (họ MLCC X5R dung lượng lớn thường ghi 50 Ω·F → tới ~13 µA/tụ ở 3 V trong trường hợp xấu nhất) | [DS] spec tối thiểu, [AS] điển hình |
 | Q1 (dòng rò cổng) | ≤ 100 nA max, thường < 1 nA | [DS] |
 | Chân ADC GPIO1 | ≤ 50 nA | [DS] |
-| Nút nhả / nhấn | ≤ 50 nA / 7 µA (chỉ khi đang giữ) | tính |
+| Nút nhả / nhấn | ≤ 50 nA / 3,3 µA (chỉ khi đang giữ) | tính |
 | Kéo lên GPIO8, EN | 0 (chân input) | |
 | LED tắt | 0 (GPIO22 cách ly khi ngủ) | |
 | **Mô hình dùng** | **0,15 µA** ngoài chip và TPS63900 | [AS] |
@@ -252,7 +252,7 @@ Schematic KiCad (dùng cho PCB): [`hardware/docs/schematic.pdf`](hardware/docs/s
 
 ```
 NGUỒN
-                          Q1 DMG2305UX (P-MOSFET, SOT-23)
+                          Q1 AO3401A (P-MOSFET, SOT-23)
   BT1 CR2032 (+) ───────── D ┤├ S ──── JP1 ────┬──────────────┬──────────────┬─────────────── VBAT
   Keystone 3034             G                  │              │              │
   BT1 (−) ── GND            └── GND            C1 220µF       C2 220µF       C3 10µF (sát U2)
@@ -261,11 +261,11 @@ NGUỒN
 
                        U2 TPS63900DSKR (WSON-10)
   VBAT ──┬──────────── 10 VIN                  LX1 9 ───┐
-         ├──────────── 1  EN                            L1 2,2 µH DFE252012F-2R2M
+         ├──────────── 1  EN                            L1 2,2 µH DFE252012P-2R2M
          └──────────── 2  SEL                  LX2 7 ───┘
   GND ── R1 36,5 kΩ ── 3  CFG1                 VOUT 6 ──┬──── JP2 ────┬──────────────── 3V3
   GND ── R2 0 Ω ────── 4  CFG2                          C4 22 µF      C5 10 µF   C6 100 nF  (sát chân 1 của U1)
-  GND ── R3 16,2 kΩ ── 5  CFG3                          │             │          │
+  GND ── R3 0 Ω ────── 5  CFG3                          │             │          │
   GND ──────────────── 8  GND + pad nhiệt              GND           GND        GND
 
 MODULE
@@ -281,12 +281,12 @@ MODULE
   3V3 ── R5 10 kΩ ──── 7  IO8                  RXD0  21 ── TP4 RXD0 (GPIO23)
   TP6 BOOT ─────────── 8  IO9                  IO25  20 ── NC
   GND ──────────────── 9  GND                  NC 16..19
-  NC ───────────────── 10 IO12                 IO22  15 ── R8 1 kΩ ──►|── GND   (D1 KP-1608SURCK)
+  NC ───────────────── 10 IO12                 IO22  15 ── R8 1 kΩ ──►|── GND   (D1 KT-0603R)
   NC ───────────────── 11 IO13                 VBAT  14 ── NC (trong module đã nối 3V3; KHÔNG nối pin)
   NC ───────────────── 12 IO14                 GND   13, 29 (pad giữa) ── GND
 
 NÚT NHẤN
-  3V3 ── R6 470 kΩ ──┬── R7 1 kΩ ──┬── BTN (U1 chân 5, GPIO10)
+  3V3 ── R6 1 MΩ ────┬── R7 1 kΩ ──┬── BTN (U1 chân 5, GPIO10)
                      SW1           C8 1 nF
                      │             │
                     GND           GND
@@ -346,33 +346,33 @@ PAD NẠP / ĐO
 
 ## 4. BOM
 
-| Ký hiệu | SL | Giá trị | Mã linh kiện (nhà sản xuất) | Kiểu chân | Ghi chú |
-|---|---|---|---|---|---|
-| U1 | 1 | Module ESP32-H2, 4 MB flash, anten PCB | **ESP32-H2-WROOM-02C-H4S** (Espressif) | SMD 18 × 20 mm | bản H2S có 2 MB: không đủ cho 2 phân vùng OTA 1,875 MB |
-| U2 | 1 | Buck-boost 3,3 V, Iq 75 nA | **TPS63900DSKR** (TI) | WSON-10 2,5 × 2,5 mm | |
-| L1 | 1 | 2,2 µH, 82 mΩ | **DFE252012F-2R2M=P2** (Murata) | 2520 | theo Bảng 8-5 datasheet TPS63900 |
-| Q1 | 1 | P-MOSFET −20 V, V_GS(th) thấp | **DMG2305UX-7** (Diodes Inc.) | SOT-23 | chống ngược cực |
-| C1, C2 | 2 | 220 µF 6,3 V X5R | **GRM32ER60J227ME05L** (Murata) | 1210 | tụ bulk; phương án: 4 × GRM31CR60J107ME39L (100 µF 1206) |
-| C3, C5 | 2 | 10 µF 10 V X5R | **GRM188R61A106ME69D** (Murata) | 0603 | vào TPS63900; 3V3 module |
-| C4 | 1 | 22 µF 6,3 V X5R | **GRM187R60J226ME15D** (Murata) | 0603 | ra TPS63900 |
-| C6, C9 | 2 | 100 nF 16 V X7R | GRM155R71C104KA88D (Murata) | 0402 | |
-| C7 | 1 | 1 µF 10 V X5R (để trống) | GRM155R61A105KE15D (Murata) | 0402 | chỉ lắp nếu EN cần trễ thêm |
-| C8 | 1 | 1 nF 50 V X7R | GRM155R71H102KA01D (Murata) | 0402 | lọc nút |
-| R1 | 1 | 36,5 kΩ 1 % | RC0402FR-0736K5L (Yageo) | 0402 | CFG1 |
-| R2 | 1 | 0 Ω | RC0402JR-070RL (Yageo) | 0402 | CFG2 (511 Ω RC0402FR-07511RL nếu muốn giới hạn 100 mA) |
-| R3 | 1 | 16,2 kΩ 1 % | RC0402FR-0716K2L (Yageo) | 0402 | CFG3 |
-| R4, R5 | 2 | 10 kΩ 1 % | RC0402FR-0710KL (Yageo) | 0402 | kéo lên EN, GPIO8 |
-| R6 | 1 | 470 kΩ 1 % | RC0402FR-07470KL (Yageo) | 0402 | kéo lên nút |
-| R7, R8 | 2 | 1 kΩ 1 % | RC0402FR-071KL (Yageo) | 0402 | nút, LED |
-| R9 | 1 | 1 MΩ 1 % | RC0402FR-071ML (Yageo) | 0402 | đo pin |
-| SW1 | 1 | Nút nhấn SMD 250 gf | **PTS810 SJM 250 SMTR LFS** (C&K) | 4,2 × 3,2 mm | đổi theo cơ khí vỏ |
-| D1 | 1 | LED đỏ | **KP-1608SURCK** (Kingbright) | 0603 | |
-| BT1 | 1 | Đế pin CR2032 SMD | **3034** (Keystone) | SMD, mặt dưới | đế khác (BU2032SM-HD-G…) cần đổi footprint |
-| — | 1 | Pin CR2032 | Panasonic / Energizer / Murata CR2032 | | dùng hãng có tên tuổi (SWRA349: pin không tên chỉ đạt ~50 % dung lượng khi tải xung) |
-| JP1, JP2 | 2 | Cầu hàn 2 pad | — | PCB | đo dòng |
-| TP1–TP10 | 10 | Pad thử | — | PCB | |
+| Ký hiệu | SL | Giá trị | Mã linh kiện (nhà sản xuất) | LCSC (JLCPCB) | Kiểu chân | Ghi chú |
+|---|---|---|---|---|---|---|
+| U1 | 1 | Module ESP32-H2, 4 MB flash, anten PCB | **ESP32-H2-WROOM-02C-H4S** (Espressif) | — (hàn tay) | SMD 18 × 20 mm | bản H2S có 2 MB: không đủ cho 2 phân vùng OTA 1,875 MB |
+| U2 | 1 | Buck-boost 3,3 V, Iq 75 nA | **TPS63900DSKR** (TI) | C1518762 (Extended) | WSON-10 2,5 × 2,5 mm | |
+| L1 | 1 | 2,2 µH, I_sat 3 A, 70 mΩ | **DFE252012P-2R2M=P2** (Murata) | C391305 (Extended) | 2520 (1008) | Bảng 8-5 datasheet TPS63900 dùng DFE252012F-2R2M (cùng kích thước) |
+| Q1 | 1 | P-MOSFET −30 V, V_GS(th) ≤ 1,3 V, 85 mΩ ở −2,5 V | **AO3401A** (Alpha & Omega) | C15127 (Basic) | SOT-23 (1 G, 2 S, 3 D) | chống ngược cực |
+| C1, C2 | 2 | 220 µF 6,3 V X5R | **GRM32ER60J227ME05L** (Murata) | C469553 (Extended) | 1210 | tụ bulk; thay được bằng Samsung CL32A227MQVNNNE (C400951) |
+| C3, C5 | 2 | 10 µF 10 V X5R | **CL10A106KP8NNNC** (Samsung) | C19702 (Basic) | 0603 | vào TPS63900; 3V3 module |
+| C4 | 1 | 22 µF 6,3 V X5R | **CL10A226MQ8NRNC** (Samsung) | C59461 (Basic) | 0603 | ra TPS63900 |
+| C6, C9 | 2 | 100 nF 16 V X7R | CL05B104KO5NNNC (Samsung) | C1525 (Basic) | 0402 | |
+| C7 | 1 | 1 µF 25 V X5R (để trống) | CL05A105KA5NQNC (Samsung) | C52923 | 0402 | chỉ lắp nếu EN cần trễ thêm |
+| C8 | 1 | 1 nF 50 V X7R | CL05B102KB5NNNC (Samsung) | C1523 (Basic) | 0402 | lọc nút |
+| R1 | 1 | 36,5 kΩ 1 % 100 ppm | FRC0402F3652TS (FOJAN) | C49010116 (Extended) | 0402 | CFG1; giá trị E96, không có trong thư viện Basic |
+| R2, R3 | 2 | 0 Ω | 0402WGF0000TCE (UNI-ROYAL) | C17168 (Basic) | 0402 | CFG2, CFG3 (R2 = 511 Ω nếu muốn giới hạn dòng vào 100 mA) |
+| R4, R5 | 2 | 10 kΩ 1 % | 0402WGF1002TCE (UNI-ROYAL) | C25744 (Basic) | 0402 | kéo lên EN, GPIO8 |
+| R6, R9 | 2 | 1 MΩ 1 % | 0402WGF1004TCE (UNI-ROYAL) | C26083 (Basic) | 0402 | kéo lên nút; đo pin |
+| R7, R8 | 2 | 1 kΩ 1 % | 0402WGF1001TCE (UNI-ROYAL) | C11702 (Basic) | 0402 | nút, LED |
+| SW1 | 1 | Nút nhấn SMD, lực nhấn 160 gf, cao 2,5 mm | **PTS810 SJM 250 SMTR LFS** (C&K) | C116501 (Extended) | 4,2 × 3,2 mm | đổi theo cơ khí vỏ; bản SJG (400 gf) cứng hơn |
+| D1 | 1 | LED đỏ | **KT-0603R** (Hubei KENTO) | C2286 (Basic) | 0603 | |
+| BT1 | 1 | Đế pin CR2032 SMD | **3034** (Keystone) | — (hàn tay) | SMD, mặt dưới | đế khác (BU2032SM-HD-G…) cần đổi footprint |
+| — | 1 | Pin CR2032 | Panasonic / Energizer / Murata CR2032 | | | dùng hãng có tên tuổi (SWRA349: pin không tên chỉ đạt ~50 % dung lượng khi tải xung) |
+| JP1, JP2 | 2 | Cầu hàn 2 pad | — | | PCB | đo dòng |
+| TP1–TP10 | 10 | Pad thử | — | | PCB | |
 
-Điện trở CFG của TPS63900 phải là loại ±1 %, TCR ≤ ±200 ppm (Yageo RC…FR: ±1 %, ±100 ppm). Tất cả tụ đều là MLCC: không dùng tantalum/điện phân vì rò.
+Mã linh kiện chọn theo thư viện lắp ráp của JLCPCB: dùng loại **Basic** (không tốn phí nạp linh kiện) khi có loại đạt thông số; còn **5 loại Extended** (U2, L1, C1/C2, R1, SW1), mỗi loại tốn phí nạp riêng. U1 và BT1 không có ở LCSC: không có trong `hardware/fab/bom-jlcpcb.csv` / `cpl-jlcpcb.csv`, hàn tay sau (mục lắp ráp trong [`hardware/README.md`](hardware/README.md)).
+
+Điện trở CFG của TPS63900 phải là loại ±1 %, TCR ≤ ±200 ppm (R1 FOJAN FRC0402: ±1 %, ±100 ppm; R2, R3 là 0 Ω). Tất cả tụ đều là MLCC: không dùng tantalum/điện phân vì rò.
 
 ---
 
@@ -553,7 +553,7 @@ Nhấn ngắn mở lại cửa sổ ghép nối BLE (15 phút); giữ 10 s / 20 
 
 ### 6.5 Năng lượng của nút
 
-Đánh thức + debounce + FSM ≈ 0,1 mC/cử chỉ [AS] (chip ngủ cả trong 20 ms debounce và 350 ms cửa sổ). Dòng qua R6 khi đang giữ: 7 µA. Một lần nhấn đơn với 1 controller tốn ~3,8 mC ở SIT (3 report + 1,5 s poll nhanh), ~8,8 mC ở LIT (Active tối thiểu 5 s) — mục 9.2.
+Đánh thức + debounce + FSM ≈ 0,1 mC/cử chỉ [AS] (chip ngủ cả trong 20 ms debounce và 350 ms cửa sổ). Dòng qua R6 khi đang giữ: 3,3 µA. Một lần nhấn đơn với 1 controller tốn ~3,8 mC ở SIT (3 report + 1,5 s poll nhanh), ~8,8 mC ở LIT (Active tối thiểu 5 s) — mục 9.2.
 
 ### 6.6 Độ trễ
 
@@ -879,7 +879,7 @@ py tools\battery_model.py --breakdown
 | 10 | Mất Border Router lâu | nút offline; tốn pin cho re-attach | tạm dừng Thread sau 30 phút, thử lại 30 phút → 4 giờ, nhấn nút thử ngay; nên có ≥ 2 Border Router/router | checklist J |
 | 11 | Sự kiện nhấn khi mất mạng bị mất | automation không chạy | giới hạn của Matter (không lưu-và-chuyển); LED báo pin yếu; khuyến nghị nhiều Border Router | checklist J |
 | 12 | Độ trễ "nhấn một lần" > 300 ms do cửa sổ nhấn đúp | automation chậm ~0,35 s | giảm `BUTTON_MULTI_PRESS_WINDOW_MS`, hoặc tắt nhấn đúp | checklist E |
-| 13 | Nút bị đè liên tục (trong túi, dưới vật nặng) | phát `LongPress`; nếu đủ 20 s rồi nhả thì factory reset | giữ > 40 s thì huỷ thao tác bảo trì; chip vẫn ngủ khi đang giữ (chỉ 7 µA qua R6) | host test, checklist D |
+| 13 | Nút bị đè liên tục (trong túi, dưới vật nặng) | phát `LongPress`; nếu đủ 20 s rồi nhả thì factory reset | giữ > 40 s thì huỷ thao tác bảo trì; chip vẫn ngủ khi đang giữ (chỉ 3,3 µA qua R6) | host test, checklist D |
 | 14 | Giữ 10/20 s cũng phát `LongPress`/`LongRelease` | automation "giữ" chạy khi bảo trì | ghi chú cho người dùng; có thể tắt bằng `BUTTON_PAIRING_HOLD_MS = 0` / `RESET_HOLD_MS = 0` (còn factory reset lúc lắp pin) | checklist D |
 | 15 | Nhiều bo dùng chung mã test / chép NVS | ghép nhầm bo, trùng danh tính | `unique_setup` hoặc `factory`; không chép NVS; ghép từng bo | checklist K |
 | 16 | Chứng chỉ test | cảnh báo "chưa chứng nhận", không bán được | PAI/CD thật + VID riêng khi thương mại hoá | — |

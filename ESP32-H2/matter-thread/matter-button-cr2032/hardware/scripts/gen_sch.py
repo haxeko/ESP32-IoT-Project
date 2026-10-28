@@ -183,7 +183,8 @@ def build():
         pins = pins_of(SYMS[lid])
         missing = set(p["pins"]) - set(pins)
         assert not missing, f"{p['ref']}: pins {missing} not in {lid}"
-        fields = [("Footprint", p["fp"]), ("Datasheet", "~"), ("Description", p["desc"]), ("MPN", p["mpn"])]
+        fields = [("Footprint", p["fp"]), ("Datasheet", "~"), ("Description", p["desc"]), ("MPN", p["mpn"]),
+                  ("LCSC", p["lcsc"])]
         sh.symbol(lid, p["ref"], p["value"], X, Y, rot, fields, sorted(pins, key=lambda s: (len(s), s)),
                   SYMS[lid], dnp=p.get("dnp", False), bom=p["bom"])
         done = set()  # stacked pins (TPS63900 exposed pad 11 hidden under GND pin 8) get one stub

@@ -91,7 +91,7 @@ PPK2/Joulescope ở JP1 (phía pin, nguồn 3,0 V) và ở JP2 (phía 3,3 V). Đ
 | F5 | Trung bình 1 giờ, không nhấn, JP1 | SIT ≤ 65 µA; LIT ≤ 50 µA | |
 | F6 | Điện tích một lần nhấn đơn (từ cạnh nhấn tới khi về sàn), 1 controller và 2 controller | SIT ~3,8 mC / 1 controller; ghi `Q_REPORT`, `Q_BUTTON` | |
 | F7 | Điện tích keep-alive mỗi giờ | ghi lại | |
-| F8 | Dòng khi đang giữ nút 30 s | sàn + ~7 µA (qua R6), chip vẫn ngủ | |
+| F8 | Dòng khi đang giữ nút 30 s | sàn + ~3,3 µA (qua R6), chip vẫn ngủ | |
 | F9 | Dòng khi cửa sổ ghép nối mở (đã ghép, giữ 10 s) | poll 200 ms; ghi lại; trở về sàn khi đóng cửa sổ | |
 | F10 | Đo pin có tải hằng ngày | xung CPU 500 ms ~10 mA, log `battery: Load test ...` | |
 | F11 | Thiết bị **chưa ghép**, sau khi cửa sổ BLE 15 phút đã đóng | chỉ còn dòng sàn, không có lần thức 10 s (log `thread_diag: Thread diagnostics stopped`) | |
