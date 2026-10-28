@@ -35,16 +35,14 @@ CONFIG_LWIP_IPV6_NUM_ADDRESSES=6
 # Enable OTA Requestor
 CONFIG_ENABLE_OTA_REQUESTOR=y
 
-# GPIO20/GPIO21 are the default UART0 console pins on ESP32-C3. They are used
-# for the PM sensor here (UART1), so move the log console to the built-in
-# USB-Serial-JTAG.
+# Log console on the built-in USB-Serial-JTAG (the USB-C port of the board).
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
-# PM sensor
+# PM sensor on UART1, PCB connector J2B: sensor TX -> GPIO6, sensor RX <- GPIO7
 CONFIG_PM_SENSOR_MODEL_PMS=y
-CONFIG_PM_SENSOR_UART_RX_PIN=20
-CONFIG_PM_SENSOR_UART_TX_PIN=21
+CONFIG_PM_SENSOR_UART_RX_PIN=6
+CONFIG_PM_SENSOR_UART_TX_PIN=7
 
 # RAM optimizations (esp-matter docs/en/optimizations.rst). The OLED and LEDs
 # add tasks and buffers; keep enough heap for BLE + Wi-Fi + CASE during

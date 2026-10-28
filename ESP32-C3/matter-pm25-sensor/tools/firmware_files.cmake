@@ -6,7 +6,7 @@
 #   <NAME>_update.bin  OTA data + app, flash at its offset (0x1D000 here). NVS
 #                      is not touched, so the device stays paired. Enough as
 #                      long as the bootloader and partition table do not change.
-# where <NAME> is e.g. haxeko_pm5003_button_v1.0.49_esp32c3.
+# where <NAME> is e.g. haxeko_pm5003_pcb_v1.0.49_esp32c3.
 
 include("${CMAKE_CURRENT_LIST_DIR}/firmware_version.cmake")
 

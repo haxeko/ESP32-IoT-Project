@@ -44,9 +44,9 @@ using namespace chip::app::Clusters;
 // Upper limit of the PMS5003 / SDS011 measuring range, in µg/m³.
 static constexpr float kPmMaxMeasuredValue = 1000.0f;
 
-// GPIO9 (BOOT button) is the OLED SCL line, so factory reset is done by
-// powering the device on kFactoryResetBootCount times in a row, each time for
-// less than kFactoryResetWindowUs...
+// The PCB has no factory reset button, so factory reset is done by powering
+// the device on kFactoryResetBootCount times in a row, each time for less
+// than kFactoryResetWindowUs...
 static constexpr uint8_t kFactoryResetBootCount = 5;
 static constexpr uint64_t kFactoryResetWindowUs = 10 * 1000 * 1000;
 static constexpr char kNvsNamespace[] = "app";

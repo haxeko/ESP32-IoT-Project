@@ -29,7 +29,7 @@ project(matter_pm25_sensor)
 # build/firmware/<vendor>_<model>_<tag>_v<version>_<target>_merged.bin after
 # every build. The tag tells these files apart from those of the radar version
 # (ESP32-C3/matter-wifi/matter-pm25-sensor), which have the same model name.
-set(FIRMWARE_FILE_TAG "button")
+set(FIRMWARE_FILE_TAG "pcb")
 firmware_files_target(${CMAKE_CURRENT_LIST_DIR})
 
 idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-Os;-DCHIP_HAVE_CONFIG_H;-Wno-overloaded-virtual" APPEND)

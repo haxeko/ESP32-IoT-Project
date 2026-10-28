@@ -1,21 +1,22 @@
 // Host test of the local UI task (main/local_ui.cpp) with the real SH1106
 // driver on a simulated I2C bus, the display setting in a simulated NVS, and
-// the LEDs and the display button stubbed below. run.sh also builds it with
-// CONFIG_DISPLAY_BUTTON_GPIO=-1 (no button).
+// the LEDs and the display button stubbed below. Pins of the PCB; the PCB has
+// no display button, so the button logic is tested with one added on GPIO20,
+// and run.sh also builds it with CONFIG_DISPLAY_BUTTON_GPIO=-1 (the default).
 #include "sim.h"
 
 #define CONFIG_STATUS_LED_BRIGHTNESS 50
 #define CONFIG_OLED_ROTATE_180 1
-#define CONFIG_OLED_SDA_PIN 8
-#define CONFIG_OLED_SCL_PIN 9
+#define CONFIG_OLED_SDA_PIN 4
+#define CONFIG_OLED_SCL_PIN 5
 #define CONFIG_OLED_I2C_ADDRESS 0x3C
-#define CONFIG_STATUS_LED_GPIO 10
+#define CONFIG_STATUS_LED_GPIO 3
 #define CONFIG_STATUS_LED_COUNT 6
-#define CONFIG_PM_SENSOR_UART_RX_PIN 20
-#define CONFIG_PM_SENSOR_UART_TX_PIN 21
-#define CONFIG_FACTORY_RESET_BUTTON_GPIO 7
+#define CONFIG_PM_SENSOR_UART_RX_PIN 6
+#define CONFIG_PM_SENSOR_UART_TX_PIN 7
+#define CONFIG_FACTORY_RESET_BUTTON_GPIO -1
 #ifndef CONFIG_DISPLAY_BUTTON_GPIO
-#define CONFIG_DISPLAY_BUTTON_GPIO 3
+#define CONFIG_DISPLAY_BUTTON_GPIO 20
 #endif
 
 #include "drivers/button.h"

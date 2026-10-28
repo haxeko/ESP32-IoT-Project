@@ -42,11 +42,15 @@ menu "PM2.5 Sensor Configuration"
 
     config PM_SENSOR_UART_RX_PIN
         int "UART RX pin (connect to sensor TX)"
-        default 20
+        default 6
+        help
+            GPIO6 on the PCB: connector J2B pin 3, the sensor TX.
 
     config PM_SENSOR_UART_TX_PIN
         int "UART TX pin (connect to sensor RX)"
-        default 21
+        default 7
+        help
+            GPIO7 on the PCB: connector J2B pin 4, the sensor RX.
 
     config PM_SENSOR_PMS_PERIOD_SEC
         int "PMS measurement period (seconds, 0 = continuous)"
@@ -83,11 +87,11 @@ menu "Local Display and Indicators"
 
     config OLED_SDA_PIN
         int "OLED I2C SDA pin"
-        default 8
+        default 4
 
     config OLED_SCL_PIN
         int "OLED I2C SCL pin"
-        default 9
+        default 5
 
     config OLED_I2C_ADDRESS
         hex "OLED I2C address"
@@ -99,7 +103,7 @@ menu "Local Display and Indicators"
 
     config STATUS_LED_GPIO
         int "WS2812 data pin"
-        default 10
+        default 3
 
     config STATUS_LED_COUNT
         int "Number of WS2812 LEDs"
@@ -114,18 +118,18 @@ menu "Local Display and Indicators"
     config DISPLAY_BUTTON_GPIO
         int "Display on/off button GPIO (-1 = no button)"
         range -1 21
-        default 3
+        default -1
         help
-            Push button between this GPIO and GND (the internal pull-up is
-            used). Each press turns the OLED off when it is on, and on when it
-            is off. The choice is saved and applies again after a restart.
-            The OLED is still on during start-up (until the first measurement
-            + 5 s) and during a factory reset. Without a button (-1) the OLED
-            stays on.
+            Optional push button between this GPIO and GND (the internal
+            pull-up is used). Each press turns the OLED off when it is on, and
+            on when it is off. The choice is saved and applies again after a
+            restart. The OLED is still on during start-up (until the first
+            measurement + 5 s) and during a factory reset. Without a button
+            (-1, the PCB has none) the OLED stays on.
 
-            Free on an ESP32-C3 with this wiring: GPIO0, 1, 3, 4, 5, 6. Do not
-            use a strapping pin (GPIO2, 8, 9), the flash pins (GPIO11 to 17)
-            or the USB pins (GPIO18, 19).
+            Free on an ESP32-C3 with the PCB wiring: GPIO0, 1, 10, 20. Do not
+            use a strapping pin (GPIO2, 8, 9), the flash pins (GPIO11 to 17),
+            the USB pins (GPIO18, 19) or GPIO21 (boot log output).
 
 endmenu
 
@@ -134,7 +138,7 @@ menu "Factory Reset Button"
     config FACTORY_RESET_BUTTON_GPIO
         int "Button GPIO (-1 = no button)"
         range -1 21
-        default 7
+        default -1
         help
             Push button between this GPIO and GND (the internal pull-up is
             used). Hold it for 5 seconds, until the OLED says to release it,
@@ -142,8 +146,11 @@ menu "Factory Reset Button"
             and restarts, ready to be paired again. Releasing it earlier
             cancels.
 
-            Free on an ESP32-C3 with this wiring: GPIO0, 1, 4, 5, 6, 7 (GPIO3
-            is the display button). Do not use a strapping pin (GPIO2, 8, 9),
-            the flash pins (GPIO11 to 17) or the USB pins (GPIO18, 19).
+            The PCB has no factory reset button (-1): power the device on 5
+            times in a row instead, each time for less than 10 seconds.
+
+            Free on an ESP32-C3 with the PCB wiring: GPIO0, 1, 10, 20. Do not
+            use a strapping pin (GPIO2, 8, 9), the flash pins (GPIO11 to 17),
+            the USB pins (GPIO18, 19) or GPIO21 (boot log output).
 
 endmenu

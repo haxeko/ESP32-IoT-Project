@@ -1,8 +1,8 @@
-# Matter PM2.5 Air Quality Sensor (ESP32-C3, Wi-Fi), bản nút bật/tắt màn hình
+# Matter PM2.5 Air Quality Sensor (ESP32-C3, Wi-Fi), bản PCB không radar
 
 Cảm biến bụi mịn PM2.5 chuẩn **Matter over Wi-Fi** chạy trên ESP32-C3, thêm trực tiếp vào **Apple Home (HomeKit)**, Google Home, Home Assistant, SmartThings...
 
-Bản này giống [bản có radar](../matter-wifi/matter-pm25-sensor/) nhưng **không dùng radar LD2410**: màn hình OLED bật/tắt bằng **một nút nhấn** (mặc định GPIO3). Phần Matter, cảm biến, LED và nút factory reset giữ nguyên.
+Bản này dành cho **PCB không có radar LD2410**: PMS5003 ở GPIO6/7 (giắc J2B), OLED ở GPIO4/5, LED WS2812 ở GPIO3. PCB không có nút nhấn nên màn hình luôn sáng; có thể lắp thêm nút bật/tắt màn hình và nút factory reset rồi chọn chân trong `menuconfig`. Phần Matter, cảm biến và LED giống [bản có radar](../matter-wifi/matter-pm25-sensor/).
 
 Thiết bị dùng device type **Air Quality Sensor (0x002C)** và chỉ gửi qua Matter hai giá trị:
 
@@ -11,16 +11,14 @@ Thiết bị dùng device type **Air Quality Sensor (0x002C)** và chỉ gửi q
 | Air Quality (0x005B) | Mức chất lượng không khí, tính từ PM2.5 (trạng thái chính của cảm biến) |
 | PM2.5 Concentration Measurement (0x042A) | PM2.5, µg/m³ |
 
-Màn hình OLED, đèn LED WS2812 và các nút nhấn chạy **tại chỗ trên thiết bị**, không gửi qua Matter:
+Màn hình OLED, đèn LED WS2812 và các nút nhấn (nếu lắp) chạy **tại chỗ trên thiết bị**, không gửi qua Matter:
 
 - **LED WS2812** đổi màu theo mức chất lượng không khí, theo bảng màu của Apple Home: xanh lá, xanh vàng, vàng, đỏ, tím. Khi ứng dụng gửi lệnh **Identify** (ví dụ nút *Identify* của thiết bị trong Home Assistant), LED nháy trắng để chỉ ra thiết bị, xong thì trở lại màu chất lượng không khí.
 - **Màn hình OLED** hiện PM2.5 và mức chất lượng không khí. Giữa dòng tiêu đề có biểu tượng ngôi nhà khi thiết bị có Wi-Fi **và** có ít nhất một ứng dụng (Apple Home, Home Assistant...) đang kết nối. Khi không còn ứng dụng nào kết nối, biểu tượng tự mất, chậm nhất sau khoảng thời gian báo cáo tối đa mà ứng dụng chọn (thường tới 10 phút).
   Màn hình sáng/tắt như sau:
-  - Luôn sáng khi khởi động cho tới khi có kết quả đo đầu tiên, sau đó sáng thêm 5 giây. Nếu cảm biến PM lỗi thì tối đa 120 giây.
-  - Sau đó theo **nút màn hình**: mỗi lần nhấn, màn hình đang sáng thì tắt, đang tắt thì sáng. Màn hình đổi ngay khi nhấn xuống, không cần chờ buông nút. Nhấn trong lúc khởi động thì màn hình tắt ngay.
-  - Lựa chọn sáng/tắt được **lưu lại**: mất điện rồi cắm lại, màn hình vẫn sáng lúc khởi động như trên, rồi trở về đúng trạng thái đã chọn. Lần đầu dùng, hoặc khi không lắp nút, màn hình luôn sáng.
-  - Khi factory reset, màn hình luôn sáng để hiện đếm ngược, kể cả khi đang tắt.
-  - Màn hình OLED để sáng liên tục nhiều tháng có thể bị **lưu ảnh** (các chữ cố định như "PM2.5" mờ dần in lên màn hình). Nên tắt màn hình khi không cần xem.
+  - PCB không có nút màn hình nên **màn hình luôn sáng**.
+  - Nếu lắp thêm nút màn hình (`menuconfig` → *Display on/off button GPIO*): màn hình sáng khi khởi động cho tới khi có kết quả đo đầu tiên, thêm 5 giây (tối đa 120 giây nếu cảm biến PM lỗi). Sau đó mỗi lần nhấn nút, màn hình đang sáng thì tắt, đang tắt thì sáng, đổi ngay khi nhấn xuống. Lựa chọn được **lưu lại**, mất điện cắm lại vẫn giữ. Khi factory reset, màn hình luôn sáng để hiện đếm ngược.
+  - Màn hình OLED để sáng liên tục nhiều tháng có thể bị **lưu ảnh** (các chữ cố định như "PM2.5" mờ dần in lên màn hình).
 
 ## Phần cứng
 
@@ -30,8 +28,7 @@ Màn hình OLED, đèn LED WS2812 và các nút nhấn chạy **tại chỗ trê
   - **Nova Fitness SDS011 / SDS021**
 - Màn hình OLED **SH1106 128x64** (I2C, địa chỉ 0x3C)
 - Dải LED **WS2812**, 6 bóng
-- Một nút nhấn bất kỳ để bật/tắt màn hình (không bắt buộc)
-- Một nút nhấn bất kỳ để factory reset (không bắt buộc)
+- Nút bật/tắt màn hình và nút factory reset: PCB không có, có thể lắp thêm (không bắt buộc)
 
 Các phần OLED, LED và hai nút đều không bắt buộc. Thiếu phần nào thì firmware ghi lỗi vào log rồi chạy tiếp, cảm biến PM2.5 và Matter vẫn hoạt động. Màn hình không trả lời (chưa cắm, lỏng dây, mất nguồn giữa chừng) thì firmware thử khởi tạo lại mỗi 5 giây và tự sáng lại khi màn hình trả lời.
 
@@ -39,50 +36,39 @@ Thiết bị **chạy độc lập với Matter**: cảm biến, màn hình, LED
 
 Nếu luồng Matter hoặc một task của thiết bị (cảm biến PM, màn hình) bị treo quá 30 giây, watchdog khởi động lại thiết bị thay vì để nó đứng im.
 
-### Sơ đồ nối dây
+### Sơ đồ chân trên PCB
 
-![Sơ đồ đấu dây: ESP32-C3 SuperMini, PMS5003, OLED SH1106, LED WS2812B, nút bật/tắt màn hình và nút factory reset](docs/wiring.png)
+| Linh kiện | Chân | Giắc trên PCB | ESP32-C3 |
+|---|---|---|---|
+| PMS5003 | TX (chân 5) | J2B chân 3 | **GPIO6** (RX của ESP32) |
+| PMS5003 | RX (chân 4) | J2B chân 4 | **GPIO7** (TX của ESP32) |
+| PMS5003 | VCC 5V (chân 1) | J2B chân 2 | 5V |
+| PMS5003 | GND (chân 2) | J2B chân 1 | GND |
+| OLED SH1106 | SDA / SCL | | **GPIO4** / **GPIO5** |
+| OLED SH1106 | VCC / GND | | 3.3V / GND |
+| WS2812 | DIN | | **GPIO3** |
+| WS2812 | VCC / GND | | 5V / GND |
 
-Hình minh họa, không theo tỉ lệ. Thứ tự chân của OLED khác nhau giữa các hãng: nối theo chữ in trên mạch, không theo vị trí chân trong hình.
+PMS5003 nối bắt chéo: TX của cảm biến vào chân nhận (RX) của ESP32, RX của cảm biến vào chân gửi (TX). Quạt PMS5003 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng vào ESP32-C3 được. Chân SET/RESET của PMS (nếu có) để hở hoặc nối 3.3V. PMS5003 dùng UART1, log chạy qua USB.
 
-| Thiết bị | Chân | ESP32-C3 |
-|---|---|---|
-| PMS5003 | TX | **GPIO20** |
-| PMS5003 | RX | **GPIO21** |
-| PMS5003 | VCC / GND | 5V / GND |
-| OLED SH1106 | SDA | **GPIO8** |
-| OLED SH1106 | SCL | **GPIO9** |
-| OLED SH1106 | VCC / GND | 3.3V / GND |
-| WS2812 | DIN | **GPIO10** |
-| WS2812 | VCC / GND | 5V / GND |
-| Nút bật/tắt màn hình | Chân 1 / chân 2 | **GPIO3** / GND |
-| Nút factory reset | Chân 1 / chân 2 | **GPIO7** / GND |
+PCB không có nút nhấn. Muốn thêm nút bật/tắt màn hình hoặc nút factory reset: nối nút giữa một chân trống và GND (firmware tự bật điện trở kéo lên; nút 4 chân thì dùng 2 chân chéo nhau), rồi chọn chân đó trong `menuconfig`. Chân còn trống trên PCB: **GPIO0, 1, 10, 20**. Firmware báo lỗi khi build nếu chọn trùng chân đang dùng, chân strapping (GPIO2/8/9), chân flash (GPIO11–17) hay chân USB (GPIO18/19). Không nên dùng GPIO21: ROM in log khởi động ra chân này.
 
-Quạt PMS5003 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng vào ESP32-C3 được. Chân SET/RESET của PMS (nếu có) để hở hoặc nối 3.3V.
-
-PMS5003 dùng UART1, log chạy qua USB. Hai nút nối thẳng giữa chân GPIO và GND, firmware tự bật điện trở kéo lên. Với nút 4 chân, dùng 2 chân chéo nhau.
-
-Đang có mạch bản radar thì chỉ cần tháo LD2410 và nối nút màn hình vào hai dây cũ GPIO3 và GND của radar.
+Mạch nối dây tay theo chân cũ của bản này (PMS5003 GPIO20/21, OLED GPIO8/9, LED GPIO10, nút màn hình GPIO3, nút reset GPIO7): đặt lại các chân đó trong `menuconfig` trước khi build.
 
 ### Factory reset
 
-Factory reset xóa Wi-Fi và thông tin ghép nối Matter, rồi thiết bị khởi động lại và chờ ghép nối lại. GPIO9 (nút BOOT) đang làm chân SCL của màn hình nên không dùng được nút BOOT. Có hai cách:
+Factory reset xóa Wi-Fi và thông tin ghép nối Matter, rồi thiết bị khởi động lại và chờ ghép nối lại. PCB không có nút reset, nên dùng cách đầu tiên:
 
-- **Nút factory reset trên GPIO7** (nối giữa GPIO7 và GND, firmware tự bật điện trở kéo lên):
+- **Cắm rồi rút nguồn 5 lần liên tiếp**, mỗi lần giữ điện dưới 10 giây. Ở lần cắm thứ 5, thiết bị factory reset.
+- **Nút factory reset**, nếu lắp thêm (`menuconfig` → *Factory Reset Button*, mặc định `-1` = không có nút):
   1. Giữ nút. Sau 1 giây màn hình sáng, hiện **ĐẶT LẠI THIẾT BỊ** và đếm ngược 4, 3, 2, 1.
   2. Khi màn hình hiện số **0**, buông nút. Màn hình hiện *Đang đặt lại...* rồi thiết bị khởi động lại.
   3. Buông nút trước khi về 0 là hủy. Nút bị kẹt (giữ mãi không buông) cũng không reset.
-
-  Đổi chân trong `menuconfig` → *Factory Reset Button*, đặt `-1` nếu không lắp nút. Firmware báo lỗi khi build nếu chọn trùng chân đang dùng (kể cả chân của nút màn hình), chân strapping (GPIO2/8/9), chân flash (GPIO11–17) hay chân USB (GPIO18/19). Chân còn trống: GPIO0, 1, 4, 5, 6.
-- **Cắm rồi rút nguồn 5 lần liên tiếp**, mỗi lần giữ điện dưới 10 giây. Ở lần cắm thứ 5, thiết bị factory reset. Cách này dùng được cả khi không lắp nút.
 - Nếu bạn xóa thiết bị khỏi tất cả ứng dụng (Apple Home, Home Assistant...), thiết bị tự mở lại chế độ ghép nối, không cần reset.
 - Cả hai cách vẫn chạy khi Matter không khởi động được: khi đó firmware xóa thẳng phân vùng NVS rồi khởi động lại.
 - Nếu phân vùng NVS không dùng được (hết trang trống, hoặc do bản ESP-IDF mới hơn ghi), firmware tự xóa nó khi khởi động. Kết quả giống factory reset: phải ghép nối lại.
 
-> **Lưu ý về GPIO20/GPIO21:** đây là chân UART0 (console) mặc định của ESP32-C3. Firmware này chuyển log sang **USB-Serial-JTAG** có sẵn trên chip (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`). Vì vậy:
-> - Nạp firmware và xem log qua **cổng USB native** của ESP32-C3 (SuperMini chỉ có cổng này).
-> - Với board có chip USB-UART (CP2102/CH340) nối vào GPIO20/21 như ESP32-C3-DevKitM-1, hãy cắm board qua cổng USB native, và tháo dây cảm biến nếu cần nạp qua cổng USB-UART.
-> - Khi khởi động, ROM bootloader in vài dòng log ra GPIO21. Cảm biến bỏ qua dữ liệu này, không ảnh hưởng.
+> **Log và nạp firmware:** log chạy qua **USB-Serial-JTAG** có sẵn trên chip (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`). Nạp firmware và xem log qua **cổng USB native** của ESP32-C3 (SuperMini chỉ có cổng này).
 
 ## Phần mềm
 
@@ -114,22 +100,22 @@ idf.py menuconfig          # (tùy chọn) PM2.5 Sensor Configuration
 idf.py -p /dev/ttyACM0 flash monitor
 ```
 
-`sdkconfig.defaults` chỉ áp dụng khi tạo file `sdkconfig` mới. Sau khi kéo code mới về, nếu thư mục đã có `sdkconfig` từ lần build trước thì xóa nó đi để các thay đổi trong `sdkconfig.defaults` có hiệu lực.
+`sdkconfig.defaults` chỉ áp dụng khi tạo file `sdkconfig` mới. Sau khi kéo code mới về, nếu thư mục đã có `sdkconfig` từ lần build trước thì xóa nó đi để các thay đổi trong `sdkconfig.defaults` có hiệu lực. **Bắt buộc khi chuyển sang chân của PCB**: `sdkconfig` cũ vẫn giữ chân cũ (GPIO20/21, 8/9, 10...).
 
 Mỗi lần build xong, thư mục `build/firmware/` chỉ chứa file của đúng phiên bản vừa build (xem [Phiên bản firmware](#phiên-bản-firmware)):
 
 | File | Dùng khi | Nạp ở địa chỉ | Wi-Fi và ghép nối Matter |
 |---|---|---|---|
-| `haxeko_pm5003_button_v1.0.49_esp32c3_merged.bin` | Mạch mới, hoặc muốn xóa sạch | `0x0` | **Bị xóa**: file phủ cả vùng NVS |
-| `haxeko_pm5003_button_v1.0.49_esp32c3_update.bin` | Cập nhật thiết bị đang dùng | `0x1D000` | Giữ nguyên |
+| `haxeko_pm5003_pcb_v1.0.49_esp32c3_merged.bin` | Mạch mới, hoặc muốn xóa sạch | `0x0` | **Bị xóa**: file phủ cả vùng NVS |
+| `haxeko_pm5003_pcb_v1.0.49_esp32c3_update.bin` | Cập nhật thiết bị đang dùng | `0x1D000` | Giữ nguyên |
 
-Chữ `button` trong tên file phân biệt với file của bản radar (`haxeko_pm5003_v...`), vì hai bản có cùng tên kiểu máy. Đổi hoặc bỏ chữ này ở `FIRMWARE_FILE_TAG` trong `CMakeLists.txt`.
+Chữ `pcb` trong tên file phân biệt với file của bản radar (`haxeko_pm5003_v...`), vì hai bản có cùng tên kiểu máy. Đổi hoặc bỏ chữ này ở `FIRMWARE_FILE_TAG` trong `CMakeLists.txt`.
 
 ```bash
 # Mạch mới (xóa ghép nối)
-esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x0 build/firmware/haxeko_pm5003_button_v1.0.49_esp32c3_merged.bin
+esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x0 build/firmware/haxeko_pm5003_pcb_v1.0.49_esp32c3_merged.bin
 # Cập nhật, giữ ghép nối
-esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x1d000 build/firmware/haxeko_pm5003_button_v1.0.49_esp32c3_update.bin
+esptool.py --chip esp32c3 -p /dev/ttyACM0 write_flash 0x1d000 build/firmware/haxeko_pm5003_pcb_v1.0.49_esp32c3_update.bin
 ```
 
 Có thể nạp file update của bản này lên thiết bị đang chạy bản radar (và ngược lại) mà vẫn giữ ghép nối: hai bản dùng cùng bảng phân vùng và cùng thông tin Matter.
@@ -143,7 +129,7 @@ File update chỉ ghi vùng chọn phân vùng OTA và firmware, nên vẫn ch�
 | Tùy chọn | Mặc định | Ý nghĩa |
 |---|---|---|
 | PM sensor model | PMS5003/7003/A003 | Chọn loại cảm biến |
-| UART RX / TX pin | 20 / 21 | Chân nối với TX / RX của cảm biến |
+| UART RX / TX pin | 6 / 7 | Chân nối với TX / RX của cảm biến (giắc J2B) |
 | PMS measurement period | 300 s | PMS ngủ giữa các lần đo (tắt quạt và laser). Mỗi chu kỳ: đánh thức, chờ 30 giây, đo 5 giây rồi ngủ lại. Giá trị đầu tiên có sau khoảng 35 giây. Đặt `0` để đo liên tục |
 | Report interval | 10 s | Chỉ dùng khi đo liên tục: lấy trung bình các mẫu trong khoảng này |
 | SDS011 working period | 0 (liên tục) | Chế độ đo chu kỳ của SDS011 (1–30 phút) |
@@ -152,17 +138,17 @@ File update chỉ ghi vùng chọn phân vùng OTA và firmware, nên vẫn ch�
 
 | Tùy chọn | Mặc định |
 |---|---|
-| OLED SDA / SCL pin | 8 / 9 |
+| OLED SDA / SCL pin | 4 / 5 |
 | OLED I2C address | 0x3C |
 | Rotate OLED 180 degrees | bật |
-| WS2812 data pin / số LED / độ sáng | 10 / 6 / 50% |
-| Display on/off button GPIO | 3 (`-1` = không có nút, màn hình luôn sáng) |
+| WS2812 data pin / số LED / độ sáng | 3 / 6 / 50% |
+| Display on/off button GPIO | `-1` (không có nút, màn hình luôn sáng) |
 
 *Factory Reset Button*:
 
 | Tùy chọn | Mặc định | Ý nghĩa |
 |---|---|---|
-| Button GPIO | 7 | Chân nối nút factory reset (nút nối xuống GND). `-1` = không có nút |
+| Button GPIO | `-1` (không có nút) | Chân nối nút factory reset (nút nối xuống GND), nếu lắp thêm |
 
 ### Thông tin thiết bị và phiên bản firmware
 
@@ -186,7 +172,7 @@ Phiên bản có dạng **`<major>.<minor>.<build>`**, ví dụ `1.0.49`, và ch
 | Nơi | Ví dụ |
 |---|---|
 | Apple Home / Home Assistant, mục Firmware (`SoftwareVersionString`) | `1.0.49` |
-| Tên file nạp trong `build/firmware/` | `haxeko_pm5003_button_v1.0.49_esp32c3_merged.bin` |
+| Tên file nạp trong `build/firmware/` | `haxeko_pm5003_pcb_v1.0.49_esp32c3_merged.bin` |
 | Log khi khởi động | `Haxeko PM5003, firmware 1.0.49` |
 | Số phiên bản Matter dùng cho OTA (`SoftwareVersion`) | `49` |
 
@@ -259,7 +245,6 @@ python3 tools/gen_fonts.py Roboto-Regular.ttf Roboto-Bold.ttf > main/ui/fonts.c
 ```
 matter-pm25-sensor/
 ├── CMakeLists.txt
-├── docs/wiring.png            # Sơ đồ đấu dây
 ├── partitions.csv
 ├── sdkconfig.defaults
 ├── main/

@@ -2,7 +2,7 @@
 
 Cảm biến bụi mịn PM2.5 chuẩn **Matter over Wi-Fi** chạy trên ESP32-C3, thêm trực tiếp vào **Apple Home (HomeKit)**, Google Home, Home Assistant, SmartThings...
 
-Không dùng radar LD2410? Xem [bản nút bật/tắt màn hình](../../matter-pm25-sensor/): màn hình bật/tắt bằng một nút nhấn thay cho radar.
+Không dùng radar LD2410? Xem [bản PCB không radar](../../matter-pm25-sensor/): PMS5003 ở GPIO6/7, OLED ở GPIO4/5, LED ở GPIO3, màn hình luôn sáng (có thể thêm nút bật/tắt).
 
 Thiết bị dùng device type **Air Quality Sensor (0x002C)** và chỉ gửi qua Matter hai giá trị:
 

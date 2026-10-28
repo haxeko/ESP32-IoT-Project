@@ -1,11 +1,12 @@
-// Host test of the polled, debounced buttons (main/drivers/button.cpp): the
-// factory reset button (GPIO7) and the display button (GPIO3).
+// Host test of the polled, debounced buttons (main/drivers/button.cpp): two
+// buttons, as an added factory reset button and display button would be (the
+// PCB has neither), on GPIO pins left free by the PCB.
 #include "sim.h"
 
 #include "button.cpp"
 
-static constexpr int kReset = 7;
-static constexpr int kDisplay = 3;
+static constexpr int kReset = 20;
+static constexpr int kDisplay = 10;
 
 struct Event {
     int gpio;
@@ -70,7 +71,7 @@ int main()
     }
     CHECK(button_init(99, on_button, NULL) == ESP_ERR_INVALID_ARG);
     CHECK(button_init(kReset, on_button, NULL) == ESP_ERR_INVALID_STATE);
-    CHECK(button_init(5, on_button, NULL) == ESP_ERR_NO_MEM);
+    CHECK(button_init(0, on_button, NULL) == ESP_ERR_NO_MEM);
     CHECK(g_sim.timers.size() == 2);
 
     // One-poll glitches are ignored.
