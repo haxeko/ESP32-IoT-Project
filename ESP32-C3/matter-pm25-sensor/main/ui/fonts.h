@@ -36,6 +36,7 @@ typedef struct {
 extern const font_t font_small;     // Roboto Regular 12 px (+ Vietnamese)
 extern const font_t font_medium;    // Roboto Bold 16 px
 extern const font_t font_large;     // Roboto Bold 28 px
+extern const font_t font_value;     // Roboto Bold 24 px, digits and '-' only
 
 #ifdef __cplusplus
 }

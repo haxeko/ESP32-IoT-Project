@@ -13,14 +13,16 @@ from PIL import ImageFont
 
 ASCII = ''.join(chr(c) for c in range(0x20, 0x7F))
 # Extra glyphs needed by the Vietnamese texts on the screen (air quality
-# labels, "Đang đo...", factory reset screens).
-VIETNAMESE = 'ĐđÁÉÔỐỰỲ' + 'ẠẶẾỊạặ'
+# labels, "Đang đo...", factory reset and pairing screens).
+VIETNAMESE = 'ĐđÁÉÔỐỰỲ' + 'ẠẶẾỊạặ' + 'Ờ'
 
 # (C name, TTF index in argv, pixel size, characters)
 FONTS = [
     ('font_small', 0, 12, ASCII + VIETNAMESE),
     ('font_medium', 1, 16, ASCII),
     ('font_large', 1, 28, ASCII),
+    # Values of the PM2.5 + CO2 screen: two 4-digit numbers side by side.
+    ('font_value', 1, 24, '-0123456789'),
 ]
 
 

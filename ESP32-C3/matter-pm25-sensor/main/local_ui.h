@@ -13,7 +13,9 @@
 
 // On-device UI that runs without any controller: OLED, WS2812 air quality
 // indicator and the button that turns the OLED on and off
-// (CONFIG_DISPLAY_BUTTON_GPIO).
+// (CONFIG_DISPLAY_BUTTON_GPIO). The OLED shows PM2.5 alone, or PM2.5 and CO2
+// side by side when there is a CO2 sensor (CONFIG_CO2_SENSOR_SCD4X). The I2C
+// bus of the OLED (i2c_bus.h) must be initialized first.
 esp_err_t local_ui_init(void);
 
 // Air quality level shown on the OLED and LEDs, from PM2.5 in µg/m³:
@@ -24,6 +26,15 @@ int local_ui_pm25_level(float pm25);
 // New PM2.5 value in µg/m³. Can be called from any task. A missing value
 // (NAN) is ignored: the last value stays on the OLED and LEDs.
 void local_ui_set_pm25(float pm25);
+
+// New CO2 value in ppm. Can be called from any task. NAN (the sensor stopped
+// answering) shows "--" instead of the last value.
+void local_ui_set_co2(float co2_ppm);
+
+// Switches the OLED between PM2.5 alone and PM2.5 + CO2. The choice is kept
+// across restarts. Does nothing without a CO2 sensor. Can be called from any
+// task.
+void local_ui_toggle_layout(void);
 
 // Shows a small icon at the top center of the OLED while the device is online
 // and at least one controller is subscribed. Can be called from any task.
@@ -39,6 +50,12 @@ typedef enum {
 } local_ui_reset_t;
 
 void local_ui_set_reset(local_ui_reset_t reset, int seconds_left);
+
+// Pairing mode (Matter commissioning window opened with the button): the OLED
+// turns on and shows "CHỜ GHÉP NỐI" and the manual pairing code (digits only,
+// empty if unknown) instead of the measurement. NULL ends it. Can be called
+// from any task.
+void local_ui_set_pairing(const char *code);
 
 // Matter Identify: the LEDs blink white for duration_ms (0 stops it,
 // LOCAL_UI_IDENTIFY_FOREVER until stopped), then show the air quality color

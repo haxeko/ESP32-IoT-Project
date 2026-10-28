@@ -7,12 +7,16 @@
 */
 
 // Matter Air Quality Sensor (device type 0x002C) with a PM2.5 concentration
-// measurement cluster, fed by a UART PM sensor. The OLED (with its on/off
-// button) and the WS2812 indicator are handled locally (local_ui.cpp) and are
-// not exposed to Matter.
+// measurement cluster, fed by a UART PM sensor, and a CO2 concentration
+// measurement cluster fed by an I2C CO2 sensor (CONFIG_CO2_SENSOR_SCD4X). The
+// OLED (with its on/off button) and the WS2812 indicator are handled locally
+// (local_ui.cpp) and are not exposed to Matter. The main button
+// (CONFIG_BUTTON_GPIO) resets the device, opens pairing mode and switches the
+// screen.
 
 #include <app/server/CommissioningWindowManager.h>
 #include <app/InteractionModelEngine.h>
+#include <app/server/OnboardingCodesUtil.h>
 #include <app/server/Server.h>
 #include <esp_app_desc.h>
 #include <esp_err.h>
@@ -31,7 +35,9 @@
 // drivers implemented by this example
 #include <device_info.h>
 #include <drivers/button.h>
+#include <drivers/i2c_bus.h>
 #include <drivers/pm_sensor.h>
+#include <drivers/scd4x.h>
 #include <local_ui.h>
 
 static const char *TAG = "app_main";
@@ -43,36 +49,41 @@ using namespace chip::app::Clusters;
 
 // Upper limit of the PMS5003 / SDS011 measuring range, in µg/m³.
 static constexpr float kPmMaxMeasuredValue = 1000.0f;
+// Upper limit of the SCD40 / SCD41 output range, in ppm.
+static constexpr float kCo2MaxMeasuredValue = 40000.0f;
 
-// The PCB has no factory reset button, so factory reset is done by powering
-// the device on kFactoryResetBootCount times in a row, each time for less
-// than kFactoryResetWindowUs...
+// Factory reset by powering the device on kFactoryResetBootCount times in a
+// row, each time for less than kFactoryResetWindowUs...
 static constexpr uint8_t kFactoryResetBootCount = 5;
 static constexpr uint64_t kFactoryResetWindowUs = 10 * 1000 * 1000;
 static constexpr char kNvsNamespace[] = "app";
 static constexpr char kNvsBootCountKey[] = "boot_count";
 
-// ...or with a button on CONFIG_FACTORY_RESET_BUTTON_GPIO: hold it for
+// ...or with the main button (CONFIG_BUTTON_GPIO): hold it for
 // kResetButtonHoldMs, then release it. The OLED counts down from
 // kResetButtonShowMs on, so a short press shows nothing; releasing the button
 // before the end cancels, and a button stuck down never resets.
 static constexpr uint32_t kResetButtonShowMs = 1000;
 static constexpr uint32_t kResetButtonHoldMs = 5000;
+// Main button pressed twice: pairing mode (commissioning window) for this
+// long. Pressed 4 times: PM2.5 alone <-> PM2.5 + CO2 on the OLED.
+static constexpr uint16_t kPairingWindowSeconds = 300;
+static constexpr int kPairingClicks = 2;
+static constexpr int kLayoutClicks = 4;
 
-#if CONFIG_FACTORY_RESET_BUTTON_GPIO >= 0
-static_assert(CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_RX_PIN &&
-              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_TX_PIN &&
-              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_OLED_SDA_PIN &&
-              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_OLED_SCL_PIN &&
-              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_STATUS_LED_GPIO &&
-              CONFIG_FACTORY_RESET_BUTTON_GPIO != CONFIG_DISPLAY_BUTTON_GPIO,
-              "The factory reset button GPIO is already used");
+#if CONFIG_BUTTON_GPIO >= 0
+static_assert(CONFIG_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_RX_PIN &&
+              CONFIG_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_TX_PIN &&
+              CONFIG_BUTTON_GPIO != CONFIG_OLED_SDA_PIN &&
+              CONFIG_BUTTON_GPIO != CONFIG_OLED_SCL_PIN &&
+              CONFIG_BUTTON_GPIO != CONFIG_STATUS_LED_GPIO &&
+              CONFIG_BUTTON_GPIO != CONFIG_DISPLAY_BUTTON_GPIO,
+              "The button GPIO is already used");
 #if CONFIG_IDF_TARGET_ESP32C3
 // Pressed during a reset, a strapping pin changes the boot mode.
-static_assert(CONFIG_FACTORY_RESET_BUTTON_GPIO != 2 && CONFIG_FACTORY_RESET_BUTTON_GPIO != 8 &&
-              CONFIG_FACTORY_RESET_BUTTON_GPIO != 9 &&
-              (CONFIG_FACTORY_RESET_BUTTON_GPIO < 11 || CONFIG_FACTORY_RESET_BUTTON_GPIO > 19),
-              "Factory reset button: GPIO2/8/9 are strapping pins, GPIO11-17 flash, GPIO18-19 USB");
+static_assert(CONFIG_BUTTON_GPIO != 2 && CONFIG_BUTTON_GPIO != 8 && CONFIG_BUTTON_GPIO != 9 &&
+              (CONFIG_BUTTON_GPIO < 11 || CONFIG_BUTTON_GPIO > 19),
+              "Button: GPIO2/8/9 are strapping pins, GPIO11-17 flash, GPIO18-19 USB");
 #endif
 #endif
 
@@ -156,24 +167,94 @@ static void start_factory_reset(const char *reason)
     erase_nvs_and_restart();
 }
 
-#if CONFIG_FACTORY_RESET_BUTTON_GPIO >= 0
+#if CONFIG_BUTTON_GPIO >= 0
+// Pairing mode: shows the manual pairing code of the device on the OLED.
+// Runs on the Matter thread.
+static void show_pairing_code()
+{
+    char code[chip::kManualSetupLongCodeCharLength + 2];
+    chip::MutableCharSpan span(code);
+    if (GetManualPairingCode(span, chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kOnNetwork)) ==
+        CHIP_NO_ERROR) {
+        code[span.size()] = '\0';
+    } else {
+        code[0] = '\0';    // the OLED then only shows the pairing mode
+    }
+    local_ui_set_pairing(code);
+}
+
+// Opens a commissioning window, so that the device can be paired (again, or
+// with one more controller) with its pairing code. Runs on the Matter thread.
+static void open_pairing_window()
+{
+    chip::CommissioningWindowManager &commissionMgr = chip::Server::GetInstance().GetCommissioningWindowManager();
+    if (commissionMgr.IsCommissioningWindowOpen()) {
+        // A controller opened it with a code of its own (enhanced commissioning):
+        // the code of the device does not work then, so show none.
+        if (commissionMgr.CommissioningWindowStatusForCluster() ==
+            AdministratorCommissioning::CommissioningWindowStatusEnum::kEnhancedWindowOpen) {
+            local_ui_set_pairing("");
+        } else {
+            show_pairing_code();
+        }
+        ESP_LOGI(TAG, "Pairing mode: the commissioning window is already open");
+        return;
+    }
+    // On Wi-Fi, controllers find the device on the network; otherwise it
+    // needs BLE as well.
+    const chip::CommissioningWindowAdvertisement advertisement =
+        chip::DeviceLayer::ConnectivityMgr().IsWiFiStationProvisioned()
+            ? chip::CommissioningWindowAdvertisement::kDnssdOnly
+            : chip::CommissioningWindowAdvertisement::kAllSupported;
+    CHIP_ERROR err = commissionMgr.OpenBasicCommissioningWindow(chip::System::Clock::Seconds32(kPairingWindowSeconds),
+                                                                advertisement);
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Failed to open commissioning window, err:%" CHIP_ERROR_FORMAT, err.Format());
+        return;
+    }
+    ESP_LOGI(TAG, "Pairing mode for %u s", kPairingWindowSeconds);
+    show_pairing_code();
+}
+
 // Runs in the esp_timer task.
-static void reset_button_cb(uint32_t held_ms, bool released, void *user_data)
+static void button_cb(const button_event_t *event, void *user_data)
 {
     if (s_factory_reset_started) {
         return;
     }
-    if (released) {
-        if (held_ms >= kResetButtonHoldMs) {
+    switch (event->type) {
+    case BUTTON_RELEASED:
+        if (event->held_ms >= kResetButtonHoldMs) {
             start_factory_reset("the button");
         } else {
             local_ui_set_reset(LOCAL_UI_RESET_NONE, 0);    // released too early: cancelled
         }
-    } else if (held_ms >= kResetButtonHoldMs) {
-        local_ui_set_reset(LOCAL_UI_RESET_RELEASE, 0);
-    } else if (held_ms >= kResetButtonShowMs) {
-        // Whole seconds left, rounded up: 4, 3, 2, 1.
-        local_ui_set_reset(LOCAL_UI_RESET_HOLD, (int)((kResetButtonHoldMs - held_ms + 999) / 1000));
+        break;
+
+    case BUTTON_HELD:
+        if (event->held_ms >= kResetButtonHoldMs) {
+            local_ui_set_reset(LOCAL_UI_RESET_RELEASE, 0);
+        } else if (event->held_ms >= kResetButtonShowMs) {
+            // Whole seconds left, rounded up: 4, 3, 2, 1.
+            local_ui_set_reset(LOCAL_UI_RESET_HOLD, (int)((kResetButtonHoldMs - event->held_ms + 999) / 1000));
+        }
+        break;
+
+    case BUTTON_CLICKS:
+        ESP_LOGI(TAG, "Button pressed %d times", event->clicks);
+        if (event->clicks == kPairingClicks) {
+            if (!s_matter_started) {
+                ESP_LOGW(TAG, "Matter is not running: no pairing mode");
+                break;
+            }
+            CHIP_ERROR err = chip::DeviceLayer::SystemLayer().ScheduleLambda([]() { open_pairing_window(); });
+            if (err != CHIP_NO_ERROR) {
+                ESP_LOGW(TAG, "Failed to schedule the pairing mode, err:%" CHIP_ERROR_FORMAT, err.Format());
+            }
+        } else if (event->clicks == kLayoutClicks) {
+            local_ui_toggle_layout();
+        }
+        break;
     }
 }
 #endif
@@ -207,17 +288,43 @@ static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data
     }
 }
 
-// Adds the Numeric Measurement feature (MeasuredValue in µg/m³) to a concentration measurement cluster.
+#if CONFIG_CO2_SENSOR_SCD4X
+static void co2_sensor_notification(const scd4x_data_t *data, void *user_data)
+{
+    const float co2 = data->valid ? data->co2_ppm : NAN;
+    local_ui_set_co2(co2);
+    if (!s_matter_started) {
+        return;
+    }
+    const uint16_t endpoint_id = s_air_quality_endpoint_id;
+
+    // schedule the attribute update so that we can report it from matter thread
+    CHIP_ERROR err = chip::DeviceLayer::SystemLayer().ScheduleLambda([endpoint_id, co2]() {
+        // MeasuredValue must stay within [MinMeasuredValue, MaxMeasuredValue].
+        const float value = isnan(co2) ? NAN : fminf(fmaxf(co2, 0.0f), kCo2MaxMeasuredValue);
+        update_measured_value(endpoint_id, CarbonDioxideConcentrationMeasurement::Id,
+                              CarbonDioxideConcentrationMeasurement::Attributes::MeasuredValue::Id, value);
+    });
+    if (err != CHIP_NO_ERROR) {
+        // Matter event queue full: this value is lost, the next one is sent normally.
+        ESP_LOGW(TAG, "Failed to schedule the Matter update, err:%" CHIP_ERROR_FORMAT, err.Format());
+    }
+}
+#endif
+
+// Adds the Numeric Measurement feature (MeasuredValue from 0 to max_value, in
+// unit) to a concentration measurement cluster.
 template <typename NumericMeasurementConfig>
 static esp_err_t add_numeric_measurement(cluster_t *cluster,
-                                         esp_err_t (*add_feature)(cluster_t *, NumericMeasurementConfig *))
+                                         esp_err_t (*add_feature)(cluster_t *, NumericMeasurementConfig *),
+                                         float max_value, uint8_t unit)
 {
     VerifyOrReturnError(cluster != nullptr, ESP_FAIL);
     NumericMeasurementConfig config;
     config.measured_value = nullable<float>();
     config.min_measured_value = nullable<float>(0.0f);
-    config.max_measured_value = nullable<float>(kPmMaxMeasuredValue);
-    config.measurement_unit = chip::to_underlying(Pm25ConcentrationMeasurement::MeasurementUnitEnum::kUgm3);
+    config.max_measured_value = nullable<float>(max_value);
+    config.measurement_unit = unit;
     return add_feature(cluster, &config);
 }
 
@@ -247,8 +354,22 @@ static endpoint_t *create_air_quality_sensor(node_t *node)
     cluster_t *pm25_cluster = cluster::pm25_concentration_measurement::create(endpoint, &pm25_config,
                                                                               CLUSTER_FLAG_SERVER);
     VerifyOrReturnValue(add_numeric_measurement(pm25_cluster,
-                        cluster::pm25_concentration_measurement::feature::numeric_measurement::add) == ESP_OK,
+                        cluster::pm25_concentration_measurement::feature::numeric_measurement::add,
+                        kPmMaxMeasuredValue,
+                        chip::to_underlying(Pm25ConcentrationMeasurement::MeasurementUnitEnum::kUgm3)) == ESP_OK,
                         nullptr);
+
+#if CONFIG_CO2_SENSOR_SCD4X
+    // CO2 concentration measurement in ppm, measurement medium defaults to Air.
+    cluster::carbon_dioxide_concentration_measurement::config_t co2_config;
+    cluster_t *co2_cluster = cluster::carbon_dioxide_concentration_measurement::create(endpoint, &co2_config,
+                                                                                       CLUSTER_FLAG_SERVER);
+    VerifyOrReturnValue(add_numeric_measurement(co2_cluster,
+                        cluster::carbon_dioxide_concentration_measurement::feature::numeric_measurement::add,
+                        kCo2MaxMeasuredValue,
+                        chip::to_underlying(CarbonDioxideConcentrationMeasurement::MeasurementUnitEnum::kPpm)) ==
+                        ESP_OK, nullptr);
+#endif
 
     return endpoint;
 }
@@ -367,6 +488,12 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     case chip::DeviceLayer::DeviceEventType::kBLEDeinitialized:
         ESP_LOGI(TAG, "BLE deinitialized and memory reclaimed");
+        break;
+
+    case chip::DeviceLayer::DeviceEventType::kCommissioningWindowClosed:
+        // Paired, or the time ran out: end of the pairing mode on the OLED.
+        ESP_LOGI(TAG, "Commissioning window closed");
+        local_ui_set_pairing(NULL);
         break;
 
     default:
@@ -490,7 +617,9 @@ extern "C" void app_main()
 
     const bool factory_reset_requested = check_factory_reset_boot_count();
 
-    /* The sensor, OLED and WS2812 work locally, before and without Matter */
+    /* The sensors, OLED and WS2812 work locally, before and without Matter */
+    // I2C bus shared by the OLED and the CO2 sensor; on failure both are left out.
+    i2c_bus_init(CONFIG_OLED_SDA_PIN, CONFIG_OLED_SCL_PIN);
     esp_err_t err = local_ui_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start local UI: %s", esp_err_to_name(err));
@@ -508,6 +637,19 @@ extern "C" void app_main()
         ESP_LOGE(TAG, "Failed to initialize PM sensor driver: %s", esp_err_to_name(err));
     }
 
+#if CONFIG_CO2_SENSOR_SCD4X
+    scd4x_config_t co2_config = {
+        .bus = i2c_bus_get(),
+        .report_interval_ms = CONFIG_CO2_SENSOR_REPORT_INTERVAL_SEC * 1000,
+        .cb = co2_sensor_notification,
+        .user_data = NULL,
+    };
+    err = scd4x_init(&co2_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize CO2 sensor driver: %s", esp_err_to_name(err));
+    }
+#endif
+
     /* Matter is optional for the local functions: on failure, keep running without it */
     if (start_matter() != ESP_OK) {
         ESP_LOGE(TAG, "Matter is not running; the device keeps working locally");
@@ -517,10 +659,10 @@ extern "C" void app_main()
     if (factory_reset_requested) {
         start_factory_reset("quick power cycles");
     }
-#if CONFIG_FACTORY_RESET_BUTTON_GPIO >= 0
-    err = button_init(CONFIG_FACTORY_RESET_BUTTON_GPIO, reset_button_cb, NULL);
+#if CONFIG_BUTTON_GPIO >= 0
+    err = button_init(CONFIG_BUTTON_GPIO, button_cb, NULL);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize the factory reset button: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to initialize the button: %s", esp_err_to_name(err));
     }
 #endif
 }

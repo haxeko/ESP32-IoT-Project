@@ -83,14 +83,44 @@ menu "PM2.5 Sensor Configuration"
 
 endmenu
 
+menu "CO2 Sensor Configuration"
+
+    choice CO2_SENSOR
+        prompt "CO2 sensor"
+        default CO2_SENSOR_SCD4X
+        help
+            CO2 sensor on the I2C bus of the OLED (same SDA/SCL pins). Its
+            value is shown on the OLED and sent to Matter (Carbon Dioxide
+            Concentration Measurement cluster, in ppm). The air quality level
+            (OLED label, LED color, Matter AirQuality) still follows PM2.5
+            only.
+
+        config CO2_SENSOR_NONE
+            bool "None"
+
+        config CO2_SENSOR_SCD4X
+            bool "Sensirion SCD40 / SCD41 (I2C address 0x62)"
+    endchoice
+
+    config CO2_SENSOR_REPORT_INTERVAL_SEC
+        int "CO2 report interval (seconds)"
+        depends on CO2_SENSOR_SCD4X
+        range 5 3600
+        default 30
+        help
+            The sensor measures every 5 seconds; its measurements are
+            averaged over this interval and then shown and published.
+
+endmenu
+
 menu "Local Display and Indicators"
 
     config OLED_SDA_PIN
-        int "OLED I2C SDA pin"
+        int "I2C SDA pin (OLED and CO2 sensor)"
         default 4
 
     config OLED_SCL_PIN
-        int "OLED I2C SCL pin"
+        int "I2C SCL pin (OLED and CO2 sensor)"
         default 5
 
     config OLED_I2C_ADDRESS
@@ -142,30 +172,38 @@ menu "Local Display and Indicators"
             pull-up is used). Each press turns the OLED off when it is on, and
             on when it is off. The choice is saved and applies again after a
             restart. The OLED is still on during start-up (until the first
-            measurement + 5 s) and during a factory reset. Without a button
-            (-1, the PCB has none) the OLED stays on.
+            measurement + 5 s), during a factory reset and in pairing mode.
+            Without a button (-1, the PCB has none) the OLED stays on.
 
-            Free on an ESP32-C3 with the PCB wiring: GPIO0, 1, 10, 20. Do not
-            use a strapping pin (GPIO2, 8, 9), the flash pins (GPIO11 to 17),
-            the USB pins (GPIO18, 19) or GPIO21 (boot log output).
+            Free on an ESP32-C3 with the PCB wiring: GPIO0, 1, 20 (GPIO10 is
+            the main button). Do not use a strapping pin (GPIO2, 8, 9), the
+            flash pins (GPIO11 to 17), the USB pins (GPIO18, 19) or GPIO21
+            (boot log output).
 
 endmenu
 
-menu "Factory Reset Button"
+menu "Button"
 
-    config FACTORY_RESET_BUTTON_GPIO
+    config BUTTON_GPIO
         int "Button GPIO (-1 = no button)"
         range -1 21
-        default -1
+        default 10
         help
             Push button between this GPIO and GND (the internal pull-up is
-            used). Hold it for 5 seconds, until the OLED says to release it,
-            then release it: the device erases its Wi-Fi and Matter pairing
-            and restarts, ready to be paired again. Releasing it earlier
-            cancels.
+            used):
+            - Hold it for 5 seconds, until the OLED shows 0, then release it:
+              factory reset. The device erases its Wi-Fi and Matter pairing
+              and restarts, ready to be paired again. Releasing it earlier
+              cancels.
+            - Press it twice: pairing mode. The device can be paired for 5
+              minutes (again, or with one more controller), and the OLED
+              shows its pairing code.
+            - Press it 4 times: the OLED switches between PM2.5 alone and
+              PM2.5 + CO2 (with a CO2 sensor). The choice is kept.
 
-            The PCB has no factory reset button (-1): power the device on 5
-            times in a row instead, each time for less than 10 seconds.
+            Without a button (-1), factory reset by powering the device on 5
+            times in a row, each time for less than 10 seconds (this also
+            works with the button).
 
             Free on an ESP32-C3 with the PCB wiring: GPIO0, 1, 10, 20. Do not
             use a strapping pin (GPIO2, 8, 9), the flash pins (GPIO11 to 17),

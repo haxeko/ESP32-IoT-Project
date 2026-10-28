@@ -7,6 +7,7 @@ typedef void *TaskHandle_t;
 #define taskENTER_CRITICAL(mux) ((void)(mux))
 #define taskEXIT_CRITICAL(mux) ((void)(mux))
 #define pdMS_TO_TICKS(ms) (ms)
+#define portTICK_PERIOD_MS 1
 #define pdPASS 1
 #define pdTRUE 1
 // Tasks are not started: each test calls the task function itself.

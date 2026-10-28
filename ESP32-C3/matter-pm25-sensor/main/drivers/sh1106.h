@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <driver/i2c_master.h>
 #include <esp_err.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -25,8 +26,9 @@ typedef enum {
     TEXT_ALIGN_CENTER,
 } text_align_t;
 
-// Can be called again after a failure to retry (e.g. the panel powered up late).
-esp_err_t sh1106_init(int sda_pin, int scl_pin, uint8_t address, bool rotate_180);
+// On the shared I2C bus (i2c_bus.h). Can be called again after a failure to
+// retry (e.g. the panel powered up late).
+esp_err_t sh1106_init(i2c_master_bus_handle_t bus, uint8_t address, bool rotate_180);
 
 // Panel on/off (display sleep). The frame buffer is kept. Turning it on also
 // sends the panel settings again, in case the panel lost power (and them)

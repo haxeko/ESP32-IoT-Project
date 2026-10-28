@@ -28,11 +28,19 @@ typedef struct {
     bool pressed;               // debounced state
     int changed_samples;        // polls in a row that disagree with pressed
     int64_t pressed_since_ms;
+    int clicks;                 // short presses of the current series
+    int64_t released_at_ms;     // end of the last click
 } button_t;
 
 // A slot is filled before its timer starts, and then only used by that timer.
 static button_t s_buttons[BUTTON_MAX_COUNT];
 static int s_button_count;
+
+static void emit(const button_t *b, button_event_type_t type, uint32_t held_ms, int clicks)
+{
+    const button_event_t event = { type, held_ms, clicks };
+    b->cb(&event, b->user_data);
+}
 
 static void poll_button(void *arg)
 {
@@ -48,12 +56,24 @@ static void poll_button(void *arg)
         if (pressed) {
             b->pressed_since_ms = now_ms;
         } else {
-            b->cb((uint32_t)(now_ms - b->pressed_since_ms), true, b->user_data);
+            const uint32_t held_ms = (uint32_t)(now_ms - b->pressed_since_ms);
+            emit(b, BUTTON_RELEASED, held_ms, 0);
+            if (held_ms < BUTTON_CLICK_MAX_MS) {
+                b->clicks++;
+                b->released_at_ms = now_ms;
+            } else {
+                b->clicks = 0;
+            }
         }
     }
 
     if (b->pressed) {
-        b->cb((uint32_t)(now_ms - b->pressed_since_ms), false, b->user_data);
+        emit(b, BUTTON_HELD, (uint32_t)(now_ms - b->pressed_since_ms), 0);
+    } else if (b->clicks > 0 && b->changed_samples == 0 && now_ms - b->released_at_ms >= BUTTON_CLICK_GAP_MS) {
+        // No new press (not even one being debounced) since the last click.
+        const int clicks = b->clicks;
+        b->clicks = 0;
+        emit(b, BUTTON_CLICKS, 0, clicks);
     }
 }
 
