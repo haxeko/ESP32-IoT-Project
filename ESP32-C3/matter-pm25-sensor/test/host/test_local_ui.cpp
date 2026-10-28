@@ -132,6 +132,22 @@ static void run(int64_t end_ms, std::function<void()> step, std::function<void()
     return n;
 }
 
+// First and last rows with lit pixels in columns x0..x1 (inclusive), between
+// the names and the line of the PM2.5 + CO2 screen; { -1, -1 } without any.
+[[maybe_unused]] static std::pair<int, int> value_rows(int x0, int x1)
+{
+    int top = -1, bottom = -1;
+    for (int y = 13; y <= 46; y++) {
+        for (int x = x0; x <= x1; x++) {
+            if ((g_sim.oled_frame[y / 8][x] >> (y % 8)) & 1) {
+                top = top < 0 ? y : top;
+                bottom = y;
+            }
+        }
+    }
+    return { top, bottom };
+}
+
 // Pairing screen with this code.
 [[maybe_unused]] static screen_t pairing(const char *code)
 {
@@ -215,6 +231,17 @@ int main()
     CHECK(ink(0, 63, 13, 46) > 2 * ink(64, 127, 13, 46) && ink(64, 127, 13, 46) > 0);
     CHECK(!shows(values(31, 612), true));   // the frames do differ
     CHECK(g_sim.nvs_writes == 0);
+
+    // Both values always have the same size. Compared on the first digit of
+    // PM2.5 and the last one of CO2 (both an 8): CO2 above 9999 ppm keeps the
+    // large font (digits 14 px wide) next to a short PM2.5 value...
+    draw_screen(values(8, 12008), true);
+    const auto pm25_large = value_rows(3, 16);
+    CHECK(pm25_large == value_rows(110, 123) && pm25_large.second - pm25_large.first + 1 >= 16);
+    // ...and when they do not fit side by side, both take the smaller font (9 px).
+    draw_screen(values(8008, 12008), true);
+    const auto pm25_small = value_rows(3, 11);
+    CHECK(pm25_small == value_rows(115, 123) && pm25_small.second - pm25_small.first + 1 <= 13);
 
     // Switching: PM2.5 alone, then PM2.5 + CO2 again; each change is saved.
     bool single_at_41 = false, saved_single = false;

@@ -68,8 +68,10 @@ static const char *TAG = "local_ui";
 // PM2.5 + CO2 screen: baseline of the values (digits 17 px high), between the
 // names and the line above the level...
 #define DUAL_VALUE_BASELINE         40
-// ...and their margin, the width of the space before "PM2.5" and after "CO2".
+// ...their margin, the width of the space before "PM2.5" and after "CO2"...
 #define DUAL_MARGIN                 3
+// ...and the smallest space between them.
+#define DUAL_MIN_GAP                6
 
 #if CONFIG_OLED_ROTATE_180
 #define OLED_ROTATE_180             true
@@ -348,28 +350,37 @@ static void draw_pairing(const char *code)
     sh1106_draw_text(64, PAIRING_CODE_BASELINE - font_medium.ascent, &font_medium, TEXT_ALIGN_TOP_CENTER, text);
 }
 
-// One value of the PM2.5 + CO2 screen, "--" without a value. Five digits (CO2
-// above 9999 ppm) take a smaller font to fit in half of the width.
-static void draw_dual_value(int x, text_align_t align, float value)
+// One value of the PM2.5 + CO2 screen, "--" without a value.
+static void format_dual_value(char *text, size_t size, float value)
 {
-    char text[12];
     if (isnan(value)) {
-        snprintf(text, sizeof(text), "--");
+        snprintf(text, size, "--");
     } else {
-        snprintf(text, sizeof(text), "%d", (int)lroundf(value));
+        snprintf(text, size, "%d", (int)lroundf(value));
     }
-    const font_t *font = strlen(text) > 4 ? &font_medium : &font_value;
-    sh1106_draw_text(x, DUAL_VALUE_BASELINE - font->ascent, font, align, text);
 }
 
 // PM2.5 and CO2 side by side, each value below its name, with the level of
-// PM2.5 at the bottom (the LEDs and Matter also follow PM2.5 only).
+// PM2.5 at the bottom (the LEDs and Matter also follow PM2.5 only). Both
+// values always have the same size: the large font, unless together they do
+// not fit (e.g. PM2.5 1000 and CO2 10000), and then both take a smaller one.
 static void draw_dual(const screen_t &screen)
 {
+    char pm25[12];
+    char co2[12];
+    format_dual_value(pm25, sizeof(pm25), screen.level >= 0 ? screen.pm25 : NAN);
+    format_dual_value(co2, sizeof(co2), screen.co2);
+    const int room = SH1106_WIDTH - 1 - 2 * DUAL_MARGIN - DUAL_MIN_GAP;
+    const font_t *font = &font_value;
+    if (sh1106_text_width(font, pm25) + sh1106_text_width(font, co2) > room) {
+        font = &font_medium;
+    }
+    const int y = DUAL_VALUE_BASELINE - font->ascent;
+
     sh1106_draw_text(0, 0, &font_small, TEXT_ALIGN_TOP_LEFT, " PM2.5");
     sh1106_draw_text(127, 0, &font_small, TEXT_ALIGN_TOP_RIGHT, "CO2 ");
-    draw_dual_value(DUAL_MARGIN, TEXT_ALIGN_TOP_LEFT, screen.level >= 0 ? screen.pm25 : NAN);
-    draw_dual_value(SH1106_WIDTH - 1 - DUAL_MARGIN, TEXT_ALIGN_TOP_RIGHT, screen.co2);
+    sh1106_draw_text(DUAL_MARGIN, y, font, TEXT_ALIGN_TOP_LEFT, pm25);
+    sh1106_draw_text(SH1106_WIDTH - 1 - DUAL_MARGIN, y, font, TEXT_ALIGN_TOP_RIGHT, co2);
     sh1106_draw_hline(8, 119, 47);
     sh1106_draw_text(64, 50, &font_small, TEXT_ALIGN_TOP_CENTER,
                      screen.level >= 0 ? k_level_labels[screen.level] : "Đang đo...");

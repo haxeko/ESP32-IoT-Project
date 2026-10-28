@@ -16,7 +16,7 @@ Màn hình OLED, đèn LED WS2812 và các nút nhấn (nếu lắp) chạy **t�
 
 - **LED WS2812** đổi màu theo mức chất lượng không khí, theo bảng màu của Apple Home: xanh lá, xanh vàng, vàng, đỏ, tím. Khi ứng dụng gửi lệnh **Identify** (ví dụ nút *Identify* của thiết bị trong Home Assistant), LED nháy trắng để chỉ ra thiết bị, xong thì trở lại màu chất lượng không khí.
 - **Màn hình OLED** có hai kiểu, **bấm nút 4 lần** để đổi qua lại. Lựa chọn được **lưu lại**, mất điện cắm lại vẫn giữ:
-  - **PM2.5 + CO2** (mặc định khi có cảm biến CO2): chữ *PM2.5* bên trái, *CO2* bên phải, số đo nằm ngay dưới chữ, không ghi đơn vị (PM2.5 tính bằng µg/m³, CO2 bằng ppm). Dòng dưới cùng là mức chất lượng không khí theo PM2.5. Chưa có số đo thì hiện `--`; cảm biến CO2 ngừng trả lời thì CO2 cũng hiện `--`.
+  - **PM2.5 + CO2** (mặc định khi có cảm biến CO2): chữ *PM2.5* bên trái, *CO2* bên phải, số đo nằm ngay dưới chữ, không ghi đơn vị (PM2.5 tính bằng µg/m³, CO2 bằng ppm). Hai số **luôn cùng cỡ chữ**: chữ lớn, trừ khi cả hai cùng quá dài không vừa một hàng (ví dụ PM2.5 từ 1000 và CO2 từ 10000 cùng lúc), khi đó cả hai cùng nhỏ lại. Dòng dưới cùng là mức chất lượng không khí theo PM2.5. Chưa có số đo thì hiện `--`; cảm biến CO2 ngừng trả lời thì CO2 cũng hiện `--`.
   - **Chỉ PM2.5**: như bản trước, số PM2.5 lớn ở giữa, đơn vị ug/m3, mức chất lượng không khí ở dưới.
 
   Giữa dòng tiêu đề có biểu tượng ngôi nhà khi thiết bị có Wi-Fi **và** có ít nhất một ứng dụng (Apple Home, Home Assistant...) đang kết nối. Khi không còn ứng dụng nào kết nối, biểu tượng tự mất, chậm nhất sau khoảng thời gian báo cáo tối đa mà ứng dụng chọn (thường tới 10 phút).
@@ -274,7 +274,7 @@ test/host/run.sh
 | `test_pm_sensor.cpp` (đo theo chu kỳ và đo liên tục) | Ghép khung PMS5003 bị chia nhỏ, nhiễu, khung trả lời lệnh; bỏ 30 giây khởi động; báo mất dữ liệu; gửi lại lệnh cấu hình khi cảm biến im lặng |
 | `test_button.cpp` | Hai nút chạy độc lập, chống dội nút, thời gian giữ, nút bị kẹt, chân trùng; đếm số lần bấm (1, 2, 4), bấm cách quá xa, bấm giữ lâu không tính là bấm |
 | `test_scd4x.cpp` | SCD4x giả lập theo datasheet: thứ tự lệnh khi khởi động, CRC, chờ đủ thời gian lệnh, trung bình theo khoảng báo cáo, bỏ mẫu 0 ppm và mẫu sai CRC; thiếu cảm biến lúc khởi động, rút ra cắm lại, reset do nguồn, cảm biến không đo |
-| `test_local_ui.cpp` (có nút, không có nút, không có CO2) | OLED lúc khởi động, kiểu PM2.5 + CO2 và chỉ PM2.5, đổi kiểu và lưu lựa chọn, `--` khi thiếu số, màn hình chờ ghép nối (bật màn hình khi đang tắt, màn reset được ưu tiên), nút màn hình bật/tắt và lưu lựa chọn, nhấn trong lúc khởi động, nhấn hai lần liền, màn reset khi màn hình đang tắt, rút/cắm OLED, OLED mất nguồn âm thầm, không tạo được bus I2C, LED theo mức không khí, Identify |
+| `test_local_ui.cpp` (có nút, không có nút, không có CO2) | OLED lúc khởi động, kiểu PM2.5 + CO2 (hai số luôn cùng cỡ chữ) và chỉ PM2.5, đổi kiểu và lưu lựa chọn, `--` khi thiếu số, màn hình chờ ghép nối (bật màn hình khi đang tắt, màn reset được ưu tiên), nút màn hình bật/tắt và lưu lựa chọn, nhấn trong lúc khởi động, nhấn hai lần liền, màn reset khi màn hình đang tắt, rút/cắm OLED, OLED mất nguồn âm thầm, không tạo được bus I2C, LED theo mức không khí, Identify |
 
 Phần Matter, Wi-Fi và BLE vẫn phải thử trên thiết bị thật.
 

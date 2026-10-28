@@ -257,7 +257,7 @@ static const font_glyph_t *find_glyph(const font_t *font, uint32_t cp)
     return cp == '?' ? NULL : find_glyph(font, '?');
 }
 
-static int text_width(const font_t *font, const char *utf8)
+int sh1106_text_width(const font_t *font, const char *utf8)
 {
     int width = 0;
     while (*utf8) {
@@ -277,7 +277,7 @@ static void draw_glyph(int pen_x, int baseline, const font_t *font, const font_g
 
 void sh1106_draw_text(int x, int y, const font_t *font, text_align_t align, const char *utf8)
 {
-    const int width = text_width(font, utf8);
+    const int width = sh1106_text_width(font, utf8);
     const int height = font->ascent + font->descent;
     switch (align) {
     case TEXT_ALIGN_TOP_CENTER:

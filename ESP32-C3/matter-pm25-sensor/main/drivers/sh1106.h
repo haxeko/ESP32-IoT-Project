@@ -42,4 +42,6 @@ void sh1106_draw_hline(int x0, int x1, int y);
 // 1-bit bitmap, rows packed MSB first and padded to a whole byte.
 void sh1106_draw_bitmap(int x, int y, int width, int height, const uint8_t *data);
 void sh1106_draw_text(int x, int y, const font_t *font, text_align_t align, const char *utf8);
+// Width of the text in pixels (sum of the glyph advances).
+int sh1106_text_width(const font_t *font, const char *utf8);
 esp_err_t sh1106_flush(void);
