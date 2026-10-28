@@ -2,7 +2,8 @@
 """Generate, route and check the PCB (KiCad 9 pcbnew API + FreeRouting).
 
   python3 gen_pcb.py place     board from the schematic netlist: outline, placement, nets, rule areas, texts
-  python3 gen_pcb.py route     FreeRouting (Specctra DSN/SES), GND pours both layers, stitching vias
+  python3 gen_pcb.py route     FreeRouting (Specctra DSN/SES) for what the hand routes leave open, GND pours both
+                               layers, stitching vias
   python3 gen_pcb.py pour      GND pours and stitching vias again (after a manual change)
   python3 gen_pcb.py all       place + route
   python3 gen_pcb.py sync      values and part numbers from the schematic onto the routed board (no placement)
@@ -10,9 +11,10 @@
 The footprints, values, nets and symbol links come from the netlist that kicad-cli exports from the schematic,
 as "Update PCB from Schematic" would do, so DRC with --schematic-parity checks the board against the schematic.
 
-Board: 25 x 27 mm, 2 layers, 1.6 mm. The module antenna (6 mm) overhangs the top edge, nothing under it.
-The CR2032 holder is on the bottom side under the module and the circuit, the cell 6.5 mm from the antenna edge.
-Every other part is on the top side; the test pads are on the bottom side under the module (pogo pins).
+Board: 29.8 x 23.9 mm, 2 layers, 1.6 mm; with the module antenna (6 mm, overhanging the top edge) 29.8 x 29.9 mm.
+The module sits at the right edge, the TPS63900 on its left. The CR2032 holder is on the bottom side under the module
+and the circuit, the cell edge 3.4 mm from the antenna (top board edge). Every other part is on the top side; the
+test pads are on the bottom side (pogo pins).
 """
 
 import math
@@ -28,13 +30,17 @@ from kicad_sexp import HW, KICAD_FP
 
 PCB = os.path.join(HW, design.PROJECT + ".kicad_pcb")
 SCH = os.path.join(HW, design.PROJECT + ".kicad_sch")
+PRO = os.path.join(HW, design.PROJECT + ".kicad_pro")
+# the project file as gen_project.py wrote it, read before pcbnew touches it: NewBoard and SaveBoard write every
+# default setting into it
+PRO_TEXT = open(PRO).read() if os.path.exists(PRO) else None
 BUILD = os.path.join(HW, "build")  # intermediate files (git-ignored)
 FREEROUTING = os.environ.get("FREEROUTING_JAR", os.path.expanduser("~/freerouting-2.1.0.jar"))
 JOB_TIMEOUT = os.environ.get("FREEROUTING_TIMEOUT", "00:03:00")
 
-X0, Y0, W, H, R_CORNER = 100.0, 100.0, 25.0, 27.0, 1.0  # board outline, mm
-MODULE = (112.5, 104.0)  # module centre: antenna area (y -10 .. -4 of the footprint) outside the top edge
-HOLDER = (112.5, 116.46)  # CR2032 holder centre, bottom side: the cell edge 0.5 mm from the bottom edge
+X0, Y0, W, H, R_CORNER = 100.0, 100.0, 29.8, 23.9, 0.5  # board outline, mm; with the antenna 29.8 x 29.9 mm
+MODULE = (120.0, 104.0)  # module at the right edge, antenna area (y -10 .. -4 of the footprint) outside the top edge
+HOLDER = (114.9, 113.36)  # CR2032 holder centre, bottom side: the cell edge 0.54 mm from the bottom edge
 # bottom side, ring from the edge of the contact pad (8.9 mm) to just outside the cell (10 mm): the crimped edge of the
 # cell is its + terminal, so no copper at all (tracks, vias, pour) where the cell slides in and sits
 CELL_RING = (8.95, 10.3)
@@ -43,130 +49,146 @@ CELL_RING = (8.95, 10.3)
 PLACE = {
     "U1": (*MODULE, 0, "F"),
     "BT1": (*HOLDER, 0, "B"),
-    # left of the module: decoupling at pin 1 (3V3), EN pull-up (and RC option) at pin 2, GPIO8 strap at pin 7
-    "C6": (102.2, 101.62, 270, "F"),
-    "R4": (101.72, 103.4, 0, "F"),
-    "C7": (101.72, 104.5, 180, "F"),
-    "R5": (101.72, 110.1, 0, "F"),
-    # right of the module: battery sense at IO1 (pin 27)
-    "R9": (123.3, 102.6, 180, "F"),
-    "C9": (123.3, 101.35, 180, "F"),
-    # below the module, left: 3V3 out (JP2, C5), button pull-up and RC filter
-    "JP2": (101.6, 122.62, 90, "F"),
-    "C5": (101.6, 119.2, 270, "F"),
-    "R7": (103.6, 115.32, 180, "F"),
-    "C8": (102.2, 116.4, 0, "F"),
-    "R6": (105.3, 116.0, 90, "F"),
-    # TPS63900 (VOUT left, VIN right): CFG resistors above, inductor below
-    "U2": (106.8, 122.0, 270, "F"),
-    "R1": (106.8, 118.5, 90, "F"),
-    "R2": (105.8, 118.5, 90, "F"),
-    "R3": (104.8, 118.5, 90, "F"),
-    "L1": (106.8, 125.35, 180, "F"),
-    "C4": (103.7, 122.8, 90, "F"),
-    "C3": (109.9, 122.8, 90, "F"),
-    # button in the middle, LED (IO22, pin 15) on its right
-    "SW1": (112.0, 116.8, 0, "F"),
-    "R8": (116.3, 115.35, 0, "F"),
-    "D1": (119.0, 115.6, 180, "F"),
-    # battery input, right: + tab of the holder -> Q1 -> JP1 -> C1, C2 (VBAT)
-    "C2": (112.6, 122.6, 90, "F"),
-    "C1": (116.0, 122.6, 90, "F"),
-    "Q1": (120.6, 121.0, 0, "F"),
-    "JP1": (120.6, 124.3, 180, "F"),
-    # test pads, bottom side, under the module (pogo pins, 2.54 x 2.7 mm grid)
-    "TP1": (107.42, 101.3, 0, "B"), "TP2": (109.96, 101.3, 0, "B"), "TP7": (112.5, 101.3, 0, "B"),
-    "TP8": (115.04, 101.3, 0, "B"), "TP10": (117.58, 101.3, 0, "B"),
-    "TP5": (107.42, 104.0, 0, "B"), "TP6": (109.96, 104.0, 0, "B"), "TP4": (112.5, 104.0, 0, "B"),
-    "TP3": (115.04, 104.0, 0, "B"), "TP9": (117.58, 104.0, 0, "B"),
+    # left of the module, next to its pins: decoupling at pin 1 (3V3), EN pull-up (and RC option) at pin 2,
+    # button RC filter and pull-up at pin 5 (GPIO10), GPIO8 strap at pin 7
+    "C6": (109.6, 101.62, 270, "F"),
+    "R4": (108.6, 103.1, 0, "F"),
+    "C7": (108.6, 104.2, 180, "F"),
+    "C8": (108.1, 106.2, 180, "F"),
+    "R7": (109.6, 107.6, 90, "F"),
+    "R6": (108.1, 109.1, 0, "F"),
+    "R5": (108.6, 110.25, 0, "F"),
+    # left, lower half: 3V3 out (C5, JP2) and the TPS63900 (VOUT left, VIN right, CFG resistors above, L1 below)
+    "C5": (101.65, 115.2, 90, "F"),
+    "JP2": (101.65, 118.62, 90, "F"),
+    "U2": (106.85, 118.0, 270, "F"),
+    "R1": (106.85, 114.5, 90, "F"),
+    "R2": (105.85, 114.5, 90, "F"),
+    "R3": (104.85, 114.5, 90, "F"),
+    "L1": (106.85, 121.35, 180, "F"),
+    "C4": (103.75, 118.8, 90, "F"),
+    "C3": (109.95, 118.8, 90, "F"),
+    # below the module: button in the middle of the board, C2 under it; LED (IO22, pin 15) on its right
+    "SW1": (114.9, 117.4, 0, "F"),
+    "C2": (114.9, 121.5, 0, "F"),
+    "R8": (119.7, 115.35, 180, "F"),
+    "D1": (119.4, 116.8, 180, "F"),
+    # battery input, right: + tab of the holder -> Q1 -> JP1 -> C1 -> C2, C3; battery sense R9, C9 in the corner
+    "Q1": (127.3, 117.3, 180, "F"),
+    "JP1": (124.0, 117.2, 270, "F"),
+    "C1": (122.6, 121.5, 180, "F"),
+    "R9": (127.0, 121.0, 0, "F"),
+    "C9": (127.0, 122.4, 180, "F"),
+    # test pads, bottom side (pogo pins): the two top corners next to the holder (left: GND, 3V3, EN, BOOT; right:
+    # TX, VBAT_SENSE, USB), RX and VBAT right of the holder, above the corner with R9
+    "TP2": (102.0, 101.6, 0, "B"), "TP1": (104.54, 101.6, 0, "B"),
+    "TP6": (102.0, 104.3, 0, "B"), "TP5": (104.54, 104.3, 0, "B"),
+    "TP3": (125.44, 101.6, 0, "B"), "TP10": (127.98, 101.6, 0, "B"),
+    "TP7": (125.44, 104.3, 0, "B"), "TP8": (127.98, 104.3, 0, "B"),
+    "TP4": (126.9, 118.5, 0, "B"), "TP9": (127.2, 121.2, 0, "B"),
 }
 
-# Hand-routed tracks (top layer unless "B"): the 0.5 mm pitch TPS63900 and the short local connections.
-# FreeRouting keeps them (locked) and routes the rest. (net, width, [points], layer)
+# Hand-routed tracks (top layer unless "B"): every connection but GND (the pours connect it). FreeRouting keeps them
+# (locked) and routes whatever is left, nothing in this layout. (net, width, [points], layer)
 F, B = "F", "B"
 ROUTES = [
     # TPS63900 (U2 rotated: bottom row VOUT LX2 GND LX1 VIN, top row CFG3 CFG2 CFG1 SEL EN, from left)
-    ("GND", 0.25, [(106.8, 123.2125), (106.8, 122.0)], F),                    # pin 8 to exposed pad
-    ("GND", 0.3, [(106.8, 122.0), (103.7, 122.025)], F),                      # EP to C4
-    ("GND", 0.3, [(106.8, 122.0), (108.6, 122.0), (109.9, 122.025)], F),      # EP, via, C3
-    ("/VOUT", 0.25, [(105.8, 123.2125), (105.8, 123.5), (103.7, 123.5)], F),  # pin 6 to C4
-    ("/VOUT", 0.3, [(103.7, 123.575), (102.9, 123.27), (101.6, 123.27)], F),  # C4 to JP2
-    ("VBAT", 0.25, [(107.8, 123.2125), (107.8, 123.5), (109.9, 123.5)], F),   # VIN to C3
-    ("/LX1", 0.3, [(107.3, 123.2125), (107.3, 124.6)], F),
-    ("/LX2", 0.3, [(106.3, 123.2125), (106.3, 124.6)], F),
-    ("/CFG1", 0.2, [(106.8, 120.7875), (106.8, 119.01)], F),
-    ("/CFG2", 0.2, [(106.3, 120.7875), (106.3, 120.1), (105.8, 119.6), (105.8, 119.01)], F),
-    ("/CFG3", 0.2, [(105.8, 120.7875), (105.8, 120.4), (104.8, 119.4), (104.8, 119.01)], F),
-    ("VBAT", 0.25, [(107.3, 120.5), (107.8, 120.5)], F),                      # SEL and EN to VIN
-    ("VBAT", 0.25, [(107.8, 120.5), (107.8, 120.0), (108.1, 119.7), (110.9, 119.7), (110.9, 123.6),
-                    (110.375, 123.6)], F),
-    ("GND", 0.3, [(104.8, 117.99), (107.7, 117.99)], F),                      # R1-R3 to GND
-    # battery input: + tab (bottom side) -> Q1 -> JP1 -> C1, C2 -> C3 / VIN; VBAT up the right edge to R9, TP9
-    ("/BAT+", 0.4, [(123.3, 120.2), (123.45, 118.7)], B),
-    ("/BAT+", 0.4, [(121.537, 121.0), (122.6, 121.0), (123.3, 120.3)], F),
-    ("GND", 0.3, [(119.662, 120.05), (118.4, 120.05)], F),                    # Q1 gate
-    ("/VBAT_Q", 0.4, [(119.662, 121.95), (120.6, 122.9), (121.25, 123.6)], F),
-    ("VBAT", 0.4, [(110.375, 123.6), (111.6, 124.075), (117.35, 124.075), (119.95, 124.3)], F),
-    ("VBAT", 0.3, [(119.95, 124.3), (119.95, 125.6), (124.1, 125.6), (124.1, 103.0), (123.81, 102.6)], F),
-    ("GND", 0.3, [(112.6, 121.125), (112.6, 120.15)], F),                     # C2
-    ("GND", 0.3, [(116.0, 121.125), (116.0, 120.15)], F),                     # C1
-    # button: both pads of each contact, pull-up and RC filter on the left; LED right of the button
-    ("/BTN_SW", 0.25, [(109.925, 115.725), (114.075, 115.725)], F),
-    ("GND", 0.3, [(109.925, 117.875), (114.075, 117.875)], F),
-    ("/BTN_SW", 0.25, [(104.11, 115.32), (105.3, 115.49), (106.0, 115.7), (109.925, 115.725)], F),
-    ("/BTN", 0.2, [(101.9, 113.4), (101.9, 116.2)], F),
-    ("/BTN", 0.2, [(101.9, 115.32), (103.09, 115.32)], F),
-    ("GND", 0.25, [(102.68, 116.4), (104.1, 116.6)], F),                      # C8
-    ("+3V3", 0.25, [(101.6, 118.425), (102.4, 117.3), (105.3, 117.3), (105.3, 116.51)], F),  # R6
-    ("GND", 0.3, [(101.6, 119.975), (102.5, 120.75)], F),                     # C5
-    ("/LED", 0.2, [(113.25, 114.4), (113.25, 114.95), (115.4, 114.95), (115.79, 115.35)], F),
-    ("/LED_A", 0.2, [(116.81, 115.35), (117.4, 115.6), (118.213, 115.6)], F),
-    ("GND", 0.3, [(119.787, 115.6), (121.0, 115.6)], F),                      # D1 cathode
-    # left of the module: 3V3 trunk from JP2 to pin 1 with its pull-ups; GPIO10 crosses the strap and BOOT
-    # stubs on the bottom side, next to the edge
-    ("+3V3", 0.3, [(101.0, 121.97), (100.55, 121.97), (100.55, 101.14), (103.2, 101.14)], F),
-    ("+3V3", 0.3, [(100.55, 103.4), (101.21, 103.4)], F),                     # R4
-    ("+3V3", 0.3, [(100.55, 110.1), (101.21, 110.1)], F),                     # R5
-    ("+3V3", 0.3, [(100.55, 118.425), (101.6, 118.425)], F),                  # C5
-    ("+3V3", 0.25, [(104.4, 101.1), (104.9, 101.1)], F),                      # to TP1
-    ("/EN", 0.2, [(103.1, 102.9), (102.23, 103.4), (102.2, 104.5)], F),
-    ("/EN", 0.2, [(104.4, 102.6), (104.9, 102.6)], F),                        # to TP5
-    ("GND", 0.25, [(102.2, 102.1), (101.3, 102.3)], F),                       # C6
-    ("GND", 0.25, [(101.24, 104.5), (101.24, 105.4)], F),                     # C7
-    ("/BTN", 0.2, [(101.9, 107.1), (103.1, 107.1)], F),
-    ("/BTN", 0.2, [(101.9, 113.4), (101.3, 112.8), (101.3, 107.7), (101.9, 107.1)], B),
-    ("/STRAP8", 0.2, [(102.23, 110.1), (103.1, 110.1)], F),
-    ("/BOOT", 0.2, [(102.25, 111.6), (103.1, 111.6)], F),
-    # right of the module: battery sense; UART down to the test pads (FreeRouting takes USB D+/D-)
-    ("/VBAT_SENSE", 0.2, [(121.6, 102.6), (122.79, 102.6), (123.78, 101.35)], F),
-    ("/VBAT_SENSE", 0.2, [(120.6, 102.6), (120.1, 102.6)], F),
-    ("GND", 0.2, [(122.82, 101.35), (122.3, 101.85), (120.0, 101.85)], F),   # C9, between pins 28 and 27
-    ("/TXD0", 0.2, [(121.6, 110.1), (122.75, 110.1)], F),
-    ("/RXD0", 0.2, [(121.6, 111.6), (122.75, 111.6)], F),
-    ("GND", 0.3, [(109.96, 101.3), (111.23, 102.65)], B),                     # TP2
+    ("GND", 0.25, [(106.85, 119.2125), (106.85, 118.0)], F),                  # pin 8 to exposed pad
+    ("GND", 0.3, [(106.85, 118.0), (105.05, 118.0), (103.75, 118.025)], F),   # EP, via, C4
+    ("GND", 0.3, [(106.85, 118.0), (108.65, 118.0), (109.95, 118.025)], F),   # EP, via, C3
+    ("/VOUT", 0.25, [(105.85, 119.2125), (105.85, 119.5), (103.75, 119.5)], F),  # pin 6 to C4
+    ("/VOUT", 0.3, [(103.75, 119.575), (102.95, 119.27), (101.65, 119.27)], F),  # C4 to JP2
+    ("VBAT", 0.25, [(107.85, 119.2125), (107.85, 119.5), (109.95, 119.5)], F),   # VIN to C3
+    ("/LX1", 0.3, [(107.35, 119.2125), (107.35, 120.6)], F),
+    ("/LX2", 0.3, [(106.35, 119.2125), (106.35, 120.6)], F),
+    ("/CFG1", 0.2, [(106.85, 116.7875), (106.85, 115.01)], F),
+    ("/CFG2", 0.2, [(106.35, 116.7875), (106.35, 116.1), (105.85, 115.6), (105.85, 115.01)], F),
+    ("/CFG3", 0.2, [(105.85, 116.7875), (105.85, 116.4), (104.85, 115.4), (104.85, 115.01)], F),
+    ("VBAT", 0.25, [(107.35, 116.5), (107.85, 116.5)], F),                    # SEL and EN to VIN
+    ("VBAT", 0.25, [(107.85, 116.5), (107.85, 116.0), (108.15, 115.7), (110.95, 115.7), (110.95, 119.6),
+                    (110.425, 119.6)], F),
+    ("GND", 0.3, [(104.85, 113.99), (107.75, 113.99)], F),                    # R1-R3 to GND
+    # 3V3: JP2 -> C5 -> trunk along the left edge to pin 1; branch at x 106.5 for the pull-ups R4, R6, R5
+    ("+3V3", 0.3, [(101.65, 115.975), (101.65, 117.97)], F),
+    ("+3V3", 0.3, [(101.65, 116.6), (100.55, 116.6), (100.55, 101.12), (110.8, 101.12)], F),
+    ("+3V3", 0.3, [(106.5, 101.12), (106.5, 110.25), (108.09, 110.25)], F),
+    ("+3V3", 0.3, [(106.5, 103.1), (108.09, 103.1)], F),                      # R4
+    ("+3V3", 0.3, [(106.5, 109.1), (107.59, 109.1)], F),                      # R6
+    ("GND", 0.3, [(101.65, 114.425), (102.6, 113.6)], F),                     # C5
+    ("GND", 0.2, [(109.6, 102.1), (110.0, 101.85), (112.85, 101.85)], F),     # C6, between pins 1 and 2
+    ("/EN", 0.2, [(110.6, 102.9), (109.11, 103.1), (109.08, 104.2)], F),
+    ("/EN", 0.2, [(111.9, 102.6), (112.6, 102.6)], F),                        # to TP5
+    ("GND", 0.25, [(108.12, 104.2), (107.3, 105.25)], F),                     # C7
+    ("GND", 0.25, [(107.62, 106.2), (107.3, 105.25)], F),                     # C8
+    # button: GPIO10 RC at pin 5; BTN_SW enters the module margin between pins 5 and 6, runs down inside the
+    # pads and leaves at the corner between pins 9 and 10 to SW1
+    ("/BTN", 0.2, [(110.6, 107.1), (109.6, 107.09), (108.58, 106.2)], F),
+    ("/BTN_SW", 0.2, [(109.6, 108.11), (108.61, 109.1)], F),
+    ("/BTN_SW", 0.2, [(109.6, 108.11), (109.9, 107.85), (112.4, 107.85), (112.4, 115.3), (112.825, 116.0)], F),
+    ("/BTN_SW", 0.25, [(112.825, 116.325), (116.975, 116.325)], F),          # both pads of contact 1
+    ("GND", 0.3, [(112.825, 118.475), (116.975, 118.475)], F),               # both pads of contact 2
+    ("/STRAP8", 0.2, [(109.11, 110.25), (110.6, 110.1)], F),
+    ("/BOOT", 0.2, [(110.6, 111.6), (104.6, 111.6), (104.6, 109.5)], F),
+    # LED right of the button
+    ("/LED", 0.2, [(120.75, 114.4), (120.75, 114.9), (120.21, 115.35)], F),
+    ("/LED_A", 0.2, [(119.19, 115.35), (118.613, 116.8)], F),
+    ("GND", 0.3, [(120.187, 116.8), (121.2, 116.0)], F),                      # D1 cathode
+    # battery input: + tab (bottom side) -> Q1 -> JP1 -> C1 -> bus along the bottom edge -> C2, C3 / VIN
+    ("/BAT+", 0.4, [(125.9, 116.5), (125.885, 115.6)], B),
+    ("/BAT+", 0.4, [(125.9, 116.5), (126.362, 117.3)], F),
+    ("/VBAT_Q", 0.4, [(128.238, 116.35), (128.238, 115.75), (124.6, 115.75), (124.0, 116.35)], F),
+    ("GND", 0.3, [(128.238, 118.25), (128.45, 119.4)], F),                    # Q1 gate
+    ("VBAT", 0.4, [(124.0, 117.85), (124.0, 120.4)], F),                      # JP1 to C1
+    ("VBAT", 0.4, [(124.075, 122.85), (124.075, 123.35), (110.95, 123.35), (110.95, 119.6)], F),
+    ("VBAT", 0.4, [(113.425, 122.85), (113.425, 123.35)], F),                 # C2
+    ("VBAT", 0.3, [(124.65, 121.0), (126.49, 121.0)], F),                     # R9, via to TP9
+    ("GND", 0.3, [(116.375, 121.5), (117.4, 120.3)], F),                      # C2
+    ("GND", 0.3, [(121.125, 121.5), (119.6, 120.0)], F),                      # C1
+    # battery sense in the corner; the sense line goes to pin 27 on the bottom side, along the right edge
+    ("/VBAT_SENSE", 0.2, [(127.51, 121.0), (127.48, 122.4)], F),
+    ("/VBAT_SENSE", 0.2, [(127.51, 121.0), (128.6, 121.0)], F),
+    ("/VBAT_SENSE", 0.2, [(128.6, 121.0), (129.2, 120.4), (129.2, 103.0), (128.3, 102.1)], B),  # to TP10
+    ("GND", 0.25, [(126.52, 122.4), (125.6, 122.9)], F),                      # C9
+    ("VBAT", 0.3, [(125.6, 121.0), (127.2, 121.2)], B),                       # TP9
+    # right of the module: inward stubs to vias next to the pads, to the test pads on the bottom side
+    ("/VBAT_SENSE", 0.2, [(128.1, 102.6), (127.4, 102.6)], F),
+    ("/USB_DP", 0.2, [(128.1, 107.1), (127.4, 107.1)], F),
+    ("/USB_DN", 0.2, [(128.1, 108.6), (127.4, 108.6)], F),
+    ("/TXD0", 0.2, [(128.1, 110.1), (127.4, 110.1)], F),
+    ("/RXD0", 0.2, [(128.1, 111.6), (127.4, 111.6)], F),
+    ("/VBAT_SENSE", 0.2, [(127.4, 102.6), (127.98, 101.6)], B),
+    ("/USB_DP", 0.2, [(127.4, 107.1), (127.4, 104.88), (127.98, 104.3)], B),
+    ("/USB_DN", 0.2, [(127.4, 108.6), (126.6, 108.6), (126.6, 105.4), (125.5, 104.3)], B),
+    ("/TXD0", 0.2, [(127.4, 110.1), (126.2, 110.1), (124.3, 108.2), (124.3, 102.54), (124.9, 101.94)], B),
+    ("/RXD0", 0.2, [(127.4, 111.6), (127.4, 117.8), (127.2, 118.0)], B),    # past the + tab of the holder
+    # left: test pads in the top left corner
+    ("+3V3", 0.3, [(106.1, 101.12), (105.0, 101.12)], B),                    # from the trunk on top
+    ("/EN", 0.2, [(112.6, 102.6), (112.25, 102.95), (106.4, 102.95), (105.2, 104.15)], B),
+    ("/BOOT", 0.2, [(104.6, 109.5), (102.6, 107.5), (102.6, 105.1), (102.2, 104.7)], B),
+    ("GND", 0.3, [(102.0, 101.6), (101.6, 103.0)], B),                        # TP2
 ]
 # GND vias: inside the contact pad of the cell or outside the cell, never in CELL_RING
-VIAS = [("GND", 108.6, 122.0), ("GND", 107.7, 117.99), ("GND", 118.4, 120.05), ("GND", 112.6, 120.15),
-        ("GND", 116.0, 120.15), ("GND", 112.0, 117.875), ("GND", 104.1, 116.6), ("GND", 102.5, 120.75),
-        ("GND", 121.0, 115.6), ("GND", 101.3, 102.3), ("GND", 101.24, 105.4),
-        ("GND", 111.23, 102.65), ("/BAT+", 123.3, 120.2), ("+3V3", 104.9, 101.1), ("/EN", 104.9, 102.6),
-        ("/BTN", 101.9, 107.1), ("/BTN", 101.9, 113.4), ("/BOOT", 102.25, 111.6), ("/VBAT_SENSE", 120.1, 102.6),
-        ("/TXD0", 122.75, 110.1), ("/RXD0", 122.75, 111.6), ("VBAT", 124.1, 105.6)]
+VIAS = [("GND", 108.65, 118.0), ("GND", 105.05, 118.0), ("GND", 107.75, 113.99), ("GND", 102.6, 113.6),
+        ("GND", 107.3, 105.25), ("GND", 114.9, 118.475), ("GND", 121.2, 116.0), ("GND", 128.45, 119.4),
+        ("GND", 117.4, 120.3), ("GND", 119.6, 120.0), ("GND", 125.6, 122.9), ("GND", 101.6, 103.0),
+        ("/BAT+", 125.9, 116.5), ("+3V3", 106.1, 101.12), ("/EN", 112.6, 102.6), ("/BOOT", 104.6, 109.5),
+        ("/VBAT_SENSE", 127.4, 102.6), ("/VBAT_SENSE", 128.6, 121.0), ("/USB_DP", 127.4, 107.1),
+        ("/USB_DN", 127.4, 108.6), ("/TXD0", 127.4, 110.1), ("/RXD0", 127.4, 111.6), ("VBAT", 125.6, 121.0)]
 
 # reference designators shown on the silkscreen: ref -> (x, y) or None (footprint default)
-SILK_REFS = {"U1": (112.5, 111.2), "JP1": (122.3, 126.35), "JP2": (101.7, 125.4)}
+SILK_REFS = {"U1": (120.0, 111.0), "JP1": (121.7, 118.9), "JP2": (101.65, 121.1)}
 
 # silkscreen labels of the test pads (bottom side), below each pad
 TP_LABEL = {"TP1": "3V3", "TP2": "GND", "TP3": "TX", "TP4": "RX", "TP5": "EN", "TP6": "BOOT", "TP7": "D-",
             "TP8": "D+", "TP9": "VBAT", "TP10": "VSNS"}
 
-# top layer under the module body: no tracks (ground under the module, Espressif guideline); the 1 mm next to
-# the pads stays free for the fan-out vias
-UNDER_MODULE = [(105.4, 100.4), (119.6, 100.4), (119.6, 112.6), (105.4, 112.6)]
+# top layer under the module body: no tracks (ground under the module, Espressif guideline); the margin next to the
+# pads stays free: button line and test pad vias on the left, test pad vias on the right
+UNDER_MODULE = [(113.0, 100.4), (127.0, 100.4), (127.0, 112.6), (113.0, 112.6)]
 
-# silkscreen texts: (text, x, y, layer, size, thickness)
-TEXTS = [("MATTER H2 BUTTON", 114.0, 126.3, F, 0.7, 0.1), (f"rev {design.REV}", 121.6, 104.4, B, 0.6, 0.1),
-         ("+", 124.1, 122.6, B, 1.0, 0.15)]
+# silkscreen texts: (text, x, y, layer, size, thickness, angle)
+TEXTS = [("Thread Button", 103.1, 106.4, F, 0.8, 0.12, 90), ("Made by Haxeko", 115.0, 101.35, B, 0.9, 0.13, 0),
+         (f"rev {design.REV}", 115.0, 102.5, B, 0.6, 0.1, 0), ("+", 128.7, 114.6, B, 1.0, 0.15, 0)]
 
 
 def mm(v):
@@ -213,13 +235,11 @@ def load_footprint(lib_id):
 
 
 def save(board):
-    """SaveBoard also writes every default setting into the project file: keep it as gen_project.py wrote it."""
-    pro = PCB.replace(".kicad_pcb", ".kicad_pro")
-    settings = open(pro).read() if os.path.exists(pro) else None
+    """SaveBoard, then the project file back as gen_project.py wrote it (PRO_TEXT)."""
     pcbnew.SaveBoard(PCB, board)
-    if settings is not None:
-        with open(pro, "w") as f:
-            f.write(settings)
+    if PRO_TEXT is not None:
+        with open(PRO, "w") as f:
+            f.write(PRO_TEXT)
 
 
 # --------------------------------------------------------------------------------------------------- board
@@ -389,8 +409,8 @@ def place():
         add_rule_area(board, f"coin-cell-{i}", [pcbnew.B_Cu], pts, tracks=True, vias=True, pour=True)
 
     # silkscreen
-    for text, x, y, layer, size, thick in TEXTS:
-        add_text(board, text, x, y, pcbnew.F_SilkS if layer == F else pcbnew.B_SilkS, size, thick)
+    for text, x, y, layer, size, thick, angle in TEXTS:
+        add_text(board, text, x, y, pcbnew.F_SilkS if layer == F else pcbnew.B_SilkS, size, thick, angle)
     for ref, label in TP_LABEL.items():
         x, y, _, _ = PLACE[ref]
         add_text(board, label, x, y + 1.35, pcbnew.B_SilkS, 0.6, 0.1)
@@ -613,8 +633,20 @@ def run_step(name):
     return out
 
 
+def drc_unrouted():
+    """Nets other than GND with a missing connection, from KiCad's DRC."""
+    nets = set()
+    for blk in drc(PCB).split("\n[")[1:]:
+        if blk.startswith("unconnected_items"):
+            nets.update(re.findall(r"@\([^)]*\): [^\[\n]*\[([^\]]*)\]", blk))
+    return nets - {design.GND}
+
+
 def route():
-    print(run_step("freeroute"))
+    if drc_unrouted():
+        print(run_step("freeroute"))
+    else:
+        print("FreeRouting skipped: every connection but GND (pours) is routed")
     for _ in range(8):
         out = run_step("cleanup")
         if out.strip().endswith("removed 0"):

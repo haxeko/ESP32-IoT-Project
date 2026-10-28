@@ -233,13 +233,14 @@ Kiểm tra rò tụ bulk là bước đầu tiên của checklist: đo dòng to�
 
 PCB đã thiết kế bằng KiCad 9: **[`hardware/`](hardware/README.md)** (schematic, PCB đã đi dây, Gerber, BOM, file vị trí linh kiện; ERC và DRC sạch).
 
-- PCB 2 lớp FR-4 1,6 mm, **25 × 27 mm** (nhỏ nhất với đế CR2032 Keystone 3034: hai tai hàn của đế đã dài 23,2 mm). Module ở mép trên, **vùng anten (6 mm đầu module) chìa ra ngoài mép bo** → cả cụm 25 × 33 mm; không đồng, không đường mạch, không linh kiện dưới vùng anten (datasheet WROOM-02C, mục 11; ESP32-H2 Hardware Design Guidelines, *Positioning a Module on a Base Board*). Mặt phẳng GND hai lớp chạy tới sát mép bo ở chân anten.
-- **Pin CR2032 (vỏ kim loại) và đế pin ở mặt dưới, nằm dưới module và mạch; mép pin cách chân anten 6,5 mm** (bố trí 30 × 38 mm trước đây: ~16 mm). Đây là đánh đổi để bo nhỏ: pin nằm sau mặt phẳng GND, không nằm dưới anten, nhưng có thể làm giảm tầm phủ. Đo RSSI/LQI của parent khi đã lắp vỏ (checklist mục C); nếu link yếu, dùng lại bố trí 30 × 38 mm (commit `6649456`).
+- PCB 2 lớp FR-4 1,6 mm, **29,8 × 23,9 mm**, không có lỗ bắt vít. Module ở mép trên, sát mép phải, **vùng anten (6 mm đầu module) chìa ra ngoài mép bo** → cả cụm **29,8 × 29,9 mm** (dưới 30 × 30 mm); không đồng, không đường mạch, không linh kiện dưới vùng anten (datasheet WROOM-02C, mục 11; ESP32-H2 Hardware Design Guidelines, *Positioning a Module on a Base Board*). Mặt phẳng GND hai lớp chạy tới sát mép bo ở chân anten.
+- **Pin CR2032 (vỏ kim loại) và đế pin ở mặt dưới, nằm dưới module và mạch; mép pin cách chân anten 3,4 mm** (bố trí 25 × 27 mm: 6,5 mm; 30 × 38 mm: ~16 mm). Đây là đánh đổi để cả cụm dưới 30 × 30 mm: pin nằm sau mặt phẳng GND, không nằm dưới anten, nhưng có thể làm giảm tầm phủ. Đo RSSI/LQI của parent khi đã lắp vỏ (checklist mục C); nếu link yếu, dùng lại bố trí 25 × 27 mm (commit `af26218`) hoặc 30 × 38 mm (commit `6649456`).
 - Mặt dưới, dưới pin chỉ có pad tiếp xúc âm Ø17,8 mm (GND); vành từ mép pad tới ngoài mép pin không có đồng (đường mạch, via, phủ đồng), vì mép vỏ pin là cực +.
 - TPS63900: C3 (VIN) và C4 (VOUT) sát chân trên lớp trên, L1 ngay dưới LX1/LX2, điện trở CFG sát chân; pad tản nhiệt nối chân GND 8 và hai via (TI: via trong pad là tùy chọn).
 - C1/C2 ngay sau Q1/JP1. Phủ đồng GND cả hai lớp, mỗi pad GND có via riêng.
-- SW1 ở giữa, ngay dưới module; R7/C8 (lọc RC) và R6 bên trái nút; GPIO10 đi dọc mép trái, đổi lớp để vượt qua chân 7, 8. D1 bên phải nút (ống dẫn sáng).
-- 10 pad nạp/debug Ø1,5 mm ở mặt dưới (dưới module), 2 hàng × 5, bước 2,54 mm ngang × 2,7 mm dọc (jig pogo-pin).
+- SW1 ở giữa bo, ngay dưới module; R7/C8 (lọc RC) và R6 bên trái module cạnh chân GPIO10, đường nút đi trong lề trái của module xuống SW1. D1 bên phải nút (ống dẫn sáng).
+- 10 pad nạp/debug Ø1,5 mm ở mặt dưới: hai nhóm 2 × 2 ở hai góc trên (bước 2,54 × 2,7 mm), RX và VBAT bên phải đế pin (jig pogo-pin).
+- Chữ in: "Thread Button" ở mặt trên, "Made by Haxeko" và số rev ở mặt dưới.
 
 ---
 
@@ -876,7 +877,7 @@ py tools\battery_model.py --breakdown
 | 6 | Apple Home không hỗ trợ LIT | bản LIT không lợi gì với Apple | DSLS: tự giữ SIT khi có fabric không đăng ký Check-In; mặc định build SIT | checklist C |
 | 7 | HA LIT/Battery Saving còn thử nghiệm | mất subscription, sự kiện trễ | dùng SIT nếu thấy `SUB terminated` lặp lại | checklist L |
 | 8 | Controller đặt subscription max interval ngắn | keep-alive dày hơn, tốn pin | xem `id_diag: SUB established … max …`; ICD giới hạn max interval theo IdleModeDuration khi controller cho phép | checklist C |
-| 9 | Link 0 dBm yếu (vỏ, kim loại, xa router) | poll lỗi, re-attach thường xuyên, tốn pin | bo 25 × 27 mm đặt pin cách anten 6,5 mm (đánh đổi kích thước): đo RSSI/LQI trước; nếu yếu, dùng bố trí 30 × 38 mm (pin cách ~16 mm); thêm router Thread cắm điện gần; tăng `THREAD_TX_POWER_DBM` từng bước (3–6 dBm) | checklist C, L |
+| 9 | Link 0 dBm yếu (vỏ, kim loại, xa router) | poll lỗi, re-attach thường xuyên, tốn pin | bo 29,8 × 23,9 mm (cả cụm dưới 30 × 30 mm) đặt pin cách anten 3,4 mm (đánh đổi kích thước): đo RSSI/LQI trước; nếu yếu, dùng bố trí 25 × 27 mm (6,5 mm) hoặc 30 × 38 mm (~16 mm); thêm router Thread cắm điện gần; tăng `THREAD_TX_POWER_DBM` từng bước (3–6 dBm) | checklist C, L |
 | 10 | Mất Border Router lâu | nút offline; tốn pin cho re-attach | tạm dừng Thread sau 30 phút, thử lại 30 phút → 4 giờ, nhấn nút thử ngay; nên có ≥ 2 Border Router/router | checklist J |
 | 11 | Sự kiện nhấn khi mất mạng bị mất | automation không chạy | giới hạn của Matter (không lưu-và-chuyển); LED báo pin yếu; khuyến nghị nhiều Border Router | checklist J |
 | 12 | Độ trễ "nhấn một lần" > 300 ms do cửa sổ nhấn đúp | automation chậm ~0,35 s | giảm `BUTTON_MULTI_PRESS_WINDOW_MS`, hoặc tắt nhấn đúp | checklist E |

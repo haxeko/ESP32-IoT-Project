@@ -137,7 +137,7 @@ def documents():
             "--exclude-drawing-sheet", "--sketch-pads-on-fab-layers", "--crossout-DNP-footprints-on-fab-layers",
             "--black-and-white", "-o", os.path.join(DOCS, f"assembly-{side}.svg"), PCB)
     for side in ("top", "bottom"):
-        cli("pcb", "render", "--side", side, "--width", "1200", "--height", "1400", "--quality", "high",
+        cli("pcb", "render", "--side", side, "--width", "1500", "--height", "1200", "--quality", "high",
             "--background", "opaque", "--zoom", "0.9", "-o", os.path.join(DOCS, f"pcb-{side}.png"), PCB)
     layout_png()
     print("docs:", DOCS)
