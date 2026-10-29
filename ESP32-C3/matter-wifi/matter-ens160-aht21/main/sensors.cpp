@@ -50,6 +50,7 @@ struct SensorLink {
 
 static i2c_master_bus_handle_t s_bus;
 static sensor_values_cb_t s_cb;
+static TaskHandle_t s_task;
 
 static SensorLink s_aht;
 static float s_temperature_c; // last AHT21 values, before the offset
@@ -59,6 +60,7 @@ static SensorLink s_ens;
 static bool s_ens_reset;    // reset the ENS160 at its next initialization: it stopped measuring
 static ens160_data_t s_air; // last ENS160 status and values
 static int s_logged_validity = -1;
+static bool s_logged_error; // STATER shown in the log
 
 // Counts a reading without a value. From kMaxFailures in a row on, the sensor has no values and is initialized again
 // at the next reading. Returns true when this reading made it lose its values.
@@ -71,8 +73,10 @@ static bool count_failure(SensorLink &link)
         return false;
     }
     link.ready = false;
-    // Frees SDA if a sensor holds it low after a transfer cut in the middle (9 clock pulses and a stop)
-    i2c_master_bus_reset(s_bus);
+    if (link.failures == kMaxFailures) {
+        // Frees SDA if a sensor holds it low after a transfer cut in the middle (9 clock pulses and a stop)
+        i2c_master_bus_reset(s_bus);
+    }
     const bool lost = link.has_values;
     link.has_values = false;
     return lost;
@@ -183,8 +187,18 @@ static void read_air(sensor_values_t *values)
     }
     if (err == ESP_OK) {
         s_air.status = data.status;
+        // STATER: its values are still used while it measures (NEWDAT); one that stops measuring is reset below
+        const bool error = (data.status & kEns160StatusError) != 0;
+        if (error != s_logged_error) {
+            s_logged_error = error;
+            if (error) {
+                ESP_LOGW(TAG, "ENS160 reports an error (status 0x%02X)", data.status);
+            } else {
+                ESP_LOGI(TAG, "ENS160 error cleared");
+            }
+        }
     }
-    const bool fresh = err == ESP_OK && data.new_data && !(data.status & kEns160StatusError);
+    const bool fresh = err == ESP_OK && data.new_data;
     if (fresh) {
         s_ens.failures = 0;
         s_ens.has_values = true;
@@ -198,8 +212,6 @@ static void read_air(sensor_values_t *values)
             } else {
                 ESP_LOGD(TAG, "ENS160 reading failed, err:%d", err);
             }
-        } else if (data.status & kEns160StatusError) {
-            ESP_LOGW(TAG, "ENS160 reports an error (status 0x%02X)", data.status);
         } else {
             ESP_LOGD(TAG, "ENS160: no new values (status 0x%02X)", data.status);
         }
@@ -269,16 +281,26 @@ static void sensor_task(void *arg)
 {
     vTaskDelay(pdMS_TO_TICKS(100)); // the AHT21 needs 100 ms after power-on before its first command
     const uint32_t log_every = kLogPeriodSec > CONFIG_SENSOR_PERIOD_SEC ? kLogPeriodSec / CONFIG_SENSOR_PERIOD_SEC : 1;
+    const TickType_t period = pdMS_TO_TICKS(CONFIG_SENSOR_PERIOD_SEC * 1000);
     uint32_t readings = 0;
-    TickType_t last_wake = xTaskGetTickCount();
     while (true) {
+        const TickType_t start = xTaskGetTickCount();
         sensor_values_t values;
         sensors_read_once(&values);
         if (readings++ % log_every == 0) {
             sensors_log(&values);
         }
         s_cb(&values);
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(CONFIG_SENSOR_PERIOD_SEC * 1000));
+        // Until the next period, or sooner with sensors_read_now()
+        const TickType_t elapsed = xTaskGetTickCount() - start;
+        ulTaskNotifyTake(pdTRUE, elapsed < period ? period - elapsed : 0);
+    }
+}
+
+void sensors_read_now(void)
+{
+    if (s_task != nullptr) {
+        xTaskNotifyGive(s_task);
     }
 }
 
@@ -295,7 +317,7 @@ esp_err_t sensors_start(sensor_values_cb_t cb)
     ESP_LOGI(TAG, "ENS160 + AHT21 on I2C SDA GPIO%d, SCL GPIO%d, reading every %d s, temperature offset %s%d.%d C",
              CONFIG_SENSOR_I2C_SDA_GPIO, CONFIG_SENSOR_I2C_SCL_GPIO, CONFIG_SENSOR_PERIOD_SEC, offset < 0 ? "-" : "",
              abs(offset) / 10, abs(offset) % 10);
-    if (xTaskCreate(sensor_task, "sensors", kTaskStack, nullptr, kTaskPriority, nullptr) != pdPASS) {
+    if (xTaskCreate(sensor_task, "sensors", kTaskStack, nullptr, kTaskPriority, &s_task) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;

@@ -30,6 +30,10 @@ static void test_ready_sensor()
     CHECK(sim_i2c_find("W38 1B") < 0);   // status 0x18: no register initialization
     CHECK(g_sim.devices_added == 1);
 
+    // 10 ms or more between the status check and the first measurement command (datasheet)
+    const int64_t status_read = sim_i2c_time((int)g_sim.i2c.size() - 1);
+    CHECK(g_sim.i2c.back().find("R38 1") != std::string::npos);
+
     const size_t before = g_sim.i2c.size();
     const int64_t start = sim_ms();
     float t = 0;
@@ -42,6 +46,7 @@ static void test_ready_sensor()
     const int frame = sim_i2c_find("R38 7", before);
     CHECK(command >= 0 && frame > command);
     CHECK(sim_i2c_time(frame) - sim_i2c_time(command) >= 80);
+    CHECK(sim_i2c_time(command) - status_read >= 10);
     CHECK(sim_ms() - start < 120);
 
     // Initialized again (e.g. after a lost sensor): the same device handle

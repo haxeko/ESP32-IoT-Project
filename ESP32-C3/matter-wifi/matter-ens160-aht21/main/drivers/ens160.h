@@ -22,6 +22,7 @@
 constexpr uint16_t kEns160AddressHigh = 0x53;
 constexpr uint16_t kEns160AddressLow = 0x52;
 constexpr uint16_t kEns160PartId = 0x0160;
+constexpr uint16_t kEns161PartId = 0x0161; // its successor, with the same registers
 
 typedef struct {
     uint8_t status;    // DEVICE_STATUS: flags and validity (sensor_math.h)
@@ -31,9 +32,10 @@ typedef struct {
     uint16_t eco2_ppm; // 400 to 65000 ppm
 } ens160_data_t;
 
-// Finds the sensor at 0x53 or 0x52, checks its part ID and starts the standard (gas sensing) mode. A sensor that
-// still runs in standard mode (the ESP32 restarted, the sensor kept its power) is left running, so that it does not
-// warm up again. reset: reset the sensor first (after errors). ESP_ERR_NOT_FOUND: no sensor answers.
+// Finds the sensor at 0x53 or 0x52, checks its part ID (ENS160 or ENS161) and starts the standard (gas sensing)
+// mode. A sensor that still runs in standard mode (the ESP32 restarted, the sensor kept its power) is left running,
+// so that it does not warm up again. reset: reset the sensor first (after errors). ESP_ERR_NOT_FOUND: no sensor
+// answers.
 esp_err_t ens160_init(i2c_master_bus_handle_t bus, bool reset);
 
 // Address found by ens160_init(), 0 before.

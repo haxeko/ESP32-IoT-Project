@@ -41,6 +41,13 @@ static constexpr uint16_t kAddresses[] = {kEns160AddressHigh, kEns160AddressLow}
 
 static i2c_master_dev_handle_t s_dev;
 static uint16_t s_address;
+static uint16_t s_part_id;
+static uint16_t s_logged_part_id; // last wrong part ID logged: searched for at every reading, logged once
+
+static const char *model()
+{
+    return s_part_id == kEns161PartId ? "ENS161" : "ENS160";
+}
 
 // vTaskDelay() ends on a tick boundary: wait one tick more than ms rounded up, so that the wait is never shorter.
 static void delay_ms(uint32_t ms)
@@ -84,7 +91,7 @@ static void log_firmware_version()
         err = read_regs(kRegGprRead4, version, sizeof(version));
     }
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "ENS160 at 0x%02X, firmware %u.%u.%u", s_address, version[0], version[1], version[2]);
+        ESP_LOGI(TAG, "%s at 0x%02X, firmware %u.%u.%u", model(), s_address, version[0], version[1], version[2]);
     } else {
         ESP_LOGW(TAG, "Firmware version not read, err:%d", err);
     }
@@ -136,11 +143,15 @@ esp_err_t ens160_init(i2c_master_bus_handle_t bus, bool reset)
         return err;
     }
     const uint16_t part_id = (uint16_t)(id[0] | (id[1] << 8));
-    if (part_id != kEns160PartId) {
-        ESP_LOGE(TAG, "The device at 0x%02X has part ID 0x%04X: not an ENS160 (0x%04X)", address, part_id,
-                 kEns160PartId);
+    if (part_id != kEns160PartId && part_id != kEns161PartId) {
+        if (part_id != s_logged_part_id) {
+            s_logged_part_id = part_id;
+            ESP_LOGE(TAG, "The device at 0x%02X has part ID 0x%04X: not an ENS160 (0x%04X) or ENS161 (0x%04X)",
+                     address, part_id, kEns160PartId, kEns161PartId);
+        }
         return ESP_ERR_INVALID_RESPONSE;
     }
+    s_part_id = part_id;
 
     if (reset) {
         err = set_mode(kModeReset);
@@ -158,7 +169,7 @@ esp_err_t ens160_init(i2c_master_bus_handle_t bus, bool reset)
             return err;
         }
         if (mode == kModeStandard && (status & kEns160StatusRunning) && !(status & kEns160StatusError)) {
-            ESP_LOGI(TAG, "ENS160 at 0x%02X already measuring (%s)", address,
+            ESP_LOGI(TAG, "%s at 0x%02X already measuring (%s)", model(), address,
                      ens160_validity_name(ens160_validity(status)));
             return ESP_OK;
         }
@@ -180,10 +191,10 @@ esp_err_t ens160_init(i2c_master_bus_handle_t bus, bool reset)
         return err;
     }
     if (mode != kModeStandard) {
-        ESP_LOGE(TAG, "The ENS160 did not enter the standard mode (OPMODE 0x%02X)", mode);
+        ESP_LOGE(TAG, "The %s did not enter the standard mode (OPMODE 0x%02X)", model(), mode);
         return ESP_ERR_INVALID_STATE;
     }
-    ESP_LOGI(TAG, "ENS160 at 0x%02X measuring (standard mode)", address);
+    ESP_LOGI(TAG, "%s at 0x%02X measuring (standard mode)", model(), address);
     return ESP_OK;
 }
 

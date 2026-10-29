@@ -194,20 +194,23 @@ static float expected_humidity()
     CHECK(v.air_valid == kReportWhileWarmingUp); // warms up again
     CHECK(sim_log_count("ENS160: warm-up") == 2);
 
-    // Error flag: handled as missing values
+    // Error flag while it keeps measuring: logged once, the values are still sent, no reset
     for (int i = 0; i < 18; i++) {
         v = read_after(10000);
     }
     CHECK(v.air_valid);
+    const size_t mode_writes = g_sim.ens.opmode_writes.size();
     g_sim.ens.error = true;
+    for (int i = 0; i < 5; i++) {
+        v = read_after(10000);
+        CHECK(v.air_valid);
+    }
+    CHECK(sim_log_count("ENS160 reports an error (status 0xC2)") == 1);
+    CHECK(g_sim.ens.opmode_writes.size() == mode_writes);
+    g_sim.ens.error = false;
     v = read_after(10000);
     CHECK(v.air_valid);
-    CHECK(sim_log_contains("ENS160 reports an error"));
-    v = read_after(10000);
-    v = read_after(10000);
-    CHECK(!v.air_valid);
-    v = read_after(10000); // reset clears the error
-    CHECK(!g_sim.ens.error);
+    CHECK(sim_log_contains("ENS160 error cleared"));
 }
 
 [[maybe_unused]] static void test_ens160_invalid_output()

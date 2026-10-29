@@ -38,7 +38,8 @@ static_assert(!board_pin_reserved(CONFIG_SENSOR_I2C_SDA_GPIO) && !board_pin_rese
               "I2C pins must not be " BOARD_PIN_RESERVED_TEXT);
 // -1: no button, no LED
 static_assert(CONFIG_RESET_BUTTON_GPIO != CONFIG_SENSOR_I2C_SDA_GPIO &&
-                  CONFIG_RESET_BUTTON_GPIO != CONFIG_SENSOR_I2C_SCL_GPIO && !board_pin_reserved(CONFIG_RESET_BUTTON_GPIO),
+                  CONFIG_RESET_BUTTON_GPIO != CONFIG_SENSOR_I2C_SCL_GPIO &&
+                  !board_pin_reserved(CONFIG_RESET_BUTTON_GPIO),
               "Button pin conflicts with the I2C bus or " BOARD_PIN_RESERVED_TEXT);
 static_assert(CONFIG_STATUS_LED_GPIO < 0 ||
                   (CONFIG_STATUS_LED_GPIO != CONFIG_SENSOR_I2C_SDA_GPIO &&

@@ -83,6 +83,13 @@ static bool is_commissioned()
     return chip::Server::GetInstance().GetFabricTable().FabricCount() > 0;
 }
 
+// BLE is released after commissioning (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING), or about to be: from then on the device
+// is only found over the Wi-Fi LAN (DNS-SD over mDNS). Matter task.
+static bool network_only()
+{
+    return s_ble_released || is_commissioned();
+}
+
 // Matter task. The LED blinks while the commissioning window is open (waiting to be added to an app).
 static void update_led()
 {
@@ -94,7 +101,7 @@ static void update_led()
 // for Multi-Admin, which has its own code).
 static void print_onboarding_codes()
 {
-    PrintOnboardingCodes(chip::RendezvousInformationFlags(s_ble_released ? chip::RendezvousInformationFlag::kOnNetwork
+    PrintOnboardingCodes(chip::RendezvousInformationFlags(network_only() ? chip::RendezvousInformationFlag::kOnNetwork
                                                                          : chip::RendezvousInformationFlag::kBLE));
 }
 
@@ -106,8 +113,7 @@ static void open_commissioning_window(uint32_t timeout_sec)
         ESP_LOGI(TAG, "Commissioning window already open");
         return;
     }
-    // Once BLE is released the device is only found over the Wi-Fi LAN (DNS-SD over mDNS).
-    const auto advertisement = s_ble_released ? chip::CommissioningWindowAdvertisement::kDnssdOnly
+    const auto advertisement = network_only() ? chip::CommissioningWindowAdvertisement::kDnssdOnly
                                               : chip::CommissioningWindowAdvertisement::kAllSupported;
     const CHIP_ERROR err =
         commissionMgr.OpenBasicCommissioningWindow(chip::System::Clock::Seconds32(timeout_sec), advertisement);
@@ -116,7 +122,7 @@ static void open_commissioning_window(uint32_t timeout_sec)
         return;
     }
     ESP_LOGI(TAG, "Commissioning window open for %" PRIu32 " s (%s)", timeout_sec,
-             s_ble_released ? "network only" : "BLE and network");
+             network_only() ? "network only" : "BLE and network");
     print_onboarding_codes();
 }
 
@@ -190,7 +196,8 @@ static uint32_t identify_effect_ms(uint8_t effect_id)
     }
 }
 
-// Identify cluster of the three sensor endpoints (IdentifyType "visible indicator"): the LED blinks fast.
+// Identify cluster of the three sensor endpoints (IdentifyType "visible indicator", Identify and TriggerEffect
+// commands): the LED blinks fast.
 static esp_err_t app_identification_cb(identification::callback_type_t type, uint16_t endpoint_id, uint8_t effect_id,
                                        uint8_t effect_variant, void *priv_data)
 {
@@ -236,6 +243,8 @@ static esp_err_t start_matter()
     s_matter_started = true;
     // Device name "ENS160-B2C4": NodeLabel when none is stored yet, Bluetooth name
     device_info_apply_name();
+    // The first reading came before Matter: send the values now rather than at the next period
+    sensors_read_now();
     return ESP_OK;
 }
 

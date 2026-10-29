@@ -19,6 +19,15 @@ static inline void vTaskDelay(TickType_t ticks)
     const int64_t wake_ms = (sim_ms() / kSimTickMs + ticks) * kSimTickMs;
     sim_advance_ms((uint32_t)(wake_ms - sim_ms()));
 }
+// The sensor task loop does not run in the tests: no notifications to deliver.
+static inline void xTaskNotifyGive(TaskHandle_t)
+{
+}
+static inline uint32_t ulTaskNotifyTake(BaseType_t, TickType_t ticks)
+{
+    vTaskDelay(ticks);
+    return 0;
+}
 static inline void vTaskDelayUntil(TickType_t *last, TickType_t ticks)
 {
     *last += ticks;

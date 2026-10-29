@@ -19,11 +19,20 @@ static void test_absent_or_wrong_chip()
     g_sim.ens.present = false;
     CHECK(ens160_init(bus(), false) == ESP_ERR_NOT_FOUND);
 
+    // Another chip at the address: refused, logged once although it is searched for at every reading
     sim_reset();
-    g_sim.ens.part_id = 0x0161; // another ScioSense sensor
+    g_sim.ens.part_id = 0x1234;
     CHECK(ens160_init(bus(), false) == ESP_ERR_INVALID_RESPONSE);
-    CHECK(sim_log_contains("part ID 0x0161"));
+    CHECK(ens160_init(bus(), false) == ESP_ERR_INVALID_RESPONSE);
+    CHECK(sim_log_count("part ID 0x1234") == 1);
     CHECK(g_sim.ens.opmode_writes.empty());
+
+    // ENS161: the same registers
+    sim_reset();
+    g_sim.ens.part_id = 0x0161;
+    CHECK(ens160_init(bus(), false) == ESP_OK);
+    CHECK(sim_log_contains("ENS161 at 0x53, firmware 5.4.6"));
+    CHECK(g_sim.ens.opmode == 0x02);
 }
 
 static void test_start_from_power_on()

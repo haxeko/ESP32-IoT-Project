@@ -38,6 +38,10 @@ typedef void (*sensor_values_cb_t)(const sensor_values_t *values);
 // Starts the I2C bus (CONFIG_SENSOR_I2C_SDA_GPIO, CONFIG_SENSOR_I2C_SCL_GPIO) and the sensor task.
 esp_err_t sensors_start(sensor_values_cb_t cb);
 
+// Wakes the sensor task for a reading at once, e.g. when Matter has started: the controllers get the values without
+// waiting for the period. The period starts again from that reading.
+void sensors_read_now(void);
+
 // One reading of both sensors: the body of the sensor task loop, also used by the host tests. After
 // sensors_init_bus().
 esp_err_t sensors_init_bus(void);

@@ -21,10 +21,13 @@ static constexpr uint32_t kMeasureMs = 80;  // datasheet: wait 80 ms, then read 
 static constexpr int kBusyReads = 6;        // 80 ms + 5 x 10 ms at most
 static constexpr uint8_t kCmdSoftReset = 0xBA;
 static constexpr uint8_t kCmdMeasure[3] = {0xAC, 0x33, 0x00};
-static constexpr uint8_t kCmdCalibrate[3] = {0xBE, 0x08, 0x00}; // first AHT20 series; the AHT21 uses the registers
+static constexpr uint8_t kCmdCalibrate[3] = {0xBE, 0x08, 0x00};
 static constexpr uint8_t kInitRegisters[3] = {0x1B, 0x1C, 0x1E};
 
 static i2c_master_dev_handle_t s_dev;
+// A defective sensor is initialized again at every reading: these are logged once, then at debug level.
+static bool s_logged_register_init;
+static bool s_logged_not_calibrated;
 
 // vTaskDelay() ends on a tick boundary: wait one tick more than ms rounded up, so that the wait is never shorter.
 static void delay_ms(uint32_t ms)
@@ -90,7 +93,12 @@ esp_err_t aht21_init(i2c_master_bus_handle_t bus)
         return err;
     }
     if ((status & kAht2xStatusReady) != kAht2xStatusReady) {
-        ESP_LOGI(TAG, "Status 0x%02X: initializing the calibration registers", status);
+        if (!s_logged_register_init) {
+            s_logged_register_init = true;
+            ESP_LOGI(TAG, "Status 0x%02X: initializing the calibration registers", status);
+        } else {
+            ESP_LOGD(TAG, "Status 0x%02X: initializing the calibration registers", status);
+        }
         for (const uint8_t reg : kInitRegisters) {
             err = init_register(reg);
             if (err != ESP_OK) {
@@ -104,6 +112,8 @@ esp_err_t aht21_init(i2c_master_bus_handle_t bus)
         }
     }
     if (!(status & kAht2xStatusCalibrated)) {
+        // Only for a sensor still not calibrated after the registers: the initialization command of the first AHT20
+        // series (0xBE is also the write-back opcode of register 0x1E on the AHT21).
         err = i2c_master_transmit(s_dev, kCmdCalibrate, sizeof(kCmdCalibrate), kTimeoutMs);
         if (err != ESP_OK) {
             return err;
@@ -114,10 +124,16 @@ esp_err_t aht21_init(i2c_master_bus_handle_t bus)
             return err;
         }
         if (!(status & kAht2xStatusCalibrated)) {
-            ESP_LOGW(TAG, "Status 0x%02X: the sensor does not report itself calibrated", status);
+            if (!s_logged_not_calibrated) {
+                s_logged_not_calibrated = true;
+                ESP_LOGW(TAG, "Status 0x%02X: the sensor does not report itself calibrated", status);
+            } else {
+                ESP_LOGD(TAG, "Status 0x%02X: the sensor does not report itself calibrated", status);
+            }
         }
     }
     ESP_LOGD(TAG, "AHT21 at 0x%02X initialized, status 0x%02X", kAht21Address, status);
+    delay_ms(10); // datasheet: 10 ms before the measurement command
     return ESP_OK;
 }
 

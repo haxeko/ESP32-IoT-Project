@@ -27,9 +27,11 @@ using namespace esp_matter::endpoint;
 using namespace chip::app::Clusters;
 using chip::app::DataModel::MakeNullable;
 using chip::app::DataModel::Nullable;
-// The same enums in every Concentration Measurement cluster
-using MeasurementMediumEnum = TotalVolatileOrganicCompoundsConcentrationMeasurement::MeasurementMediumEnum;
-using MeasurementUnitEnum = TotalVolatileOrganicCompoundsConcentrationMeasurement::MeasurementUnitEnum;
+// The same enums and MeasuredValue ID in every Concentration Measurement cluster
+namespace Tvoc = TotalVolatileOrganicCompoundsConcentrationMeasurement;
+using MeasurementMediumEnum = Tvoc::MeasurementMediumEnum;
+using MeasurementUnitEnum = Tvoc::MeasurementUnitEnum;
+using ConcentrationCreate = cluster_t *(*)(endpoint_t *, cluster::concentration_measurement::config_t *, uint8_t);
 
 // Measuring ranges (MinMeasuredValue, MaxMeasuredValue): AHT21 -40 to 120 °C and 0 to 100 %, ENS160 TVOC 0 to
 // 65000 ppb and eCO2 400 to 65000 ppm. Values outside are kept within them.
@@ -67,10 +69,8 @@ static ReportedValue s_eco2;
 #endif
 
 // Numeric Measurement feature only (MeasuredValue, MinMeasuredValue, MaxMeasuredValue, MeasurementUnit), medium air.
-static cluster_t *create_concentration(endpoint_t *endpoint,
-                                       cluster_t *(*create)(endpoint_t *, cluster::concentration_measurement::config_t *,
-                                                            uint8_t),
-                                       uint16_t min, uint16_t max, MeasurementUnitEnum unit)
+static cluster_t *create_concentration(endpoint_t *endpoint, ConcentrationCreate create, uint16_t min, uint16_t max,
+                                       MeasurementUnitEnum unit)
 {
     cluster::concentration_measurement::config_t config;
     config.measurement_medium = chip::to_underlying(MeasurementMediumEnum::kAir);
@@ -82,26 +82,36 @@ static cluster_t *create_concentration(endpoint_t *endpoint,
     return create(endpoint, &config, CLUSTER_FLAG_SERVER);
 }
 
+// The optional TriggerEffect command of Identify (blink, okay, breathe...): the LED blinks for the effect.
+static bool add_trigger_effect(endpoint_t *endpoint)
+{
+    cluster_t *identify = cluster::get(endpoint, Identify::Id);
+    return identify != nullptr && cluster::identify::command::create_trigger_effect(identify) != nullptr;
+}
+
 esp_err_t sensor_endpoints_create(node_t *node)
 {
     temperature_sensor::config_t temperature_config;
     temperature_config.temperature_measurement.min_measured_value = kTemperatureMin;
     temperature_config.temperature_measurement.max_measured_value = kTemperatureMax;
     endpoint_t *temperature = temperature_sensor::create(node, &temperature_config, ENDPOINT_FLAG_NONE, nullptr);
-    VerifyOrReturnError(temperature != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the temperature endpoint"));
+    VerifyOrReturnError(temperature != nullptr && add_trigger_effect(temperature), ESP_FAIL,
+                        ESP_LOGE(TAG, "Failed to create the temperature endpoint"));
     s_temperature_ep = endpoint::get_id(temperature);
 
     humidity_sensor::config_t humidity_config;
     humidity_config.relative_humidity_measurement.min_measured_value = kHumidityMin;
     humidity_config.relative_humidity_measurement.max_measured_value = kHumidityMax;
     endpoint_t *humidity = humidity_sensor::create(node, &humidity_config, ENDPOINT_FLAG_NONE, nullptr);
-    VerifyOrReturnError(humidity != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the humidity endpoint"));
+    VerifyOrReturnError(humidity != nullptr && add_trigger_effect(humidity), ESP_FAIL,
+                        ESP_LOGE(TAG, "Failed to create the humidity endpoint"));
     s_humidity_ep = endpoint::get_id(humidity);
 
     // AirQuality starts Unknown
     air_quality_sensor::config_t air_config;
     endpoint_t *air = air_quality_sensor::create(node, &air_config, ENDPOINT_FLAG_NONE, nullptr);
-    VerifyOrReturnError(air != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the air quality endpoint"));
+    VerifyOrReturnError(air != nullptr && add_trigger_effect(air), ESP_FAIL,
+                        ESP_LOGE(TAG, "Failed to create the air quality endpoint"));
     s_air_ep = endpoint::get_id(air);
     // AQI-UBA 2, 3 and 5 are sent as Fair, Moderate and VeryPoor, values these features allow (Good, Poor and Unknown
     // are always allowed). The cluster reads its features when Matter starts.
@@ -112,14 +122,14 @@ esp_err_t sensor_endpoints_create(node_t *node)
                             cluster::air_quality::feature::very_poor::add(air_quality) == ESP_OK,
                         ESP_FAIL, ESP_LOGE(TAG, "Failed to add the air quality levels"));
 
-    VerifyOrReturnError(create_concentration(air,
-                                             cluster::total_volatile_organic_compounds_concentration_measurement::create,
-                                             kTvocMin, kTvocMax, MeasurementUnitEnum::kPpb) != nullptr,
-                        ESP_FAIL, ESP_LOGE(TAG, "Failed to create the TVOC cluster"));
+    const cluster_t *tvoc =
+        create_concentration(air, cluster::total_volatile_organic_compounds_concentration_measurement::create, kTvocMin,
+                             kTvocMax, MeasurementUnitEnum::kPpb);
+    VerifyOrReturnError(tvoc != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the TVOC cluster"));
 #if CONFIG_SENSOR_ECO2_AS_CO2
-    VerifyOrReturnError(create_concentration(air, cluster::carbon_dioxide_concentration_measurement::create, kEco2Min,
-                                             kEco2Max, MeasurementUnitEnum::kPpm) != nullptr,
-                        ESP_FAIL, ESP_LOGE(TAG, "Failed to create the CO2 (eCO2) cluster"));
+    const cluster_t *co2 = create_concentration(air, cluster::carbon_dioxide_concentration_measurement::create,
+                                                kEco2Min, kEco2Max, MeasurementUnitEnum::kPpm);
+    VerifyOrReturnError(co2 != nullptr, ESP_FAIL, ESP_LOGE(TAG, "Failed to create the CO2 (eCO2) cluster"));
     static const char kAirClusters[] = "air quality, TVOC, CO2 (eCO2)";
 #else
     static const char kAirClusters[] = "air quality, TVOC";
@@ -192,10 +202,7 @@ static void update_concentration(ReportedValue &reported, uint32_t cluster_id, b
         return;
     }
     esp_matter_attr_val_t val = esp_matter_nullable_float(valid ? nullable<float>(kept) : nullable<float>());
-    // MeasuredValue has the same ID in every Concentration Measurement cluster
-    const esp_err_t err = attribute::update(s_air_ep, cluster_id,
-                                            TotalVolatileOrganicCompoundsConcentrationMeasurement::Attributes::MeasuredValue::Id,
-                                            &val);
+    const esp_err_t err = attribute::update(s_air_ep, cluster_id, Tvoc::Attributes::MeasuredValue::Id, &val);
     if (err == ESP_OK) {
         reported.set(!valid, kept);
     } else {
@@ -210,8 +217,7 @@ void sensor_endpoints_update(const sensor_values_t *values)
         lock::ScopedChipStackLock lock(portMAX_DELAY);
         update_sdk_clusters(values);
     }
-    update_concentration(s_tvoc, TotalVolatileOrganicCompoundsConcentrationMeasurement::Id, values->air_valid,
-                         values->tvoc_ppb, kTvocMin, kTvocMax, kTvocStep);
+    update_concentration(s_tvoc, Tvoc::Id, values->air_valid, values->tvoc_ppb, kTvocMin, kTvocMax, kTvocStep);
 #if CONFIG_SENSOR_ECO2_AS_CO2
     update_concentration(s_eco2, CarbonDioxideConcentrationMeasurement::Id, values->air_valid, values->eco2_ppm,
                          kEco2Min, kEco2Max, kEco2Step);

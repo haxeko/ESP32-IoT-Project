@@ -16,9 +16,9 @@ Firmware **ESP-IDF + esp-matter** (SDK Matter chính thức của Espressif, kh�
 | | | TVOC Concentration Measurement | TVOC, ppb | ENS160 |
 | | | Carbon Dioxide Concentration Measurement | eCO2, ppm (tắt được, xem dưới) | ENS160 |
 
-- Mỗi endpoint có cluster **Identify**: khi ứng dụng gửi lệnh Identify, LED nháy nhanh.
+- Mỗi endpoint có cluster **Identify** (lệnh Identify và TriggerEffect): khi ứng dụng yêu cầu nhận diện thiết bị, LED nháy nhanh.
 - Trước khi ghép nối, thiết bị quảng bá loại **Temperature Sensor** (DNS-SD `DT` = 0x0302) với tên `ENS160 Sensor`.
-- Cảm biến được đọc **10 giây một lần**. Giá trị chỉ được ghi sang Matter khi thay đổi đủ lớn để không gửi nhiễu cho mọi ứng dụng đang theo dõi: **0,1 °C**, **0,5 %RH**, **10 ppb** TVOC, **10 ppm** eCO2; mức chất lượng không khí thì mọi thay đổi.
+- Cảm biến được đọc **10 giây một lần**, và một lần ngay khi Matter khởi động xong. Giá trị chỉ được ghi sang Matter khi thay đổi đủ lớn để không gửi nhiễu cho mọi ứng dụng đang theo dõi: **0,1 °C**, **0,5 %RH**, **10 ppb** TVOC, **10 ppm** eCO2; mức chất lượng không khí thì mọi thay đổi.
 - Cảm biến không trả lời (chưa cắm, lỏng dây) hoặc ENS160 đang làm nóng: Matter báo giá trị **null** (ứng dụng hiện "không có dữ liệu") và chất lượng không khí **Unknown**.
 
 Mức chất lượng không khí lấy thẳng từ chỉ số AQI-UBA (Cơ quan Môi trường Liên bang Đức) mà ENS160 tính:
@@ -36,7 +36,7 @@ Mức chất lượng không khí lấy thẳng từ chỉ số AQI-UBA (Cơ qua
 ## Phần cứng
 
 - **ESP32-C3 SuperMini** (flash 4 MB). Bo ESP32-C3 khác cũng được: đổi chân trong `menuconfig` → *Board*.
-- Module **ENS160 + AHT21** (I2C). ENS160 ở địa chỉ **0x53** (chân ADD ở mức cao, thường gặp nhất) hoặc **0x52** (ADD mức thấp): firmware tự tìm cả hai. AHT21 ở **0x38**.
+- Module **ENS160 + AHT21** (I2C); ENS161 (bản kế tiếp, cùng thanh ghi) cũng được. ENS160 ở địa chỉ **0x53** (chân ADD ở mức cao, thường gặp nhất) hoặc **0x52** (ADD mức thấp): firmware tự tìm cả hai. AHT21 ở **0x38**.
 
 ### Nối dây
 
@@ -186,7 +186,7 @@ Trên module ENS160 + AHT21, AHT21 nằm sát bộ gia nhiệt của ENS160 nên
 - **Mỗi lần cấp điện**, ENS160 cần khoảng **3 phút** làm nóng (*warm-up*). Một **cảm biến mới** cần khoảng **1 giờ** chạy liên tục lần đầu tiên (*initial start-up*), và độ chính xác còn tốt dần lên trong 1–2 ngày đầu. Trong thời gian này, Matter báo chất lượng không khí *Unknown*, TVOC và eCO2 null; log ghi `ENS160: warm-up ...` hoặc `ENS160: initial start-up ...`. Muốn thấy giá trị ngay (ví dụ để thử dây), bật `ENS160_REPORT_WHILE_WARMING_UP`.
 - Khi ESP32 khởi động lại mà module không mất điện (cập nhật OTA, reset), ENS160 vẫn đang đo: firmware để nó chạy tiếp, **không làm nóng lại**.
 - **eCO2 là CO2 ước lượng từ VOC**, không phải CO2 đo thật như cảm biến NDIR (SCD40, MH-Z19...): nó tăng theo hơi thở, mùi nấu ăn, cồn... nhưng không đo được CO2 từ nguồn không có VOC. Không muốn ứng dụng hiện nó là CO2 thì tắt `SENSOR_ECO2_AS_CO2`.
-- ENS160 ngừng đo (không có giá trị mới 3 lần đọc liên tiếp) hoặc báo lỗi: firmware reset nó và chạy lại (làm nóng lại 3 phút).
+- ENS160 ngừng đo (không có giá trị mới 3 lần đọc liên tiếp): firmware reset nó và chạy lại (làm nóng lại 3 phút). ENS160 bật cờ lỗi (STATER) mà vẫn đo: log ghi một lần, giá trị vẫn được gửi.
 
 ## Log
 
@@ -225,9 +225,9 @@ test/host/run.sh          # thêm -v để in log
 | Test | Kiểm tra |
 |---|---|
 | `test_sensor_math.cpp` | CRC-8 của AHT21 (giá trị chuẩn của CRC-8/NRSC-5), giải mã khung 7 byte, TEMP_IN/RH_IN của ENS160, quy đổi AQI-UBA, giới hạn giá trị Matter, độ ẩm sau khi bù nhiệt, ngưỡng gửi |
-| `test_aht21.cpp` | Khởi tạo thanh ghi 0x1B/0x1C/0x1E khi status khác 0x18, lệnh hiệu chuẩn của AHT20 đời đầu, chờ đủ 80 ms dù tick FreeRTOS là 10 ms, đo lâu, CRC hỏng, mất hiệu chuẩn, rút dây |
-| `test_ens160.cpp` | Khởi động từ deep sleep (idle → phiên bản firmware → standard), sai part ID, địa chỉ 0x52, giữ nguyên cảm biến đang đo khi ESP32 khởi động lại, reset, ghi bù trừ, cờ NEWDAT |
-| `test_sensors.cpp` (3 bản build) | Làm nóng, rút/cắm lại AHT21, khung lỗi đơn lẻ, AHT21 hỏng không hiệu chuẩn được (giá trị cũ không bị giữ mãi), ENS160 treo hoặc báo lỗi rồi được reset, output không hợp lệ, dòng log, offset −2 °C và gửi khi đang làm nóng, không có AHT21 từ đầu |
+| `test_aht21.cpp` | Khởi tạo thanh ghi 0x1B/0x1C/0x1E khi status khác 0x18, lệnh hiệu chuẩn của AHT20 đời đầu, chờ đủ 10 ms sau khởi tạo và 80 ms khi đo dù tick FreeRTOS là 10 ms, đo lâu, CRC hỏng, mất hiệu chuẩn, rút dây |
+| `test_ens160.cpp` | Khởi động từ deep sleep (idle → phiên bản firmware → standard), sai part ID (log một lần), ENS161, địa chỉ 0x52, giữ nguyên cảm biến đang đo khi ESP32 khởi động lại, reset, ghi bù trừ, cờ NEWDAT |
+| `test_sensors.cpp` (3 bản build) | Làm nóng, rút/cắm lại AHT21, khung lỗi đơn lẻ, AHT21 hỏng không hiệu chuẩn được (giá trị cũ không bị giữ mãi), ENS160 treo rồi được reset, cờ lỗi STATER, output không hợp lệ, dòng log, offset −2 °C và gửi khi đang làm nóng, không có AHT21 từ đầu |
 
 Phần Matter, Wi-Fi và BLE phải thử trên bo thật.
 
