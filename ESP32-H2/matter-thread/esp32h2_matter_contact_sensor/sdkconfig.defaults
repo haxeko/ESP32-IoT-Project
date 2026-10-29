@@ -1,0 +1,90 @@
+# ESP32-H2 Matter over Thread contact sensor, powered continuously from USB.
+# esp-matter release/v1.6.1 + ESP-IDF v6.0.2. Based on examples/sensors (sdkconfig.defaults +
+# sdkconfig.defaults.esp32h2), merged into this one file.
+# After editing this file, delete sdkconfig (or run idf.py set-target esp32h2): an existing sdkconfig keeps
+# its old values.
+
+CONFIG_IDF_TARGET="esp32h2"
+
+# Flash: 4 MB (ESP32-H2 with 4 MB in-package flash). The partition table needs 4 MB.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# Partition table of the esp-matter examples: two 1.875 MB OTA app slots, nvs (fabrics, Thread dataset),
+# fctry (factory data from esp-matter-mfg-tool), esp_secure_cert
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0xC000
+
+# ---------------------------------------------------------------------------
+# BLE: only to commission (CHIPoBLE carries the PASE session and the Thread Operational Dataset).
+# Shut down after a successful commissioning, and not started at boot when the device has a fabric
+# (CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING, default y in the chip component).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT=n
+CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING=y
+
+# ---------------------------------------------------------------------------
+# Thread (OpenThread on the native 802.15.4 radio). menuconfig: Component config > OpenThread
+CONFIG_OPENTHREAD_ENABLED=y
+# Thread device type: Full Thread Device. esp-matter (esp_matter_core.cpp) then sets the Thread device type
+# to kThreadDeviceType_Router: link mode rx-on-when-idle + full device, router-eligible. The device joins as a
+# child (REED) that keeps its receiver on, and OpenThread may promote it to router when the mesh needs one.
+# Never a Sleepy End Device: SED needs CONFIG_OPENTHREAD_MTD + CONFIG_ENABLE_ICD_SERVER.
+# End device only (MED, also rx-on-when-idle, never a router): CONFIG_OPENTHREAD_MTD=y instead.
+CONFIG_OPENTHREAD_FTD=y
+# SRP client: registers the Matter DNS-SD services with the Border Router (on-network discovery)
+CONFIG_OPENTHREAD_SRP_CLIENT=y
+CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
+CONFIG_OPENTHREAD_LOG_LEVEL_NOTE=y
+CONFIG_OPENTHREAD_CLI=n
+# Note: CONFIG_OPENTHREAD_RX_ON_WHEN_IDLE ("radio capability rx on when idle") is a radio driver capability,
+# not the Thread link mode. It defaults to n while BLE/802.15.4 coexistence is enabled, as here; the link mode
+# above keeps the receiver on regardless. Left at its default.
+
+# Matter ICD (Intermittently Connected Device = sleepy): off. Only selectable with CONFIG_OPENTHREAD_MTD; set
+# here so it stays off if the device type is changed to MTD.
+CONFIG_ENABLE_ICD_SERVER=n
+
+# No power management: no automatic light sleep, no tickless idle, CPU and radio always running.
+# The firmware never calls esp_deep_sleep_start() / esp_light_sleep_start().
+CONFIG_PM_ENABLE=n
+
+# lwIP for OpenThread
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=8
+CONFIG_LWIP_MULTICAST_PING=y
+
+# DNS-SD over SRP (Thread), not mDNS
+CONFIG_USE_MINIMAL_MDNS=n
+
+# ESP32-H2 has no Wi-Fi
+CONFIG_ENABLE_WIFI_STATION=n
+
+# Enable HKDF in mbedtls
+CONFIG_MBEDTLS_HKDF_C=y
+
+# ---------------------------------------------------------------------------
+# Matter
+
+# Root Node (endpoint 0) + Contact Sensor (endpoint 1)
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=2
+
+# Development identity: test vendor 0xFFF1. Product 0x8015 (0x0015 is the Contact Sensor device type) is
+# one of the products the SDK test DAC/PAI and test Certification Declaration cover (chip-tool and Home
+# Assistant accept them; Apple Home warns about an uncertified accessory; Google Home needs the test VID/PID
+# added in the Google Home Developer Console). Production: your own VID/PID and factory data (README).
+CONFIG_DEVICE_VENDOR_ID=0xFFF1
+CONFIG_DEVICE_PRODUCT_ID=0x8015
+# Device type in commissionable discovery (DNS-SD "DT"): 21 = 0x0015 Contact Sensor
+CONFIG_ENABLE_COMMISSIONABLE_DEVICE_TYPE=y
+CONFIG_DEVICE_TYPE=21
+
+# Matter OTA Requestor, as in the esp-matter example (firmware updates through a Matter OTA provider)
+CONFIG_ENABLE_OTA_REQUESTOR=y
+
+# Unattended device: reboot if a task starves the idle task for 5 s (default only prints a warning). Fabrics,
+# Thread credentials and the door state survive the reboot (flash, and a fresh GPIO read).
+CONFIG_ESP_TASK_WDT_PANIC=y
+
+# Pins (menuconfig: "Contact sensor (reed switch)", "Factory reset button", "Status LED"): defaults in
+# main/Kconfig.projbuild, GPIO4 reed switch, GPIO9 button, no LED.

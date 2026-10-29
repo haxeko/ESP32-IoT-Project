@@ -1,0 +1,118 @@
+menu "Contact sensor (reed switch)"
+
+    config CONTACT_SENSOR_GPIO
+        int "Reed switch GPIO"
+        range 0 27
+        default 4
+        help
+            GPIO wired to one side of the reed switch; the other side goes to GND. The internal pull-up of this
+            GPIO is enabled, no external resistor is needed for short wires.
+
+            GPIO4 is only a suggestion: check the pinout printed on your ESP32-H2 Mini board. It is not a
+            strapping pin. Do not use GPIO6-7 and GPIO15-21 (in-package flash, not available on the module pins)
+            or GPIO26-27 (USB Serial/JTAG: flashing and logs); the build stops with an error if you do. Avoid
+            the strapping pins GPIO2, GPIO3, GPIO8, GPIO9 and GPIO25: a closed contact on them at power-up can
+            change the boot mode. GPIO23/GPIO24 are the UART0 console pins.
+
+    config CONTACT_ACTIVE_LOW
+        bool "Contact closed (door closed) reads LOW"
+        default y
+        help
+            y (default): a normally-open reed switch to GND. Magnet at the switch (door closed) closes the
+            contact and pulls the GPIO LOW; magnet away (door open) leaves the pull-up: HIGH.
+              GPIO LOW  = door closed
+              GPIO HIGH = door open
+
+            n: the opposite, for a normally-closed reed switch or a module with an inverted output:
+              GPIO HIGH = door closed
+              GPIO LOW  = door open
+
+    config CONTACT_DEBOUNCE_MS
+        int "Debounce time (ms)"
+        range 10 500
+        default 50
+        help
+            The contact state is accepted only after the GPIO has been quiet (no edge) for this time. Every new
+            edge restarts the wait, so contact bounce and vibration are filtered out. Reed switches bounce for
+            well under 5 ms; 50 ms also absorbs a door that rattles in its frame while closing. Larger values
+            delay the report by the same amount.
+
+endmenu
+
+menu "Factory reset button"
+
+    config FACTORY_RESET_GPIO
+        int "Factory reset button GPIO"
+        range 0 27
+        default 9
+        help
+            Push button between this GPIO and GND (internal pull-up). Default GPIO9 is the BOOT button of most
+            ESP32-H2 boards, but check your board: GPIO9 is a strapping pin. Holding it while the board powers up
+            or resets starts the ROM download mode (no firmware runs, so no factory reset happens): press it only
+            after the firmware has started.
+
+            Must differ from the reed switch and LED pins; GPIO6-7, GPIO15-21 and GPIO26-27 are rejected at build
+            time (see "Reed switch GPIO").
+
+    config FACTORY_RESET_HOLD_MS
+        int "Hold time for factory reset (ms)"
+        range 3000 30000
+        default 6000
+        help
+            Holding the button this long erases all Matter fabrics and the Thread network credentials, then
+            restarts the device so it can be commissioned again. Shorter presses do nothing.
+
+endmenu
+
+menu "Status LED"
+
+    config STATUS_LED_ENABLE
+        bool "Status LED on a GPIO"
+        default n
+        help
+            Optional single-color LED (with a series resistor) on a GPIO. ESP32-H2 Mini boards do not share a
+            common LED pin, and boards whose LED is an addressable RGB LED (WS2812 type, often on GPIO8) cannot be
+            driven as a plain GPIO LED: in that case wire an external LED to a free GPIO.
+
+            Patterns: solid on = factory reset running; fast blink = reset button held; medium blink = Identify;
+            slow blink = commissioning window open; off otherwise (or the door state, see below).
+
+    config STATUS_LED_GPIO
+        int "Status LED GPIO"
+        depends on STATUS_LED_ENABLE
+        range 0 27
+        default 5
+        help
+            GPIO of the LED. GPIO5 is only a placeholder: set the pin your LED is actually wired to. Must differ
+            from the reed switch and button pins.
+
+    config STATUS_LED_ACTIVE_HIGH
+        bool "LED lights when the GPIO is HIGH"
+        depends on STATUS_LED_ENABLE
+        default y
+        help
+            y: LED from the GPIO through a resistor to GND. n: LED from 3V3 to the GPIO (lights on LOW).
+
+    config STATUS_LED_SHOW_CONTACT
+        bool "LED on while the door is open"
+        depends on STATUS_LED_ENABLE
+        default n
+        help
+            When no other pattern is active, light the LED while the contact is open. Useful to check the
+            wiring and the debounce on the bench.
+
+endmenu
+
+menu "Matter onboarding (development)"
+
+    config CONTACT_PRINT_ONBOARDING_CODES
+        bool "Print the QR code and manual pairing code on the serial console"
+        default y
+        help
+            While the device is not commissioned, print the onboarding payload (QR code text, a URL that shows
+            the QR code, and the 11-digit manual pairing code) after start-up. With the default test credentials
+            these are the well-known development codes (passcode 20202021, discriminator 3840). With factory
+            data from esp-matter-mfg-tool the passcode is not stored on the device, so nothing can be printed:
+            use the codes printed by esp-matter-mfg-tool instead.
+
+endmenu
