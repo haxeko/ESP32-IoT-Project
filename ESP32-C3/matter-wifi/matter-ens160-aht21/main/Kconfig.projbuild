@@ -1,0 +1,149 @@
+menu "Device Information"
+
+    config DEVICE_VENDOR_NAME
+        string "Manufacturer (Basic Information VendorName)"
+        default "Haxeko"
+        help
+            Max 32 characters.
+
+    config DEVICE_PRODUCT_NAME
+        string "Model (Basic Information ProductName and ProductLabel)"
+        default "ENS160 AHT21"
+        help
+            Home Assistant shows ProductLabel (else ProductName) as the model.
+            Max 32 characters.
+
+    config DEVICE_NAME_PREFIX
+        string "Device name prefix, followed by the last 4 characters of the serial number"
+        default "ENS160-"
+        help
+            Device name: this prefix and the last 4 characters of the serial
+            number (factory MAC in eFuse), e.g. "ENS160-B2C4", so boards
+            flashed with the same firmware get different names. Max 11
+            characters.
+            Written to Basic Information NodeLabel at boot when no label is
+            stored yet (new board, after a factory reset); a label set from an
+            app is kept. Home Assistant names the device after NodeLabel.
+            Also the Bluetooth (GAP) name while waiting to be commissioned,
+            seen only once connected: the Matter advertisement has no name.
+            Empty: NodeLabel DEVICE_DISPLAY_NAME and the Bluetooth name
+            "<BLE_DEVICE_NAME_PREFIX><discriminator>".
+
+    config DEVICE_DISPLAY_NAME
+        string "Name advertised before commissioning (DNS-SD)"
+        default "ENS160 Sensor"
+        help
+            Name in commissionable node discovery (DNS-SD "DN"), the same for
+            every board. Also the NodeLabel when DEVICE_NAME_PREFIX is empty.
+            Max 32 characters.
+
+    config DEVICE_HARDWARE_VERSION_STRING
+        string "Hardware (Basic Information HardwareVersionString)"
+        default "ESP32C3-ENS160-AHT21"
+        help
+            Shown as Hardware by controllers. Max 64 characters.
+
+endmenu
+
+menu "Board"
+
+    config BOARD_NAME
+        string "Board name in the boot log"
+        default "ESP32-C3 SuperMini"
+        help
+            Only shown in the log ("Target esp32c3, board ..."). The pins are
+            the options below.
+
+    config SENSOR_I2C_SDA_GPIO
+        int "I2C SDA pin (SDA of the ENS160 + AHT21 module)"
+        range 0 21
+        default 5
+        help
+            ESP32-C3 SuperMini: GPIO5. Not the flash pins (GPIO11-GPIO17) or
+            the USB pins (GPIO18, GPIO19): the build fails on them. Avoid the
+            strapping pins GPIO2, GPIO8 and GPIO9 (LED and BOOT button of the
+            SuperMini).
+
+    config SENSOR_I2C_SCL_GPIO
+        int "I2C SCL pin (SCL of the ENS160 + AHT21 module)"
+        range 0 21
+        default 6
+        help
+            ESP32-C3 SuperMini: GPIO6. Same restrictions as the SDA pin.
+
+    config STATUS_LED_GPIO
+        int "Status LED pin (-1 = none)"
+        range -1 21
+        default 8
+        help
+            Single-colour LED, the blue LED of the ESP32-C3 SuperMini on GPIO8.
+            Blinks fast while an app asks the device to identify itself, slowly
+            (1 s on, 1 s off) while waiting to be commissioned (pairing mode),
+            flashes briefly every 2 seconds when the AHT21 or the ENS160 does
+            not answer, and stays off otherwise.
+
+    config STATUS_LED_ACTIVE_HIGH
+        bool "Status LED is on when the pin is high"
+        default n
+        help
+            The blue LED of the ESP32-C3 SuperMini is on when GPIO8 is low.
+
+    config RESET_BUTTON_GPIO
+        int "Button pin (-1 = none)"
+        range -1 21
+        default 9
+        help
+            Active-low push button, GPIO9 is the BOOT button of the SuperMini.
+            Double click: pairing mode (opens the commissioning window for
+            15 minutes, also to add the device to a second app).
+            Hold 5 seconds: factory reset (erases the Wi-Fi credentials and the
+            Matter pairing, then restarts, ready to be commissioned again).
+
+endmenu
+
+menu "ENS160 + AHT21 Sensor"
+
+    config SENSOR_PERIOD_SEC
+        int "Reading period (seconds)"
+        range 2 300
+        default 10
+        help
+            Both sensors are read every period. The ENS160 measures once a
+            second on its own; the AHT21 measures when asked (more often than
+            every 2 seconds would warm it up). The values are written to
+            Matter when they change by more than the noise of the sensors:
+            0.1 C, 0.5 %RH, 10 ppb TVOC, 10 ppm eCO2, any air quality change.
+
+    config SENSOR_TEMPERATURE_OFFSET_TENTHS
+        int "Temperature offset (tenths of a degree Celsius)"
+        range -100 100
+        default 0
+        help
+            Added to the temperature of the AHT21, e.g. -15 for -1.5 C. On the
+            ENS160 + AHT21 module the AHT21 sits next to the heated ENS160 and
+            often reads 1 to 3 C too warm: compare with a thermometer after an
+            hour, away from the ESP32 (which warms up as well), and set the
+            difference here. The humidity is corrected with it (same air at the
+            corrected temperature).
+
+    config ENS160_REPORT_WHILE_WARMING_UP
+        bool "Send the ENS160 values during its warm-up and initial start-up"
+        default n
+        help
+            The ENS160 flags its values as not valid yet for about 3 minutes
+            after each power-on (warm-up) and during the first hour of a new
+            sensor (initial start-up). Off: Matter gets no air quality, TVOC
+            and eCO2 (Unknown / null) until they are valid. On: they are sent
+            anyway, e.g. to check the wiring of a new sensor in the app.
+
+    config SENSOR_ECO2_AS_CO2
+        bool "Expose the eCO2 of the ENS160 as a CO2 concentration"
+        default y
+        help
+            Adds a Carbon Dioxide Concentration Measurement cluster with the
+            eCO2 of the ENS160 (ppm). eCO2 is estimated from the VOCs, not
+            measured like a real (NDIR) CO2 sensor does: turn this off when the
+            apps should not show it as CO2. Changing it changes the clusters of
+            endpoint 3: remove and add the device again in the apps.
+
+endmenu
