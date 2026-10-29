@@ -1,29 +1,39 @@
 #pragma once
 
 /*
- * Optional status LED (CONFIG_STATUS_LED_GPIO, -1 = none). Patterns are short flashes so the LED costs little:
- * the chip may Light-sleep between flashes (esp_timer wakes it) and a PM lock is held only while the LED is lit,
- * because the GPIO output is not kept while the digital peripherals are powered down.
+ * Optional status LED: a single-colour LED on CONFIG_STATUS_LED_GPIO (-1 = none, module board) or an addressable RGB
+ * LED (CONFIG_STATUS_LED_WS2812, chip-down board) that is powered only while lit and shows a colour per pattern.
+ * Patterns are short flashes so the LED costs little: the chip may Light-sleep between flashes (esp_timer wakes it)
+ * and a PM lock is held only while the LED is lit, because the GPIO output is not kept while the digital peripherals
+ * are powered down.
  *
  * Persistent modes (highest priority shown): reset hold > pairing hold > boot reset wait > identify > pairing window.
  * One-shot flashes override them for their duration. Every function is safe from any task, not from ISRs.
  */
 
+#include <sdkconfig.h>
+
 #include <stdbool.h>
 
+#if CONFIG_STATUS_LED_WS2812 || (defined(CONFIG_STATUS_LED_GPIO) && CONFIG_STATUS_LED_GPIO >= 0)
+#define STATUS_LED_PRESENT 1
+#else
+#define STATUS_LED_PRESENT 0
+#endif
+
 enum class LedMode : unsigned {
-    PairingWindow, // commissioning window open: 40 ms flash every 3 s
-    Identify,      // Matter Identify: 200 ms on / 300 ms off
-    BootResetWait, // button held at power-up: fast blink until the reset decision
-    HoldPairing,   // button held past the pairing threshold: 100 / 400 ms
-    HoldReset,     // button held past the factory reset threshold: 50 / 100 ms
+    PairingWindow, // commissioning window open: 40 ms flash every 3 s (blue)
+    Identify,      // Matter Identify: 200 ms on / 300 ms off (white)
+    BootResetWait, // button held at power-up: fast blink until the reset decision (yellow)
+    HoldPairing,   // button held past the pairing threshold: 100 / 400 ms (blue)
+    HoldReset,     // button held past the factory reset threshold: 50 / 100 ms (red)
     Count,
 };
 
 enum class LedFlash : unsigned {
-    Ack,          // 20 ms: gesture recognised (CONFIG_STATUS_LED_PRESS_FEEDBACK)
-    LowBattery,   // 2 x 40 ms: battery Warning/Critical, after a gesture
-    ResetConfirm, // 3 x 150 ms: factory reset accepted
+    Ack,          // 20 ms: gesture recognised (CONFIG_STATUS_LED_PRESS_FEEDBACK) (green)
+    LowBattery,   // 2 x 40 ms: battery Warning/Critical, after a gesture (orange)
+    ResetConfirm, // 3 x 150 ms: factory reset accepted (red)
     Count,
 };
 

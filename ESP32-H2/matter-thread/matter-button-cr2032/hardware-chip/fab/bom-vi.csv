@@ -1,0 +1,32 @@
+﻿STT,Ký hiệu trên bo,Số lượng,Tên linh kiện,Thông số cần mua,Kích thước / kiểu chân,Từ khóa tìm mua,Mã LCSC (JLCPCB),Có thể thay bằng / ghi chú
+1,U1,1,"Chip ESP32-H2 (Thread/Zigbee/BLE), flash 4 MB trong chip",ESP32-H2FH4 (bản flash 4 MB),"QFN-32 4 × 4 mm, bước chân 0,4 mm, pad GND giữa 2,8 mm",ESP32-H2FH4,C22470214 (Extended),Không thay. Bản flash 2 MB không đủ bộ nhớ cho OTA
+2,U2,1,"IC nguồn buck-boost 3,3 V, dòng tĩnh 75 nA",TPS63900 (Texas Instruments),"WSON-10 2,5 × 2,5 mm",TPS63900DSKR,C1518762 (Extended),Không có loại thay chân tương thích
+3,Y1,1,Thạch anh 32 MHz,32 MHz; sai số ±10 ppm; tải CL 12 pF,"SMD 3225, 4 chân (3,2 × 2,5 mm)",crystal 32MHz 3225 10ppm 12pF,C90923 (Extended),TXC 7M32000035. Thạch anh 3225 32 MHz ±10 ppm khác cũng được (đổi CL thì tính lại C18/C19)
+4,Y2,1,"Thạch anh 32,768 kHz (đồng hồ RTC)","32,768 kHz; tải CL 12,5 pF; ESR ≤ 70 kΩ","SMD 3215, 2 chân (3,2 × 1,5 mm)",crystal 32.768kHz 3215 12.5pF,C32346 (Basic),Epson FC-135 (Q13FC13500004)
+5,D1,1,LED RGB có IC điều khiển (giao thức WS2812B),"3,0–5,5 V; 800 kbit/s; thứ tự màu GRB","SMD 2,1 × 2,1 × 1,0 mm, 4 chân",XL-2121RGBC-WS2812B,C5349957 (Extended),"XINGLIGHT XL-2121RGBC-WS2812B. Không có LED kiểu WS2812 nào là Basic ở JLCPCB. Loại khác phải chạy được ở 3,3 V và cùng vị trí chân"
+6,L1,1,"Cuộn cảm công suất (power inductor) 2,2 µH","2,2 µH; dòng bão hòa ≥ 2 A; điện trở ≤ 120 mΩ","SMD 2520 (1008), 2,5 × 2,0 mm",DFE252012P-2R2M,C391305 (Extended),"Murata DFE252012P-2R2M (3 A, 70 mΩ) hoặc DFE252012F-2R2M, hoặc loại 2520 khác đạt thông số"
+7,L2,1,Cuộn cảm 24 nH (nối tiếp chân XTAL_P),24 nH ±5 %,SMD 0402,inductor 24nH 0402,C74301 (Extended),Sunlord SDCL1005C24NJTDF. Theo khuyến nghị của Espressif cho ESP32-H2
+8,L3,1,"Cuộn cảm RF 2,4 nH (lọc RF ở chân anten)","2,4 nH ±0,3 nH; loại cao tần, Q cao",SMD 0402,inductor 2.4nH 0402 RF,C97997 (Extended),Murata LQG15HS2N4S02D. Giá trị có thể phải chỉnh khi đo RF
+9,"Q1, Q2",2,MOSFET kênh P,"−20 V trở lên; ngưỡng mở ≤ 1,3 V; R_DS(on) ≤ 0,1 Ω ở V_GS = −2,5 V","SOT-23 (chân 1 G, 2 S, 3 D)",AO3401A,C15127 (Basic),"Q1 chống ngược cực pin; Q2 bật/tắt nguồn LED. Hoặc DMG2305UX, Si2301 (cùng chân SOT-23)"
+10,"C1, C2",2,Tụ gốm (MLCC) 220 µF,"220 µF; 6,3 V; X5R","SMD 1210 (3,2 × 2,5 mm)",MLCC 220uF 6.3V 1210,C469553 (Extended),Murata GRM32ER60J227ME05L; Samsung CL32A227MQVNNNE (C400951) cũng được. Không dùng tụ tantalum hay tụ hóa vì rò điện
+11,"C3, C5, C6",3,Tụ gốm 10 µF,"10 µF; ≥ 6,3 V; X5R hoặc X7R",SMD 0603,MLCC 10uF 0603,C19702 (Basic),Samsung CL10A106KP8NNNC. C6 sát chân 1–2 của chip
+12,C4,1,Tụ gốm 22 µF,"22 µF; 6,3 V; X5R",SMD 0603,MLCC 22uF 0603,C59461 (Basic),Samsung CL10A226MQ8NRNC
+13,"C7, C10, C13",3,Tụ gốm 1 µF,1 µF; ≥ 10 V; X5R,SMD 0402,MLCC 1uF 0402,C52923 (Basic),Samsung CL05A105KA5NQNC. C7: trễ EN; C10: chân 1–2; C13: chân 27
+14,"C9, C11, C14, C15, C16, C17, C26",7,Tụ gốm 100 nF,100 nF; ≥ 16 V; X7R,SMD 0402,MLCC 100nF 0402,C1525 (Basic),Samsung CL05B104KO5NNNC. Lọc nguồn sát từng chân của chip; C26 ở chân VDD của LED
+15,C12,1,Tụ gốm 10 nF,10 nF (103); ≥ 16 V; X7R,SMD 0402,MLCC 10nF 0402,C15195 (Basic),Samsung CL05B103KB5NNNC. Sát chân 30–31 (nguồn RF)
+16,C8,1,Tụ gốm 1 nF,1 nF (102); 50 V; X7R,SMD 0402,MLCC 1nF 0402,C1523 (Basic),FH 0402B102K500NT
+17,"C18, C19, C20, C21",4,Tụ gốm 18 pF (tụ tải thạch anh),18 pF; 50 V; C0G (NP0) ±5 %,SMD 0402,MLCC 18pF C0G 0402,C1549 (Basic),FH 0402CG180J500NT. Bắt buộc C0G. C18/C19 có thể phải chỉnh để tần số 32 MHz lệch ≤ ±10 ppm
+18,"C22, C23",2,"Tụ gốm 1,5 pF (lọc RF)","1,5 pF ±0,1 pF; C0G; loại cao tần",SMD 0402,MLCC 1.5pF C0G 0402,C76957 (Extended),Murata GRM1555C1H1R5BA01D. Giá trị có thể phải chỉnh khi đo RF
+19,"C24, C25",2,Tụ chỉnh anten — KHÔNG LẮP,"tụ C0G hoặc cuộn cảm 0402, giá trị chọn khi đo anten bằng VNA",SMD 0402,,,"Để trống chỗ trên bo, không cần mua trước"
+20,R1,1,"Điện trở 36,5 kΩ, sai số 1 %","36,5 kΩ ±1 %; TCR ≤ ±200 ppm",SMD 0402,resistor 36.5k 1% 0402,C49010116 (Extended),"FOJAN FRC0402F3652TS. BẮT BUỘC loại 1 % (đặt điện áp ra 3,3 V của TPS63900)"
+21,"R2, R3, R11",3,Điện trở 0 Ω (cầu nối),0 Ω,SMD 0402,resistor 0R 0402,C17168 (Basic),UNI-ROYAL 0402WGF0000TCE. R11: chỗ của linh kiện nối tiếp trong mạng chỉnh anten
+22,"R4, R5",2,Điện trở 10 kΩ,10 kΩ (103) ±1 % hoặc ±5 %,SMD 0402,resistor 10k 0402,C25744 (Basic),UNI-ROYAL 0402WGF1002TCE. R4: kéo lên EN; R5: kéo lên GPIO8
+23,"R6, R9",2,Điện trở 1 MΩ,1 MΩ (105) ±1 % hoặc ±5 %,SMD 0402,resistor 1M 0402,C26083 (Basic),UNI-ROYAL 0402WGF1004TCE. R6: kéo lên nút; R9: đo pin
+24,R7,1,Điện trở 1 kΩ,1 kΩ (102) ±1 % hoặc ±5 %,SMD 0402,resistor 1k 0402,C11702 (Basic),UNI-ROYAL 0402WGF1001TCE. Nối tiếp nút
+25,R8,1,Điện trở 100 kΩ,100 kΩ (104) ±1 % hoặc ±5 %,SMD 0402,resistor 100k 0402,C25741 (Basic),UNI-ROYAL 0402WGF1003TCE. Giữ Q2 tắt (LED không có nguồn) khi reset và khi ngủ
+26,R10,1,Điện trở 510 Ω,510 Ω (511) ±1 % hoặc ±5 %,SMD 0402,resistor 510R 0402,C25123 (Basic),UNI-ROYAL 0402WGF5100TCE. Nối tiếp chân TX của UART0
+27,R12,1,Điện trở 100 Ω,100 Ω (101) ±1 % hoặc ±5 %,SMD 0402,resistor 100R 0402,C25076 (Basic),UNI-ROYAL 0402WGF1000TCE. Nối tiếp chân dữ liệu của LED
+28,SW1,1,"Nút nhấn dán 4 chân (tact switch), nhấn trên đỉnh","lực nhấn 160 gf, cao 2,5 mm","SMD thân 4,2 × 3,2 mm; tâm pad cách 4,15 × 2,15 mm",PTS810 SJM 250 SMTR LFS,C116501 (Extended),"C&K PTS810 bản SJM. Bản SJG (C221895) lực 400 gf, cứng hơn. Hoặc nút 4,2 × 3,2 mm có cùng vị trí 4 pad"
+29,BT1,1,"Đế pin cúc áo CR2032 dán (1 lá kẹp, 2 tai hàn)",cho pin CR2032,"SMD; 2 tai cách nhau 21,97 mm (tâm–tâm); hàn ở mặt dưới bo",CR2032 SMD battery holder 3034,— (LCSC không có: hàn tay),Keystone 3034 hoặc đế tương đương cùng kích thước tai
+30,AE1,1,"Anten 2,4 GHz in trên bo (TI AN043)",,"đồng trên PCB, góc trên phải",,,Không phải linh kiện: là một phần của PCB
+31,—,1,Pin CR2032,"Lithium 3 V, ≥ 220 mAh",—,CR2032,,"Dùng pin hãng (Panasonic, Energizer, Murata, Maxell). Pin không tên tuổi chỉ đạt khoảng một nửa dung lượng"

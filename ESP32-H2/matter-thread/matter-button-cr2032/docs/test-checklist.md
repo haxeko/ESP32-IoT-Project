@@ -196,3 +196,18 @@ Bản phát hành, 2 controller (Apple + HA), ~20 lần nhấn/ngày (bằng tay
 | N2 | Giữ khi lắp pin 5 s | như N1 | |
 | N3 | Xoá khỏi controller cuối cùng | như N1 | |
 | N4 | Giữ nút khi lắp pin với pin yếu (boot guard Deep-sleep) | không thức dậy liên tục khi nút đang bị giữ; thức bằng timer sau 1 giờ | |
+
+## O. Bo chip (`hardware-chip/`, firmware `sdkconfig.defaults.chip`)
+
+Thêm cho bản không dùng module (chip ESP32-H2, anten in trên bo, LED RGB). Các mục A–N vẫn áp dụng; điểm đo và pad test như bản module (vị trí khác, xem [`hardware-chip/README.md`](../hardware-chip/README.md) mục 4).
+
+| # | Bước | Đạt khi | Kết quả |
+|---|---|---|---|
+| O1 | Log khởi động: đồng hồ RTC | không có cảnh báo chuyển về RC trong (thạch anh 32,768 kHz Y2 dao động) | |
+| O2 | Tần số 32 MHz: TX tone (ESP RF Test Tool), máy phân tích phổ | lệch ≤ ±10 ppm; nếu không, đổi C18/C19 (lệch dương → tăng) | |
+| O3 | Anten: S11 tại chân feed (tháo R11, cáp đồng trục), bo trong vỏ, có pin | S11 < −10 dB trên 2,40–2,48 GHz sau khi chọn C24/R11/C25 | |
+| O4 | Công suất phát dẫn (cáp ở chân 32 sau lọc C22/L3/C23) | đúng mức đặt (0 dBm) ± 2 dB, hài trong giới hạn | |
+| O5 | RSSI/LQI của parent so với bo module ở cùng vị trí | không kém hơn quá 6 dB | |
+| O6 | LED RGB: mở cửa sổ ghép nối, Identify, giữ nút 10 s / 20 s, nhấn khi pin yếu (giả lập) | lần lượt xanh dương, trắng, xanh dương rồi đỏ, cam (bảng màu ở README mục 7.8, dòng `STATUS_LED_WS2812`) | |
+| O7 | **Dòng ngủ khi LED tắt** (JP2) | như bản module ± 2 µA: Q2 cắt nguồn LED (LED kiểu WS2812 tự tiêu thụ 0,7 mA nếu còn nguồn) | |
+| O8 | Dòng khi LED sáng (JP2, độ sáng 40) | ~2 mA mỗi màu, ~6 mA màu trắng | |

@@ -1,0 +1,20 @@
+# Chip-down board (hardware-chip/): ESP32-H2FH4 chip with a 32.768 kHz crystal, printed antenna and an addressable RGB
+# status LED instead of the module and its red LED. Applied after sdkconfig.defaults and sdkconfig.defaults.esp32h2;
+# combine it with the other variants by listing it last:
+#   idf.py -B build-chip -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.chip \
+#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.chip" build
+#   LIT:  SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.lit;sdkconfig.defaults.chip"
+
+# RTC slow clock from the 32.768 kHz crystal (Y2 on XTAL_32K_P/N = GPIO13/GPIO14): sleep timing within +-20 ppm instead
+# of the calibrated 136 kHz RC; the bootloader falls back to the RC if the crystal does not start. BLE uses it too.
+CONFIG_RTC_CLK_SRC_EXT_CRYS=y
+CONFIG_BT_LE_LP_CLK_SRC_DEFAULT=y
+
+# RGB status LED: XL-2121RGBC-WS2812B, data GPIO12 (chip pin 14), supply switched by Q2 from GPIO11 (chip pin 13),
+# low = on
+CONFIG_STATUS_LED_WS2812=y
+CONFIG_STATUS_LED_WS2812_DATA_GPIO=12
+CONFIG_STATUS_LED_WS2812_POWER_GPIO=11
+CONFIG_STATUS_LED_WS2812_POWER_ON_LEVEL=0
+
+CONFIG_DEVICE_HARDWARE_VERSION_STRING="ESP32-H2 chip CR2032 v1.0"

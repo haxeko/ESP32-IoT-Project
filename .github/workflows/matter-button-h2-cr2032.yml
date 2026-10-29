@@ -33,8 +33,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # default: ICD SIT (every controller, Apple Home included); lit: ICD LIT + DSLS (sdkconfig.defaults.lit)
-        variant: [default, lit]
+        # default: ICD SIT (every controller, Apple Home included); lit: ICD LIT + DSLS (sdkconfig.defaults.lit);
+        # chip: the chip-down board of hardware-chip/ (32.768 kHz crystal, WS2812B RGB LED, sdkconfig.defaults.chip)
+        variant: [default, lit, chip]
     defaults:
       run:
         working-directory: ESP32-H2/matter-thread/matter-button-cr2032

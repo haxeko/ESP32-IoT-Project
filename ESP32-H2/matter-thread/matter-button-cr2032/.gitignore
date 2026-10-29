@@ -11,3 +11,5 @@ build-factory/
 sdkconfig.lit
 build-lit/
 __pycache__/
+sdkconfig.chip
+build-chip/

@@ -1,0 +1,4 @@
+(version 1)
+(rule "dense small parts"
+	(constraint courtyard_clearance (min -1mm))
+	(condition "(A.Library_Link == '*_0402_*' || A.Library_Link == '*_0603_*' || A.Library_Link == '*QFN-32*' || A.Library_Link == '*Crystal_SMD*' || A.Library_Link == '*SOT-23*' || A.Library_Link == '*XL-2121*' || A.Library_Link == '*ANT_MIFA*' || A.Library_Link == '*SolderJumper*') && (B.Library_Link == '*_0402_*' || B.Library_Link == '*_0603_*' || B.Library_Link == '*QFN-32*' || B.Library_Link == '*Crystal_SMD*' || B.Library_Link == '*SOT-23*' || B.Library_Link == '*XL-2121*' || B.Library_Link == '*ANT_MIFA*' || B.Library_Link == '*SolderJumper*')"))

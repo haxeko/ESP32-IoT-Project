@@ -7,6 +7,8 @@ Dự án KiCad 9 của mạch trong [README chính](../README.md) (mục 2–4):
 
 Chưa đặt mạch, chưa đo trên bo thật: kiểm tra lại footprint module với datasheet trước khi đặt và chạy [checklist](../docs/test-checklist.md) khi có bo.
 
+Bản không dùng module (chip ESP32-H2, thạch anh, anten in trên PCB, LED RGB WS2812B, bo 4 lớp 29,8 × 29,8 mm): [`../hardware-chip`](../hardware-chip/README.md).
+
 | Mặt trên | Mặt dưới |
 |---|---|
 | ![Mặt trên](docs/pcb-top.png) | ![Mặt dưới](docs/pcb-bottom.png) |

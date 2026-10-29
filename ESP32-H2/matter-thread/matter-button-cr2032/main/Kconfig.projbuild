@@ -9,7 +9,7 @@ menu "Button"
             ESP32-H2; GPIO8..GPIO14 are bonded out): with the digital peripherals powered down in
             Light-sleep only an LP IO (EXT1) can wake the chip. Avoid GPIO8/GPIO9 (strapping, boot
             mode) and GPIO13/GPIO14 if a 32.768 kHz crystal is fitted. GPIO10 is module pin 5 of
-            ESP32-H2-WROOM-02C.
+            ESP32-H2-WROOM-02C and chip pin 12 of the chip-down board.
 
     config BUTTON_INTERNAL_PULLUP
         bool "Use the internal pull-up (~45 kOhm) instead of an external one"
@@ -269,8 +269,18 @@ endmenu
 
 menu "Status LED"
 
+    config STATUS_LED_WS2812
+        bool "Addressable RGB LED (WS2812B protocol) instead of a single-colour LED"
+        default n
+        help
+            Chip-down board (hardware-chip, sdkconfig.defaults.chip): XL-2121RGBC-WS2812B, data from GPIO12
+            through 100 Ohm, supply switched by a P-MOSFET from GPIO11 (low = on; a 100 kOhm pull-up keeps it off
+            through reset and sleep, as the LED draws 0.7 mA even when dark). The LED is powered only while it
+            is lit and shows a colour per pattern (RMT, 800 kbit/s).
+
     config STATUS_LED_GPIO
         int "Status LED GPIO (-1 = none)"
+        depends on !STATUS_LED_WS2812
         range -1 27
         default 22
         help
@@ -278,8 +288,41 @@ menu "Status LED"
 
     config STATUS_LED_ACTIVE_LEVEL
         int "Level that lights the LED"
+        depends on !STATUS_LED_WS2812
         range 0 1
         default 1
+
+    config STATUS_LED_WS2812_DATA_GPIO
+        int "RGB LED data GPIO"
+        depends on STATUS_LED_WS2812
+        range 0 27
+        default 12
+        help
+            GPIO12 is chip pin 14 of the chip-down board.
+
+    config STATUS_LED_WS2812_POWER_GPIO
+        int "RGB LED supply switch GPIO (-1 = always powered)"
+        depends on STATUS_LED_WS2812
+        range -1 27
+        default 11
+        help
+            GPIO11 (chip pin 13) drives the gate of the P-MOSFET. Without a switch the dark LED keeps drawing
+            its supply current (0.7 mA for the XL-2121RGBC-WS2812B: about 6 Ah a year, far more than a CR2032).
+
+    config STATUS_LED_WS2812_POWER_ON_LEVEL
+        int "Level that switches the RGB LED supply on"
+        depends on STATUS_LED_WS2812
+        range 0 1
+        default 0
+
+    config STATUS_LED_WS2812_BRIGHTNESS
+        int "RGB LED brightness (1-255)"
+        depends on STATUS_LED_WS2812
+        range 1 255
+        default 40
+        help
+            Scales every colour. Each colour of the XL-2121RGBC-WS2812B draws 12 mA while its 1.5 kHz PWM is on:
+            40 draws about 1.9 mA per colour on average (5.6 mA for white), from the 3.3 V rail.
 
     config STATUS_LED_PRESS_FEEDBACK
         bool "Flash on every press"

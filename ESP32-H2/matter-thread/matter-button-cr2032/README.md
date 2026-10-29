@@ -2,7 +2,7 @@
 
 Thiết kế đầy đủ (phần cứng, firmware, tính pin, kiểm thử) cho một **nút nhấn Matter over Thread chạy pin CR2032**: module **ESP32-H2-WROOM-02C**, một nút nhấn vật lý, gửi **nhấn một lần / nhấn đúp / giữ lâu** dưới dạng sự kiện chuẩn của cluster **Switch** (device type Generic Switch 0x000F), dùng được trong Apple Home, Home Assistant và các controller Matter khác. Thiết bị là **Thread Sleepy End Device (SED)** kiêm **Matter Intermittently Connected Device (ICD)**: ngủ Light-sleep giữa các lần nhấn mà vẫn giữ kết nối Thread, thức dậy bằng ngắt của nút.
 
-Firmware: ESP-IDF v6.0.2 + esp-matter release/v1.6.1 (cùng Docker image với các dự án khác trong repo). Cả 5 biến thể (mặc định SIT, LIT, `unique_setup`, `factory`, `debug`) đã build được; host test máy trạng thái nút qua 17 kịch bản. **Chưa đo trên bo thật**: mọi số đo đánh dấu [AS] phải được thay bằng số đo theo [checklist](docs/test-checklist.md).
+Firmware: ESP-IDF v6.0.2 + esp-matter release/v1.6.1 (cùng Docker image với các dự án khác trong repo). Cả 5 biến thể (mặc định SIT, LIT, `unique_setup`, `factory`, `debug`) đã build được, cùng bản `chip` cho bo không dùng module ([`hardware-chip/`](hardware-chip/README.md)); host test máy trạng thái nút qua 17 kịch bản. **Chưa đo trên bo thật**: mọi số đo đánh dấu [AS] phải được thay bằng số đo theo [checklist](docs/test-checklist.md).
 
 > **Kết luận nhanh**
 >
@@ -25,7 +25,7 @@ Firmware: ESP-IDF v6.0.2 + esp-matter release/v1.6.1 (cùng Docker image với c
 9. [Bảng tính thời lượng pin](#9-bảng-tính-thời-lượng-pin)
 10. [Rủi ro và cách khắc phục](#10-rủi-ro-và-cách-khắc-phục)
 
-Kiểm thử: [`docs/test-checklist.md`](docs/test-checklist.md). PCB KiCad và file sản xuất: [`hardware/`](hardware/README.md).
+Kiểm thử: [`docs/test-checklist.md`](docs/test-checklist.md). PCB KiCad và file sản xuất: [`hardware/`](hardware/README.md) (module ESP32-H2-WROOM-02C); bản **chip ESP32-H2 + thạch anh + anten in trên PCB + LED RGB WS2812B**, không dùng module, bo 4 lớp 29,8 × 29,8 mm: [`hardware-chip/`](hardware-chip/README.md) (firmware: thêm `sdkconfig.defaults.chip`, mục 8.2).
 
 Ký hiệu nguồn số liệu dùng trong toàn tài liệu: **[DS]** datasheet; **[ME]** số đo công bố của Espressif (esp-matter `examples/icd_app`, ESP32-H2 DevKitC); **[AS]** giả định / ước lượng, phải đo lại trên bo thật.
 
@@ -231,7 +231,7 @@ Kiểm tra rò tụ bulk là bước đầu tiên của checklist: đo dòng to�
 
 ### 2.7 Bố trí PCB và anten
 
-PCB đã thiết kế bằng KiCad 9: **[`hardware/`](hardware/README.md)** (schematic, PCB đã đi dây, Gerber, BOM, file vị trí linh kiện; ERC và DRC sạch).
+PCB đã thiết kế bằng KiCad 9: **[`hardware/`](hardware/README.md)** (schematic, PCB đã đi dây, Gerber, BOM, file vị trí linh kiện; ERC và DRC sạch). Bản không dùng module, **[`hardware-chip/`](hardware-chip/README.md)**: chip ESP32-H2FH4, thạch anh 32 MHz + 32,768 kHz, anten in trên bo (TI AN043), LED RGB WS2812B, bo 4 lớp 1,0 mm 29,8 × 29,8 mm (anten nằm trong bo); cần chỉnh anten và tụ thạch anh khi có bo. Các mục dưới đây mô tả bản module.
 
 - PCB 2 lớp FR-4 1,6 mm, **29,8 × 23,9 mm**, không có lỗ bắt vít. Module ở mép trên, sát mép phải, **vùng anten (6 mm đầu module) chìa ra ngoài mép bo** → cả cụm **29,8 × 29,9 mm** (dưới 30 × 30 mm); không đồng, không đường mạch, không linh kiện dưới vùng anten (datasheet WROOM-02C, mục 11; ESP32-H2 Hardware Design Guidelines, *Positioning a Module on a Base Board*). Mặt phẳng GND hai lớp chạy tới sát mép bo ở chân anten.
 - **Pin CR2032 (vỏ kim loại) và đế pin ở mặt dưới, nằm dưới module và mạch; mép pin cách chân anten 3,4 mm** (bố trí 25 × 27 mm: 6,5 mm; 30 × 38 mm: ~16 mm). Đây là đánh đổi để cả cụm dưới 30 × 30 mm: pin nằm sau mặt phẳng GND, không nằm dưới anten, nhưng có thể làm giảm tầm phủ. Đo RSSI/LQI của parent khi đã lắp vỏ (checklist mục C); nếu link yếu, dùng lại bố trí 25 × 27 mm (commit `af26218`) hoặc 30 × 38 mm (commit `6649456`).
@@ -587,6 +587,7 @@ matter-button-cr2032/
 ├── sdkconfig.defaults.unique_setup mã ghép nối riêng từng bo
 ├── sdkconfig.defaults.factory      factory data (DAC riêng từng bo) từ esp-matter-mfg-tool
 ├── sdkconfig.defaults.debug        CHIP shell + OpenThread CLI, không Light-sleep
+├── sdkconfig.defaults.chip         bo chip (hardware-chip/): RTC từ thạch anh 32,768 kHz, LED RGB WS2812B
 ├── dependencies.lock               phiên bản cố định của managed components
 ├── main/
 │   ├── CMakeLists.txt              + linker wrap esp_ieee802154_enable (công suất phát từ khung đầu tiên)
@@ -598,7 +599,7 @@ matter-button-cr2032/
 │   ├── switch_events.h/.cpp        cử chỉ → sự kiện Matter Switch, ghép nối, factory reset
 │   ├── power.h/.cpp                esp_pm, công suất phát, child timeout/supervision, chính sách mất mạng, LIT/SIT
 │   ├── battery.h/.cpp              đo pin, đo điện trở trong, cluster Power Source, boot guard
-│   ├── status_led.h/.cpp           LED nháy ngắn, khoá Light-sleep chỉ khi LED sáng
+│   ├── status_led.h/.cpp           LED nháy ngắn (LED thường, hoặc LED RGB WS2812B qua RMT có cắt nguồn), khoá Light-sleep chỉ khi LED sáng
 │   ├── device_info.h/.cpp          nhà sản xuất, model, phần cứng, serial = MAC eFuse
 │   ├── setup_code.h/.cpp           in QR; mã ghép nối riêng từng bo (unique_setup)
 │   ├── identity_diag.h/.cpp        log id_diag: danh tính, Thread, SRP, fabric, subscription
@@ -667,6 +668,7 @@ Matter OTA Requestor, hỏi provider **1 lần/ngày** (`APP_OTA_QUERY_INTERVAL_
 | `BATTERY_WARNING_REST_MV` / `CRITICAL_REST_MV` / `WARNING_BURST_MV` / `CRITICAL_BURST_MV` | 2750 / 2600 / 2200 / 1950 | ngưỡng mức pin |
 | `BATTERY_BOOT_MIN_MV`, `BATTERY_BROWNOUT_LIMIT`, `BATTERY_RECOVERY_SLEEP_S` | 2200, 3, 3600 | boot guard |
 | *Status LED* `STATUS_LED_GPIO` / `STATUS_LED_PRESS_FEEDBACK` | 22 / n | −1 = không có LED; nháy 20 ms mỗi lần nhấn |
+| `STATUS_LED_WS2812`, `_DATA_GPIO`, `_POWER_GPIO`, `_POWER_ON_LEVEL`, `_BRIGHTNESS` | n, 12, 11, 0, 40 | LED RGB của bo chip: dữ liệu GPIO12, nguồn LED qua MOSFET từ GPIO11 (mức thấp = bật), độ sáng 40/255; màu theo trạng thái: ghép nối xanh dương, Identify trắng, chờ reset lúc khởi động vàng, giữ để reset đỏ, pin yếu cam, nhấn xanh lá |
 | *Identity Diagnostics* `IDENTITY_DIAG_PERIOD_SEC` | 86400 | log id_diag 1 lần/ngày (debug: 300 s) |
 | *Device Identity* | Haxeko / Matter Button / ESP32-H2-WROOM-02C CR2032 v1.0 | Basic Information |
 
@@ -710,11 +712,15 @@ docker run --rm -v "${repo}:/repo" $img bash -c "$pre && idf.py -B build-lit -D 
 #   SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.lit;sdkconfig.defaults.unique_setup'
 docker run --rm -v "${repo}:/repo" $img bash -c "$pre && idf.py -B build-unique -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.unique -D SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.unique_setup' build"
 
+# Bo chip (hardware-chip/: chip ESP32-H2, thạch anh 32,768 kHz, LED RGB WS2812B); ghép được với LIT bằng cách đặt
+#   sdkconfig.defaults.chip ở cuối: SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.lit;sdkconfig.defaults.chip'
+docker run --rm -v "${repo}:/repo" $img bash -c "$pre && idf.py -B build-chip -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.chip -D SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.chip' build"
+
 # Bản debug: CHIP shell + OpenThread CLI trên UART0, KHÔNG Light-sleep (không dùng để đo dòng)
 docker run --rm -v "${repo}:/repo" $img bash -c "$pre && idf.py -B build-debug -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.debug -D SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.debug' build"
 ```
 
-Sau khi sửa `sdkconfig.defaults*`, xoá file `sdkconfig*` tương ứng (`sdkconfig`, `sdkconfig.lit`, …) để áp dụng lại. Kích thước đã build: mặc định 1,33 MB, LIT ~1,35 MB, debug 1,45 MB, unique_setup 1,34 MB, factory 1,33 MB; phân vùng OTA 1,875 MB (còn ≥ 23 %).
+Sau khi sửa `sdkconfig.defaults*`, xoá file `sdkconfig*` tương ứng (`sdkconfig`, `sdkconfig.lit`, …) để áp dụng lại. Kích thước đã build: mặc định 1,33 MB, LIT ~1,35 MB, debug 1,45 MB, unique_setup 1,34 MB, factory 1,33 MB, chip 1,35 MB; phân vùng OTA 1,875 MB (còn ≥ 23 %).
 
 | File trong `build*/` | Dùng để |
 |---|---|
@@ -722,7 +728,7 @@ Sau khi sửa `sdkconfig.defaults*`, xoá file `sdkconfig*` tương ứng (`sdkc
 | `matter_button_h2.bin` + `flash_args` | nạp bằng `write-flash "@flash_args"`, giữ ghép nối |
 | `matter_button_h2-ota.bin` | Matter OTA |
 
-GitHub Actions (`.github/workflows/matter-button-h2-cr2032.yml`) chạy host test, mô hình pin và build hai bản mặc định + `lit`; artifact `matter_button_h2-<phiên bản>` và `matter_button_h2-<phiên bản>-lit`.
+GitHub Actions (`.github/workflows/matter-button-h2-cr2032.yml`) chạy host test, mô hình pin và build ba bản: mặc định, `lit` và `chip`; artifact `matter_button_h2-<phiên bản>`, `matter_button_h2-<phiên bản>-lit` và `matter_button_h2-<phiên bản>-chip`.
 
 ### 8.3 Nạp firmware
 

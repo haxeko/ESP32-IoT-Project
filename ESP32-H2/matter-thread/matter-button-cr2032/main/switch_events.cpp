@@ -38,7 +38,7 @@ static uint16_t s_endpoint = 0;
 uint16_t switch_events_create_endpoint(node_t *node)
 {
     endpoint::generic_switch::config_t cfg;
-#if CONFIG_STATUS_LED_GPIO < 0
+#if !STATUS_LED_PRESENT
     // No LED to show Identify
     cfg.identify.identify_type = chip::to_underlying(Identify::IdentifyTypeEnum::kNone);
 #endif
