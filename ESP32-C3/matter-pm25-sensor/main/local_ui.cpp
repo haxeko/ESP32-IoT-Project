@@ -174,6 +174,14 @@ static int64_t now_ms()
     return esp_timer_get_time() / 1000;
 }
 
+// Smallest free stack of the task with this name since it started, in bytes
+// (ESP-IDF counts stacks in bytes); 0 without such a task.
+static unsigned stack_min_free(const char *name)
+{
+    TaskHandle_t task = xTaskGetHandle(name);
+    return task != NULL ? (unsigned)uxTaskGetStackHighWaterMark(task) : 0;
+}
+
 // PM2.5 thresholds (µg/m³) of the 5 levels.
 int local_ui_pm25_level(float pm25)
 {
@@ -585,6 +593,10 @@ static void local_ui_task(void *arg)
             ESP_LOGI(TAG, "heap: free=%u min=%u largest=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+            // Stack headroom of the tasks this firmware runs on (stack size check).
+            ESP_LOGI(TAG, "stack min free: local_ui=%u pm_sensor=%u scd4x=%u CHIP=%u esp_timer=%u sys_evt=%u",
+                     stack_min_free("local_ui"), stack_min_free("pm_sensor"), stack_min_free("scd4x"),
+                     stack_min_free("CHIP"), stack_min_free("esp_timer"), stack_min_free("sys_evt"));
         }
 
         // Woken up early by local_ui_set_reset(), local_ui_set_pairing(), local_ui_identify(),

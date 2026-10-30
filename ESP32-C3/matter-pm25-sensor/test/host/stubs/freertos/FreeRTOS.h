@@ -18,6 +18,8 @@ static inline int xTaskCreate(void (*)(void *), const char *, int, void *, int, 
     }
     return pdPASS;
 }
+static inline TaskHandle_t xTaskGetHandle(const char *) { return NULL; }
+static inline unsigned uxTaskGetStackHighWaterMark(TaskHandle_t) { return 0; }
 static inline void vTaskDelay(int ms) { sim_advance(ms); }
 static inline uint32_t ulTaskNotifyTake(int, int ms) { sim_advance(ms); return 0; }
 static inline void xTaskNotifyGive(TaskHandle_t) {}

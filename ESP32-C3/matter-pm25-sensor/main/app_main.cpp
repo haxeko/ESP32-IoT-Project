@@ -20,11 +20,13 @@
 #include <app/server/Server.h>
 #include <esp_app_desc.h>
 #include <esp_err.h>
+#include <esp_event.h>
 #include <esp_log.h>
 #include <esp_matter.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
 #include <esp_timer.h>
+#include <esp_wifi.h>
 #include <nvs.h>
 #include <nvs_flash.h>
 
@@ -86,6 +88,28 @@ static_assert(CONFIG_BUTTON_GPIO != 2 && CONFIG_BUTTON_GPIO != 8 && CONFIG_BUTTO
               "Button: GPIO2/8/9 are strapping pins, GPIO11-17 flash, GPIO18-19 USB");
 #endif
 #endif
+
+// Names of the esp_reset_reason_t values, in their order, for the boot log: a
+// watchdog, panic or brown-out reset points at a problem to look into.
+static const char *const k_reset_reasons[] = {
+    "unknown", "power-on", "external pin", "software", "panic", "interrupt watchdog", "task watchdog",
+    "other watchdog", "deep sleep", "brown-out", "SDIO", "USB", "JTAG", "eFuse error", "power glitch", "CPU lock-up",
+};
+
+static const char *reset_reason_name(esp_reset_reason_t reason)
+{
+    return (size_t)reason < std::size(k_reset_reasons) ? k_reset_reasons[reason] : "?";
+}
+
+// Logs why the Wi-Fi connection was lost (wifi_err_reason_t: e.g. 2 = auth
+// expired, 15 = 4-way handshake timeout, 200 = beacon timeout, 201 = AP not
+// found, 205 = connection failed). The Matter stack logs the event without
+// the reason, then reconnects by itself every 5 s. Runs in the system event task.
+static void wifi_disconnected_cb(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    const wifi_event_sta_disconnected_t *event = (const wifi_event_sta_disconnected_t *)data;
+    ESP_LOGW(TAG, "Wi-Fi disconnected: reason %u, RSSI %d", event->reason, event->rssi);
+}
 
 // Matter AirQuality value sent for each level of the OLED/LEDs, and how
 // Apple Home shows it:
@@ -571,6 +595,11 @@ static esp_err_t start_matter()
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
 
+    // The default event loop exists once Wi-Fi is initialized, by esp_matter::start().
+    if (esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_disconnected_cb, NULL) != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi disconnect reasons will not be logged");
+    }
+
     static esp_timer_handle_t s_status_timer;
     const esp_timer_create_args_t timer_args = {
         .callback = matter_status_timer_cb,
@@ -614,6 +643,7 @@ extern "C" void app_main()
 
     ESP_LOGI(TAG, "%s %s, firmware %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME,
              esp_app_get_description()->version);
+    ESP_LOGI(TAG, "Reset reason: %s (%d)", reset_reason_name(esp_reset_reason()), esp_reset_reason());
 
     const bool factory_reset_requested = check_factory_reset_boot_count();
 
