@@ -149,6 +149,14 @@ CI (`.github/workflows/matter-ens160-aht21.yml`) chạy test trên máy tính r�
 
 > Firmware dùng **chứng chỉ test** của Matter SDK (VID `0xFFF1`) và setup code test dùng chung cho mọi bo: chỉ để tự làm (DIY). Làm sản phẩm thật thì cần DAC/passcode riêng (`esp-matter-mfg-tool`) và chứng nhận CSA. PID `0x8002` khác các firmware khác của repo (`0x8000`, `0x8001`) để bộ điều khiển và file OTA không nhầm lẫn giữa chúng.
 
+### Không kết nối được Wi-Fi
+
+Ghép nối qua BLE chạy, nhưng log lặp lại `wifi:state: init -> auth` rồi `auth -> init (0x200)` (lý do 2, `AUTH_EXPIRE`: router không trả lời) và ứng dụng báo không thêm được thiết bị: nhiều bo **ESP32-C3 SuperMini** không phát được ở công suất tối đa (anten và mạch nguồn của bo). Firmware mặc định giới hạn công suất phát ở **8,5 dBm** (log `Wi-Fi TX power limited to 8.50 dBm`), cách sửa thường dùng cho bo này. Nếu vẫn lỗi:
+
+- Đặt thiết bị gần router hơn khi ghép nối, hoặc thử `WIFI_MAX_TX_POWER_QUARTER_DBM` = 52 (13 dBm), 60 (15 dBm).
+- Router phải phát **2,4 GHz** (ESP32-C3 không có 5 GHz), WPA2 hoặc WPA2/WPA3; tắt chế độ chỉ WPA3 hoặc "802.11ax only" nếu có.
+- Sai mật khẩu thì lỗi ở bước sau (`assoc` / 4-way handshake, lý do 15 hoặc 204), không phải `auth -> init`.
+
 ## Cấu hình (`idf.py menuconfig`)
 
 *Board*:
@@ -159,6 +167,7 @@ CI (`.github/workflows/matter-ens160-aht21.yml`) chạy test trên máy tính r�
 | `STATUS_LED_GPIO` | 8 | LED trạng thái, `-1` = không có |
 | `STATUS_LED_ACTIVE_HIGH` | tắt | LED sáng khi chân ở mức cao (LED của SuperMini sáng khi mức thấp) |
 | `RESET_BUTTON_GPIO` | 9 | Nút ghép nối / factory reset (nối xuống GND), `-1` = không có |
+| `WIFI_MAX_TX_POWER_QUARTER_DBM` | 34 (8,5 dBm) | Giới hạn công suất phát Wi-Fi, đơn vị 0,25 dBm; `0` = mặc định ESP-IDF (20 dBm). Xem [Không kết nối được Wi-Fi](#không-kết-nối-được-wi-fi) |
 
 *ENS160 + AHT21 Sensor*:
 

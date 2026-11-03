@@ -24,7 +24,9 @@
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_matter.h>
+#include <esp_event.h>
 #include <esp_system.h>
+#include <esp_wifi.h>
 #include <inttypes.h>
 #include <nvs_flash.h>
 #include <setup_payload/OnboardingCodesUtil.h>
@@ -224,6 +226,38 @@ static esp_err_t app_attribute_update_cb(attribute::callback_type_t type, uint16
     return ESP_OK;
 }
 
+// Wi-Fi TX power limit (CONFIG_WIFI_MAX_TX_POWER_QUARTER_DBM, see its help: needed by many ESP32-C3 SuperMini).
+// The limit only holds once the driver has started, and the Matter stack starts it and connects right away: set it from
+// the esp_event handler of WIFI_EVENT_STA_START, which runs before the Matter task sees the event.
+static void limit_wifi_tx_power()
+{
+    const int power = CONFIG_WIFI_MAX_TX_POWER_QUARTER_DBM < 8 ? 8 : CONFIG_WIFI_MAX_TX_POWER_QUARTER_DBM;
+    const esp_err_t err = esp_wifi_set_max_tx_power(power);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Wi-Fi TX power limited to %d.%02d dBm", power / 4, power % 4 * 25);
+    } else if (err != ESP_ERR_WIFI_NOT_STARTED) {
+        ESP_LOGW(TAG, "Wi-Fi TX power not limited, err:%d", err);
+    }
+}
+
+static void wifi_start_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    limit_wifi_tx_power();
+}
+
+static esp_err_t init_wifi_tx_power()
+{
+    if (CONFIG_WIFI_MAX_TX_POWER_QUARTER_DBM == 0) {
+        return ESP_OK;
+    }
+    // esp_matter::start() accepts the default event loop created here
+    esp_err_t err = esp_event_loop_create_default();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        return err;
+    }
+    return esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, wifi_start_handler, nullptr);
+}
+
 static esp_err_t start_matter()
 {
     // Manufacturer / Model / Serial number shown by controllers
@@ -238,9 +272,15 @@ static esp_err_t start_matter()
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to create the sensor endpoints"));
 
     // Wi-Fi: the station is started by the Matter stack with the credentials from commissioning
+    if (init_wifi_tx_power() != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi TX power limit not installed");
+    }
     err = esp_matter::start(app_event_cb);
     VerifyOrReturnError(err == ESP_OK, err, ESP_LOGE(TAG, "Failed to start Matter, err:%d", err));
     s_matter_started = true;
+    if (CONFIG_WIFI_MAX_TX_POWER_QUARTER_DBM != 0) {
+        limit_wifi_tx_power(); // in case the driver started before the handler (nothing logged when not started)
+    }
     // Device name "ENS160-B2C4": NodeLabel when none is stored yet, Bluetooth name
     device_info_apply_name();
     // The first reading came before Matter: send the values now rather than at the next period

@@ -99,6 +99,20 @@ menu "Board"
             Hold 5 seconds: factory reset (erases the Wi-Fi credentials and the
             Matter pairing, then restarts, ready to be commissioned again).
 
+    config WIFI_MAX_TX_POWER_QUARTER_DBM
+        int "Wi-Fi max TX power (0.25 dBm units, 0 = ESP-IDF default 20 dBm)"
+        range 0 84
+        default 34
+        help
+            Many ESP32-C3 SuperMini boards cannot transmit at full power (their
+            antenna and regulator): the station never gets past the
+            authentication with the access point ("state: auth -> init
+            (0x200)" in the log, reason 2 AUTH_EXPIRE), or keeps dropping the
+            connection. Limiting the TX power fixes it: 34 = 8.5 dBm, the usual
+            value for these boards. Raise it (e.g. 52 = 13 dBm, 60 = 15 dBm)
+            if the access point is far; 0 keeps the ESP-IDF maximum (boards
+            with a good antenna). Values from 1 to 7 are taken as 8 (2 dBm).
+
 endmenu
 
 menu "ENS160 + AHT21 Sensor"
