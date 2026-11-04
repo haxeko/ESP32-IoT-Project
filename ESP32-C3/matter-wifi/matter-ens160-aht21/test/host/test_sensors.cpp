@@ -248,10 +248,48 @@ static float expected_humidity()
     CHECK(sim_log_contains("ENS160: initial start-up"));
 }
 
+[[maybe_unused]] static void test_simulated()
+{
+    // No sensor on the bus: simulated room, no I2C transfer, no air quality
+    sim_reset();
+    g_sim.aht.present = false;
+    g_sim.ens.present = false;
+    float t_min = 100, t_max = -100, rh_min = 200, rh_max = -100;
+    sensor_values_t v = {};
+    for (int i = 0; i < 6 * 60 * 2; i++) { // 2 hours, every 10 s
+        v = read_after(10000);
+        CHECK(v.climate_valid);
+        CHECK(!v.air_found && !v.air_valid);
+        t_min = fminf(t_min, v.temperature_c);
+        t_max = fmaxf(t_max, v.temperature_c);
+        rh_min = fminf(rh_min, v.humidity_pct);
+        rh_max = fmaxf(rh_max, v.humidity_pct);
+    }
+    CHECK(t_min >= 20.0f && t_max <= 26.0f);
+    CHECK(rh_min >= 50.0f && rh_max <= 80.0f);
+    CHECK(t_max - t_min > 5.0f);   // the whole range is covered
+    CHECK(rh_max - rh_min > 25.0f);
+    CHECK(g_sim.i2c.empty());
+    sensors_log(&v);
+    CHECK(sim_log_contains("%RH | simulated"));
+    // Changes between two readings: above the Matter steps most of the time, never jumps
+    float t0 = 0, rh0 = 0;
+    simulated_climate(0, &t0, &rh0);
+    for (uint32_t s = 10; s < 3600; s += 10) {
+        float t1 = 0, rh1 = 0;
+        simulated_climate(s, &t1, &rh1);
+        CHECK(fabsf(t1 - t0) < 0.5f && fabsf(rh1 - rh0) < 2.0f);
+        t0 = t1;
+        rh0 = rh1;
+    }
+}
+
 int main(int argc, char **argv)
 {
     sim_parse_args(argc, argv);
-#if NO_AHT21
+#if CONFIG_SENSOR_SIMULATED
+    test_simulated();
+#elif NO_AHT21
     test_no_aht21_from_boot();
 #else
     sim_reset();

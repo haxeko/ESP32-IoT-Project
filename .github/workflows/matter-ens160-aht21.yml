@@ -22,6 +22,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: espressif/esp-matter:release-v1.6.1_idf_v6.0.2
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ENS160 + AHT21 module
+          - variant: sensor
+            defaults: sdkconfig.defaults
+          # Simulated temperature and humidity, no module (sdkconfig.defaults.simulated)
+          - variant: simulated
+            defaults: sdkconfig.defaults;sdkconfig.defaults.simulated
     defaults:
       run:
         working-directory: ESP32-C3/matter-wifi/matter-ens160-aht21
@@ -29,26 +39,27 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # the firmware version is the git commit count
-      - name: Build (esp32c3)
+      - name: Build (esp32c3, ${{ matrix.variant }})
         shell: bash
         run: |
           git config --global --add safe.directory '*'
           pushd $IDF_PATH && . ./export.sh && popd
           pushd $ESP_MATTER_PATH && . ./export.sh && popd
-          idf.py set-target esp32c3
-          idf.py build
-          idf.py merge-bin -o matter_ens160_aht21_merged.bin
+          dir=build/${{ matrix.variant }}
+          idf.py -B $dir -D IDF_TARGET=esp32c3 -D SDKCONFIG=$dir/sdkconfig -D SDKCONFIG_DEFAULTS="${{ matrix.defaults }}" build
+          idf.py -B $dir -D IDF_TARGET=esp32c3 -D SDKCONFIG=$dir/sdkconfig -D SDKCONFIG_DEFAULTS="${{ matrix.defaults }}" \
+            merge-bin -o matter_ens160_aht21_merged.bin
           # Matter OTA image (CONFIG_CHIP_OTA_IMAGE_BUILD); .ota is the extension controllers expect
-          cp build/matter_ens160_aht21-ota.bin build/matter_ens160_aht21.ota
+          cp $dir/matter_ens160_aht21-ota.bin $dir/matter_ens160_aht21.ota
       - uses: actions/upload-artifact@v4
         with:
-          name: matter_ens160_aht21-esp32c3
+          name: matter_ens160_aht21-esp32c3-${{ matrix.variant }}
           if-no-files-found: error
           path: |
-            ESP32-C3/matter-wifi/matter-ens160-aht21/build/matter_ens160_aht21.bin
-            ESP32-C3/matter-wifi/matter-ens160-aht21/build/bootloader/bootloader.bin
-            ESP32-C3/matter-wifi/matter-ens160-aht21/build/partition_table/partition-table.bin
-            ESP32-C3/matter-wifi/matter-ens160-aht21/build/ota_data_initial.bin
-            ESP32-C3/matter-wifi/matter-ens160-aht21/build/flash_args
-            ESP32-C3/matter-wifi/matter-ens160-aht21/build/matter_ens160_aht21_merged.bin
-            ESP32-C3/matter-wifi/matter-ens160-aht21/build/matter_ens160_aht21.ota
+            ESP32-C3/matter-wifi/matter-ens160-aht21/build/${{ matrix.variant }}/matter_ens160_aht21.bin
+            ESP32-C3/matter-wifi/matter-ens160-aht21/build/${{ matrix.variant }}/bootloader/bootloader.bin
+            ESP32-C3/matter-wifi/matter-ens160-aht21/build/${{ matrix.variant }}/partition_table/partition-table.bin
+            ESP32-C3/matter-wifi/matter-ens160-aht21/build/${{ matrix.variant }}/ota_data_initial.bin
+            ESP32-C3/matter-wifi/matter-ens160-aht21/build/${{ matrix.variant }}/flash_args
+            ESP32-C3/matter-wifi/matter-ens160-aht21/build/${{ matrix.variant }}/matter_ens160_aht21_merged.bin
+            ESP32-C3/matter-wifi/matter-ens160-aht21/build/${{ matrix.variant }}/matter_ens160_aht21.ota

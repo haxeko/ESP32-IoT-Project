@@ -254,8 +254,15 @@ esp_err_t sensors_init_bus(void)
 void sensors_read_once(sensor_values_t *values)
 {
     *values = {};
+    if (kSensorSimulated) {
+        values->climate_valid = true;
+        simulated_climate(xTaskGetTickCount() / configTICK_RATE_HZ, &values->temperature_c, &values->humidity_pct);
+        return;
+    }
     read_climate(values);
-    read_air(values);
+    if (kSensorAirQuality) {
+        read_air(values);
+    }
 }
 
 void sensors_log(const sensor_values_t *v)
@@ -268,7 +275,9 @@ void sensors_log(const sensor_values_t *v)
                  rh / 100, rh % 100);
     }
     char air[72] = "no ENS160";
-    if (s_ens.has_values) {
+    if (!kSensorAirQuality) {
+        snprintf(air, sizeof(air), kSensorSimulated ? "simulated" : "ENS160 not used");
+    } else if (s_ens.has_values) {
         snprintf(air, sizeof(air), "AQI %u, TVOC %u ppb, eCO2 %u ppm%s", s_air.aqi, s_air.tvoc_ppb, s_air.eco2_ppm,
                  v->air_valid ? "" : " (not valid yet, not sent)");
     } else if (s_ens.ready) {
@@ -307,6 +316,14 @@ void sensors_read_now(void)
 esp_err_t sensors_start(sensor_values_cb_t cb)
 {
     s_cb = cb;
+    if (kSensorSimulated) {
+        ESP_LOGW(TAG, "SIMULATED temperature (20-26 C) and humidity (50-80 %%), no sensor read, every %d s",
+                 CONFIG_SENSOR_PERIOD_SEC);
+        if (xTaskCreate(sensor_task, "sensors", kTaskStack, nullptr, kTaskPriority, &s_task) != pdPASS) {
+            return ESP_ERR_NO_MEM;
+        }
+        return ESP_OK;
+    }
     esp_err_t err = sensors_init_bus();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "I2C bus on SDA GPIO%d, SCL GPIO%d not started, err:%d", CONFIG_SENSOR_I2C_SDA_GPIO,

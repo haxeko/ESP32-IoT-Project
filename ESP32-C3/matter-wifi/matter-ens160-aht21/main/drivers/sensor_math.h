@@ -179,6 +179,21 @@ inline float humidity_at_temperature(float humidity_pct, float measured_c, float
     return value > 100.0f ? 100.0f : value;
 }
 
+// Simulated room (CONFIG_SENSOR_SIMULATED) at a time in seconds: the temperature moves between 20 and 26 °C over a
+// 10 minute cycle and the humidity between 50 and 80 % over a 15 minute cycle, in the opposite way (a warmer room is
+// drier), with a little noise (at most 0.08 °C and 0.4 %) so that the values look measured.
+inline void simulated_climate(uint32_t seconds, float *temperature_c, float *humidity_pct)
+{
+    const float two_pi = 6.2831853f;
+    float t = 23.0f + 2.9f * sinf(two_pi * (float)(seconds % 600) / 600.0f);
+    float rh = 65.0f - 14.5f * sinf(two_pi * (float)(seconds % 900) / 900.0f);
+    const uint32_t hash = seconds * 2654435761u; // Knuth multiplicative hash: noise that repeats for a time
+    t += (float)((int)((hash >> 16) % 161) - 80) / 1000.0f;
+    rh += (float)((int)((hash >> 8) % 81) - 40) / 100.0f;
+    *temperature_c = t < 20.0f ? 20.0f : (t > 26.0f ? 26.0f : t);
+    *humidity_pct = rh < 50.0f ? 50.0f : (rh > 80.0f ? 80.0f : rh);
+}
+
 // Last value written to a Matter attribute, to skip the writes that would only report noise to the controllers.
 struct ReportedValue {
     bool written = false; // nothing written yet

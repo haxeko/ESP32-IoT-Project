@@ -117,6 +117,28 @@ endmenu
 
 menu "ENS160 + AHT21 Sensor"
 
+    config SENSOR_SIMULATED
+        bool "Simulated temperature and humidity (no sensor)"
+        default n
+        help
+            For testing Matter without the module: the I2C bus is not used and
+            the device reports a simulated room, the temperature moving between
+            20 and 26 C (10 minute cycle) and the humidity between 50 and 80 %
+            (15 minute cycle), with a little noise. Only the Temperature Sensor
+            and Humidity Sensor endpoints exist (no Air Quality Sensor).
+            sdkconfig.defaults.simulated turns it on (README). The endpoints
+            differ from the sensor build: remove and add the device again in
+            the apps when switching between the two.
+
+    config SENSOR_AIR_QUALITY
+        bool "Air Quality Sensor endpoint (ENS160)"
+        depends on !SENSOR_SIMULATED
+        default y
+        help
+            Endpoint 3 with the air quality, TVOC and eCO2 of the ENS160. Off:
+            the ENS160 is not used, only the temperature and humidity of the
+            AHT21 are reported.
+
     config SENSOR_PERIOD_SEC
         int "Reading period (seconds)"
         range 2 300
@@ -142,6 +164,7 @@ menu "ENS160 + AHT21 Sensor"
 
     config ENS160_REPORT_WHILE_WARMING_UP
         bool "Send the ENS160 values during its warm-up and initial start-up"
+        depends on SENSOR_AIR_QUALITY
         default n
         help
             The ENS160 flags its values as not valid yet for about 3 minutes
@@ -152,6 +175,7 @@ menu "ENS160 + AHT21 Sensor"
 
     config SENSOR_ECO2_AS_CO2
         bool "Expose the eCO2 of the ENS160 as a CO2 concentration"
+        depends on SENSOR_AIR_QUALITY
         default y
         help
             Adds a Carbon Dioxide Concentration Measurement cluster with the

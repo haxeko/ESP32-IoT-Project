@@ -107,6 +107,12 @@ esp_err_t sensor_endpoints_create(node_t *node)
                         ESP_LOGE(TAG, "Failed to create the humidity endpoint"));
     s_humidity_ep = endpoint::get_id(humidity);
 
+    if (!kSensorAirQuality) {
+        ESP_LOGI(TAG, "Endpoints: %u temperature, %u humidity%s", s_temperature_ep, s_humidity_ep,
+                 kSensorSimulated ? " (simulated values)" : "");
+        return ESP_OK;
+    }
+
     // AirQuality starts Unknown
     air_quality_sensor::config_t air_config;
     endpoint_t *air = air_quality_sensor::create(node, &air_config, ENDPOINT_FLAG_NONE, nullptr);
@@ -179,7 +185,7 @@ static void update_sdk_clusters(const sensor_values_t *v)
     }
 
     const uint8_t quality = v->air_valid ? ens160_aqi_to_air_quality(v->aqi) : 0; // 0: Unknown
-    if (s_air_quality.due(false, quality, 1)) {
+    if (kSensorAirQuality && s_air_quality.due(false, quality, 1)) {
         AirQualityCluster *cluster = air_quality_cluster();
         if (cluster == nullptr) {
             ESP_LOGW(TAG, "Air quality not set: no Air Quality cluster on endpoint %u", s_air_ep);
@@ -216,6 +222,9 @@ void sensor_endpoints_update(const sensor_values_t *values)
         // Waits for the Matter task rather than posting to its event queue, which may be full.
         lock::ScopedChipStackLock lock(portMAX_DELAY);
         update_sdk_clusters(values);
+    }
+    if (!kSensorAirQuality) {
+        return;
     }
     update_concentration(s_tvoc, Tvoc::Id, values->air_valid, values->tvoc_ppb, kTvocMin, kTvocMax, kTvocStep);
 #if CONFIG_SENSOR_ECO2_AS_CO2

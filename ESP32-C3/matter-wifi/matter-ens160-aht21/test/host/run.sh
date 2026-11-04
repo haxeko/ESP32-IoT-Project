@@ -19,9 +19,10 @@ $CXX $FLAGS -o "$OUT/sensors" test_sensors.cpp $MAIN/sensors.cpp $DRIVERS
 $CXX $FLAGS -DCONFIG_SENSOR_TEMPERATURE_OFFSET_TENTHS=-20 -DCONFIG_ENS160_REPORT_WHILE_WARMING_UP=1 \
     -o "$OUT/sensors_offset" test_sensors.cpp $MAIN/sensors.cpp $DRIVERS
 $CXX $FLAGS -DNO_AHT21=1 -o "$OUT/sensors_no_aht21" test_sensors.cpp $MAIN/sensors.cpp $DRIVERS
+$CXX $FLAGS -DCONFIG_SENSOR_SIMULATED=1 -o "$OUT/sensors_simulated" test_sensors.cpp $MAIN/sensors.cpp $DRIVERS
 
 status=0
-for t in sensor_math aht21 ens160 sensors sensors_offset sensors_no_aht21; do
+for t in sensor_math aht21 ens160 sensors sensors_offset sensors_no_aht21 sensors_simulated; do
     "$OUT/$t" "$@" || status=1
 done
 [ $status -eq 0 ] && echo "All host tests passed" || echo "Host tests FAILED"

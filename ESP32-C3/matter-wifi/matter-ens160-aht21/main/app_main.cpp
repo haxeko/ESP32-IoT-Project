@@ -71,7 +71,7 @@ static bool s_ble_released;
 // commissioning too.
 static void sensor_values_cb(const sensor_values_t *values)
 {
-    status_led_set_sensor_error(!values->climate_valid || !values->air_found);
+    status_led_set_sensor_error(!values->climate_valid || (kSensorAirQuality && !values->air_found));
     if (s_matter_started) {
         sensor_endpoints_update(values);
     }

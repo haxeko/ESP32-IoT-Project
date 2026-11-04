@@ -1,0 +1,8 @@
+# Simulated temperature (20-26 C) and humidity (50-80 %) without the sensor module, Temperature Sensor and Humidity
+# Sensor endpoints only (main/Kconfig.projbuild, SENSOR_SIMULATED). Build:
+#   idf.py -B build/simulated -D SDKCONFIG=build/simulated/sdkconfig \
+#          -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.simulated" build
+CONFIG_SENSOR_SIMULATED=y
+CONFIG_DEVICE_HARDWARE_VERSION_STRING="ESP32C3-SIMULATED"
+# Root, Temperature Sensor and Humidity Sensor endpoints
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=3

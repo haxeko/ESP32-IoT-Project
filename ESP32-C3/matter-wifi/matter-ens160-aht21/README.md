@@ -33,6 +33,18 @@ Mức chất lượng không khí lấy thẳng từ chỉ số AQI-UBA (Cơ qua
 
 Đổi cách quy đổi: sửa `ens160_aqi_to_air_quality()` trong `main/drivers/sensor_math.h` (và các feature Fair/Moderate/VeryPoor trong `main/sensor_endpoints.cpp` nếu dùng thêm mức khác).
 
+## Bản giả lập (không cần cảm biến)
+
+Để thử Matter khi chưa có module, `sdkconfig.defaults.simulated` bật `SENSOR_SIMULATED`: firmware không dùng I2C và báo một căn phòng giả lập, **nhiệt độ 20–26 °C** (chu kỳ 10 phút) và **độ ẩm 50–80 %** (chu kỳ 15 phút, ngược chiều nhiệt độ), có chút nhiễu cho giống số đo thật. Chỉ có **endpoint 1 Temperature Sensor** và **endpoint 2 Humidity Sensor**, không có Air Quality Sensor. Phần cứng (Model) hiện `ESP32C3-SIMULATED`, log khởi động ghi `SIMULATED temperature ...`.
+
+```bash
+idf.py -B build/simulated -D IDF_TARGET=esp32c3 -D SDKCONFIG=build/simulated/sdkconfig \
+       -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.simulated" build
+idf.py -B build/simulated -D SDKCONFIG=build/simulated/sdkconfig flash monitor
+```
+
+CI build cả hai bản: artifact `...-sensor` (module ENS160 + AHT21) và `...-simulated`. Hai bản có endpoint khác nhau: khi đổi từ bản này sang bản kia, xóa thiết bị trong ứng dụng rồi thêm lại (nạp file merged ở `0x0` là được ghép nối mới). Bản dùng cảm biến nhưng không cần chất lượng không khí: tắt `SENSOR_AIR_QUALITY` trong `menuconfig`.
+
 ## Phần cứng
 
 - **ESP32-C3 SuperMini** (flash 4 MB). Bo ESP32-C3 khác cũng được: đổi chân trong `menuconfig` → *Board*.
@@ -123,7 +135,7 @@ SuperMini không vào được chế độ nạp: giữ nút **BOOT**, bấm **R
 
 **Phiên bản firmware** = `1.0.<số commit của repo>` (`git rev-list --count HEAD`), hiện trong ứng dụng (mục Firmware), trong log khởi động và là số SoftwareVersion của Matter OTA: commit mới hơn luôn ra số lớn hơn. Clone đầy đủ (không `--depth`) để số đúng.
 
-CI (`.github/workflows/matter-ens160-aht21.yml`) chạy test trên máy tính rồi build bằng đúng Docker image trên, lưu các file nạp vào *Artifacts*.
+CI (`.github/workflows/matter-ens160-aht21.yml`) chạy test trên máy tính rồi build bằng đúng Docker image trên, bản cảm biến (`build/sensor`) và bản giả lập (`build/simulated`), lưu các file nạp vào *Artifacts*.
 
 ## Thêm vào ứng dụng
 
@@ -173,6 +185,8 @@ Ghép nối qua BLE chạy, nhưng log lặp lại `wifi:state: init -> auth` r�
 
 | Tùy chọn | Mặc định | Ý nghĩa |
 |---|---|---|
+| `SENSOR_SIMULATED` | tắt | Nhiệt độ, độ ẩm giả lập, không cần cảm biến (xem [Bản giả lập](#bản-giả-lập-không-cần-cảm-biến)) |
+| `SENSOR_AIR_QUALITY` | bật | Endpoint 3 Air Quality Sensor (ENS160); tắt thì chỉ còn nhiệt độ, độ ẩm của AHT21 |
 | `SENSOR_PERIOD_SEC` | 10 | Chu kỳ đọc cảm biến (2–300 s). AHT21 không nên đo dày hơn 2 s một lần (tự làm nóng) |
 | `SENSOR_TEMPERATURE_OFFSET_TENTHS` | 0 | Bù nhiệt độ, đơn vị 0,1 °C (ví dụ `-15` = −1,5 °C) |
 | `ENS160_REPORT_WHILE_WARMING_UP` | tắt | Gửi giá trị ENS160 cả khi nó đang làm nóng |
@@ -236,7 +250,7 @@ test/host/run.sh          # thêm -v để in log
 | `test_sensor_math.cpp` | CRC-8 của AHT21 (giá trị chuẩn của CRC-8/NRSC-5), giải mã khung 7 byte, TEMP_IN/RH_IN của ENS160, quy đổi AQI-UBA, giới hạn giá trị Matter, độ ẩm sau khi bù nhiệt, ngưỡng gửi |
 | `test_aht21.cpp` | Khởi tạo thanh ghi 0x1B/0x1C/0x1E khi status khác 0x18, lệnh hiệu chuẩn của AHT20 đời đầu, chờ đủ 10 ms sau khởi tạo và 80 ms khi đo dù tick FreeRTOS là 10 ms, đo lâu, CRC hỏng, mất hiệu chuẩn, rút dây |
 | `test_ens160.cpp` | Khởi động từ deep sleep (idle → phiên bản firmware → standard), sai part ID (log một lần), ENS161, địa chỉ 0x52, giữ nguyên cảm biến đang đo khi ESP32 khởi động lại, reset, ghi bù trừ, cờ NEWDAT |
-| `test_sensors.cpp` (3 bản build) | Làm nóng, rút/cắm lại AHT21, khung lỗi đơn lẻ, AHT21 hỏng không hiệu chuẩn được (giá trị cũ không bị giữ mãi), ENS160 treo rồi được reset, cờ lỗi STATER, output không hợp lệ, dòng log, offset −2 °C và gửi khi đang làm nóng, không có AHT21 từ đầu |
+| `test_sensors.cpp` (4 bản build) | Làm nóng, rút/cắm lại AHT21, khung lỗi đơn lẻ, AHT21 hỏng không hiệu chuẩn được (giá trị cũ không bị giữ mãi), ENS160 treo rồi được reset, cờ lỗi STATER, output không hợp lệ, dòng log, offset −2 °C và gửi khi đang làm nóng, không có AHT21 từ đầu, bản giả lập (2 giờ trong 20–26 °C / 50–80 %, không dùng I2C) |
 
 Phần Matter, Wi-Fi và BLE phải thử trên bo thật.
 

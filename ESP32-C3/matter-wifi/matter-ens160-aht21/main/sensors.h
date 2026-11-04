@@ -15,8 +15,21 @@
 #pragma once
 
 #include <esp_err.h>
+#include <sdkconfig.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+// Kconfig leaves a bool option undefined when it is off.
+#if CONFIG_SENSOR_SIMULATED
+constexpr bool kSensorSimulated = true; // simulated temperature and humidity, no I2C
+#else
+constexpr bool kSensorSimulated = false;
+#endif
+#if CONFIG_SENSOR_AIR_QUALITY
+constexpr bool kSensorAirQuality = true; // ENS160 read, Air Quality Sensor endpoint
+#else
+constexpr bool kSensorAirQuality = false;
+#endif
 
 typedef struct {
     // AHT21. Not valid: not found, or no answer (the values below are not set).
