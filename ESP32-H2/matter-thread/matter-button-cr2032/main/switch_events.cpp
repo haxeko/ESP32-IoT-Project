@@ -168,6 +168,7 @@ static void handle_gesture(intptr_t packed)
     const auto count = static_cast<uint8_t>((packed >> 8) & 0xFF);
     const auto action = static_cast<ButtonAction>((packed >> 16) & 0xFF);
 
+    battery_note_activity(); // the report and the active mode load the cell: no rest reading right after
     if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
         handle_uncommissioned(type, count, action);
         return;

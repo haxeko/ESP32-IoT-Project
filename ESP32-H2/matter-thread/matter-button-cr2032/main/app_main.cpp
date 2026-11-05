@@ -140,6 +140,7 @@ static void commissioning_state_update()
     chip::Server &server = chip::Server::GetInstance();
     const bool open = server.GetCommissioningWindowManager().IsCommissioningWindowOpen();
     status_led_set(LedMode::PairingWindow, open);
+    battery_set_busy(BatteryBusy::CommissioningWindow, open); // BLE and fast polling: no rest reading meanwhile
     if (open && server.GetFabricTable().FabricCount() == 0) {
         thread_diag_start();
     } else {
@@ -172,6 +173,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kThreadConnectivityChange:
+        battery_note_activity(); // an attach (or a lost parent) comes with seconds of receiving
 #if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
         if (event->ThreadConnectivityChange.Result == chip::DeviceLayer::kConnectivity_Established) {
             s_ota_attached_since = esp_timer_get_time();
@@ -230,6 +232,8 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 
 #if CONFIG_ENABLE_OTA_REQUESTOR
     case chip::DeviceLayer::DeviceEventType::kOtaStateChanged:
+        battery_set_busy(BatteryBusy::OtaDownload,
+                         event->OtaStateChanged.newState == chip::DeviceLayer::kOtaDownloadInProgress);
         // A download keeps the radio and the flash busy for minutes: not on a weak cell
         if (event->OtaStateChanged.newState == chip::DeviceLayer::kOtaDownloadInProgress && !battery_ota_allowed()) {
             ESP_LOGW(TAG, "OTA download cancelled: battery level not OK");

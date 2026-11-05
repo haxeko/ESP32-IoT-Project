@@ -17,11 +17,13 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <nvs.h>
 
 #include <app/clusters/power-source-server/power-source-server.h>
 #include <lib/support/CodeUtils.h>
 #include <platform/CHIPDeviceLayer.h>
 
+#include "battery_report.h"
 #include "button.h"
 #include "status_led.h"
 
@@ -34,17 +36,25 @@ static constexpr int k_samples = 16;
 static constexpr uint32_t k_rtc_magic = 0x42415454; // "BATT"
 // A rest voltage change smaller than this is not reported again (ADC noise, temperature)
 static constexpr uint32_t k_report_step_mv = 20;
+// A stable run this long clears the brownout counter of the boot guard
+static constexpr uint32_t k_stable_run_ms = 120 * 1000;
+// Rest readings wait for a quiet radio: rechecked this often while busy, taken anyway after the longest wait (a low
+// reading then only counts towards the drop confirmation)
+static constexpr uint32_t k_quiet_ms = CONFIG_BATTERY_QUIET_MIN * 60 * 1000;
+static constexpr uint32_t k_busy_recheck_ms = 60 * 1000;
+static constexpr uint32_t k_max_quiet_wait_ms = 2 * 3600 * 1000;
 
-// Coarse CR2032 state of charge from the rest voltage at ~30 uA, 25 degC, in Matter half-percent units.
-// ASSUMPTION derived from the Energizer CR2032 discharge curves (flat ~2.9-3.0 V plateau, then a knee):
-// calibrate with a real discharge (README, battery test). The level (OK/Warning/Critical) does not use it.
-struct SocPoint {
-    uint16_t mv;
+// The last reported values, kept in NVS across battery changes: version, half-percent, level, rest mV
+static constexpr char k_nvs_namespace[] = "battery";
+static constexpr char k_nvs_key[] = "reported";
+struct SavedReport {
+    uint8_t version;
     uint8_t half_percent;
+    uint8_t level;
+    uint8_t reserved;
+    uint32_t mv;
 };
-static constexpr SocPoint k_soc[] = {
-    {3000, 200}, {2950, 170}, {2900, 130}, {2850, 90}, {2800, 60}, {2750, 40}, {2700, 25}, {2600, 10}, {2400, 0},
-};
+static constexpr uint8_t k_saved_version = 1;
 
 static adc_unit_t s_unit = ADC_UNIT_1;
 static adc_channel_t s_chan = ADC_CHANNEL_0;
@@ -55,12 +65,20 @@ static esp_pm_lock_handle_t s_cpu_max_lock = nullptr;
 #endif
 
 // Written by the battery task (and app_main before it starts), read anywhere: 32-bit values, no tearing
-static volatile uint32_t s_boot_mv = 0;  // at boot, CPU running (loaded)
-static volatile uint32_t s_rest_mv = 0;  // last rest measurement
+static volatile uint32_t s_boot_mv = 0;  // at boot, CPU running (loaded): boot guard only, never reported
+static volatile uint32_t s_rest_mv = 0;  // reported rest voltage, 0 = nothing reported yet
 static volatile uint32_t s_burst_mv = 0; // last predicted voltage at a radio burst, 0 = not tested yet
 static volatile BatteryLevel s_level = BatteryLevel::Ok;
 static volatile uint8_t s_half_percent = 200;
 static TaskHandle_t s_task = nullptr;
+
+// Battery task (and app_main before it starts)
+static BatteryReport s_report(CONFIG_BATTERY_DROP_CONFIRM_COUNT);
+static SavedReport s_saved = {};
+
+// Radio activity that loads the cell: written on the CHIP task, read by the battery task (32-bit values)
+static volatile uint32_t s_busy = 0;        // bit per BatteryBusy
+static volatile uint32_t s_activity_ms = 0; // last start or end of a busy period, or a short burst; 0 = boot
 
 // Survives software, panic and Deep-sleep resets (not power-on); maybe not a brownout reset on every chip
 static RTC_NOINIT_ATTR uint32_t s_rtc_magic;
@@ -132,22 +150,6 @@ static esp_err_t read_vbat_mv(uint32_t &mv)
     return ESP_OK;
 }
 
-static uint8_t soc_from_rest(uint32_t mv)
-{
-    if (mv >= k_soc[0].mv) {
-        return k_soc[0].half_percent;
-    }
-    for (size_t i = 1; i < sizeof(k_soc) / sizeof(k_soc[0]); i++) {
-        if (mv >= k_soc[i].mv) {
-            const SocPoint &hi = k_soc[i - 1];
-            const SocPoint &lo = k_soc[i];
-            return static_cast<uint8_t>(lo.half_percent + (mv - lo.mv) * (hi.half_percent - lo.half_percent) /
-                                                              (hi.mv - lo.mv));
-        }
-    }
-    return 0;
-}
-
 static BatteryLevel level_from(uint32_t rest_mv, uint32_t burst_mv)
 {
     BatteryLevel level = BatteryLevel::Ok;
@@ -206,7 +208,7 @@ static void publish_work(intptr_t)
             last_mv = mv;
         }
     }
-    if (half_percent != last_half_percent) {
+    if (mv && half_percent != last_half_percent) { // mv 0: nothing reported yet, the percentage stays null
         esp_matter_attr_val_t val = esp_matter_nullable_uint8(nullable<uint8_t>(half_percent));
         if (attribute::update(chip::kRootEndpointId, PowerSource::Id,
                               PowerSource::Attributes::BatPercentRemaining::Id, &val) == ESP_OK) {
@@ -225,6 +227,90 @@ static void publish_work(intptr_t)
     }
 }
 
+static const char *level_name(BatteryLevel level)
+{
+    return level == BatteryLevel::Ok ? "OK" : level == BatteryLevel::Warning ? "WARNING" : "CRITICAL";
+}
+
+/* NVS (after nvs_flash_init()): the values reported before the battery was taken out */
+static void restore_saved()
+{
+    nvs_handle_t nvs;
+    if (nvs_open(k_nvs_namespace, NVS_READONLY, &nvs) != ESP_OK) {
+        ESP_LOGI(TAG, "No saved battery values: BatPercentRemaining unknown until the first rest reading");
+        return;
+    }
+    SavedReport saved = {};
+    size_t size = sizeof(saved);
+    const esp_err_t err = nvs_get_blob(nvs, k_nvs_key, &saved, &size);
+    nvs_close(nvs);
+    if (err != ESP_OK || size != sizeof(saved) || saved.version != k_saved_version || saved.mv == 0 ||
+        saved.half_percent > 200 || saved.level > static_cast<uint8_t>(BatteryLevel::Critical)) {
+        ESP_LOGI(TAG, "No saved battery values: BatPercentRemaining unknown until the first rest reading");
+        return;
+    }
+    s_saved = saved;
+    s_report.Restore(saved.mv, saved.half_percent);
+    s_rest_mv = saved.mv;
+    s_half_percent = saved.half_percent;
+    s_level = static_cast<BatteryLevel>(saved.level);
+    ESP_LOGI(TAG, "Last reported %" PRIu32 " mV, %u %%, level %s: kept until a rest reading", saved.mv,
+             saved.half_percent / 2, level_name(s_level));
+}
+
+/* Battery task: write the reported values when they changed (a few times a year on a draining cell) */
+static void save_reported()
+{
+    const SavedReport now = {k_saved_version, s_half_percent, static_cast<uint8_t>(s_level), 0, s_rest_mv};
+    const uint32_t mv_diff = now.mv > s_saved.mv ? now.mv - s_saved.mv : s_saved.mv - now.mv;
+    if (s_saved.version == k_saved_version && now.half_percent == s_saved.half_percent &&
+        now.level == s_saved.level && mv_diff < k_report_step_mv) {
+        return;
+    }
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(k_nvs_namespace, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(nvs, k_nvs_key, &now, sizeof(now));
+        if (err == ESP_OK) {
+            err = nvs_commit(nvs);
+        }
+        nvs_close(nvs);
+    }
+    if (err == ESP_OK) {
+        s_saved = now;
+    } else {
+        ESP_LOGW(TAG, "Battery values not saved: %s", esp_err_to_name(err));
+    }
+}
+
+static uint32_t now_ms()
+{
+    return static_cast<uint32_t>(esp_timer_get_time() / 1000);
+}
+
+/* Until no commissioning window or OTA download is running and nothing has loaded the cell (boot, Thread attach,
+ * button report) for CONFIG_BATTERY_QUIET_MIN: a CR2032 takes minutes to recover from the 25-40 mA bursts, a
+ * reading taken earlier is too low. Gives up after k_max_quiet_wait_ms of activity. */
+static void wait_quiet()
+{
+    const uint32_t start = now_ms();
+    for (;;) {
+        const uint32_t activity = s_activity_ms; // before now_ms(): never "in the future"
+        const uint32_t busy = s_busy;
+        const uint32_t now = now_ms();
+        const uint32_t quiet = now - activity;
+        if (!busy && quiet >= k_quiet_ms) {
+            return;
+        }
+        if (now - start >= k_max_quiet_wait_ms) {
+            ESP_LOGW(TAG, "Radio busy for %" PRIu32 " min: rest reading taken anyway", (now - start) / 60000);
+            return;
+        }
+        // Light-sleep friendly: the task timeout is the only wakeup
+        vTaskDelay(pdMS_TO_TICKS(busy ? k_busy_recheck_ms : k_quiet_ms - quiet));
+    }
+}
+
 static void measure(bool load_test)
 {
     uint32_t rest_mv = 0;
@@ -233,35 +319,55 @@ static void measure(bool load_test)
         ESP_LOGW(TAG, "ADC error %s", esp_err_to_name(err));
         return;
     }
-    s_rest_mv = rest_mv;
-    s_half_percent = soc_from_rest(rest_mv);
     if (load_test) {
         health_test(rest_mv);
     }
-    const BatteryLevel level = level_from(rest_mv, s_burst_mv);
+    // Same or higher percentage: reported now; lower: only once CONFIG_BATTERY_DROP_CONFIRM_COUNT readings in a
+    // row are lower (battery_report.h). The level follows the reported rest voltage and the latest burst test.
+    s_report.OnReading(rest_mv);
+    s_rest_mv = s_report.ReportedMv();
+    s_half_percent = s_report.ReportedHalfPercent();
+    const BatteryLevel level = level_from(s_rest_mv, s_burst_mv);
     if (level != s_level) {
-        ESP_LOGW(TAG, "Battery level %s -> %s", s_level == BatteryLevel::Ok ? "OK" : s_level == BatteryLevel::Warning ? "WARNING" : "CRITICAL",
-                 level == BatteryLevel::Ok ? "OK" : level == BatteryLevel::Warning ? "WARNING" : "CRITICAL");
+        ESP_LOGW(TAG, "Battery level %s -> %s", level_name(s_level), level_name(level));
     }
     s_level = level;
-    ESP_LOGI(TAG, "VBAT rest %" PRIu32 " mV (~%u %%), level %u", rest_mv, s_half_percent / 2, static_cast<unsigned>(level));
+    if (s_report.PendingLower()) {
+        ESP_LOGI(TAG, "VBAT rest %" PRIu32 " mV (~%u %%): lower than the reported %" PRIu32 " mV (~%u %%), %u/%d in a "
+                      "row, next reading in %d min", rest_mv, battery_soc_from_rest(rest_mv) / 2, s_rest_mv,
+                 s_half_percent / 2, s_report.PendingLower(), CONFIG_BATTERY_DROP_CONFIRM_COUNT,
+                 CONFIG_BATTERY_CONFIRM_INTERVAL_MIN);
+    } else {
+        ESP_LOGI(TAG, "VBAT rest %" PRIu32 " mV, reported %" PRIu32 " mV (~%u %%), level %s", rest_mv, s_rest_mv,
+                 s_half_percent / 2, level_name(level));
+    }
+    save_reported();
     LogErrorOnFailure(chip::DeviceLayer::PlatformMgr().ScheduleWork(publish_work));
 }
 
 static void battery_task(void *)
 {
-    // First rest reading once the start-up activity (Thread attach, CASE, reports) has settled
-    vTaskDelay(pdMS_TO_TICKS(CONFIG_BATTERY_FIRST_MEASURE_DELAY_S * 1000));
-    measure(true);
-    // A stable run clears the brownout counter of the boot guard
+    vTaskDelay(pdMS_TO_TICKS(k_stable_run_ms));
     s_rtc_brownouts = 0;
+
+    // First rest reading once the start-up activity (Thread attach, CASE, reports, a commissioning window) is over
+    wait_quiet();
+    measure(true);
 
     const uint32_t measure_s = CONFIG_BATTERY_MEASURE_INTERVAL_H * 3600;
     const uint32_t tests_every = CONFIG_BATTERY_TEST_INTERVAL_H / CONFIG_BATTERY_MEASURE_INTERVAL_H;
     uint32_t round = 0;
     for (;;) {
+        if (s_report.PendingLower()) {
+            // Confirming a lower reading: sooner than the regular interval, no load test
+            vTaskDelay(pdMS_TO_TICKS(CONFIG_BATTERY_CONFIRM_INTERVAL_MIN * 60 * 1000ULL));
+            wait_quiet();
+            measure(false);
+            continue;
+        }
         // Light-sleep friendly: the task timeout is the only wakeup (twice a day by default)
         vTaskDelay(pdMS_TO_TICKS(measure_s * 1000ULL));
+        wait_quiet();
         round++;
         measure(tests_every > 0 && round % tests_every == 0);
     }
@@ -287,12 +393,10 @@ void battery_init(void)
     esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "battery", &s_no_sleep_lock);
     esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "battery_load", &s_cpu_max_lock);
 #endif
+    // Loaded (CPU running, C9 still charging after a battery change): for the boot guard only, never reported
     uint32_t mv = 0;
     if (read_vbat_mv(mv) == ESP_OK) {
         s_boot_mv = mv;
-        s_rest_mv = mv; // until the first rest reading
-        s_half_percent = soc_from_rest(mv);
-        s_level = level_from(mv, 0);
         ESP_LOGI(TAG, "VBAT at boot (CPU running) %" PRIu32 " mV", mv);
     }
 }
@@ -336,6 +440,8 @@ void battery_boot_guard(void)
 
 esp_err_t battery_create_power_source(node_t *node)
 {
+    // Initial values: the ones reported before the battery was taken out, not the loaded boot reading
+    restore_saved();
     endpoint_t *root = endpoint::get(node, chip::kRootEndpointId);
     if (!root) {
         return ESP_ERR_INVALID_STATE;
@@ -391,7 +497,8 @@ static void register_work(intptr_t)
 void battery_start(void)
 {
     LogErrorOnFailure(chip::DeviceLayer::PlatformMgr().ScheduleWork(register_work));
-    if (xTaskCreate(battery_task, "battery", 3072, nullptr, tskIDLE_PRIORITY + 1, &s_task) != pdPASS) {
+    // 4 KB: ADC, NVS writes and logging
+    if (xTaskCreate(battery_task, "battery", 4096, nullptr, tskIDLE_PRIORITY + 1, &s_task) != pdPASS) {
         ESP_LOGE(TAG, "Failed to start the battery task");
     }
 }
@@ -409,4 +516,20 @@ uint32_t battery_rest_mv(void)
 bool battery_ota_allowed(void)
 {
     return s_level == BatteryLevel::Ok;
+}
+
+void battery_set_busy(BatteryBusy what, bool busy)
+{
+    const uint32_t bit = 1u << static_cast<unsigned>(what);
+    const uint32_t before = s_busy;
+    const uint32_t after = busy ? (before | bit) : (before & ~bit);
+    if (after != before) {
+        s_busy = after;
+        s_activity_ms = now_ms();
+    }
+}
+
+void battery_note_activity(void)
+{
+    s_activity_ms = now_ms();
 }

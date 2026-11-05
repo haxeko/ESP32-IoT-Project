@@ -213,6 +213,12 @@ VBAT ──R9 1 MΩ──┬── GPIO1 (ADC1_CH0, ATTEN 12 dB, 0..3,3 V)
 
 Ngoài ra `BatVoltage` (mV) và `BatPercentRemaining` (bảng áp nghỉ → %, ước lượng [AS], hiệu chỉnh bằng một lần xả pin thật). Ngưỡng là [AS], hiệu chỉnh theo phép đo ở checklist (mục I).
 
+**Cách báo số liệu** (CR2032 đọc thấp vài phút sau mỗi đợt dòng radio):
+
+- **Không báo số đo lúc khởi động.** Số đo này có tải (CPU chạy, C9 còn đang nạp) và chỉ dùng cho boot guard. Sau khi thay hoặc lắp lại pin, thiết bị báo lại **giá trị đã báo lần trước** (lưu trong NVS, factory reset không xoá) cho tới lần đo nghỉ đầu tiên; lần đầu dùng (chưa lưu gì) thì `BatPercentRemaining` để trống.
+- **Chỉ đo nghỉ khi radio đã yên**: không có cửa sổ ghép nối, không tải OTA, và đã **10 phút** (`BATTERY_QUIET_MIN`) không có khởi động, nối mạng Thread hay lần nhấn nào. Hoạt động kéo dài quá 2 giờ thì vẫn đo.
+- **% tăng thì báo ngay** (pin hồi, pin mới); **% giảm chỉ được báo khi 3 lần đo nghỉ liên tiếp đều thấp hơn** (`BATTERY_DROP_CONFIRM_COUNT`), và báo giá trị cao nhất trong 3 lần đó. Trong lúc chờ xác nhận, thiết bị đo lại mỗi **60 phút** (`BATTERY_CONFIRM_INTERVAL_MIN`) thay vì 12 giờ, nên pin yếu thật hiện ra sau ~2 giờ. Mức pin (OK/Warning/Critical) đi theo áp nghỉ đã báo và lần đo có tải mới nhất. Logic nằm ở `main/battery_report.cpp` (có host test).
+
 ### 2.6 Ngân sách dòng rò (25 °C)
 
 | Nguồn | Giá trị | Nguồn số liệu |
@@ -598,13 +604,14 @@ matter-button-cr2032/
 │   ├── button.h/.cpp               driver nút: ngắt mức + EXT1, debounce theo hạn, task
 │   ├── switch_events.h/.cpp        cử chỉ → sự kiện Matter Switch, ghép nối, factory reset
 │   ├── power.h/.cpp                esp_pm, công suất phát, child timeout/supervision, chính sách mất mạng, LIT/SIT
-│   ├── battery.h/.cpp              đo pin, đo điện trở trong, cluster Power Source, boot guard
+│   ├── battery.h/.cpp              đo pin, đo điện trở trong, cluster Power Source, boot guard, lưu giá trị đã báo (NVS)
+│   ├── battery_report.h/.cpp       khi nào % pin tăng/giảm (thuần C++17, có host test)
 │   ├── status_led.h/.cpp           LED nháy ngắn (LED thường, hoặc LED RGB WS2812B qua RMT có cắt nguồn), khoá Light-sleep chỉ khi LED sáng
 │   ├── device_info.h/.cpp          nhà sản xuất, model, phần cứng, serial = MAC eFuse
 │   ├── setup_code.h/.cpp           in QR; mã ghép nối riêng từng bo (unique_setup)
 │   ├── identity_diag.h/.cpp        log id_diag: danh tính, Thread, SRP, fabric, subscription
 │   └── thread_diag.h/.cpp          log Thread/SRP khi chưa ghép nối
-├── test/host/                      host test máy trạng thái nút (17 kịch bản, chỉ cần g++)
+├── test/host/                      host test máy trạng thái nút (17 kịch bản) và cách báo % pin, chỉ cần g++
 ├── tools/battery_model.py          mô hình pin (bảng mục 9)
 ├── tools/schematic.py              vẽ sơ đồ nguyên lý (schemdraw) → docs/schematic.svg / .png
 └── docs/                           schematic.svg / .png (sơ đồ nguyên lý), test-checklist.md
@@ -628,7 +635,7 @@ matter-button-cr2032/
 
 ### 7.4 Pin yếu
 
-Mục [2.5](#25-đo-pin-gần-như-không-tốn-dòng). Tóm tắt: Power Source (`BatVoltage`, `BatPercentRemaining`, `BatChargeLevel`, `BatReplacementNeeded`, `BatIECDesignation` = "CR2032", `BatApprovedChemistry` = LiMnO2, `BatCapacity` = 220 mAh); LED nháy 2 lần sau mỗi cử chỉ khi pin không OK; huỷ tải OTA khi pin không OK (`CancelImageUpdate()`); Deep-sleep khi khởi động với pin quá yếu. Thuộc tính chỉ được cập nhật khi đổi ≥ 20 mV để không sinh report thừa.
+Mục [2.5](#25-đo-pin-gần-như-không-tốn-dòng). Tóm tắt: số đo lúc khởi động không được báo (sau khi lắp lại pin báo giá trị lần trước, lưu trong NVS); đo nghỉ khi radio đã yên 10 phút; % giảm chỉ khi 3 lần đo liên tiếp đều thấp. Power Source (`BatVoltage`, `BatPercentRemaining`, `BatChargeLevel`, `BatReplacementNeeded`, `BatIECDesignation` = "CR2032", `BatApprovedChemistry` = LiMnO2, `BatCapacity` = 220 mAh); LED nháy 2 lần sau mỗi cử chỉ khi pin không OK; huỷ tải OTA khi pin không OK (`CancelImageUpdate()`); Deep-sleep khi khởi động với pin quá yếu. Thuộc tính chỉ được cập nhật khi đổi ≥ 20 mV để không sinh report thừa.
 
 ### 7.5 Factory reset
 
@@ -665,6 +672,7 @@ Matter OTA Requestor, hỏi provider **1 lần/ngày** (`APP_OTA_QUERY_INTERVAL_
 | `APP_OTA_QUERY_INTERVAL_H` | 24 | chu kỳ hỏi OTA |
 | *Battery* `BATTERY_SENSE_GPIO`, `BATTERY_SENSE_RATIO_X1000` | 1, 1000 | chân đo, tỷ lệ chia (1000 = không chia) |
 | `BATTERY_MEASURE_INTERVAL_H` / `BATTERY_TEST_INTERVAL_H` / `BATTERY_TEST_LOAD_MS` | 12 / 24 / 500 | đo nghỉ, đo có tải |
+| `BATTERY_QUIET_MIN` / `BATTERY_DROP_CONFIRM_COUNT` / `BATTERY_CONFIRM_INTERVAL_MIN` | 10 / 3 / 60 | radio phải yên bao lâu trước khi đo nghỉ; số lần đo thấp liên tiếp để % giảm (1 = báo mọi lần); chu kỳ đo xác nhận |
 | `BATTERY_WARNING_REST_MV` / `CRITICAL_REST_MV` / `WARNING_BURST_MV` / `CRITICAL_BURST_MV` | 2750 / 2600 / 2200 / 1950 | ngưỡng mức pin |
 | `BATTERY_BOOT_MIN_MV`, `BATTERY_BROWNOUT_LIMIT`, `BATTERY_RECOVERY_SLEEP_S` | 2200, 3, 3600 | boot guard |
 | *Status LED* `STATUS_LED_GPIO` / `STATUS_LED_PRESS_FEEDBACK` | 22 / n | −1 = không có LED; nháy 20 ms mỗi lần nhấn |
@@ -677,6 +685,7 @@ Matter OTA Requestor, hỏi provider **1 lần/ngày** (`APP_OTA_QUERY_INTERVAL_
 ```bash
 test/host/run.sh      # g++ -std=gnu++17 -Wall -Wextra -Werror; 17 kịch bản: đơn, đúp, ba, giữ, 999 ms, giữ 12/25/45 s,
                       # nhiễu, nhả sát mốc 1 s, poll trễ, nút đang giữ lúc khởi động, tắt nhấn đúp, ...
+                      # + cách báo % pin: giữ giá trị đã lưu, tăng báo ngay, giảm sau 3 lần đo thấp liên tiếp
 ```
 
 ---

@@ -201,10 +201,32 @@ menu "Battery"
         int "Nominal capacity (mAh), Power Source BatCapacity"
         default 220
 
-    config BATTERY_FIRST_MEASURE_DELAY_S
-        int "First rest measurement after boot (s)"
-        range 10 3600
-        default 120
+    config BATTERY_QUIET_MIN
+        int "Quiet radio time before a rest reading (min)"
+        range 1 120
+        default 10
+        help
+            A rest reading waits until no commissioning window or OTA download is running and nothing has loaded
+            the cell (boot, Thread attach, button report) for this long: a CR2032 reads low for minutes after
+            the 25-40 mA bursts. After a battery change the values reported before (saved in NVS) are shown until
+            this first reading; the boot reading only feeds the boot guard.
+
+    config BATTERY_DROP_CONFIRM_COUNT
+        int "Lower rest readings in a row before the reported percentage drops"
+        range 1 10
+        default 3
+        help
+            A reading giving the same or a higher percentage (recovered or new cell) is reported at once. A lower
+            one is reported only once this many readings in a row are lower, as the highest of them. 1: every
+            reading is reported (tests with a bench supply).
+
+    config BATTERY_CONFIRM_INTERVAL_MIN
+        int "Interval of the readings confirming a lower one (min)"
+        range 10 720
+        default 60
+        help
+            Instead of BATTERY_MEASURE_INTERVAL_H while a lower reading waits for its confirmation: with the
+            defaults a real drop shows ~2 h after the first lower reading.
 
     config BATTERY_MEASURE_INTERVAL_H
         int "Rest voltage measurement interval (hours)"

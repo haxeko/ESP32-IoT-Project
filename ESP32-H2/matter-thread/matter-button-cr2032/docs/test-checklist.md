@@ -132,7 +132,7 @@ Nguồn DC + điện trở nối tiếp vào cọc pin, thay cho CR2032:
 
 | # | Bước (mỗi điểm) | Đạt khi | Kết quả |
 |---|---|---|---|
-| I1 | Khởi động, chờ đo pin đầu tiên (2 phút), đọc log `battery: Load test ...` và `BatChargeLevel` trên HA | mức pin chuyển **Warning trước điểm đầu tiên có brownout** | |
+| I1 | Khởi động, chờ đo pin đầu tiên (≥ 12 phút: radio yên 10 phút), đọc log `battery: Load test ...` và `BatChargeLevel` trên HA. Build test với `CONFIG_BATTERY_DROP_CONFIRM_COUNT=1`, nếu không mỗi bước hạ áp chỉ hiện sau 3 lần đo (~2 giờ) | mức pin chuyển **Warning trước điểm đầu tiên có brownout** | |
 | I2 | 20 lần nhấn | không reset ở I-a … I-d | |
 | I3 | Re-attach (tắt/bật Border Router) | thành công ở I-a … I-c; ghi lại kết quả I-d | |
 | I4 | Khởi động ở I-f | log `Battery too weak ... Deep-sleep`; ≤ 3 brownout liên tiếp rồi ngủ; nhấn nút thử lại được | |
