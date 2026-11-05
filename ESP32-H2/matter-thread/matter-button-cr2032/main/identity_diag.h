@@ -15,6 +15,7 @@
  *   - Matter: commissioned, commissioning window, fail-safe, sessions, subscriptions, and per fabric:
  *     fabric index, node ID, fabric ID, compressed fabric ID, controller vendor ID, label
  *   - NVS usage (entries per namespace, never values)
+ *   - esp_pm locks (active counts; hold times and the Light-sleep share with CONFIG_PM_PROFILING)
  * Never logged: setup passcode, DAC / operational private keys, IPK, Thread network key, PSKc.
  *
  * Locks: CHIP data is copied with the CHIP stack lock held, OpenThread data with the OpenThread lock held,

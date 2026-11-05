@@ -119,6 +119,18 @@ menu "Power and Thread"
         help
             Off only for debugging with a console (the UART cannot wake the chip).
 
+    config APP_UNCOMMISSIONED_DEEP_SLEEP
+        bool "Deep-sleep while not commissioned and no commissioning window is open"
+        depends on !BUTTON_INTERNAL_PULLUP
+        default y
+        help
+            esp-matter keeps the BLE controller initialised until the device has a fabric, and with the main XTAL as
+            the BLE low-power clock (CONFIG_BT_LE_LP_CLK_SRC_MAIN_XTAL: the module board has no 32 kHz crystal)
+            Light-sleep then draws ~4 mA instead of ~25 uA (ESP-IDF nimble power_save README, ESP32-H2): a quarter
+            of a CR2032 per night for a device nobody paired. With this option the device goes to Deep-sleep (~7 uA)
+            60 s after its commissioning window closed without a commissioning; a press (EXT1 wake, external
+            pull-up) restarts it into a normal boot with a new 15 min window. Off (debug build): stays awake.
+
     config THREAD_TX_POWER_DBM
         int "802.15.4 TX power (dBm)"
         range -24 20

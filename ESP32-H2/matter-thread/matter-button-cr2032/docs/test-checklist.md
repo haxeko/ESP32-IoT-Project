@@ -26,7 +26,7 @@ Log: UART0 115200 baud (TP3/TP4). Các dòng log được nhắc tới: `id_diag
 | B1 | Lắp pin ngược chiều | không có dòng (< 1 µA), không nóng; lắp đúng chạy bình thường | |
 | B2 | Đo 3V3 (TP1) lúc nghỉ và lúc phát | 3,30 V ± 2 %, sụt < 100 mV khi phát | |
 | B3 | Kiểm tra TPS63900 đọc đúng cấu hình: cấp 2,0 V và 3,2 V vào cọc pin | 3V3 vẫn 3,30 V ở cả hai mức | |
-| B4 | **Rò khi chip tắt**: nối TP5 (EN) xuống GND, đo ở JP1 sau 5 phút có áp (tụ MLCC cần thời gian ổn định) | ≤ 2 µA tổng (≈ 1 µA module tắt [DS] + 75 nA TPS63900 + rò tụ). Nếu lớn hơn: tháo C1/C2 đo lại để tách rò tụ | |
+| B4 | **Rò của mạch nguồn**: đo ở JP1 sau 5 phút có áp (tụ MLCC cần thời gian ổn định) **trước khi hàn module U1** (đầu ra 3,3 V chỉ còn C5, C6, R4, R5, R6, R9 không tải). Bo đã hàn module: nối TP5 (EN) xuống GND thì R4 10 kΩ (và điện trở kéo lên EN bên trong module, nếu có) dẫn ~0,33–0,7 mA, phải trừ đi, không đọc trực tiếp được | ≤ 2 µA tổng (75 nA TPS63900 + rò tụ + ~1 µA module tắt [DS]). Nếu lớn hơn: tháo C1/C2 đo lại để tách rò tụ | |
 | B5 | Rò riêng tụ bulk (tháo U2, cấp 3,0 V vào VBAT) | ≤ 0,5 µA sau 5 phút [AS]; ghi số đo vào `I_LEAK` | |
 | B6 | Lắp pin mới: dòng xung nạp tụ bulk | không reset lặp, khởi động trong < 1 s | |
 | B7 | Nạp firmware qua UART (tự reset hoặc BOOT/EN bằng tay) | `esptool` nạp và verify được | |
@@ -94,7 +94,8 @@ PPK2/Joulescope ở JP1 (phía pin, nguồn 3,0 V) và ở JP2 (phía 3,3 V). Đ
 | F8 | Dòng khi đang giữ nút 30 s | sàn + ~3,3 µA (qua R6), chip vẫn ngủ | |
 | F9 | Dòng khi cửa sổ ghép nối mở (đã ghép, giữ 10 s) | poll 200 ms; ghi lại; trở về sàn khi đóng cửa sổ | |
 | F10 | Đo pin có tải hằng ngày | xung CPU 500 ms ~10 mA, log `battery: Load test ...` | |
-| F11 | Thiết bị **chưa ghép**, sau khi cửa sổ BLE 15 phút đã đóng | chỉ còn dòng sàn, không có lần thức 10 s (log `thread_diag: Thread diagnostics stopped`) | |
+| F11 | Thiết bị **chưa ghép**, sau khi cửa sổ BLE 15 phút đã đóng | log `thread_diag: Thread diagnostics stopped`, ~60 s sau `power: Not commissioned ... Deep-sleep`; dòng ở JP1 ≤ 10 µA (Deep-sleep 7 µA + rò); nhấn nút → khởi động lại, cửa sổ mới. Với `APP_UNCOMMISSIONED_DEEP_SLEEP=n` (debug) bản module ở Light-sleep tốn ~4 mA (BLE còn bật, thạch anh 32 MHz chạy) | |
+| F12 | Bản `pmdiag`: đọc khối `id_diag` (10 phút/lần), các dòng `pm` | `Light sleep` chiếm ≥ 95 % thời gian khi không thao tác; không khoá nào `active` ngoài lúc đo/LED (xem cột active, time) | |
 
 ## G. Dòng đỉnh khi phát
 

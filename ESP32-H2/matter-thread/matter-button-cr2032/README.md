@@ -593,6 +593,7 @@ matter-button-cr2032/
 ├── sdkconfig.defaults.unique_setup mã ghép nối riêng từng bo
 ├── sdkconfig.defaults.factory      factory data (DAC riêng từng bo) từ esp-matter-mfg-tool
 ├── sdkconfig.defaults.debug        CHIP shell + OpenThread CLI, không Light-sleep
+├── sdkconfig.defaults.pmdiag       chẩn đoán dòng ngủ: vẫn Light-sleep, id_diag 10 phút/lần kèm khoá esp_pm và % thời gian ngủ
 ├── sdkconfig.defaults.chip         bo chip (hardware-chip/): RTC từ thạch anh 32,768 kHz, LED RGB WS2812B
 ├── dependencies.lock               phiên bản cố định của managed components
 ├── main/
@@ -609,7 +610,7 @@ matter-button-cr2032/
 │   ├── status_led.h/.cpp           LED nháy ngắn (LED thường, hoặc LED RGB WS2812B qua RMT có cắt nguồn), khoá Light-sleep chỉ khi LED sáng
 │   ├── device_info.h/.cpp          nhà sản xuất, model, phần cứng, serial = MAC eFuse
 │   ├── setup_code.h/.cpp           in QR; mã ghép nối riêng từng bo (unique_setup)
-│   ├── identity_diag.h/.cpp        log id_diag: danh tính, Thread, SRP, fabric, subscription
+│   ├── identity_diag.h/.cpp        log id_diag: danh tính, Thread, SRP, fabric, subscription, khoá esp_pm / thời gian ngủ
 │   └── thread_diag.h/.cpp          log Thread/SRP khi chưa ghép nối
 ├── test/host/                      host test máy trạng thái nút (17 kịch bản) và cách báo % pin, chỉ cần g++
 ├── tools/battery_model.py          mô hình pin (bảng mục 9)
@@ -650,7 +651,7 @@ Factory reset xoá fabric, thông tin mạng Thread, cấu hình (NVS) rồi m�
 
 ### 7.6 Commissioning
 
-- **Chưa ghép nối:** sau khi lắp pin, cửa sổ ghép nối BLE + DNS-SD mở **15 phút**, LED nháy 40 ms mỗi 3 s. Hết giờ → nhấn ngắn để mở lại.
+- **Chưa ghép nối:** sau khi lắp pin, cửa sổ ghép nối BLE + DNS-SD mở **15 phút**, LED nháy 40 ms mỗi 3 s. Hết giờ mà chưa ghép → **thiết bị ngủ sâu (Deep-sleep, ~7 µA)**; nhấn nút → khởi động lại và mở cửa sổ 15 phút mới. Lý do: khi BLE còn bật (esp-matter chỉ tắt BLE sau khi đã có fabric), đồng hồ ngủ của BLE là thạch anh 32 MHz chính (bản module không có thạch anh 32 kHz, `CONFIG_BT_LE_LP_CLK_SRC_MAIN_XTAL`) nên Light-sleep tốn **~4 mA** thay vì ~25 µA (bảng trong README `examples/bluetooth/nimble/power_save` của ESP-IDF: ESP32-H2 light sleep với main XTAL 4,0 mA, với thạch anh 32 kHz 24 µA). Một đêm chưa ghép nối ở Light-sleep tốn ~40–50 mAh, một phần tư viên CR2032. `CONFIG_APP_UNCOMMISSIONED_DEEP_SLEEP` (mặc định bật; bản debug tắt để giữ console). Bo chip (`hardware-chip/`, có thạch anh 32 kHz) không bị vấn đề này nhưng vẫn ngủ sâu cho tiết kiệm.
 - **Đã ghép nối, thêm hệ thứ hai (Multi-Admin):** ưu tiên chức năng chia sẻ của hệ đang quản lý (Apple Home: *Bật chế độ ghép nối*; HA: *Share device*). Hoặc **giữ nút 10 s** rồi nhả → mở cửa sổ 15 phút với mã gốc, chỉ qua Thread/DNS-SD (BLE đã tắt sau lần ghép đầu, `CONFIG_USE_BLE_ONLY_FOR_COMMISSIONING`).
 - Khi cửa sổ ghép nối mở, ICD giữ Active (poll 200 ms): mỗi cửa sổ 15 phút tốn ~1,1 C (~0,4 mAh từ pin). Đóng sớm bằng cách ghép xong.
 
@@ -670,6 +671,7 @@ Matter OTA Requestor, hỏi provider **1 lần/ngày** (`APP_OTA_QUERY_INTERVAL_
 | `THREAD_TX_POWER_DBM` | 0 | công suất phát 802.15.4 |
 | `THREAD_PAUSE_WHEN_DETACHED`, `THREAD_DETACHED_PAUSE_MIN`, `THREAD_RETRY_MIN_MIN`, `THREAD_RETRY_MAX_MIN`, `THREAD_RETRY_ATTACH_WINDOW_S`, `THREAD_KICK_AFTER_S` | y, 30, 30, 240, 20, 60 | chính sách mất mạng (mục 5.5) |
 | `APP_OTA_QUERY_INTERVAL_H` | 24 | chu kỳ hỏi OTA |
+| `APP_UNCOMMISSIONED_DEEP_SLEEP` | y | chưa ghép nối và cửa sổ ghép nối đã đóng → Deep-sleep (BLE còn bật làm Light-sleep tốn ~4 mA trên bo module), nhấn nút để mở lại |
 | *Battery* `BATTERY_SENSE_GPIO`, `BATTERY_SENSE_RATIO_X1000` | 1, 1000 | chân đo, tỷ lệ chia (1000 = không chia) |
 | `BATTERY_MEASURE_INTERVAL_H` / `BATTERY_TEST_INTERVAL_H` / `BATTERY_TEST_LOAD_MS` | 12 / 24 / 500 | đo nghỉ, đo có tải |
 | `BATTERY_QUIET_MIN` / `BATTERY_DROP_CONFIRM_COUNT` / `BATTERY_CONFIRM_INTERVAL_MIN` | 10 / 3 / 60 | radio phải yên bao lâu trước khi đo nghỉ; số lần đo thấp liên tiếp để % giảm (1 = báo mọi lần); chu kỳ đo xác nhận |
@@ -677,7 +679,7 @@ Matter OTA Requestor, hỏi provider **1 lần/ngày** (`APP_OTA_QUERY_INTERVAL_
 | `BATTERY_BOOT_MIN_MV`, `BATTERY_BROWNOUT_LIMIT`, `BATTERY_RECOVERY_SLEEP_S` | 2200, 3, 3600 | boot guard |
 | *Status LED* `STATUS_LED_GPIO` / `STATUS_LED_PRESS_FEEDBACK` | 22 / n | −1 = không có LED; nháy 20 ms mỗi lần nhấn |
 | `STATUS_LED_WS2812`, `_DATA_GPIO`, `_POWER_GPIO`, `_POWER_ON_LEVEL`, `_BRIGHTNESS` | n, 12, 11, 0, 40 | LED RGB của bo chip: dữ liệu GPIO12, nguồn LED qua MOSFET từ GPIO11 (mức thấp = bật), độ sáng 40/255; màu theo trạng thái: ghép nối xanh dương, Identify trắng, chờ reset lúc khởi động vàng, giữ để reset đỏ, pin yếu cam, nhấn xanh lá |
-| *Identity Diagnostics* `IDENTITY_DIAG_PERIOD_SEC` | 86400 | log id_diag 1 lần/ngày (debug: 300 s) |
+| *Identity Diagnostics* `IDENTITY_DIAG_PERIOD_SEC` | 86400 | log id_diag 1 lần/ngày (debug: 300 s, pmdiag: 600 s); khối đầy đủ kết thúc bằng các dòng `pm` (khoá esp_pm; với `CONFIG_PM_PROFILING` thêm thời gian giữ và % Light-sleep) |
 | *Device Identity* | Haxeko / Matter Button / ESP32-H2-WROOM-02C CR2032 v1.0 | Basic Information |
 
 ### 7.9 Host test
@@ -724,6 +726,10 @@ docker run --rm -v "${repo}:/repo" $img bash -c "$pre && idf.py -B build-unique 
 # Bo chip (hardware-chip/: chip ESP32-H2, thạch anh 32,768 kHz, LED RGB WS2812B); ghép được với LIT bằng cách đặt
 #   sdkconfig.defaults.chip ở cuối: SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.lit;sdkconfig.defaults.chip'
 docker run --rm -v "${repo}:/repo" $img bash -c "$pre && idf.py -B build-chip -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.chip -D SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.chip' build"
+
+# Bản chẩn đoán dòng ngủ: như bản mặc định (vẫn Light-sleep) + bộ đếm esp_pm; mỗi 10 phút log id_diag in các khoá PM
+# (khoá nào giữ chip thức, bao lâu) và % thời gian ở Light-sleep. Dùng khi pin tụt nhanh hơn dự tính.
+docker run --rm -v "${repo}:/repo" $img bash -c "$pre && idf.py -B build-pmdiag -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.pmdiag -D SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.pmdiag' build"
 
 # Bản debug: CHIP shell + OpenThread CLI trên UART0, KHÔNG Light-sleep (không dùng để đo dòng)
 docker run --rm -v "${repo}:/repo" $img bash -c "$pre && idf.py -B build-debug -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.debug -D SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.debug' build"
@@ -885,6 +891,7 @@ py tools\battery_model.py --breakdown
 | # | Rủi ro | Hậu quả | Khắc phục / giảm thiểu | Kiểm chứng |
 |---|---|---|---|---|
 | 1 | Tuổi pin không đạt 6–12 tháng (giới hạn Light-sleep của ESP32-H2) | thay pin 3–5 tháng/lần | LIT nếu chỉ dùng HA; CR2450 (cùng mạch, ~11–15 tháng); hoặc SoC dòng ngủ thấp | checklist F, L |
+| 1b | Thiết bị **chưa ghép nối** để lâu: BLE còn bật giữ thạch anh 32 MHz chạy trong Light-sleep (bản module không có thạch anh 32 kHz) | ~4 mA, ~40–50 mAh mỗi đêm | Deep-sleep khi cửa sổ ghép nối đã đóng (`APP_UNCOMMISSIONED_DEEP_SLEEP`), nhấn nút để mở lại; ghép nối ngay sau khi lắp pin | checklist F11 |
 | 2 | Sụt áp/brownout khi phát lúc pin yếu hoặc lạnh | reset, mất sự kiện, có thể lặp reset | tụ bulk ≥ 220 µF hiệu dụng phía pin; TX 0 dBm từ khung đầu tiên (linker wrap); brownout 2,94 V; boot guard Deep-sleep; báo pin yếu sớm nhờ đo điện trở trong | checklist H, I |
 | 3 | +20 dBm mặc định của driver ở các khung đầu sau khởi động | brownout mỗi lần khởi động với pin đã dùng | `__wrap_esp_ieee802154_enable()` đặt 0 dBm trước khung đầu; kiểm tra dòng đỉnh 2 s đầu | checklist G |
 | 4 | Rò của tụ MLCC dung lượng lớn cao hơn dự tính | tuổi pin giảm (mỗi 1 µA ≈ −1,7 %; mức spec xấu nhất −30 %) | đo rò khi EN = 0; đổi hãng/lô tụ; giảm còn 2 × 100 µF nếu link cho phép | checklist B |

@@ -13,3 +13,5 @@ build-lit/
 __pycache__/
 sdkconfig.chip
 build-chip/
+sdkconfig.pmdiag
+build-pmdiag/

@@ -14,6 +14,8 @@
  *    (CONFIG_THREAD_RETRY_MIN_MIN .. CONFIG_THREAD_RETRY_MAX_MIN); a button press retries at once.
  *  - LIT build with DSLS: stay in SIT while any fabric has no registered Check-In client (a controller that does
  *    not understand LIT would see the device as offline).
+ *  - Not commissioned and no commissioning window open: Deep-sleep until a press (CONFIG_APP_UNCOMMISSIONED_DEEP_SLEEP).
+ *    With the BLE controller up, Light-sleep costs ~4 mA on the module board (main XTAL as BLE low-power clock).
  */
 
 #include <platform/CHIPDeviceEvent.h>

@@ -10,6 +10,7 @@
 
 #include <esp_log.h>
 #include <esp_mac.h>
+#include <esp_pm.h>
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -530,6 +531,40 @@ static void log_hw(const ChipSnap &c)
              CHIP_DEVICE_CONFIG_ENABLE_TEST_SETUP_PARAMS ? "yes" : "no");
 }
 
+/* esp_pm locks (name, type, active count) and, with CONFIG_PM_PROFILING, the time each lock was held and the share
+ * of time in Light-sleep: tells whether the chip sleeps and what keeps it awake. The dump goes to a memory stream
+ * and comes out as log lines. */
+static void log_pm()
+{
+#if CONFIG_PM_ENABLE
+    char *buf = nullptr;
+    size_t size = 0;
+    FILE *mem = open_memstream(&buf, &size);
+    if (!mem) {
+        return;
+    }
+    const esp_err_t err = esp_pm_dump_locks(mem);
+    fclose(mem);
+    if (err == ESP_OK && buf) {
+        char *line = buf;
+        while (line && *line) {
+            char *end = strchr(line, '\n');
+            if (end) {
+                *end = '\0';
+            }
+            if (*line) {
+                ESP_LOGI(TAG, "pm   %s", line);
+            }
+            line = end ? end + 1 : nullptr;
+        }
+#if !CONFIG_PM_PROFILING
+        ESP_LOGI(TAG, "pm   (hold times and the Light-sleep share need CONFIG_PM_PROFILING: sdkconfig.defaults.pmdiag)");
+#endif
+    }
+    free(buf);
+#endif
+}
+
 static void log_ot(const OtSnap &o)
 {
     if (!o.valid) {
@@ -671,6 +706,7 @@ static void dump(bool full, bool scan_nvs)
     log_ot(s_ot);
     if (full) {
         log_nvs(scan_nvs);
+        log_pm();
     }
     ESP_LOGI(TAG, "================================");
 }

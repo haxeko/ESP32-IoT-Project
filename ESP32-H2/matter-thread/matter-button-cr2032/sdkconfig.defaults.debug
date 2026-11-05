@@ -8,3 +8,5 @@ CONFIG_OPENTHREAD_DIAG=y
 CONFIG_CHIP_LOG_DEFAULT_LEVEL_PROGRESS=y
 CONFIG_APP_LIGHT_SLEEP=n
 CONFIG_IDENTITY_DIAG_PERIOD_SEC=300
+# Keep the console alive while uncommissioned (the release build Deep-sleeps between commissioning windows)
+CONFIG_APP_UNCOMMISSIONED_DEEP_SLEEP=n

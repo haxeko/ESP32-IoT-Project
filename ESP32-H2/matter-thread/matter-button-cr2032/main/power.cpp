@@ -12,9 +12,15 @@
 #include <esp_openthread.h>
 #include <esp_openthread_lock.h>
 #include <esp_pm.h>
+#include <esp_sleep.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <openthread/child_supervision.h>
 #include <openthread/platform/radio.h>
 #include <openthread/thread.h>
+
+#include <esp_matter.h> // esp-matter device events: kCommissioningSessionStarted/Stopped, kCommissioningWindowClosed,
+                        // kFabricRemoved / kFabricCommitted
 
 #include <app/icd/server/ICDServerConfig.h>
 #include <app/server/Server.h>
@@ -22,17 +28,89 @@
 #include <platform/CHIPDeviceLayer.h>
 #include <platform/ThreadStackManager.h>
 #if CHIP_CONFIG_ENABLE_ICD_DSLS
-#include <esp_matter.h> // kFabricRemoved / kFabricCommitted (esp-matter device events)
-
 #include <app/icd/server/ICDMonitoringTable.h>
 #include <app/icd/server/ICDNotifier.h>
 #include <app/icd/server/ICDStateObserver.h>
 #endif
 
+#include "button.h"
+
 using namespace chip;
 using namespace chip::DeviceLayer;
 
 static const char *TAG = "power";
+
+/* ---------------------------------------------------------------------------------------------------------------
+ * Not commissioned: Deep-sleep between commissioning windows. While the BLE controller is initialised (esp-matter
+ * shuts it down only once a fabric exists) its low-power clock keeps the main XTAL on in Light-sleep (no 32 kHz
+ * crystal on the module board: CONFIG_BT_LE_LP_CLK_SRC_MAIN_XTAL): ~4 mA instead of ~25 uA (ESP-IDF nimble
+ * power_save README, ESP32-H2). A device left uncommissioned would take a quarter of the cell per night. So once
+ * the window has closed without a commissioning (or a commissioning failed), after a grace period that lets a
+ * PASE session in progress finish, the chip goes to Deep-sleep (~7 uA); a press wakes it (EXT1, external pull-up)
+ * into a normal boot, which opens a new 15 min window. */
+
+#if CONFIG_APP_UNCOMMISSIONED_DEEP_SLEEP
+static constexpr uint32_t k_uncommissioned_grace_s = 60;
+// A PASE session was established this long ago at most: a commissioning is running even before its fail-safe is
+// armed; one that never arms it is abandoned after this
+static constexpr uint32_t k_session_start_grace_s = 300;
+static System::Clock::Timestamp s_session_started = System::Clock::kZero; // CHIP task
+
+static void uncommissioned_sleep_cb(System::Layer *, void *);
+
+static void arm_uncommissioned_sleep()
+{
+    SystemLayer().CancelTimer(uncommissioned_sleep_cb, nullptr);
+    LogErrorOnFailure(SystemLayer().StartTimer(System::Clock::Seconds32(k_uncommissioned_grace_s),
+                                               uncommissioned_sleep_cb, nullptr));
+}
+
+static void uncommissioned_sleep_cb(System::Layer *, void *)
+{
+    Server &server = Server::GetInstance();
+    if (server.GetFabricTable().FabricCount() > 0 || server.GetCommissioningWindowManager().IsCommissioningWindowOpen()) {
+        return; // commissioned meanwhile, or a new window (its close arms the timer again)
+    }
+    const System::Clock::Timestamp now = System::SystemClock().GetMonotonicTimestamp();
+    const bool session_recent = s_session_started != System::Clock::kZero &&
+                                now - s_session_started < System::Clock::Seconds32(k_session_start_grace_s);
+    if (session_recent || server.GetFailSafeContext().IsFailSafeArmed() || button_is_pressed_raw()) {
+        arm_uncommissioned_sleep(); // commissioning in progress, or the button held: look again later
+        return;
+    }
+    ESP_LOGW(TAG, "Not commissioned, commissioning window closed: Deep-sleep, a press restarts with a new window");
+    vTaskDelay(pdMS_TO_TICKS(50)); // the log line out of the UART
+    // The button (external pull-up, released now) wakes the chip; nothing else has to
+    esp_sleep_enable_ext1_wakeup_io(1ULL << CONFIG_BUTTON_GPIO, ESP_EXT1_WAKEUP_ANY_LOW);
+    esp_deep_sleep_start();
+}
+
+static void uncommissioned_on_event(const ChipDeviceEvent *event)
+{
+    switch (event->Type) {
+    case DeviceEventType::kCommissioningSessionStarted: // PASE established: the window closes, the fail-safe follows
+        s_session_started = System::SystemClock().GetMonotonicTimestamp();
+        break;
+    case DeviceEventType::kCommissioningSessionStopped:
+    case DeviceEventType::kFailSafeTimerExpired:
+        s_session_started = System::Clock::kZero;
+        arm_uncommissioned_sleep();
+        break;
+    case DeviceEventType::kCommissioningComplete:
+        s_session_started = System::Clock::kZero;
+        SystemLayer().CancelTimer(uncommissioned_sleep_cb, nullptr);
+        break;
+    case DeviceEventType::kServerReady:         // in case no window opens at boot (BLE init failed)
+    case DeviceEventType::kCommissioningWindowClosed:
+        if (Server::GetInstance().GetFabricTable().FabricCount() == 0) {
+            arm_uncommissioned_sleep();
+        }
+        break;
+    default:
+        break;
+    }
+}
+#endif // CONFIG_APP_UNCOMMISSIONED_DEEP_SLEEP
 
 void power_configure(void)
 {
@@ -293,6 +371,9 @@ void power_thread_setup(void)
 
 void power_on_event(const ChipDeviceEvent *event)
 {
+#if CONFIG_APP_UNCOMMISSIONED_DEEP_SLEEP
+    uncommissioned_on_event(event);
+#endif
     switch (event->Type) {
     case DeviceEventType::kThreadConnectivityChange:
         if (event->ThreadConnectivityChange.Result == kConnectivity_Established) {
