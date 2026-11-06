@@ -17,3 +17,4 @@ sdkconfig.pmdiag
 build-pmdiag/
 sdkconfig.cr2450
 build-cr2450/
+sdkconfig.*.old
