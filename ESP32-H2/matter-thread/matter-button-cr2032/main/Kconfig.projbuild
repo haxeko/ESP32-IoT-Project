@@ -238,7 +238,9 @@ menu "Battery"
         default 60
         help
             Instead of BATTERY_MEASURE_INTERVAL_H while a lower reading waits for its confirmation: with the
-            defaults a real drop shows ~2 h after the first lower reading.
+            defaults a real drop shows ~2 h after the first lower reading. Also the spacing of the two follow-up
+            readings after the first reading after a boot (that one may come before the cell recovered from a
+            commissioning or a flash; a higher reading is reported at once).
 
     config BATTERY_MEASURE_INTERVAL_H
         int "Rest voltage measurement interval (hours)"

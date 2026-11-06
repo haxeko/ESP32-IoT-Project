@@ -43,6 +43,20 @@ static constexpr uint32_t k_stable_run_ms = 120 * 1000;
 static constexpr uint32_t k_quiet_ms = CONFIG_BATTERY_QUIET_MIN * 60 * 1000;
 static constexpr uint32_t k_busy_recheck_ms = 60 * 1000;
 static constexpr uint32_t k_max_quiet_wait_ms = 2 * 3600 * 1000;
+// Readings after the first one after a boot, CONFIG_BATTERY_CONFIRM_INTERVAL_MIN apart: that first reading may come
+// soon after a commissioning or a flash, before the cell recovered (a higher reading is reported at once)
+static constexpr uint32_t k_follow_up_readings = 2;
+
+// pdMS_TO_TICKS() multiplies in 32 bits (FreeRTOS projdefs.h): at CONFIG_FREERTOS_HZ=1000 it wraps above 4295 s, and
+// 12 h became 250 s. Every delay here goes through this 64-bit conversion.
+static constexpr TickType_t ms_to_ticks(uint64_t ms)
+{
+    return static_cast<TickType_t>(ms * configTICK_RATE_HZ / 1000);
+}
+static_assert(static_cast<uint64_t>(CONFIG_BATTERY_MEASURE_INTERVAL_H) * 3600 * configTICK_RATE_HZ < portMAX_DELAY,
+              "BATTERY_MEASURE_INTERVAL_H does not fit in a tick count");
+static_assert(static_cast<uint64_t>(CONFIG_BATTERY_CONFIRM_INTERVAL_MIN) * 60 * configTICK_RATE_HZ < portMAX_DELAY,
+              "BATTERY_CONFIRM_INTERVAL_MIN does not fit in a tick count");
 
 // The last reported values, kept in NVS across battery changes: version, half-percent, level, rest mV
 static constexpr char k_nvs_namespace[] = "battery";
@@ -307,7 +321,7 @@ static void wait_quiet()
             return;
         }
         // Light-sleep friendly: the task timeout is the only wakeup
-        vTaskDelay(pdMS_TO_TICKS(busy ? k_busy_recheck_ms : k_quiet_ms - quiet));
+        vTaskDelay(ms_to_ticks(busy ? k_busy_recheck_ms : k_quiet_ms - quiet));
     }
 }
 
@@ -347,26 +361,31 @@ static void measure(bool load_test)
 
 static void battery_task(void *)
 {
-    vTaskDelay(pdMS_TO_TICKS(k_stable_run_ms));
+    vTaskDelay(ms_to_ticks(k_stable_run_ms));
     s_rtc_brownouts = 0;
 
     // First rest reading once the start-up activity (Thread attach, CASE, reports, a commissioning window) is over
     wait_quiet();
     measure(true);
 
-    const uint32_t measure_s = CONFIG_BATTERY_MEASURE_INTERVAL_H * 3600;
+    const uint64_t measure_ms = CONFIG_BATTERY_MEASURE_INTERVAL_H * 3600ULL * 1000;
     const uint32_t tests_every = CONFIG_BATTERY_TEST_INTERVAL_H / CONFIG_BATTERY_MEASURE_INTERVAL_H;
+    uint32_t follow_ups = k_follow_up_readings;
     uint32_t round = 0;
     for (;;) {
-        if (s_report.PendingLower()) {
-            // Confirming a lower reading: sooner than the regular interval, no load test
-            vTaskDelay(pdMS_TO_TICKS(CONFIG_BATTERY_CONFIRM_INTERVAL_MIN * 60 * 1000ULL));
+        if (follow_ups || s_report.PendingLower()) {
+            // Following up the first reading, or confirming a lower one: sooner than the regular interval, no
+            // load test
+            if (follow_ups) {
+                follow_ups--;
+            }
+            vTaskDelay(ms_to_ticks(CONFIG_BATTERY_CONFIRM_INTERVAL_MIN * 60ULL * 1000));
             wait_quiet();
             measure(false);
             continue;
         }
         // Light-sleep friendly: the task timeout is the only wakeup (twice a day by default)
-        vTaskDelay(pdMS_TO_TICKS(measure_s * 1000ULL));
+        vTaskDelay(ms_to_ticks(measure_ms));
         wait_quiet();
         round++;
         measure(tests_every > 0 && round % tests_every == 0);
@@ -426,7 +445,7 @@ void battery_boot_guard(void)
         s_rtc_brownouts = CONFIG_BATTERY_BROWNOUT_LIMIT - 1;
     }
     status_led_flash(LedFlash::LowBattery);
-    vTaskDelay(pdMS_TO_TICKS(status_led_flash_duration_ms(LedFlash::LowBattery) + 50));
+    vTaskDelay(ms_to_ticks(status_led_flash_duration_ms(LedFlash::LowBattery) + 50));
     esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(CONFIG_BATTERY_RECOVERY_SLEEP_S) * 1000000ULL);
 #if !CONFIG_BUTTON_INTERNAL_PULLUP
     // The button also wakes the chip, but only with the external pull-up (defined level in Deep-sleep, no pad hold

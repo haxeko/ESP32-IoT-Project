@@ -140,6 +140,7 @@ Nguồn DC + điện trở nối tiếp vào cọc pin, thay cho CR2032:
 | I4 | Khởi động ở I-f | log `Battery too weak ... Deep-sleep`; ≤ 3 brownout liên tiếp rồi ngủ; nhấn nút thử lại được | |
 | I5 | OTA ở mức Warning | log `OTA download cancelled: battery level not OK` | |
 | I6 | Hiệu chỉnh ngưỡng `BATTERY_*_MV`, `BATTERY_BURST_RATIO_X100` theo kết quả | ghi lại giá trị chọn | |
+| I7 | Lịch đo: ghi log UART 3 giờ sau khởi động, không nhấn nút | `battery: VBAT rest …` lần đầu ~12 phút sau khi radio yên, rồi +60 và +120 phút, sau đó 12 giờ một lần; `Load test` chỉ ở lần đầu rồi 24 giờ một lần. Hai dòng cách nhau ~4 phút là lỗi tràn tick của bản ≤ 1.0.2611052141 | |
 
 ## J. Mất Border Router
 

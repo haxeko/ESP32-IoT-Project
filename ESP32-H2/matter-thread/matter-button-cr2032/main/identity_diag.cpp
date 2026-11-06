@@ -713,7 +713,7 @@ static void dump(bool full, bool scan_nvs)
 
 static void identity_diag_task(void *)
 {
-    // Seconds to ticks directly: pdMS_TO_TICKS() multiplies in 32 bits and wraps above ~42950 s
+    // Seconds to ticks directly: pdMS_TO_TICKS() multiplies in 32 bits and wraps above 4295 s at 1000 Hz
     const TickType_t period = (TickType_t)s_period_s * (TickType_t)configTICK_RATE_HZ;
     uint32_t blocks = 0;
     TickType_t last_event_dump = 0;
