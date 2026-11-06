@@ -96,6 +96,7 @@ PPK2/Joulescope ở JP1 (phía pin, nguồn 3,0 V) và ở JP2 (phía 3,3 V). Đ
 | F10 | Đo pin có tải hằng ngày | xung CPU 500 ms ~10 mA, log `battery: Load test ...` | |
 | F11 | Thiết bị **chưa ghép**, sau khi cửa sổ BLE 15 phút đã đóng | log `thread_diag: Thread diagnostics stopped`, ~60 s sau `power: Not commissioned ... Deep-sleep`; dòng ở JP1 ≤ 10 µA (Deep-sleep 7 µA + rò); nhấn nút → khởi động lại, cửa sổ mới. Với `APP_UNCOMMISSIONED_DEEP_SLEEP=n` (debug) bản module ở Light-sleep tốn ~4 mA (BLE còn bật, thạch anh 32 MHz chạy) | |
 | F12 | Bản `pmdiag`: đọc khối `id_diag` (10 phút/lần), các dòng `pm` | `Light sleep` chiếm ≥ 95 % thời gian khi không thao tác; không khoá nào `active` ngoài lúc đo/LED (xem cột active, time) | |
+| F13 | So áp pin: đồng hồ ở TP9 (VBAT) – TP2 (GND) lúc nghỉ ≥ 10 phút, với dòng log `battery: VBAT rest … mV` gần nhất; log khởi động không có `No ADC calibration in eFuse` | lệch ≤ 50 mV. Không đo ở TP10 (đồng hồ 10 MΩ kéo nút 1 MΩ xuống ~9 %) | |
 
 ## G. Dòng đỉnh khi phát
 
