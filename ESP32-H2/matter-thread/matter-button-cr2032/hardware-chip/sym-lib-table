@@ -1,0 +1,4 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "matter_button_chip") (type "KiCad") (uri "${KIPRJMOD}/lib/matter_button_chip.kicad_sym") (options "") (descr "Project parts"))
+)

@@ -1,0 +1,9 @@
+# intermediate files of the scripts (netlist, DSN/SES, DRC reports, gerber folder)
+build/
+# KiCad local state and backups
+*.kicad_prl
+fp-info-cache
+*-backups/
+_autosave-*
+*.lck
+__pycache__/

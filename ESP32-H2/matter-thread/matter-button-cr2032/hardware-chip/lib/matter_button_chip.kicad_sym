@@ -1,0 +1,535 @@
+(kicad_symbol_lib
+	(version 20241209)
+	(generator "kicad_symbol_editor")
+	(generator_version "9.0")
+	(symbol "ESP32-H2FH4"
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(property "Reference" "U" (at -17.78 29.21 0) (effects (font (size 1.27 1.27)) (justify left)))
+		(property "Value" "ESP32-H2FH4" (at -17.78 26.67 0) (effects (font (size 1.27 1.27)) (justify left)))
+		(property "Footprint" "matter_button_chip:ESP32-H2_QFN-32-1EP_4x4mm_P0.4mm" (at 0 -38.1 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "Datasheet" "https://www.espressif.com/sites/default/files/documentation/esp32-h2_datasheet_en.pdf" (at 0 -40.64 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "Description" "ESP32-H2 SoC, 802.15.4 (Thread, Zigbee) + Bluetooth LE 5.3, 4 MB in-package flash, QFN32 4 x 4 mm" (at 0 -43.18 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "ki_keywords" "ESP32-H2 Thread Zigbee Matter BLE RISC-V" (at 0 0 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "ki_fp_filters" "*QFN*32*4x4mm*P0.4mm*" (at 0 0 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(symbol "ESP32-H2FH4_0_1"
+			(rectangle (start -17.78 25.4) (end 17.78 -25.4) (stroke (width 0.254) (type default)) (fill (type background)))
+		)
+		(symbol "ESP32-H2FH4_1_1"
+			(pin power_in line (at -22.86 22.86 0) (length 5.08)
+				(name "VDD3P3" (effects (font (size 1.27 1.27))))
+				(number "1" (effects (font (size 1.27 1.27))))
+			)
+			(pin power_in line (at -22.86 20.32 0) (length 5.08)
+				(name "VDD3P3" (effects (font (size 1.27 1.27))))
+				(number "2" (effects (font (size 1.27 1.27))))
+			)
+			(pin power_in line (at -22.86 17.78 0) (length 5.08)
+				(name "VDD3P3" (effects (font (size 1.27 1.27))))
+				(number "27" (effects (font (size 1.27 1.27))))
+			)
+			(pin power_in line (at -22.86 15.24 0) (length 5.08)
+				(name "VDD3P3" (effects (font (size 1.27 1.27))))
+				(number "30" (effects (font (size 1.27 1.27))))
+			)
+			(pin power_in line (at -22.86 12.7 0) (length 5.08)
+				(name "VDD3P3" (effects (font (size 1.27 1.27))))
+				(number "31" (effects (font (size 1.27 1.27))))
+			)
+			(pin power_in line (at -22.86 10.16 0) (length 5.08)
+				(name "VDDA_PMU" (effects (font (size 1.27 1.27))))
+				(number "19" (effects (font (size 1.27 1.27))))
+			)
+			(pin power_in line (at -22.86 7.62 0) (length 5.08)
+				(name "VBAT" (effects (font (size 1.27 1.27))))
+				(number "18" (effects (font (size 1.27 1.27))))
+			)
+			(pin power_in line (at -22.86 5.08 0) (length 5.08)
+				(name "VDDPST1" (effects (font (size 1.27 1.27))))
+				(number "9" (effects (font (size 1.27 1.27))))
+			)
+			(pin power_in line (at -22.86 2.54 0) (length 5.08)
+				(name "VDDPST2" (effects (font (size 1.27 1.27))))
+				(number "20" (effects (font (size 1.27 1.27))))
+			)
+			(pin input line (at -22.86 -2.54 0) (length 5.08)
+				(name "CHIP_EN" (effects (font (size 1.27 1.27))))
+				(number "17" (effects (font (size 1.27 1.27))))
+			)
+			(pin passive line (at -22.86 -7.62 0) (length 5.08)
+				(name "XTAL_P" (effects (font (size 1.27 1.27))))
+				(number "29" (effects (font (size 1.27 1.27))))
+			)
+			(pin passive line (at -22.86 -10.16 0) (length 5.08)
+				(name "XTAL_N" (effects (font (size 1.27 1.27))))
+				(number "28" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at -22.86 -15.24 0) (length 5.08)
+				(name "XTAL_32K_P" (effects (font (size 1.27 1.27))))
+				(number "15" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at -22.86 -17.78 0) (length 5.08)
+				(name "XTAL_32K_N" (effects (font (size 1.27 1.27))))
+				(number "16" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at -22.86 -22.86 0) (length 5.08)
+				(name "ANT" (effects (font (size 1.27 1.27))))
+				(number "32" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 22.86 180) (length 5.08)
+				(name "IO0" (effects (font (size 1.27 1.27))))
+				(number "3" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 20.32 180) (length 5.08)
+				(name "IO1/ADC1_CH0" (effects (font (size 1.27 1.27))))
+				(number "4" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 17.78 180) (length 5.08)
+				(name "MTMS/IO2" (effects (font (size 1.27 1.27))))
+				(number "5" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 15.24 180) (length 5.08)
+				(name "MTDO/IO3" (effects (font (size 1.27 1.27))))
+				(number "6" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 12.7 180) (length 5.08)
+				(name "MTCK/IO4" (effects (font (size 1.27 1.27))))
+				(number "7" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 10.16 180) (length 5.08)
+				(name "MTDI/IO5" (effects (font (size 1.27 1.27))))
+				(number "8" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 5.08 180) (length 5.08)
+				(name "IO8" (effects (font (size 1.27 1.27))))
+				(number "10" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 2.54 180) (length 5.08)
+				(name "IO9" (effects (font (size 1.27 1.27))))
+				(number "11" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 0 180) (length 5.08)
+				(name "IO10" (effects (font (size 1.27 1.27))))
+				(number "12" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 -2.54 180) (length 5.08)
+				(name "IO11" (effects (font (size 1.27 1.27))))
+				(number "13" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 -5.08 180) (length 5.08)
+				(name "IO12" (effects (font (size 1.27 1.27))))
+				(number "14" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 -10.16 180) (length 5.08)
+				(name "IO22" (effects (font (size 1.27 1.27))))
+				(number "21" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 -12.7 180) (length 5.08)
+				(name "U0RXD/IO23" (effects (font (size 1.27 1.27))))
+				(number "22" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 -15.24 180) (length 5.08)
+				(name "U0TXD/IO24" (effects (font (size 1.27 1.27))))
+				(number "23" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 -17.78 180) (length 5.08)
+				(name "IO25" (effects (font (size 1.27 1.27))))
+				(number "24" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 -20.32 180) (length 5.08)
+				(name "IO26/USB_D-" (effects (font (size 1.27 1.27))))
+				(number "25" (effects (font (size 1.27 1.27))))
+			)
+			(pin bidirectional line (at 22.86 -22.86 180) (length 5.08)
+				(name "IO27/USB_D+" (effects (font (size 1.27 1.27))))
+				(number "26" (effects (font (size 1.27 1.27))))
+			)
+			(pin power_in line (at 0 -30.48 90) (length 5.08)
+				(name "GND" (effects (font (size 1.27 1.27))))
+				(number "33" (effects (font (size 1.27 1.27))))
+			)
+		)
+		(embedded_fonts no)
+	)
+	(symbol "XL-2121RGBC-WS2812B"
+			(pin_names
+				(offset 0.254)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "D"
+				(at 5.08 5.715 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify right bottom)
+				)
+			)
+			(property "Value" "WS2812B"
+				(at 1.27 -5.715 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left top)
+				)
+			)
+			(property "Footprint" "matter_button_chip:LED_XL-2121RGBC-WS2812B_2.1x2.1mm"
+				(at 1.27 -7.62 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left top)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "https://www.lcsc.com/datasheet/C5349957.pdf"
+				(at 2.54 -9.525 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left top)
+					(hide yes)
+				)
+			)
+			(property "Description" "RGB LED with integrated controller"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "RGB LED NeoPixel addressable"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_fp_filters" "LED*XL?2121*"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "XL-2121RGBC-WS2812B_0_0"
+				(text "RGB"
+					(at 2.286 -4.191 0)
+					(effects
+						(font
+							(size 0.762 0.762)
+						)
+					)
+				)
+			)
+			(symbol "XL-2121RGBC-WS2812B_0_1"
+				(polyline
+					(pts
+						(xy 1.27 -2.54) (xy 1.778 -2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 -3.556) (xy 1.778 -3.556)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 2.286 -1.524) (xy 1.27 -2.54) (xy 1.27 -2.032)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 2.286 -2.54) (xy 1.27 -3.556) (xy 1.27 -3.048)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 3.683 -1.016) (xy 3.683 -3.556) (xy 3.683 -4.064)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 4.699 -1.524) (xy 2.667 -1.524) (xy 3.683 -3.556) (xy 4.699 -1.524)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 4.699 -3.556) (xy 2.667 -3.556)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(rectangle
+					(start 5.08 5.08)
+					(end -5.08 -5.08)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type background)
+					)
+				)
+			)
+			(symbol "XL-2121RGBC-WS2812B_1_1"
+				(pin input line
+					(at -7.62 0 0)
+					(length 2.54)
+					(name "DIN"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin power_in line
+					(at 0 7.62 270)
+					(length 2.54)
+					(name "VDD"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin power_in line
+					(at 0 -7.62 90)
+					(length 2.54)
+					(name "VSS"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "4"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin output line
+					(at 7.62 0 180)
+					(length 2.54)
+					(name "DOUT"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "3"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
+	(symbol "VBAT"
+			(power)
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(offset 0)
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "#PWR"
+				(at 0 -3.81 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Value" "VBAT"
+				(at 0 3.556 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" ""
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" ""
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "Battery rail (CR2032 after Q1). Power symbol creates a global label with name \"VBAT\""
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "global power"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "VBAT_0_1"
+				(polyline
+					(pts
+						(xy -0.762 1.27) (xy 0 2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0 2.54) (xy 0.762 1.27)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0 0) (xy 0 2.54)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "VBAT_1_1"
+				(pin power_in line
+					(at 0 0 90)
+					(length 0)
+					(name "~"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
+)

@@ -4,7 +4,7 @@
 #   gen_pki.sh            Certification Declarations (CD) only, for the SDK test PAI chain (recommended):
 #                         pki/cd/CD_example_FFF1.der  the CD the default firmware already sends (SDK example,
 #                                                     VID FFF1, PID 0x8000-0x8063, extracted from the SDK)
-#                         pki/cd/CD_test_occupancy_0107.der, CD_test_plug_010A.der
+#                         pki/cd/CD_test_occupancy_0107.der, CD_test_plug_010A.der, CD_test_switch_000F.der
 #                                                     new CDs signed with the SDK TEST CD signing key
 #   gen_pki.sh --private  also a private development chain pki/private/PAA -> PAI (VID FFF1, PID 8000).
 #                         No controller trusts this PAA unless you install it (chip-tool --paa-trust-store-path).
@@ -27,7 +27,8 @@ tail = src.split('Fall back to the VID=0xFFF1 CD', 1)[1]
 body = re.search(r'kCdForAllExamples\[\] = \{(.*?)\};', tail, re.S).group(1)
 open(sys.argv[2], 'wb').write(bytes(int(x, 16) for x in re.findall(r'0x[0-9a-fA-F]{2}', body)))
 PY
-chip-cert print-cd "$OUT/cd/CD_example_FFF1.der" | head -3
+# sed reads the whole output: "| head" may end chip-cert with SIGPIPE, which fails the script (pipefail)
+chip-cert print-cd "$OUT/cd/CD_example_FFF1.der" | sed -n 1,3p
 
 # -f 1: format version, -l 0 -i 0: security level/info, -n 1: version, -t 0: certification type "development"
 [ -f "$OUT/cd/CD_test_occupancy_0107.der" ] ||
@@ -36,6 +37,9 @@ chip-cert print-cd "$OUT/cd/CD_example_FFF1.der" | head -3
 [ -f "$OUT/cd/CD_test_plug_010A.der" ] ||
     chip-cert gen-cd -K "$CDKEY" -C "$CDCERT" -O "$OUT/cd/CD_test_plug_010A.der" -f 1 -V FFF1 -p 8000 -d 010A \
         -c CSA00000SWC00000-02 -l 0 -i 0 -n 1 -t 0
+[ -f "$OUT/cd/CD_test_switch_000F.der" ] ||
+    chip-cert gen-cd -K "$CDKEY" -C "$CDCERT" -O "$OUT/cd/CD_test_switch_000F.der" -f 1 -V FFF1 -p 8000 -d 000F \
+        -c CSA00000SWC00000-03 -l 0 -i 0 -n 1 -t 0
 
 if [ "${1:-}" = "--private" ]; then
     mkdir -p "$OUT/private"
