@@ -26,7 +26,7 @@ Log: UART0 115200 baud (TP3/TP4). Các dòng log được nhắc tới: `id_diag
 | B1 | Lắp pin ngược chiều | không có dòng (< 1 µA), không nóng; lắp đúng chạy bình thường | |
 | B2 | Đo 3V3 (TP1) lúc nghỉ và lúc phát | 3,30 V ± 2 %, sụt < 100 mV khi phát | |
 | B3 | Kiểm tra TPS63900 đọc đúng cấu hình: cấp 2,0 V và 3,2 V vào cọc pin | 3V3 vẫn 3,30 V ở cả hai mức | |
-| B4 | **Rò của mạch nguồn**: đo ở JP1 sau 5 phút có áp (tụ MLCC cần thời gian ổn định) **trước khi hàn module U1** (đầu ra 3,3 V chỉ còn C5, C6, R4, R5, R6, R9 không tải). Bo đã hàn module: nối TP5 (EN) xuống GND thì R4 10 kΩ (và điện trở kéo lên EN bên trong module, nếu có) dẫn ~0,33–0,7 mA, phải trừ đi, không đọc trực tiếp được | ≤ 2 µA tổng (75 nA TPS63900 + rò tụ + ~1 µA module tắt [DS]). Nếu lớn hơn: tháo C1/C2 đo lại để tách rò tụ | |
+| B4 | **Rò của mạch nguồn**: đo ở JP1 sau 5 phút có áp (tụ MLCC cần thời gian ổn định) **trước khi hàn module U1** (đầu ra 3,3 V chỉ còn C5, C6, R4, R5, R6, R9 không tải). Bo đã hàn module: nối TP5 (EN) xuống GND thì R4 10 kΩ (và điện trở kéo lên EN bên trong module, nếu có) dẫn ~0,33–0,66 mA ở 3,3 V, tức ~0,4–0,9 mA ở JP1: số đo bị phần này lấn át, không đọc được rò µA | ≤ 2 µA tổng (75 nA TPS63900 + rò tụ + ~1 µA module tắt [DS]). Nếu lớn hơn: tháo C1/C2 đo lại để tách rò tụ | |
 | B5 | Rò riêng tụ bulk (tháo U2, cấp 3,0 V vào VBAT) | ≤ 0,5 µA sau 5 phút [AS]; ghi số đo vào `I_LEAK` | |
 | B6 | Lắp pin mới: dòng xung nạp tụ bulk | không reset lặp, khởi động trong < 1 s | |
 | B7 | Nạp firmware qua UART (tự reset hoặc BOOT/EN bằng tay) | `esptool` nạp và verify được | |
