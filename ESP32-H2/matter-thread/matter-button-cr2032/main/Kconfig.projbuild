@@ -253,40 +253,31 @@ menu "Battery"
     config BATTERY_QUIET_MIN
         int "Quiet radio time before a rest reading (min)"
         range 1 120
-        default 30
+        default 10
         help
             A rest reading waits until no commissioning window or OTA download is running and nothing has loaded
-            the cell (boot, Thread attach, button press) for this long: a coin cell reads low for minutes after
-            the 25-40 mA bursts, and for tens of minutes after many presses in a row. Gives up after 12 h of
-            activity (that reading alone lowers nothing, see BATTERY_DROP_CONFIRM_HOURS). The percentage does not
-            wait for it: it comes from the charge count.
+            the cell (boot, Thread attach, button report) for this long: a CR2032 reads low for minutes after
+            the 25-40 mA bursts. After a battery change the values reported before (saved in NVS) are shown until
+            this first reading; the boot reading only feeds the boot guard.
 
     config BATTERY_DROP_CONFIRM_COUNT
-        int "Lower rest readings in a row before the reported voltage drops"
+        int "Lower rest readings in a row before the reported percentage drops"
         range 1 10
         default 3
         help
-            A reading on the same or a higher step (recovered or new cell) is reported at once. A lower one is
-            reported only once this many readings in a row are lower and they span BATTERY_DROP_CONFIRM_HOURS,
-            as the highest of them. 1 with 0 h: every reading is reported (tests with a bench supply).
+            A reading giving the same or a higher percentage (recovered or new cell) is reported at once. A lower
+            one is reported only once this many readings in a row are lower, as the highest of them. 1: every
+            reading is reported (tests with a bench supply).
 
-    config BATTERY_DROP_CONFIRM_HOURS
-        int "Time the lower rest readings must span before the reported voltage drops (h)"
-        range 0 168
-        default 24
-        help
-            With the 12 h interval the lower readings then include night readings, taken after hours without a
-            press: a day of heavy use, a busy afternoon or the follow-ups after a boot lower nothing. A worn cell
-            loses its voltage over weeks, so one day of delay costs nothing.
-
-    config BATTERY_FOLLOW_UP_INTERVAL_MIN
-        int "Interval of the two follow-up readings after a boot (min)"
+    config BATTERY_CONFIRM_INTERVAL_MIN
+        int "Interval of the readings confirming a lower one (min)"
         range 10 720
         default 60
         help
-            The first rest reading after a boot may come before the cell recovered from a commissioning, a flash
-            or a battery change: two more readings this far apart raise the reported voltage if it was low (a
-            higher reading is reported at once), then the regular BATTERY_MEASURE_INTERVAL_H applies.
+            Instead of BATTERY_MEASURE_INTERVAL_H while a lower reading waits for its confirmation: with the
+            defaults a real drop shows ~2 h after the first lower reading. Also the spacing of the two follow-up
+            readings after the first reading after a boot (that one may come before the cell recovered from a
+            commissioning or a flash; a higher reading is reported at once).
 
     config BATTERY_MEASURE_INTERVAL_H
         int "Rest voltage measurement interval (hours)"

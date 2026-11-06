@@ -68,9 +68,9 @@ int main()
     check(battery_max_half_percent(3100, 40) == 200 && battery_max_half_percent(2900, 40) == 200 &&
               battery_max_half_percent(2850, 40) == 40 && battery_max_half_percent(2000, 40) == 0,
           "voltage cap: plateau, knee, empty");
-    check(battery_is_new_cell(3000, 2980) && battery_is_new_cell(2995, 2950) && !battery_is_new_cell(2990, 2960) &&
+    check(battery_is_new_cell(3020, 2960) && battery_is_new_cell(3010, 2900) && !battery_is_new_cell(3000, 2960) &&
               !battery_is_new_cell(2990, 0),
-          "new cell: >= 3000 mV, or 40 mV above the saved voltage");
+          "new cell: >= 3020 mV, or 60 mV above the saved voltage");
 
     std::printf("battery gauge: %s\n", s_failures ? "FAILED" : "all tests passed");
     return s_failures ? 1 : 0;
