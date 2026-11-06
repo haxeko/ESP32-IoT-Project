@@ -213,6 +213,23 @@ menu "Battery"
         int "Nominal capacity (mAh), Power Source BatCapacity"
         default 220
 
+    config BATTERY_USABLE_PERCENT
+        int "Usable share of the nominal capacity (%)"
+        range 50 100
+        default 80
+        help
+            BatPercentRemaining counts down from 100 % over this share of BATTERY_CAPACITY_MAH: beyond ~80 % the
+            cell's internal resistance no longer carries a Thread re-attach (README 1.4).
+
+    config BATTERY_MODEL_AVG_UA
+        int "Modelled average current at the cell (uA)"
+        range 5 5000
+        default 60
+        help
+            BatPercentRemaining is the charge used (running time x this current) out of the usable capacity,
+            bounded by the rest voltage near the end of life. 60 uA: SIT, 1 controller, ~20 presses a day
+            (README 1.5). Set it to the average measured at JP1 (checklist F5) for an accurate percentage.
+
     config BATTERY_QUIET_MIN
         int "Quiet radio time before a rest reading (min)"
         range 1 120

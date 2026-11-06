@@ -23,6 +23,7 @@
 #include <lib/support/CodeUtils.h>
 #include <platform/CHIPDeviceLayer.h>
 
+#include "battery_gauge.h"
 #include "battery_report.h"
 #include "button.h"
 #include "status_led.h"
@@ -58,7 +59,8 @@ static_assert(static_cast<uint64_t>(CONFIG_BATTERY_MEASURE_INTERVAL_H) * 3600 * 
 static_assert(static_cast<uint64_t>(CONFIG_BATTERY_CONFIRM_INTERVAL_MIN) * 60 * configTICK_RATE_HZ < portMAX_DELAY,
               "BATTERY_CONFIRM_INTERVAL_MIN does not fit in a tick count");
 
-// The last reported values, kept in NVS across battery changes: version, half-percent, level, rest mV
+// The last reported values, kept in NVS across battery changes: version, half-percent, level, rest mV, charge used.
+// Version 1 (8 bytes, no charge count) is still read: the count then starts at 0.
 static constexpr char k_nvs_namespace[] = "battery";
 static constexpr char k_nvs_key[] = "reported";
 struct SavedReport {
@@ -67,8 +69,15 @@ struct SavedReport {
     uint8_t level;
     uint8_t reserved;
     uint32_t mv;
+    uint32_t used_mas; // version 2
 };
-static constexpr uint8_t k_saved_version = 1;
+static constexpr uint8_t k_saved_version = 2;
+static constexpr size_t k_saved_v1_size = 8;
+// The charge count is written again after this much more use (with the defaults about once a day), or with any
+// change of the reported values
+static constexpr uint32_t k_save_used_step_mas = 3600; // 1 mAh
+// Readings after a power-on reset (battery inserted) that may recognise a new cell: the first one and its follow-ups
+static constexpr uint32_t k_new_cell_readings = 3;
 
 static adc_unit_t s_unit = ADC_UNIT_1;
 static adc_channel_t s_chan = ADC_CHANNEL_0;
@@ -88,7 +97,12 @@ static TaskHandle_t s_task = nullptr;
 
 // Battery task (and app_main before it starts)
 static BatteryReport s_report(CONFIG_BATTERY_DROP_CONFIRM_COUNT);
+static BatteryGauge s_gauge(CONFIG_BATTERY_CAPACITY_MAH * CONFIG_BATTERY_USABLE_PERCENT / 100,
+                            CONFIG_BATTERY_MODEL_AVG_UA);
 static SavedReport s_saved = {};
+static uint32_t s_saved_mv_at_boot = 0;  // reported before the battery was taken out, 0 if none
+static uint32_t s_counted_ms = 0;        // running time already counted in s_gauge (since boot)
+static uint32_t s_new_cell_readings = 0; // set at a power-on reset
 
 // Radio activity that loads the cell: written on the CHIP task, read by the battery task (32-bit values)
 static volatile uint32_t s_busy = 0;        // bit per BatteryBusy
@@ -258,27 +272,38 @@ static void restore_saved()
     size_t size = sizeof(saved);
     const esp_err_t err = nvs_get_blob(nvs, k_nvs_key, &saved, &size);
     nvs_close(nvs);
-    if (err != ESP_OK || size != sizeof(saved) || saved.version != k_saved_version || saved.mv == 0 ||
-        saved.half_percent > 200 || saved.level > static_cast<uint8_t>(BatteryLevel::Critical)) {
+    const bool v1 = size == k_saved_v1_size && saved.version == 1;
+    const bool v2 = size == sizeof(saved) && saved.version == k_saved_version;
+    if (err != ESP_OK || !(v1 || v2) || saved.mv == 0 || saved.half_percent > 200 ||
+        saved.level > static_cast<uint8_t>(BatteryLevel::Critical)) {
         ESP_LOGI(TAG, "No saved battery values: BatPercentRemaining unknown until the first rest reading");
         return;
     }
+    if (v1) {
+        saved.used_mas = 0; // the percentage was the voltage table's; the charge count starts now
+    }
     s_saved = saved;
-    s_report.Restore(saved.mv, saved.half_percent);
+    s_saved_mv_at_boot = saved.mv;
+    s_gauge.Restore(saved.used_mas);
+    s_report.Restore(saved.mv, battery_soc_from_rest(saved.mv));
     s_rest_mv = saved.mv;
-    s_half_percent = saved.half_percent;
+    s_half_percent = s_gauge.HalfPercent(saved.mv);
     s_level = static_cast<BatteryLevel>(saved.level);
-    ESP_LOGI(TAG, "Last reported %" PRIu32 " mV, %u %%, level %s: kept until a rest reading", saved.mv,
-             saved.half_percent / 2, level_name(s_level));
+    ESP_LOGI(TAG, "Last reported %" PRIu32 " mV, used %" PRIu32 " mAh, %u %%, level %s%s", saved.mv,
+             saved.used_mas / 3600, s_half_percent / 2, level_name(s_level),
+             v1 ? " (no charge count saved: counted from now)" : "");
 }
 
 /* Battery task: write the reported values when they changed (a few times a year on a draining cell) */
 static void save_reported()
 {
-    const SavedReport now = {k_saved_version, s_half_percent, static_cast<uint8_t>(s_level), 0, s_rest_mv};
+    const SavedReport now = {k_saved_version, s_half_percent, static_cast<uint8_t>(s_level), 0, s_rest_mv,
+                             s_gauge.UsedMas()};
     const uint32_t mv_diff = now.mv > s_saved.mv ? now.mv - s_saved.mv : s_saved.mv - now.mv;
+    const uint32_t used_diff = now.used_mas > s_saved.used_mas ? now.used_mas - s_saved.used_mas
+                                                               : s_saved.used_mas - now.used_mas;
     if (s_saved.version == k_saved_version && now.half_percent == s_saved.half_percent &&
-        now.level == s_saved.level && mv_diff < k_report_step_mv) {
+        now.level == s_saved.level && mv_diff < k_report_step_mv && used_diff < k_save_used_step_mas) {
         return;
     }
     nvs_handle_t nvs;
@@ -336,25 +361,38 @@ static void measure(bool load_test)
     if (load_test) {
         health_test(rest_mv);
     }
-    // Same or higher percentage: reported now; lower: only once CONFIG_BATTERY_DROP_CONFIRM_COUNT readings in a
-    // row are lower (battery_report.h). The level follows the reported rest voltage and the latest burst test.
+    // Reported voltage: same or higher now; lower only once CONFIG_BATTERY_DROP_CONFIRM_COUNT readings in a row are
+    // lower (battery_report.h). The level follows the reported rest voltage and the latest burst test.
     s_report.OnReading(rest_mv);
     s_rest_mv = s_report.ReportedMv();
-    s_half_percent = s_report.ReportedHalfPercent();
+    // The percentage: charge used since the cell was new, bounded by the reported rest voltage (battery_gauge.h)
+    const uint32_t now = now_ms();
+    s_gauge.Elapse(now - s_counted_ms);
+    s_counted_ms = now;
+    if (s_new_cell_readings) {
+        s_new_cell_readings--;
+        if (battery_is_new_cell(rest_mv, s_saved_mv_at_boot) && s_gauge.UsedMas()) {
+            ESP_LOGI(TAG, "New cell (%" PRIu32 " mV rest, %" PRIu32 " mV before): charge count restarted", rest_mv,
+                     s_saved_mv_at_boot);
+            s_gauge.NewCell();
+            s_new_cell_readings = 0;
+        }
+    }
+    s_half_percent = s_gauge.HalfPercent(s_rest_mv);
     const BatteryLevel level = level_from(s_rest_mv, s_burst_mv);
     if (level != s_level) {
         ESP_LOGW(TAG, "Battery level %s -> %s", level_name(s_level), level_name(level));
     }
     s_level = level;
     if (s_report.PendingLower()) {
-        ESP_LOGI(TAG, "VBAT rest %" PRIu32 " mV (~%u %%): lower than the reported %" PRIu32 " mV (~%u %%), %u/%d in a "
-                      "row, next reading in %d min", rest_mv, battery_soc_from_rest(rest_mv) / 2, s_rest_mv,
-                 s_half_percent / 2, s_report.PendingLower(), CONFIG_BATTERY_DROP_CONFIRM_COUNT,
+        ESP_LOGI(TAG, "VBAT rest %" PRIu32 " mV: lower than the reported %" PRIu32 " mV, %u/%d in a row, next reading "
+                      "in %d min", rest_mv, s_rest_mv, s_report.PendingLower(), CONFIG_BATTERY_DROP_CONFIRM_COUNT,
                  CONFIG_BATTERY_CONFIRM_INTERVAL_MIN);
-    } else {
-        ESP_LOGI(TAG, "VBAT rest %" PRIu32 " mV, reported %" PRIu32 " mV (~%u %%), level %s", rest_mv, s_rest_mv,
-                 s_half_percent / 2, level_name(level));
     }
+    const uint32_t used_mas = s_gauge.UsedMas();
+    ESP_LOGI(TAG, "VBAT rest %" PRIu32 " mV, reported %" PRIu32 " mV, used %" PRIu32 ".%" PRIu32 " mAh, %u.%u %%, "
+                  "level %s", rest_mv, s_rest_mv, used_mas / 3600, used_mas % 3600 / 360, s_half_percent / 2,
+             s_half_percent % 2 ? 5 : 0, level_name(level));
     save_reported();
     LogErrorOnFailure(chip::DeviceLayer::PlatformMgr().ScheduleWork(publish_work));
 }
@@ -427,6 +465,9 @@ void battery_boot_guard(void)
         // New or replaced battery (power-on reset), or LP memory lost
         s_rtc_magic = k_rtc_magic;
         s_rtc_brownouts = 0;
+    }
+    if (reason == ESP_RST_POWERON) {
+        s_new_cell_readings = k_new_cell_readings;
     }
     if (reason == ESP_RST_BROWNOUT) {
         s_rtc_brownouts++;

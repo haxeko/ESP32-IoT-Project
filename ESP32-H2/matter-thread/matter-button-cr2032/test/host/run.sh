@@ -1,6 +1,6 @@
 #!/bin/sh
 # Host tests of the button gesture state machine (main/button_fsm.cpp) and of the reported battery values
-# (main/battery_report.cpp): no ESP32 or ESP-IDF needed, only a C++17 compiler (g++, or clang++ via CXX).
+# (main/battery_report.cpp, main/battery_gauge.cpp): no ESP32 or ESP-IDF needed, only a C++17 compiler (g++, or clang++ via CXX).
 # Run: test/host/run.sh
 set -e
 cd "$(dirname "$0")"
@@ -14,3 +14,6 @@ $CXX -std=gnu++17 -Wall -Wextra -Werror -I "$MAIN" -o "$OUT/button_fsm" test_but
 $CXX -std=gnu++17 -Wall -Wextra -Werror -I "$MAIN" -o "$OUT/battery_report" test_battery_report.cpp \
     "$MAIN/battery_report.cpp"
 "$OUT/battery_report"
+$CXX -std=gnu++17 -Wall -Wextra -Werror -I "$MAIN" -o "$OUT/battery_gauge" test_battery_gauge.cpp \
+    "$MAIN/battery_gauge.cpp"
+"$OUT/battery_gauge"

@@ -1,7 +1,8 @@
 #pragma once
 
 /*
- * What the Power Source cluster reports from the CR2032 rest readings. Pure C++17 with no ESP-IDF dependency, so it
+ * Which CR2032 rest voltage the Power Source cluster reports (BatVoltage, and the bound of the percentage in
+ * battery_gauge.h). Pure C++17 with no ESP-IDF dependency, so it
  * runs in the host test (test/host/test_battery_report.cpp); battery.cpp feeds it the rest readings.
  *
  *  - A reading that gives the same or a higher percentage is reported at once: the cell recovered, or a new one.
@@ -13,7 +14,8 @@
 
 #include <stdint.h>
 
-/** Coarse CR2032 state of charge from the rest voltage, in Matter half-percent units (0..200). */
+/** Coarse voltage scale (half-percent units, 0..200) on which readings are compared: a reading on the same or a higher
+ * step counts as "same or higher". Not the reported percentage (battery_gauge.h). */
 uint8_t battery_soc_from_rest(uint32_t mv);
 
 class BatteryReport {
