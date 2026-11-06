@@ -177,7 +177,7 @@ Bản phát hành, 2 controller (Apple + HA), ~20 lần nhấn/ngày (bằng tay
 | L2 | Sự kiện đến HA/Apple so với số lần nhấn | 100 % (khi mạng bình thường) | |
 | L3 | `SUB terminated` | ≤ 1 lần/ngày/controller | |
 | L4 | Dòng trung bình 7 ngày | trong ±15 % mô hình (SIT ~60 µA) | |
-| L5 | `BatVoltage` và `BatPercentRemaining`; ghi áp nghỉ theo mAh đã dùng (dòng log `VBAT rest … used … mAh`) để hiệu chỉnh bảng giới hạn trong `main/battery_gauge.cpp` và `BATTERY_MODEL_AVG_UA` | % giảm đều theo thời gian, không nhảy; tới vùng khuỷu thì % bị kéo xuống theo áp | |
+| L5 | `BatVoltage` và `BatPercentRemaining`; ghi áp nghỉ theo mAh đã dùng (dòng log `VBAT rest … used … mAh`) để hiệu chỉnh các mốc áp trong `main/battery_gauge.cpp` và `BATTERY_MODEL_AVG_UA` | % giảm đều theo thời gian tới 20 % rồi đứng; chỉ xuống dưới 20 % khi áp nghỉ < ~2 900 mV; không nhảy | |
 | L6 | Thay pin mới (≥ 3,05 V hở mạch) giữa chừng | log `New cell ... charge count restarted`, % về 100. Lắp lại pin cũ: không có dòng này, % giữ nguyên | |
 | L6 | Heap tối thiểu (`id_diag hw ... min_heap`) | không giảm dần (không rò bộ nhớ) | |
 | L7 | Cập nhật `tools/battery_model.py` bằng số đo F và L4, tính lại tuổi pin | ghi lại | |

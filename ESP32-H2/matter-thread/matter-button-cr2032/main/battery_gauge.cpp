@@ -4,19 +4,18 @@
 
 #include <stddef.h>
 
-// Rest voltage at ~60 uA, 20-25 degC. ESTIMATES from the Energizer, Panasonic and Maxell CR2032 discharge curves
-// (light-load plateau ~2.95-3.0 V; the knee starts below ~2.9 V): calibrate with a real discharge (checklist L5).
-struct Bound {
+// Rest voltage of a Li/MnO2 coin cell at ~60 uA, 20-25 degC. ESTIMATES from the Energizer, Panasonic and Maxell
+// CR2032 / CR2450 discharge curves (light-load plateau ~2.95-3.0 V, knee from ~2.85 V): calibrate with a real
+// discharge (checklist L5). On the plateau (>= k_plateau_mv) no cap; from k_knee_mv down the cap falls from the floor
+// to 0 along k_knee (permille of the floor); in between it falls from 100 % to the floor.
+static constexpr uint32_t k_plateau_mv = 2900;
+static constexpr uint32_t k_knee_mv = 2850;
+struct KneePoint {
     uint16_t mv;
-    uint8_t half_percent;
+    uint16_t permille; // of the floor
 };
-// The most a voltage allows: on the plateau anything, below it the knee
-static constexpr Bound k_max[] = {
-    {2900, 200}, {2850, 100}, {2800, 60}, {2700, 30}, {2600, 16}, {2500, 8}, {2400, 0},
-};
-// The least a voltage allows: a cell still on the plateau has not run out
-static constexpr Bound k_min[] = {
-    {2950, 40}, {2900, 30}, {2850, 10}, {2800, 0},
+static constexpr KneePoint k_knee[] = {
+    {2850, 1000}, {2800, 600}, {2750, 400}, {2700, 250}, {2600, 100}, {2500, 50}, {2400, 0},
 };
 
 // A rest reading this high is a cell that has delivered at most a few mAh
@@ -24,30 +23,29 @@ static constexpr uint32_t k_new_cell_mv = 3020;
 // Or this much above the voltage reported before the battery was taken out (a used cell recovers less in its rest)
 static constexpr uint32_t k_new_cell_rise_mv = 60;
 
-template <size_t N> static uint8_t interpolate(const Bound (&t)[N], uint32_t mv)
+static uint32_t lerp(uint32_t mv, uint32_t lo_mv, uint32_t hi_mv, uint32_t lo, uint32_t hi)
 {
-    if (mv >= t[0].mv) {
-        return t[0].half_percent;
+    return lo + (mv - lo_mv) * (hi - lo) / (hi_mv - lo_mv);
+}
+
+uint8_t battery_max_half_percent(uint32_t rest_mv, uint8_t floor_half_percent)
+{
+    const uint32_t floor = floor_half_percent > 200 ? 200 : floor_half_percent;
+    if (rest_mv >= k_plateau_mv) {
+        return 200;
     }
-    for (size_t i = 1; i < N; i++) {
-        if (mv >= t[i].mv) {
-            const Bound &hi = t[i - 1];
-            const Bound &lo = t[i];
-            return static_cast<uint8_t>(lo.half_percent +
-                                        (mv - lo.mv) * (hi.half_percent - lo.half_percent) / (hi.mv - lo.mv));
+    if (rest_mv >= k_knee_mv) {
+        return static_cast<uint8_t>(lerp(rest_mv, k_knee_mv, k_plateau_mv, floor, 200));
+    }
+    constexpr size_t n = sizeof(k_knee) / sizeof(k_knee[0]);
+    for (size_t i = 1; i < n; i++) {
+        if (rest_mv >= k_knee[i].mv) {
+            const uint32_t permille =
+                lerp(rest_mv, k_knee[i].mv, k_knee[i - 1].mv, k_knee[i].permille, k_knee[i - 1].permille);
+            return static_cast<uint8_t>(floor * permille / 1000);
         }
     }
-    return t[N - 1].half_percent;
-}
-
-uint8_t battery_max_half_percent(uint32_t rest_mv)
-{
-    return interpolate(k_max, rest_mv);
-}
-
-uint8_t battery_min_half_percent(uint32_t rest_mv)
-{
-    return interpolate(k_min, rest_mv);
+    return 0;
 }
 
 bool battery_is_new_cell(uint32_t rest_mv, uint32_t saved_mv)
@@ -55,8 +53,9 @@ bool battery_is_new_cell(uint32_t rest_mv, uint32_t saved_mv)
     return rest_mv >= k_new_cell_mv || (saved_mv != 0 && rest_mv >= saved_mv + k_new_cell_rise_mv);
 }
 
-BatteryGauge::BatteryGauge(uint32_t usable_mah, uint32_t avg_ua)
-    : m_usable_uas(static_cast<uint64_t>(usable_mah ? usable_mah : 1) * 3600 * 1000), m_avg_ua(avg_ua)
+BatteryGauge::BatteryGauge(uint32_t nominal_mah, uint32_t avg_ua, uint8_t floor_half_percent)
+    : m_nominal_uas(static_cast<uint64_t>(nominal_mah ? nominal_mah : 1) * 3600 * 1000), m_avg_ua(avg_ua),
+      m_floor(floor_half_percent > 200 ? 200 : floor_half_percent)
 {
 }
 
@@ -87,13 +86,17 @@ uint32_t BatteryGauge::UsedMas() const
 
 uint8_t BatteryGauge::HalfPercent(uint32_t rest_mv) const
 {
-    // Rounded up: a fresh cell shows 100 % until a whole half-percent is used
-    const uint64_t used_half = m_used_uas * 200 / m_usable_uas;
+    // Rounded up: a fresh cell shows 100 % until a whole half-percent is used; the count stops at the floor
+    const uint64_t used_half = m_used_uas * 200 / m_nominal_uas;
     uint32_t half = used_half >= 200 ? 0 : static_cast<uint32_t>(200 - used_half);
+    if (half < m_floor) {
+        half = m_floor;
+    }
     if (rest_mv) {
-        const uint32_t hi = battery_max_half_percent(rest_mv);
-        const uint32_t lo = battery_min_half_percent(rest_mv);
-        half = half > hi ? hi : half < lo ? lo : half;
+        const uint32_t cap = battery_max_half_percent(rest_mv, m_floor);
+        if (half > cap) {
+            half = cap;
+        }
     }
     return static_cast<uint8_t>(half);
 }

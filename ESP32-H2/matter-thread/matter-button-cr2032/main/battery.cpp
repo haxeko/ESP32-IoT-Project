@@ -97,8 +97,8 @@ static TaskHandle_t s_task = nullptr;
 
 // Battery task (and app_main before it starts)
 static BatteryReport s_report(CONFIG_BATTERY_DROP_CONFIRM_COUNT);
-static BatteryGauge s_gauge(CONFIG_BATTERY_CAPACITY_MAH * CONFIG_BATTERY_USABLE_PERCENT / 100,
-                            CONFIG_BATTERY_MODEL_AVG_UA);
+static BatteryGauge s_gauge(CONFIG_BATTERY_CAPACITY_MAH, CONFIG_BATTERY_MODEL_AVG_UA,
+                            CONFIG_BATTERY_MODEL_FLOOR_PERCENT * 2);
 static SavedReport s_saved = {};
 static uint32_t s_saved_mv_at_boot = 0;  // reported before the battery was taken out, 0 if none
 static uint32_t s_counted_ms = 0;        // running time already counted in s_gauge (since boot)
@@ -516,7 +516,8 @@ esp_err_t battery_create_power_source(node_t *node)
     cfg.power_source.features.battery.bat_replacement_needed = s_level == BatteryLevel::Critical;
     cfg.power_source.features.battery.bat_replaceability =
         chip::to_underlying(PowerSource::BatReplaceabilityEnum::kUserReplaceable);
-    strlcpy(cfg.power_source.features.replaceable.bat_replacement_description, "CR2032 3V lithium coin cell",
+    strlcpy(cfg.power_source.features.replaceable.bat_replacement_description,
+            CONFIG_BATTERY_IEC_DESIGNATION " 3V lithium coin cell",
             sizeof(cfg.power_source.features.replaceable.bat_replacement_description));
     cfg.power_source.features.replaceable.bat_quantity = 1;
     esp_err_t err = endpoint::power_source::add(root, &cfg);
@@ -535,7 +536,7 @@ esp_err_t battery_create_power_source(node_t *node)
     psa::create_bat_percent_remaining(ps, mv ? nullable<uint8_t>(s_half_percent) : nullable<uint8_t>(),
                                       nullable<uint8_t>(0), nullable<uint8_t>(200));
     psa::create_bat_present(ps, true);
-    psa::create_bat_iec_designation(ps, "CR2032", strlen("CR2032"));
+    psa::create_bat_iec_designation(ps, CONFIG_BATTERY_IEC_DESIGNATION, strlen(CONFIG_BATTERY_IEC_DESIGNATION));
     psa::create_bat_approved_chemistry(
         ps, chip::to_underlying(PowerSource::BatApprovedChemistryEnum::kLithiumManganeseDioxide), 0, UINT8_MAX);
     psa::create_bat_capacity(ps, CONFIG_BATTERY_CAPACITY_MAH, 0, UINT32_MAX);

@@ -1,0 +1,5 @@
+# CR2450 (620 mAh) instead of a CR2032: same circuit, a CR2450 holder. Add on top of the board's defaults, e.g.
+#   idf.py -B build-cr2450 -D SDKCONFIG=sdkconfig.cr2450 \
+#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.cr2450" build
+CONFIG_BATTERY_CR2450=y
+CONFIG_DEVICE_HARDWARE_VERSION_STRING="ESP32-H2-WROOM-02C CR2450 v1.0"

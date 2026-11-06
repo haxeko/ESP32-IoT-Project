@@ -15,3 +15,5 @@ sdkconfig.chip
 build-chip/
 sdkconfig.pmdiag
 build-pmdiag/
+sdkconfig.cr2450
+build-cr2450/

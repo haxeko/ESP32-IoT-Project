@@ -213,11 +213,17 @@ VBAT ──R9 1 MΩ──┬── GPIO1 (ADC1_CH0, ATTEN 12 dB, 0..3,3 V)
 
 Ngoài ra `BatVoltage` (mV) và `BatPercentRemaining` (đếm điện tích đã dùng, giới hạn bằng áp nghỉ: xem dưới). Ngưỡng là [AS], hiệu chỉnh theo phép đo ở checklist (mục I).
 
-**`BatPercentRemaining` đếm điện tích, không đọc từ bảng áp** (`main/battery_gauge.cpp`, có host test). Ở dòng ~60 µA, CR2032 nằm trên vùng ổn định ~2,95–3,0 V gần suốt đời: áp không phân biệt được 95 % với 40 %, và pin mới tụt ~0,1 V khỏi áp hở mạch trong vài mAh đầu. Vì vậy:
+**`BatPercentRemaining` chia đều theo thời gian dùng, phần cuối theo áp đo thật** (`main/battery_gauge.cpp`, có host test). Ở dòng ~60 µA, pin lithium cúc áo (CR2032, CR2450) nằm trên vùng ổn định ~2,95–3,0 V gần suốt đời: áp không phân biệt được 95 % với 30 %. Vì vậy:
 
-- **% = 100 − điện tích đã dùng / dung lượng dùng được.** Điện tích = thời gian chạy × dòng trung bình mô hình (`BATTERY_MODEL_AVG_UA` = 60 µA, đặt bằng số đo ở JP1 theo checklist F5 để % đúng hơn); dung lượng dùng được = `BATTERY_CAPACITY_MAH` × `BATTERY_USABLE_PERCENT` = 176 mAh. Pin mới báo 100 % tới khi dùng hết nửa phần trăm (~15 giờ), 99 % sau ~1 ngày, ~50 % sau ~2 tháng. Số đếm lưu trong NVS (cùng giá trị đã báo, ~1 lần/ngày), không mất khi tháo pin.
-- **Áp nghỉ chỉ giới hạn con số**: dưới vùng ổn định thì % không được cao hơn mức áp cho phép (2 850 mV ≤ 50 %, 2 700 mV ≤ 15 %, 2 400 mV = 0 %), nên mô hình đếm thiếu vẫn báo đúng lúc pin sắp hết; còn trên vùng ổn định (≥ 2 950 mV) thì % không thấp hơn 20 %, nên mô hình đếm thừa không báo pin cạn giả. Các điểm này là [AS] từ đường xả Energizer/Panasonic/Maxell, hiệu chỉnh bằng một lần xả thật (checklist L5).
+- **100 % → 20 %: đếm điện tích.** Điện tích đã dùng = thời gian chạy × dòng trung bình mô hình (`BATTERY_MODEL_AVG_UA` = 60 µA; đặt bằng số đo ở JP1 theo checklist F5 để khớp hơn), chia cho dung lượng danh định (`BATTERY_CAPACITY_MAH`). % giảm đều tới `BATTERY_MODEL_FLOOR_PERCENT` = 20 % rồi **dừng ở đó**: phép đếm không bao giờ tự báo dưới 20 %. Số đếm lưu trong NVS (~1 lần/ngày), không mất khi tháo pin.
+- **Dưới 20 %: chỉ theo áp nghỉ đo được.** Khi pin rời vùng ổn định thì áp giới hạn %: ≥ 2 900 mV không giới hạn; 2 900 → 2 850 mV giới hạn giảm từ 100 % xuống 20 %; từ 2 850 mV (đầu "khuỷu") xuống 2 400 mV giới hạn giảm từ 20 % về 0 % (2 800 mV ≈ 12 %, 2 700 mV = 5 %, 2 600 mV = 2 %). Thiết bị tốn hơn mô hình thì khuỷu tới sớm và % bị kéo xuống theo áp; tốn ít hơn thì % đứng ở 20 % cho tới khi áp thật sự giảm. Các mốc áp là [AS] từ đường xả Energizer/Panasonic/Maxell, hiệu chỉnh bằng một lần xả thật (checklist L5).
 - **Nhận pin mới**: sau mỗi lần lắp pin (reset power-on), nếu một trong 3 lần đo đầu ≥ 3 020 mV hoặc cao hơn áp đã báo trước đó ≥ 60 mV thì số đếm về 0 (log `New cell ... charge count restarted`). Lắp lại đúng pin cũ thì giữ số đếm. Lên bản này từ bản cũ (bản ghi NVS chưa có số đếm): đếm từ 0, tức báo 100 % với pin đang dùng.
+- **Loại pin** (`BATTERY_CR2032` mặc định, hoặc `BATTERY_CR2450` qua `sdkconfig.defaults.cr2450`): đổi `BatIECDesignation` và dung lượng mặc định.
+
+| Dòng TB 60 µA | 100 % | 75 % | 50 % | 20 % (bắt đầu đứng) |
+|---|---|---|---|---|
+| CR2032 (220 mAh) | 0 | ~38 ngày | ~76 ngày | ~4 tháng |
+| CR2450 (620 mAh) | 0 | ~3,5 tháng | ~7 tháng | ~11,3 tháng |
 
 **Cách đo áp** (CR2032 đọc thấp vài phút sau mỗi đợt dòng radio):
 
@@ -684,7 +690,8 @@ Matter OTA Requestor, hỏi provider **1 lần/ngày** (`APP_OTA_QUERY_INTERVAL_
 | *Battery* `BATTERY_SENSE_GPIO`, `BATTERY_SENSE_RATIO_X1000` | 1, 1000 | chân đo, tỷ lệ chia (1000 = không chia) |
 | `BATTERY_MEASURE_INTERVAL_H` / `BATTERY_TEST_INTERVAL_H` / `BATTERY_TEST_LOAD_MS` | 12 / 24 / 500 | đo nghỉ, đo có tải |
 | `BATTERY_QUIET_MIN` / `BATTERY_DROP_CONFIRM_COUNT` / `BATTERY_CONFIRM_INTERVAL_MIN` | 10 / 3 / 60 | radio phải yên bao lâu trước khi đo nghỉ; số lần đo thấp liên tiếp để áp báo giảm (1 = báo mọi lần); chu kỳ đo xác nhận |
-| `BATTERY_MODEL_AVG_UA` / `BATTERY_USABLE_PERCENT` / `BATTERY_CAPACITY_MAH` | 60 / 80 / 220 | dòng trung bình mô hình và dung lượng dùng được, cho `BatPercentRemaining` (mục 2.5) |
+| `BATTERY_CR2032` / `BATTERY_CR2450`, `BATTERY_CAPACITY_MAH` | CR2032, 220 (CR2450: 620) | loại pin, dung lượng danh định |
+| `BATTERY_MODEL_AVG_UA` / `BATTERY_MODEL_FLOOR_PERCENT` | 60 / 20 | dòng trung bình mô hình; % thấp nhất phép đếm tự báo, dưới đó chỉ theo áp (mục 2.5) |
 | `BATTERY_WARNING_REST_MV` / `CRITICAL_REST_MV` / `WARNING_BURST_MV` / `CRITICAL_BURST_MV` | 2750 / 2600 / 2200 / 1950 | ngưỡng mức pin |
 | `BATTERY_BOOT_MIN_MV`, `BATTERY_BROWNOUT_LIMIT`, `BATTERY_RECOVERY_SLEEP_S` | 2200, 3, 3600 | boot guard |
 | *Status LED* `STATUS_LED_GPIO` / `STATUS_LED_PRESS_FEEDBACK` | 22 / n | −1 = không có LED; nháy 20 ms mỗi lần nhấn |
@@ -736,6 +743,9 @@ docker run --rm -v "${repo}:/repo" $img bash -c "$pre && idf.py -B build-unique 
 # Bo chip (hardware-chip/: chip ESP32-H2, thạch anh 32,768 kHz, LED RGB WS2812B); ghép được với LIT bằng cách đặt
 #   sdkconfig.defaults.chip ở cuối: SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.lit;sdkconfig.defaults.chip'
 docker run --rm -v "${repo}:/repo" $img bash -c "$pre && idf.py -B build-chip -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.chip -D SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.chip' build"
+
+# Pin CR2450 (620 mAh, cùng mạch, đế CR2450): BatIECDesignation, dung lượng, % pin (mục 2.5)
+docker run --rm -v "${repo}:/repo" $img bash -c "$pre && idf.py -B build-cr2450 -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.cr2450 -D SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.defaults.cr2450' build"
 
 # Bản chẩn đoán dòng ngủ: như bản mặc định (vẫn Light-sleep) + bộ đếm esp_pm; mỗi 10 phút log id_diag in các khoá PM
 # (khoá nào giữ chip thức, bao lâu) và % thời gian ở Light-sleep. Dùng khi pin tụt nhanh hơn dự tính.

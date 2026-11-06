@@ -209,17 +209,37 @@ menu "Battery"
         help
             1000 without divider (reference board: VBAT <= 3.3 V fits the ADC 12 dB range).
 
+    choice BATTERY_TYPE
+        prompt "Cell"
+        default BATTERY_CR2032
+        help
+            Same circuit for both; a CR2450 needs a CR2450 holder (or wires to the BT1 pads). Sets the Power Source
+            BatIECDesignation and the default capacity.
+
+        config BATTERY_CR2032
+            bool "CR2032 (220 mAh)"
+        config BATTERY_CR2450
+            bool "CR2450 (620 mAh)"
+    endchoice
+
+    config BATTERY_IEC_DESIGNATION
+        string
+        default "CR2450" if BATTERY_CR2450
+        default "CR2032"
+
     config BATTERY_CAPACITY_MAH
         int "Nominal capacity (mAh), Power Source BatCapacity"
+        default 620 if BATTERY_CR2450
         default 220
 
-    config BATTERY_USABLE_PERCENT
-        int "Usable share of the nominal capacity (%)"
-        range 50 100
-        default 80
+    config BATTERY_MODEL_FLOOR_PERCENT
+        int "Lowest percentage shown from the charge count (%)"
+        range 0 50
+        default 20
         help
-            BatPercentRemaining counts down from 100 % over this share of BATTERY_CAPACITY_MAH: beyond ~80 % the
-            cell's internal resistance no longer carries a Thread re-attach (README 1.4).
+            BatPercentRemaining falls evenly from 100 % to this value over BATTERY_CAPACITY_MAH x (100 - this) %
+            of charge used, then stays there: only the measured rest voltage takes it lower, once the cell leaves
+            its plateau (main/battery_gauge.cpp). 0: the count alone runs down to 0 %.
 
     config BATTERY_MODEL_AVG_UA
         int "Modelled average current at the cell (uA)"
