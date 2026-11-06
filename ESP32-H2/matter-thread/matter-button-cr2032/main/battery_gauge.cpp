@@ -18,10 +18,12 @@ static constexpr KneePoint k_knee[] = {
     {2850, 1000}, {2800, 600}, {2750, 400}, {2700, 250}, {2600, 100}, {2500, 50}, {2400, 0},
 };
 
-// A rest reading this high is a cell that has delivered at most a few mAh
-static constexpr uint32_t k_new_cell_mv = 3020;
-// Or this much above the voltage reported before the battery was taken out (a used cell recovers less in its rest)
-static constexpr uint32_t k_new_cell_rise_mv = 60;
+// A rest reading this high is a cell that has delivered at most a few mAh (a used one falls below it within its first
+// ~1-5 mAh); resetting the count of such a cell costs < 1 %
+static constexpr uint32_t k_new_cell_mv = 3000;
+// Or this much above the voltage reported before the battery was taken out: a used cell put back reads within
+// ~10-25 mV of it (rest, temperature), a new one 40-150 mV higher. Immune to the ADC offset.
+static constexpr uint32_t k_new_cell_rise_mv = 40;
 
 static uint32_t lerp(uint32_t mv, uint32_t lo_mv, uint32_t hi_mv, uint32_t lo, uint32_t hi)
 {

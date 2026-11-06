@@ -39,12 +39,13 @@ static constexpr uint32_t k_rtc_magic = 0x42415454; // "BATT"
 static constexpr uint32_t k_report_step_mv = 20;
 // A stable run this long clears the brownout counter of the boot guard
 static constexpr uint32_t k_stable_run_ms = 120 * 1000;
-// Rest readings wait for a quiet radio: rechecked this often while busy, taken anyway after the longest wait (a low
-// reading then only counts towards the drop confirmation)
+// Rest readings wait for a quiet radio: rechecked this often while busy, taken anyway after the longest wait. Such a
+// reading may be low, but a drop needs CONFIG_BATTERY_DROP_CONFIRM_COUNT lower readings over
+// CONFIG_BATTERY_DROP_CONFIRM_HOURS, so it lowers nothing on its own.
 static constexpr uint32_t k_quiet_ms = CONFIG_BATTERY_QUIET_MIN * 60 * 1000;
 static constexpr uint32_t k_busy_recheck_ms = 60 * 1000;
-static constexpr uint32_t k_max_quiet_wait_ms = 2 * 3600 * 1000;
-// Readings after the first one after a boot, CONFIG_BATTERY_CONFIRM_INTERVAL_MIN apart: that first reading may come
+static constexpr uint32_t k_max_quiet_wait_ms = 12 * 3600 * 1000;
+// Readings after the first one after a boot, CONFIG_BATTERY_FOLLOW_UP_INTERVAL_MIN apart: that first reading may come
 // soon after a commissioning or a flash, before the cell recovered (a higher reading is reported at once)
 static constexpr uint32_t k_follow_up_readings = 2;
 
@@ -56,8 +57,8 @@ static constexpr TickType_t ms_to_ticks(uint64_t ms)
 }
 static_assert(static_cast<uint64_t>(CONFIG_BATTERY_MEASURE_INTERVAL_H) * 3600 * configTICK_RATE_HZ < portMAX_DELAY,
               "BATTERY_MEASURE_INTERVAL_H does not fit in a tick count");
-static_assert(static_cast<uint64_t>(CONFIG_BATTERY_CONFIRM_INTERVAL_MIN) * 60 * configTICK_RATE_HZ < portMAX_DELAY,
-              "BATTERY_CONFIRM_INTERVAL_MIN does not fit in a tick count");
+static_assert(static_cast<uint64_t>(CONFIG_BATTERY_FOLLOW_UP_INTERVAL_MIN) * 60 * configTICK_RATE_HZ < portMAX_DELAY,
+              "BATTERY_FOLLOW_UP_INTERVAL_MIN does not fit in a tick count");
 
 // The last reported values, kept in NVS across battery changes: version, half-percent, level, rest mV, charge used.
 // Version 1 (8 bytes, no charge count) is still read: the count then starts at 0.
@@ -90,19 +91,20 @@ static esp_pm_lock_handle_t s_cpu_max_lock = nullptr;
 // Written by the battery task (and app_main before it starts), read anywhere: 32-bit values, no tearing
 static volatile uint32_t s_boot_mv = 0;  // at boot, CPU running (loaded): boot guard only, never reported
 static volatile uint32_t s_rest_mv = 0;  // reported rest voltage, 0 = nothing reported yet
-static volatile uint32_t s_burst_mv = 0; // last predicted voltage at a radio burst, 0 = not tested yet
+static volatile uint32_t s_burst_mv = 0; // predicted voltage at a radio burst (see health_test), 0 = not tested yet
 static volatile BatteryLevel s_level = BatteryLevel::Ok;
 static volatile uint8_t s_half_percent = 200;
 static TaskHandle_t s_task = nullptr;
 
 // Battery task (and app_main before it starts)
-static BatteryReport s_report(CONFIG_BATTERY_DROP_CONFIRM_COUNT);
+static BatteryReport s_report(CONFIG_BATTERY_DROP_CONFIRM_COUNT, CONFIG_BATTERY_DROP_CONFIRM_HOURS * 3600);
 static BatteryGauge s_gauge(CONFIG_BATTERY_CAPACITY_MAH, CONFIG_BATTERY_MODEL_AVG_UA,
                             CONFIG_BATTERY_MODEL_FLOOR_PERCENT * 2);
 static SavedReport s_saved = {};
 static uint32_t s_saved_mv_at_boot = 0;  // reported before the battery was taken out, 0 if none
 static uint32_t s_counted_ms = 0;        // running time already counted in s_gauge (since boot)
 static uint32_t s_new_cell_readings = 0; // set at a power-on reset
+static uint32_t s_last_test_burst_mv = 0; // prediction of the previous load test, 0 = none since the boot
 
 // Radio activity that loads the cell: written on the CHIP task, read by the battery task (32-bit values)
 static volatile uint32_t s_busy = 0;        // bit per BatteryBusy
@@ -213,9 +215,13 @@ static void health_test(uint32_t rest_mv)
     }
     const uint32_t drop = rest_mv > loaded_mv ? rest_mv - loaded_mv : 0;
     const uint32_t burst_drop = drop * CONFIG_BATTERY_BURST_RATIO_X100 / 100;
-    s_burst_mv = rest_mv > burst_drop ? rest_mv - burst_drop : 1;
-    ESP_LOGI(TAG, "Load test: rest %" PRIu32 " mV, loaded %" PRIu32 " mV, predicted at a radio burst %" PRIu32 " mV",
-             rest_mv, loaded_mv, s_burst_mv);
+    const uint32_t burst = rest_mv > burst_drop ? rest_mv - burst_drop : 1;
+    // The level uses the better of this test and the previous one (a day earlier): one test on a cell still tired
+    // from heavy use does not lower it
+    s_burst_mv = burst > s_last_test_burst_mv ? burst : s_last_test_burst_mv;
+    s_last_test_burst_mv = burst;
+    ESP_LOGI(TAG, "Load test: rest %" PRIu32 " mV, loaded %" PRIu32 " mV, predicted at a radio burst %" PRIu32
+                  " mV (level uses %" PRIu32 " mV)", rest_mv, loaded_mv, burst, s_burst_mv);
 }
 
 /* CHIP task: publish the values that changed */
@@ -236,7 +242,7 @@ static void publish_work(intptr_t)
             last_mv = mv;
         }
     }
-    if (mv && half_percent != last_half_percent) { // mv 0: nothing reported yet, the percentage stays null
+    if (half_percent != last_half_percent) { // from the charge count: known from the boot, even before a reading
         esp_matter_attr_val_t val = esp_matter_nullable_uint8(nullable<uint8_t>(half_percent));
         if (attribute::update(chip::kRootEndpointId, PowerSource::Id,
                               PowerSource::Attributes::BatPercentRemaining::Id, &val) == ESP_OK) {
@@ -263,9 +269,12 @@ static const char *level_name(BatteryLevel level)
 /* NVS (after nvs_flash_init()): the values reported before the battery was taken out */
 static void restore_saved()
 {
+    // Without saved values the charge count starts at 0: BatPercentRemaining shows 100 % at once (capped by the
+    // voltage from the first rest reading on), BatVoltage stays unknown until that reading
+    s_half_percent = s_gauge.HalfPercent(0);
     nvs_handle_t nvs;
     if (nvs_open(k_nvs_namespace, NVS_READONLY, &nvs) != ESP_OK) {
-        ESP_LOGI(TAG, "No saved battery values: BatPercentRemaining unknown until the first rest reading");
+        ESP_LOGI(TAG, "No saved battery values: charge count from 0, BatVoltage unknown until the first rest reading");
         return;
     }
     SavedReport saved = {};
@@ -276,7 +285,7 @@ static void restore_saved()
     const bool v2 = size == sizeof(saved) && saved.version == k_saved_version;
     if (err != ESP_OK || !(v1 || v2) || saved.mv == 0 || saved.half_percent > 200 ||
         saved.level > static_cast<uint8_t>(BatteryLevel::Critical)) {
-        ESP_LOGI(TAG, "No saved battery values: BatPercentRemaining unknown until the first rest reading");
+        ESP_LOGI(TAG, "No saved battery values: charge count from 0, BatVoltage unknown until the first rest reading");
         return;
     }
     if (v1) {
@@ -328,8 +337,8 @@ static uint32_t now_ms()
 }
 
 /* Until no commissioning window or OTA download is running and nothing has loaded the cell (boot, Thread attach,
- * button report) for CONFIG_BATTERY_QUIET_MIN: a CR2032 takes minutes to recover from the 25-40 mA bursts, a
- * reading taken earlier is too low. Gives up after k_max_quiet_wait_ms of activity. */
+ * button press) for CONFIG_BATTERY_QUIET_MIN: a coin cell takes minutes, after many presses tens of minutes, to recover
+ * from the 25-40 mA bursts, and a reading taken earlier is too low. Gives up after k_max_quiet_wait_ms of activity. */
 static void wait_quiet()
 {
     const uint32_t start = now_ms();
@@ -361,9 +370,11 @@ static void measure(bool load_test)
     if (load_test) {
         health_test(rest_mv);
     }
-    // Reported voltage: same or higher now; lower only once CONFIG_BATTERY_DROP_CONFIRM_COUNT readings in a row are
-    // lower (battery_report.h). The level follows the reported rest voltage and the latest burst test.
-    s_report.OnReading(rest_mv);
+    // Reported voltage: same or higher now; lower only once CONFIG_BATTERY_DROP_CONFIRM_COUNT readings in a row over
+    // CONFIG_BATTERY_DROP_CONFIRM_HOURS are lower (battery_report.h). The level follows the reported rest voltage and
+    // the load tests.
+    const uint32_t now_s = static_cast<uint32_t>(esp_timer_get_time() / 1000000);
+    s_report.OnReading(rest_mv, now_s);
     s_rest_mv = s_report.ReportedMv();
     // The percentage: charge used since the cell was new, bounded by the reported rest voltage (battery_gauge.h)
     const uint32_t now = now_ms();
@@ -385,9 +396,10 @@ static void measure(bool load_test)
     }
     s_level = level;
     if (s_report.PendingLower()) {
-        ESP_LOGI(TAG, "VBAT rest %" PRIu32 " mV: lower than the reported %" PRIu32 " mV, %u/%d in a row, next reading "
-                      "in %d min", rest_mv, s_rest_mv, s_report.PendingLower(), CONFIG_BATTERY_DROP_CONFIRM_COUNT,
-                 CONFIG_BATTERY_CONFIRM_INTERVAL_MIN);
+        ESP_LOGI(TAG, "VBAT rest %" PRIu32 " mV: lower than the reported %" PRIu32 " mV, %u in a row over %" PRIu32
+                      " h (a drop needs %d over %d h)", rest_mv, s_rest_mv, s_report.PendingLower(),
+                 s_report.PendingSpan(now_s) / 3600, CONFIG_BATTERY_DROP_CONFIRM_COUNT,
+                 CONFIG_BATTERY_DROP_CONFIRM_HOURS);
     }
     const uint32_t used_mas = s_gauge.UsedMas();
     ESP_LOGI(TAG, "VBAT rest %" PRIu32 " mV, reported %" PRIu32 " mV, used %" PRIu32 ".%" PRIu32 " mAh, %u.%u %%, "
@@ -411,13 +423,11 @@ static void battery_task(void *)
     uint32_t follow_ups = k_follow_up_readings;
     uint32_t round = 0;
     for (;;) {
-        if (follow_ups || s_report.PendingLower()) {
-            // Following up the first reading, or confirming a lower one: sooner than the regular interval, no
-            // load test
-            if (follow_ups) {
-                follow_ups--;
-            }
-            vTaskDelay(ms_to_ticks(CONFIG_BATTERY_CONFIRM_INTERVAL_MIN * 60ULL * 1000));
+        if (follow_ups) {
+            // Following up the first reading: sooner than the regular interval, no load test. These readings can
+            // raise the reported voltage; a drop still needs readings over CONFIG_BATTERY_DROP_CONFIRM_HOURS.
+            follow_ups--;
+            vTaskDelay(ms_to_ticks(CONFIG_BATTERY_FOLLOW_UP_INTERVAL_MIN * 60ULL * 1000));
             wait_quiet();
             measure(false);
             continue;
@@ -533,8 +543,8 @@ esp_err_t battery_create_power_source(node_t *node)
     const uint32_t mv = s_rest_mv;
     psa::create_bat_voltage(ps, mv ? nullable<uint32_t>(mv) : nullable<uint32_t>(), nullable<uint32_t>(0),
                             nullable<uint32_t>(5000));
-    psa::create_bat_percent_remaining(ps, mv ? nullable<uint8_t>(s_half_percent) : nullable<uint8_t>(),
-                                      nullable<uint8_t>(0), nullable<uint8_t>(200));
+    psa::create_bat_percent_remaining(ps, nullable<uint8_t>(s_half_percent), nullable<uint8_t>(0),
+                                      nullable<uint8_t>(200));
     psa::create_bat_present(ps, true);
     psa::create_bat_iec_designation(ps, CONFIG_BATTERY_IEC_DESIGNATION, strlen(CONFIG_BATTERY_IEC_DESIGNATION));
     psa::create_bat_approved_chemistry(

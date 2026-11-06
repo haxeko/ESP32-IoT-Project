@@ -134,13 +134,13 @@ Nguồn DC + điện trở nối tiếp vào cọc pin, thay cho CR2032:
 
 | # | Bước (mỗi điểm) | Đạt khi | Kết quả |
 |---|---|---|---|
-| I1 | Khởi động, chờ đo pin đầu tiên (≥ 12 phút: radio yên 10 phút), đọc log `battery: Load test ...` và `BatChargeLevel` trên HA. Build test với `CONFIG_BATTERY_DROP_CONFIRM_COUNT=1`, nếu không mỗi bước hạ áp chỉ hiện sau 3 lần đo (~2 giờ) | mức pin chuyển **Warning trước điểm đầu tiên có brownout** | |
+| I1 | Khởi động, chờ đo pin đầu tiên (≥ 32 phút: radio yên 30 phút), đọc log `battery: Load test ...` và `BatChargeLevel` trên HA. Build test với `CONFIG_BATTERY_DROP_CONFIRM_COUNT=1`, `CONFIG_BATTERY_DROP_CONFIRM_HOURS=0` và `CONFIG_BATTERY_QUIET_MIN=1`, nếu không mỗi bước hạ áp chỉ hiện sau 3 lần đo trong ≥ 24 giờ | mức pin chuyển **Warning trước điểm đầu tiên có brownout** | |
 | I2 | 20 lần nhấn | không reset ở I-a … I-d | |
 | I3 | Re-attach (tắt/bật Border Router) | thành công ở I-a … I-c; ghi lại kết quả I-d | |
 | I4 | Khởi động ở I-f | log `Battery too weak ... Deep-sleep`; ≤ 3 brownout liên tiếp rồi ngủ; nhấn nút thử lại được | |
 | I5 | OTA ở mức Warning | log `OTA download cancelled: battery level not OK` | |
 | I6 | Hiệu chỉnh ngưỡng `BATTERY_*_MV`, `BATTERY_BURST_RATIO_X100` theo kết quả | ghi lại giá trị chọn | |
-| I7 | Lịch đo: ghi log UART 3 giờ sau khởi động, không nhấn nút | `battery: VBAT rest …` lần đầu ~12 phút sau khi radio yên, rồi +60 và +120 phút, sau đó 12 giờ một lần; `Load test` chỉ ở lần đầu rồi 24 giờ một lần. Hai dòng cách nhau ~4 phút là lỗi tràn tick của bản ≤ 1.0.2611052141 | |
+| I7 | Lịch đo: ghi log UART 3 giờ sau khởi động, không nhấn nút | `battery: VBAT rest …` lần đầu ~32 phút sau khi radio yên, rồi +60 và +120 phút (mỗi lần lại chờ 30 phút không nhấn), sau đó 12 giờ một lần; `Load test` chỉ ở lần đầu rồi 24 giờ một lần. Hai dòng cách nhau ~4 phút là lỗi tràn tick của bản ≤ 1.0.2611052141 | |
 
 ## J. Mất Border Router
 
@@ -179,8 +179,9 @@ Bản phát hành, 2 controller (Apple + HA), ~20 lần nhấn/ngày (bằng tay
 | L4 | Dòng trung bình 7 ngày | trong ±15 % mô hình (SIT ~60 µA) | |
 | L5 | `BatVoltage` và `BatPercentRemaining`; ghi áp nghỉ theo mAh đã dùng (dòng log `VBAT rest … used … mAh`) để hiệu chỉnh các mốc áp trong `main/battery_gauge.cpp` và `BATTERY_MODEL_AVG_UA` | % giảm đều theo thời gian tới 20 % rồi đứng; chỉ xuống dưới 20 % khi áp nghỉ < ~2 900 mV; không nhảy | |
 | L6 | Thay pin mới (≥ 3,05 V hở mạch) giữa chừng | log `New cell ... charge count restarted`, % về 100. Lắp lại pin cũ: không có dòng này, % giữ nguyên | |
-| L6 | Heap tối thiểu (`id_diag hw ... min_heap`) | không giảm dần (không rò bộ nhớ) | |
-| L7 | Cập nhật `tools/battery_model.py` bằng số đo F và L4, tính lại tuổi pin | ghi lại | |
+| L7 | Nhấn nút liên tục ~1 giờ (vài lần mỗi phút), rồi để yên | % trên Apple Home/HA không đổi, không trống; log có thể có `lower than the reported … in a row over … h`, nhưng `reported` không giảm khi chưa đủ 24 giờ | |
+| L8 | Heap tối thiểu (`id_diag hw ... min_heap`) | không giảm dần (không rò bộ nhớ) | |
+| L9 | Cập nhật `tools/battery_model.py` bằng số đo F và L4, tính lại tuổi pin | ghi lại | |
 
 ## M. OTA
 

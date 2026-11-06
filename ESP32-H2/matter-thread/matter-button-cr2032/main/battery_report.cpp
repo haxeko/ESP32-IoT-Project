@@ -38,7 +38,7 @@ void BatteryReport::Restore(uint32_t mv, uint8_t half_percent)
     m_lower = 0;
 }
 
-bool BatteryReport::OnReading(uint32_t mv)
+bool BatteryReport::OnReading(uint32_t mv, uint32_t now_s)
 {
     const uint8_t half_percent = battery_soc_from_rest(mv);
     if (m_mv == 0 || half_percent >= m_half_percent) {
@@ -48,10 +48,16 @@ bool BatteryReport::OnReading(uint32_t mv)
         m_lower = 0;
         return changed;
     }
-    if (m_lower == 0 || mv > m_lower_best_mv) {
+    if (m_lower == 0) {
+        m_lower_best_mv = mv;
+        m_first_lower_s = now_s;
+    } else if (mv > m_lower_best_mv) {
         m_lower_best_mv = mv;
     }
-    if (++m_lower < m_confirm) {
+    if (m_lower < UINT8_MAX) {
+        m_lower++;
+    }
+    if (m_lower < m_confirm || now_s - m_first_lower_s < m_span_s) {
         return false;
     }
     m_mv = m_lower_best_mv;
