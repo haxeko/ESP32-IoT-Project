@@ -8,7 +8,7 @@ Các script chạy trong đúng image Docker dùng để build firmware (ESP-IDF
 |---|---|
 | `in_docker.sh <script> [args]` | Chạy một script trong Docker; thư mục hiện tại là thư mục làm việc (`/work`). Chuyển biến `CD_FILE`, `OUT` vào container; trả quyền sở hữu file kết quả cho người gọi; thư mục chứa khóa riêng chỉ chủ sở hữu đọc được |
 | `gen_pki.sh [--private]` | Tạo CD: `pki/cd/CD_example_FFF1.der` (CD firmware đang gửi, lấy từ SDK) và CD test 0x0107 / 0x010A / 0x000F. `--private`: thêm chuỗi PAA → PAI riêng (controller thương mại **không** tin) |
-| `gen_factory_data.sh -t occupancy\|plug\|switch -n N [--private]` | Tạo N file `fctry`; DAC ký bởi PAI test FFF1/8000 của SDK (hoặc PAI riêng); kiểm chuỗi DAC bằng `chip-cert validate-att-cert`; in uuid, discriminator, QR và mã nhập tay; báo lỗi nếu discriminator trùng trong lô |
+| `gen_factory_data.sh -t occupancy\|plug\|switch\|contact -n N [--private]` | Tạo N file `fctry`; DAC ký bởi PAI test FFF1/8000 của SDK (hoặc PAI riêng); kiểm chuỗi DAC bằng `chip-cert validate-att-cert`; in uuid, discriminator, QR và mã nhập tay; báo lỗi nếu discriminator trùng trong lô |
 | `flash_factory.sh PORT FILE [OFFSET]` | Nạp `fctry` (0x3E0000; bo 2 MB `matter-thread-plug-wroom-2m`: 0x1F0000), đọc lại và so sánh |
 | `check_qr.sh MT:...` | Giải mã QR (VID, PID, discriminator 12 bit, passcode, flow, discovery). Mã nhập tay 11 số chỉ cho passcode và 4 bit cao của discriminator, không có VID/PID |
 
@@ -29,6 +29,7 @@ $T/flash_factory.sh /dev/ttyUSB0 factory/occupancy-*/fff1_8000/<uuid>/<uuid>-par
 - `gen_factory_data.sh -t occupancy -n 2`, và `-n 3` với `CD_FILE=pki/cd/CD_test_occupancy_0107.der`
 - `gen_factory_data.sh -t plug -n 1 --private`
 - `gen_factory_data.sh -t switch -n 2` (nút CR2032 `matter-button-cr2032`, Generic Switch 0x000F)
+- `gen_factory_data.sh -t contact -n 2` (cảm biến cửa `matter-door-sensor`, Contact Sensor 0x0015)
 - `check_qr.sh` với QR và với mã nhập tay
 
 Mọi DAC đều qua kiểm tra chuỗi; mỗi file `fctry` là 24576 byte (0x6000). `flash_factory.sh` chưa chạy trên bo thật.

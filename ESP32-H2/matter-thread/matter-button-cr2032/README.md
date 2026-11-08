@@ -4,6 +4,8 @@ Thiết kế đầy đủ (phần cứng, firmware, tính pin, kiểm thử) cho
 
 Firmware: ESP-IDF v6.0.2 + esp-matter release/v1.6.1 (cùng Docker image với các dự án khác trong repo). Cả 5 biến thể (mặc định SIT, LIT, `unique_setup`, `factory`, `debug`) đã build được, cùng bản `chip` cho bo không dùng module ([`hardware-chip/`](hardware-chip/README.md)); host test máy trạng thái nút qua 17 kịch bản. **Chưa đo trên bo thật**: mọi số đo đánh dấu [AS] phải được thay bằng số đo theo [checklist](docs/test-checklist.md).
 
+Cùng bo này làm **cảm biến cửa** (công tắc lưỡi gà hàn song song nút SW1, không dùng nút nữa): firmware riêng ở [`../matter-door-sensor`](../matter-door-sensor).
+
 > **Kết luận nhanh**
 >
 > - CR2032 **không cấp trực tiếp** được cho ESP32-H2 (VDD tối thiểu 3,0 V; pin chỉ ~2,9 V khi có tải và giảm dần về 2,0 V; xung TX/RX 32–68 mA qua điện trở trong 10–25 Ω). Bắt buộc có **buck-boost TPS63900** (Iq 75 nA) và **tụ bulk ≥ 220 µF hiệu dụng** trên đường pin.

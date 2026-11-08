@@ -1,0 +1,10 @@
+# Power diagnostics build: the release build (automatic Light-sleep ON, unlike sdkconfig.defaults.debug) plus the
+# esp_pm profiling counters, and the id_diag block every 10 min instead of once a day. Each block then ends with the
+# esp_pm locks (which task holds one, for how long) and the share of time spent in Light-sleep: the first thing to read
+# when the battery drains faster than expected. Applied after sdkconfig.defaults and sdkconfig.defaults.esp32h2:
+#   idf.py -B build-pmdiag -D IDF_TARGET=esp32h2 -D SDKCONFIG=sdkconfig.pmdiag \
+#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.pmdiag" build
+# The counters cost a few us per lock operation and a block costs ~150 ms of UART time: fine for a bench test, use the
+# default build for the final current measurements.
+CONFIG_PM_PROFILING=y
+CONFIG_IDENTITY_DIAG_PERIOD_SEC=600
