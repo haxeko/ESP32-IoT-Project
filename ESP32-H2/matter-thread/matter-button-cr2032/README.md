@@ -267,6 +267,49 @@ PCB đã thiết kế bằng KiCad 9: **[`hardware/`](hardware/README.md)** (sch
 
 ---
 
+### 2.8 Tụ bulk: 2 × 220 µF gốm hay 1 × 470 µF
+
+Ghi lại phân tích ngày 2026-11-09, so với cảm biến nhiệt độ [haxeko/matter-temperature-sensor](https://github.com/haxeko/matter-temperature-sensor). Bo đó có cùng đường nguồn (CR2450 → P-MOSFET → TPS63900 3,3 V) nhưng dùng 10 µF + 2 × 100 µF + **470 µF**, phát +5 dBm và đặt giới hạn dòng vào TPS63900 100 mA. Toàn bộ là **[AS] mô phỏng**, chưa đo. Mô hình: `tools/capsim.py`, cùng phương trình với `hardware/analysis/power_model.py` của repo kia (pin OCV − I·R − hai phân cực, UVLO 1,75/1,65 V, ngưỡng reset ~2,93 V), thêm nhánh ESR cho tụ điện phân. Chạy `python3 tools/capsim.py` thì mô hình tái tạo đúng 9/9 kết quả trong bảng 4.1 của repo kia; `python3 tools/capsim_matrix.py tools` in lại các bảng dưới.
+
+**So sánh loại tụ** (giá JLCPCB khi mua 10 con, tra 2026-11-09):
+
+| | 2 × 220 µF gốm (bo này) | 1 × 470 µF nhôm (KNSCHA RVT, C2901342) | 1 × 470 µF tantal MnO2 (AVX TAJD477K006, C7229) |
+|---|---|---|---|
+| Điện dung thật ở 3 V | **~260 µF** (gốm mất ~40 % do điện áp DC) [AS] | **~470 µF** ±20 % | **~470 µF** ±10 % |
+| ESR | vài mΩ | ~0,6 Ω, ×3 khi −10 °C | ≤ 0,4 Ω |
+| Rò ở 3 V | thường < 0,5 µA cả hai tụ | datasheet ≤ 30 µA ở 6,3 V; ở 3 V ước ~0,3–3 µA, **phải đo** | datasheet ≤ 28 µA ở 6,3 V; ước ~0,5–3 µA, **phải đo** |
+| Cao | 2,5 mm | 7,7 mm (Ø6,3) | 3,1 mm |
+| Giá | ~1,25 USD cho 2 con | **0,04 USD** | 1,02 USD |
+| Rủi ro riêng | nứt khi bo bị uốn (vỏ 1210 gần đế pin) | cực tính; khô dần (2000 h ở 105 °C, hàng chục năm ở nhiệt độ phòng) | cực tính; hỏng kiểu chập. **Không dùng tantal polymer** (rò tới 0,1·C·V) |
+
+"1 tụ 470" có gần gấp đôi điện dung thật của "2 tụ 220". Tương đương bằng toàn tụ gốm cần ~4 × 220 µF (~2,5 USD). Thiết bị thương mại hay dùng 1 tụ nhôm 470 µF vì đó là cách rẻ nhất để có nhiều µF, nhiều mạch cấp pin thẳng vào chip (không IC nguồn) nên cần giữ VDD trên ngưỡng reset, và vỏ đủ dày cho tụ cao 6–8 mm; cái giá là phải chọn loại rò thấp.
+
+**Mô phỏng: trạng thái pin xấu nhất mà một sự kiện ngắn còn chạy** ("giữa đời" ≈ đã dùng 50–60 %, "cuối đời" ≈ 80–85 %, gần khuỷu; "nút" = 0 dBm 36 mA, không giới hạn dòng vào; "nhiệt độ" = +5 dBm 50 mA, giới hạn 100 mA):
+
+| Thiết bị, sự kiện | 2×220 gốm (~265 µF) | 1×470 nhôm (~475 µF) | 2×100 + 470 (~555 µF, bo nhiệt) | 2×220 + 470 (~735 µF) |
+|---|---|---|---|---|
+| Nút CR2032, một lần nhấn, 25 °C | giữa đời | giữa đời | cuối đời, sát ngưỡng | cuối đời |
+| Nút CR2032, một lần nhấn, lạnh | pin mới ở 0 °C | giữa đời ở 0 °C, pin mới ở −10 °C | như cột 470 | giữa đời ở −10 °C |
+| Nút CR2450, một lần nhấn, 25 °C | giữa đời | **cuối đời** | cuối đời | cuối đời |
+| Nút CR2450, một lần nhấn, lạnh | giữa đời ở 0 °C | giữa đời ở −10 °C | giữa đời ở −10 °C | giữa đời ở −10 °C |
+| Nhiệt độ CR2450, một report, 25 °C | giữa đời | giữa đời | giữa đời | giữa đời (cuối đời cần ~1000 µF) |
+| Nhiệt độ CR2450, một report, lạnh | giữa đời ở 10 °C sát ngưỡng, 0 °C reset | pin mới ở −10 °C | giữa đời ở 0 °C, sát ngưỡng | giữa đời ở 0 °C |
+
+Rút ra:
+
+- **Khởi động và nối lại Thread (1–2 s) không phụ thuộc tụ**: từ 265 lên 735 µF áp pin thấp nhất chỉ cao thêm 0,01–0,05 V; cứu được cần > 2 200–10 000 µF. Chỉ điện trở trong của pin quyết định (CR2450 hơn hẳn CR2032); firmware xử lý bằng boot guard và chính sách tạm dừng Thread.
+- **ESR không quan trọng**: nhôm và tantal cho kết quả gần như nhau ở 25 °C, khi lạnh tantal hơn 0,05–0,1 V. Vài phần mười Ω là nhỏ so với 10–40 Ω điện trở trong của pin.
+- **Cái giá của tụ điện phân là rò**: ở ~60 µA trung bình, 1 µA rò ≈ −1,6 % tuổi pin, 3 µA ≈ −5 %, 10 µA ≈ −14 %. Với CR2450, thêm 470 µF cho các lần nhấn chạy tới cuối đời thay vì giữa đời: đáng nếu rò < ~3 µA.
+- **Công suất phát quan trọng hơn tụ**: bo nhiệt độ hạ +5 dBm xuống 0 dBm có tác dụng ngang thêm ~300 µF; với 555 µF + 0 dBm, report chạy được tới cuối đời ở 25 °C. Giới hạn dòng vào 100 mA hầu như không đổi kết quả.
+- **Pha khởi động trong mô hình quá bi quan**: mô hình (hiệu chuẩn radio 45 mA × 100 ms) cho rằng CR2032 mới cũng reset lúc khởi động, nhưng bo này khởi động bằng CR2032 bình thường; 45 mA × 20 ms hoặc 35 mA × 100 ms thì qua. Cột khởi động chỉ đáng tin sau khi đo dòng khởi động thật.
+
+**Chọn:**
+
+| Thiết bị | Khuyến nghị |
+|---|---|
+| Nút bấm, cảm biến cửa (`../matter-door-sensor`) | **Giữ 2 × 220 µF gốm.** Muốn dư thêm khi pin gần hết hoặc lạnh (nhất là với CR2450): **hàn thêm** 470 µF song song (tantal MnO2 nếu cần mỏng, nhôm nếu vỏ đủ dày), không thay tụ gốm; đo rò theo checklist B5. Bo 25 × 27 mm chưa có footprint: tạm hàn vào TP9 (VBAT) và GND. Sản xuất nhiều và cần rẻ: 1 × 470 µF nhôm + 22 µF gốm tương đương hoặc hơn về điện, rẻ hơn ~1,2 USD/bo, đổi lại cao 7,7 mm và phải đo rò từng lô. |
+| Cảm biến nhiệt độ | **Giữ 470 µF** (bỏ đi chỉ còn ~85 µF). Thứ tự cải thiện: hạ TX xuống 0 dBm nếu sóng đủ; thay 2 × 100 µF bằng 2 × 220 µF (~735 µF); đo T-35 (sụt áp có tải của CR2450), T-39 (rò tụ 470 µF ở 3 V), T-33 (dòng khởi động). |
+
 ## 3. Sơ đồ nguyên lý và bảng kết nối
 
 ### 3.1 Sơ đồ nguyên lý
@@ -631,6 +674,7 @@ matter-button-cr2032/
 │   └── thread_diag.h/.cpp          log Thread/SRP khi chưa ghép nối
 ├── test/host/                      host test máy trạng thái nút (17 kịch bản) và cách báo % pin, chỉ cần g++
 ├── tools/battery_model.py          mô hình pin (bảng mục 9)
+├── tools/capsim.py, capsim_matrix.py  mô phỏng tụ bulk: 2 × 220 µF gốm hay 470 µF (mục 2.8)
 ├── tools/schematic.py              vẽ sơ đồ nguyên lý (schemdraw) → docs/schematic.svg / .png
 └── docs/                           schematic.svg / .png (sơ đồ nguyên lý), test-checklist.md
 ```
@@ -916,7 +960,7 @@ py tools\battery_model.py --breakdown
 | 1b | Thiết bị **chưa ghép nối** để lâu: BLE còn bật giữ thạch anh 32 MHz chạy trong Light-sleep (bản module không có thạch anh 32 kHz) | ~4 mA, ~40–50 mAh mỗi đêm | Deep-sleep khi cửa sổ ghép nối đã đóng (`APP_UNCOMMISSIONED_DEEP_SLEEP`), nhấn nút để mở lại; ghép nối ngay sau khi lắp pin | checklist F11 |
 | 2 | Sụt áp/brownout khi phát lúc pin yếu hoặc lạnh | reset, mất sự kiện, có thể lặp reset | tụ bulk ≥ 220 µF hiệu dụng phía pin; TX 0 dBm từ khung đầu tiên (linker wrap); brownout 2,94 V; boot guard Deep-sleep; báo pin yếu sớm nhờ đo điện trở trong | checklist H, I |
 | 3 | +20 dBm mặc định của driver ở các khung đầu sau khởi động | brownout mỗi lần khởi động với pin đã dùng | `__wrap_esp_ieee802154_enable()` đặt 0 dBm trước khung đầu; kiểm tra dòng đỉnh 2 s đầu | checklist G |
-| 4 | Rò của tụ MLCC dung lượng lớn cao hơn dự tính | tuổi pin giảm (mỗi 1 µA ≈ −1,7 %; mức spec xấu nhất −30 %) | đo rò khi EN = 0; đổi hãng/lô tụ; giảm còn 2 × 100 µF nếu link cho phép | checklist B |
+| 4 | Rò của tụ MLCC dung lượng lớn cao hơn dự tính | tuổi pin giảm (mỗi 1 µA ≈ −1,7 %; mức spec xấu nhất −30 %) | đo rò khi EN = 0; đổi hãng/lô tụ; giảm còn 2 × 100 µF nếu link cho phép; so sánh với tụ 470 µF: mục 2.8 | checklist B |
 | 5 | Re-attach không chạy được khi pin còn ~20 % (RX 2 s) | nút "chết" sau sự cố mạng dù pin chưa cạn hẳn | mô hình chỉ tính 80 %; cảnh báo Warning theo áp dự đoán; người dùng thay pin khi có Warning | checklist I |
 | 6 | Apple Home không hỗ trợ LIT | bản LIT không lợi gì với Apple | DSLS: tự giữ SIT khi có fabric không đăng ký Check-In; mặc định build SIT | checklist C |
 | 7 | HA LIT/Battery Saving còn thử nghiệm | mất subscription, sự kiện trễ | dùng SIT nếu thấy `SUB terminated` lặp lại | checklist L |

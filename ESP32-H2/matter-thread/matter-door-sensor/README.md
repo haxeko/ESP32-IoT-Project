@@ -49,6 +49,8 @@ Bo, sơ đồ, BOM, file sản xuất: [`../matter-button-cr2032/hardware`](../m
 | CR2032 | ~4,0 tháng | ~3,8 tháng |
 | CR2450 | ~11,2 tháng | ~10,5 tháng |
 
+Tụ bulk giữ nguyên 2 × 220 µF gốm của bo nút; so sánh với 1 tụ 470 µF và khi nào nên hàn thêm: [README bản nút, mục 2.8](../matter-button-cr2032/README.md#28-tụ-bulk-2--220-µf-gốm-hay-1--470-µf).
+
 **Không bật kéo lên bên trong** (`CONTACT_INTERNAL_PULLUP`): điện trở trong chip chỉ ~45 kΩ, tốn 73 µA khi công tắc đóng. Với loại NO, cửa đóng gần như cả ngày, tuổi pin còn khoảng 40 %.
 
 ### 1.3 Lắp đặt
