@@ -32,16 +32,23 @@ POWER = {"VIN", "VLED"}
 WIDTH = {
     "SW_NODE": (0.8, 0.6, 0.3), "V_SYS": (0.6, 0.6, 0.3), "+3V3": (0.5, 0.6, 0.3),
     "VBUS": (0.5, 0.6, 0.3), "+5V": (0.4, 0.6, 0.3), "BST": (0.4, 0.6, 0.3),
-    "VLED": (0.6, 0.8, 0.4), "GND": (0.5, 0.6, 0.3), "Q1_G": (0.4, 0.6, 0.3),
+    "VLED": (0.6, 0.8, 0.4), "GND": (0.4, 0.6, 0.3), "Q1_G": (0.4, 0.6, 0.3),
 }
 DEFAULT_WIDTH = (0.25, 0.6, 0.3)
-# pads tied to their net by the ground fill instead of a track: the module's GND pin 9 sits
-# in the top GND copper under the module, which reaches the bottom plane through the EPAD vias
-FILL_CONNECTED = {("U1", "9")}
-ORDER = ["SW_NODE", "BST", "V_SYS", "STATUS_LED", "BOOT", "EN", "DATA_IN1", "DATA_IN2",
-         "DATA_IN3", "+3V3", "USB_DP", "USB_DN", "SW_P2", "SW_P3", "SW_P4", "CC1", "CC2",
-         "VBUS", "VLED", "+5V", "Q1_G", "DATA_BUF1", "DATA_BUF2", "DATA_BUF3", "DATA_OUT1",
-         "DATA_OUT2", "DATA_OUT3"]
+# GND pads tied to the net by the ground fill instead of a track: the module's GND pads
+# touch the top GND copper under the module (directly or through a neighbouring GND pad),
+# which reaches the bottom plane through the four vias in the centre pad. Corner pad 51
+# sits between IO18 and IO19 and is routed like any other pad.
+FILL_CONNECTED = {("U1", n) for n in ["1", "2", "11", "14", "49", "50", "52", "53"]
+                  + [str(k) for k in range(36, 49)]}
+# GND pads of parts whose ground pins end up boxed in by signal tracks: they get their
+# via before any signal is routed
+EARLY_GND_REFS = {"U4", "U5", "R9", "R10", "R11"}
+NARROW = 0.25               # fallback track width when a connection does not fit
+ORDER = ["SW_NODE", "BST", "V_SYS", "USB_DP", "USB_DN", "DATA_IN1", "DATA_IN2", "DATA_IN3",
+         "DATA_BUF1", "DATA_BUF2", "DATA_BUF3", "DATA_OUT1", "DATA_OUT2", "DATA_OUT3",
+         "STATUS_LED", "BOOT", "EN", "U0RXD", "U0TXD", "SW_POS1", "SW_POS2", "SW_POS3",
+         "IO18", "IO19", "IO20", "+3V3", "CC1", "CC2", "VBUS", "VLED", "+5V", "Q1_G", "LED_A"]
 
 def base(net):
     return net.lstrip("/")
@@ -113,7 +120,7 @@ class Router:
     # ---------------------------------------------------------------- helpers
     def _load_lib(self):
         src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "astar.c")
-        out = os.path.join(tempfile.gettempdir(), "c3ws_astar_%d.so" % int(os.path.getmtime(src)))
+        out = os.path.join(tempfile.gettempdir(), "c6ws_astar_%d.so" % int(os.path.getmtime(src)))
         if not os.path.exists(out):
             subprocess.run(["cc", "-O2", "-shared", "-fPIC", "-o", out, src, "-lm"], check=True)
         lib = ctypes.CDLL(out)
@@ -195,12 +202,14 @@ class Router:
                     if attr == pcbnew.PAD_ATTRIB_SMD:
                         self.novia[sl] |= d < 0.45
             if fp.GetReference() == "U1":
-                # no top-layer routing under the module body, keep the bottom under it for GND
+                # no top-layer routing inside the pad ring (under the module body), tracks
+                # along the module edge cost more, the bottom under it is kept for GND
                 c = fp.GetPosition()
                 cx, cy = MM(c.x), MM(c.y)
-                win = self.window(cx - 7.95, cy - 12.9, cx + 7.95, cy + 6.95, 0)
-                sl, px, py = win
+                sl, px, py = self.window(cx - 5.25, cy - 4.25, cx + 5.25, cy + 4.25, 0)
                 self.occ_hard((0,), sl, np.ones(px.shape, dtype=bool))
+                sl, px, py = self.window(cx - 6.9, cy - 5.75, cx + 6.9, cy + 5.9, 0)
+                self.cost[0][sl] = np.maximum(self.cost[0][sl], 3.0)
                 self.cost[1][sl] = 4.0
         zones = list(b.Zones()) + [z for fp in b.GetFootprints() for z in fp.Zones()]
         for z in zones:
@@ -255,11 +264,13 @@ class Router:
         f = [np.ascontiguousarray(((self.occ[hw][L] & nb) == 0).astype(np.uint8)) for L in (0, 1)]
         return f
 
-    def components(self, net, free):
+    def components(self, net, free, only_refs=None):
         """Connected copper groups of a net, as boolean full-size masks per layer."""
         items = []
         for layers, sl, m, tag in self.copper.get(net, []):
-            if tag in FILL_CONNECTED:
+            if net == "GND" and tag in FILL_CONNECTED:
+                continue
+            if only_refs is not None and not (tag and tag[0] in only_refs):
                 continue
             full = np.zeros((2, self.ny, self.nx), dtype=bool)
             for L in layers:
@@ -283,7 +294,7 @@ class Router:
             groups = keep + [it]
         return groups
 
-    def route_net(self, net):
+    def route_net(self, net, only_refs=None):
         tw, vd, vdr = WIDTH.get(base(net), DEFAULT_WIDTH)
         hw = tw / 2
         hv = vd / 2
@@ -294,7 +305,7 @@ class Router:
         free = self.free_maps(net, hw)
         fv = self.free_maps(net, hv)
         viaok = np.ascontiguousarray((fv[0] & fv[1] & ~self.novia).astype(np.uint8))
-        groups = self.components(net, free)
+        groups = self.components(net, free, only_refs)
         if len(groups) <= 1:
             return 0
         groups.sort(key=lambda g: -int(g.sum()))
@@ -311,13 +322,21 @@ class Router:
             path = self._search(src & np.stack([free[0], free[1]]).astype(bool),
                                 tree & np.stack([free[0], free[1]]).astype(bool),
                                 free, viaok, net)
+            width = tw
+            if path is None and tw > NARROW and base(net) not in POWER:
+                # fine pitch pins: try again with a narrow track
+                fn = self.free_maps(net, NARROW / 2)
+                path = self._search(src & np.stack([fn[0], fn[1]]).astype(bool),
+                                    tree & np.stack([fn[0], fn[1]]).astype(bool),
+                                    fn, viaok, net)
+                width = NARROW
             if path is None:
                 i0, j0, i1, j1 = self._bbox(src)
                 print("   !! unrouted connection on %s near x %.1f-%.1f y %.1f-%.1f mm" % (
                     net, i0 * G, i1 * G, j0 * G, j1 * G))
                 self.failed.add(net)
                 continue
-            self._commit(net, path, tw, vd, vdr)
+            self._commit(net, path, width, vd, vdr)
             for L, i, j in path:
                 tree[L, j, i] = True
             tree |= src
@@ -508,7 +527,10 @@ def route_once(path, order):
     r = Router(board)
     r.load()
     for net in order:
-        if net in r.bit:
+        if isinstance(net, tuple):           # (net, refs): only those parts' pads
+            if net[0] in r.bit:
+                r.route_net(net[0], set(net[1]))
+        elif net in r.bit:
             r.route_net(net)
     return board, r
 
@@ -522,7 +544,8 @@ def main():
     order = [names[n] for n in ORDER if n in names]
     order += sorted(n for n in probe.bit if n not in order and base(n) not in POWER
                     and not n.startswith("unconnected-") and n != "GND")
-    order.append("GND")         # last: its vias must land in the final, uncut plane
+    early = [("GND", sorted(EARLY_GND_REFS))]
+    order = early + order + ["GND"]     # GND last: its vias must land in the final, uncut plane
     best = None
     for k in range(passes):
         board, r = route_once(path, order)
@@ -531,9 +554,9 @@ def main():
             best = (board, r)
         if not r.failed:
             break
-        # failed nets go first next time (GND always stays last)
-        sig = [n for n in order if n != "GND"]
-        order = [n for n in sig if n in r.failed] + [n for n in sig if n not in r.failed] + ["GND"]
+        # failed nets go first next time (early GND pads first, GND always stays last)
+        sig = [n for n in order if not isinstance(n, tuple) and n != "GND"]
+        order = early + [n for n in sig if n in r.failed] + [n for n in sig if n not in r.failed] + ["GND"]
     board, r = best
     r.apply()
     filler = pcbnew.ZONE_FILLER(board)

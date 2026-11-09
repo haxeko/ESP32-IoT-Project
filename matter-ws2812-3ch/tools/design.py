@@ -1,19 +1,17 @@
-"""Single source of truth for the c3_ws2812_3ch board: parts, nets, schematic placement.
+"""Single source of truth for the c6_ws2812_3ch board: parts, nets, schematic placement.
 
-ESP32-C3-WROOM-02 controller for three WS2812/WS2811 outputs, 5-12 V input.
+ESP32-C6-MINI-1 controller for three WS2812/WS2811 outputs, 5-12 V input.
 build_sch.py turns this into the KiCad schematic, build_pcb.py into the board.
 """
 
-PROJECT = "c3_ws2812_3ch"
-TITLE = "ESP32-C3 WS2812 3-channel Matter LED controller"
-REV = "1.1"
+PROJECT = "c6_ws2812_3ch"
+TITLE = "ESP32-C6 WS2812 3-channel Matter LED controller"
+REV = "2.0"
 DATE = "2026-11-09"
 COMPANY = "Haxeko"
 
 LOCAL_SYM_LIB = PROJECT          # project symbol library nickname
 LOCAL_FP_LIB = PROJECT           # project footprint library nickname
-
-SW_SLIDE_FP = LOCAL_FP_LIB + ":SW_Slide_SP3T_SameSky_SLW-156646-5A-N-D"
 
 # Power nets are drawn with KiCad power symbols, everything else with labels.
 POWER_NETS = {"GND": "power:GND", "+3V3": "power:+3V3", "+5V": "power:+5V"}
@@ -21,7 +19,9 @@ POWER_NETS = {"GND": "power:GND", "+3V3": "power:+3V3", "+5V": "power:+5V"}
 R0603 = "Resistor_SMD:R_0603_1608Metric"
 C0603 = "Capacitor_SMD:C_0603_1608Metric"
 C0805 = "Capacitor_SMD:C_0805_2012Metric"
-C1206 = "Capacitor_SMD:C_1206_3216Metric"
+RARRAY = "Resistor_SMD:R_Array_Convex_4x0603"
+TERM2 = "TerminalBlock_Phoenix:TerminalBlock_Phoenix_PT-1,5-2-3.5-H_1x02_P3.50mm_Horizontal"
+TERM3 = "TerminalBlock_Phoenix:TerminalBlock_Phoenix_PT-1,5-3-3.5-H_1x03_P3.50mm_Horizontal"
 
 
 def P(ref, lib_id, value, footprint, pins, at, rot=0, unit=None, mpn="", lcsc="",
@@ -37,8 +37,8 @@ def P(ref, lib_id, value, footprint, pins, at, rot=0, unit=None, mpn="", lcsc=""
                 extra_units=extra_units or {}, ref_at=ref_at, val_at=val_at, in_bom=in_bom)
 
 
-# JLCPCB "basic" parts for the common 0603 values
-LCSC_R0603 = {"10k": "C25804", "1k": "C21190", "5.1k": "C23186", "100": "C22775"}
+# JLCPCB "basic" parts for the common values
+LCSC_R0603 = {"10k": "C25804", "1k": "C21190", "5.1k": "C23186"}
 LCSC_C = {("100nF", C0603): "C14663", ("100nF 50V", C0603): "C14663"}
 
 
@@ -52,30 +52,42 @@ def C(ref, value, n1, n2, at, rot=0, fp=C0603, mpn=None, lcsc=""):
              mpn=mpn or ("MLCC " + value), lcsc=lcsc or LCSC_C.get((value, fp), ""))
 
 
+# ESP32-C6-MINI-1 pin map (module pin numbers)
+U1_GND = ["1", "2", "11", "14"] + [str(n) for n in range(36, 54)]
+U1_NC = ["4", "7", "21", "32", "33", "34", "35"]             # NC pins of the module
+U1_UNUSED = ["5", "6", "9", "10", "12", "13", "15"]          # IO2 IO3 IO4 IO5 IO0 IO1 IO6
+U1_PINS = {"3": "+3V3", "8": "EN",
+           "16": "DATA_IN1", "19": "DATA_IN2", "20": "DATA_IN3",     # IO7 IO14 IO15
+           "17": "USB_DN", "18": "USB_DP",                           # IO12 IO13
+           "22": "STATUS_LED", "23": "BOOT",                         # IO8 IO9
+           "24": "IO18", "25": "IO19", "26": "IO20",                 # J7
+           "27": "SW_POS1", "28": "SW_POS2", "29": "SW_POS3",        # IO21 IO22 IO23
+           "30": "U0RXD", "31": "U0TXD"}
+U1_PINS.update({p: "GND" for p in U1_GND})
+U1_PINS.update({p: None for p in U1_NC + U1_UNUSED})
+
 # Channel rows of the level shifter block
 Y_CH = (104.14, 127.0, 149.86)
 
 PARTS = [
     # ------------------------------------------------------------------ input + protection
-    P("J1", "Connector:Screw_Terminal_01x02", "VIN 5-12V",
-      "TerminalBlock_Phoenix:TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal",
+    P("J1", "Connector:Screw_Terminal_01x02", "VIN 5-12V", TERM2,
       {"1": "VIN", "2": "GND"}, (40.64, 48.26),
-      mpn="Terminal block 2P 5.08mm (KF128-2P / MKDS 1,5/2-5,08)"),
-    P("Q1", "Transistor_FET:SUD50P04-08", "SUD50P04-08",
-      "Package_TO_SOT_SMD:TO-252-2",
-      {"1": "Q1_G", "2": "VIN", "3": "VLED"}, (68.58, 45.72), rot=90,
-      mpn="SUD50P04-08-GE3 (alt. AOD4185)",
-      desc="P-MOSFET reverse polarity protection, -40V, 11.7mOhm @ -4.5V",
+      mpn="Terminal block 2P 3.5mm (Phoenix PT 1,5/2-3,5-H / KF350-3.5-2P)"),
+    P("Q1", "Transistor_FET:SiSS27DN", "SiSS27DN", LOCAL_FP_LIB + ":Vishay_PowerPAK_1212-8_Single",
+      {"4": "Q1_G", "5": "VIN", "1": "VLED", "2": "VLED", "3": "VLED"}, (68.58, 45.72), rot=90,
+      mpn="SiSS27DN-T1-GE3",
+      desc="P-MOSFET reverse polarity protection, -30V, 9mOhm max @ -4.5V",
       ref_at=(66.04, 36.83), val_at=(66.04, 34.29)),
-    P("D4", "Device:D_Zener", "BZT52C15", "Diode_SMD:D_SOD-123",
-      {"1": "VLED", "2": "Q1_G"}, (83.82, 58.42), rot=270, mpn="BZT52C15",
+    P("D4", "Device:D_Zener", "BZT52C15S", "Diode_SMD:D_SOD-323",
+      {"1": "VLED", "2": "Q1_G"}, (81.28, 58.42), rot=270, mpn="BZT52C15S",
       desc="Gate-source clamp, 15V"),
     R("R1", "10k", "Q1_G", "GND", (64.77, 64.77)),
-    P("D3", "Diode:SMAJ15A", "SMBJ15A", "Diode_SMD:D_SMB",
-      {"1": "VLED", "2": "GND"}, (99.06, 58.42), rot=270, mpn="SMBJ15A",
-      desc="600W TVS, 15V standoff"),
-    P("C1", "Device:C_Polarized", "470uF 25V", "Capacitor_SMD:CP_Elec_10x10.5",
-      {"1": "VLED", "2": "GND"}, (111.76, 58.42), mpn="470uF 25V 10x10.5 SMD electrolytic"),
+    P("D3", "Diode:SMAJ15A", "SMAJ15A", "Diode_SMD:D_SMA",
+      {"1": "VLED", "2": "GND"}, (96.52, 58.42), rot=270, mpn="SMAJ15A",
+      desc="400W TVS, 15V standoff"),
+    P("C1", "Device:C_Polarized", "100uF 25V", "Capacitor_SMD:CP_Elec_6.3x7.7",
+      {"1": "VLED", "2": "GND"}, (109.22, 58.42), mpn="100uF 25V 6.3x7.7 SMD electrolytic"),
     C("C2", "100nF 50V", "VLED", "GND", (124.46, 58.42)),
 
     # ------------------------------------------------------------------ logic supply 3.3 V
@@ -83,21 +95,21 @@ PARTS = [
       {"1": "V_SYS", "2": "VLED"}, (160.02, 38.1), rot=180, mpn="B5819W", lcsc="C8598"),
     P("D2", "Device:D_Schottky", "B5819W", "Diode_SMD:D_SOD-123",
       {"1": "V_SYS", "2": "VBUS"}, (160.02, 50.8), rot=180, mpn="B5819W", lcsc="C8598"),
-    C("C3", "10uF 25V", "V_SYS", "GND", (182.88, 58.42), fp=C1206),
+    C("C3", "10uF 25V", "V_SYS", "GND", (182.88, 58.42), fp=C0805),
     C("C4", "100nF 50V", "V_SYS", "GND", (195.58, 58.42)),
     P("U2", "Regulator_Switching:AP63203WU", "AP63203WU-7", "Package_TO_SOT_SMD:TSOT-23-6",
       {"3": "V_SYS", "2": "V_SYS", "4": "GND", "5": "SW_NODE", "6": "BST", "1": "+3V3"},
       (220.98, 50.8), mpn="AP63203WU-7", lcsc="C780769",
       desc="3.3V 2A buck, 3.8-32V input"),
     C("C5", "100nF", "BST", "SW_NODE", (248.92, 38.1), rot=90),
-    P("L1", "Device:L", "3.9uH", "Inductor_SMD:L_Sunlord_SWPA4030S",
-      {"1": "SW_NODE", "2": "+3V3"}, (256.54, 48.26), rot=90, mpn="SWPA4030S3R9MT"),
+    P("L1", "Device:L", "3.9uH", "Inductor_SMD:L_Sunlord_SWPA3015S",
+      {"1": "SW_NODE", "2": "+3V3"}, (256.54, 48.26), rot=90, mpn="SWPA3015S3R9MT"),
     C("C6", "22uF 10V", "+3V3", "GND", (270.51, 58.42), fp=C0805),
     C("C7", "22uF 10V", "+3V3", "GND", (283.21, 58.42), fp=C0805),
 
     # ------------------------------------------------------------------ USB-C (flash / debug)
     P("J5", "Connector:USB_C_Receptacle_USB2.0_16P", "USB-C",
-      "Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12",
+      LOCAL_FP_LIB + ":USB_C_Receptacle_HRO_TYPE-C-31-M-12_EdgeSilk",
       {"A1": "GND", "A12": "GND", "B1": "GND", "B12": "GND", "S1": "GND",
        "A4": "VBUS", "A9": "VBUS", "B4": "VBUS", "B9": "VBUS",
        "A5": "CC1", "B5": "CC2", "A6": "USB_DP", "B6": "USB_DP",
@@ -111,41 +123,28 @@ PARTS = [
       ref_at=(111.76, 128.27), val_at=(111.76, 148.59)),
     C("C8", "4.7uF 25V", "VBUS", "GND", (127.0, 152.4), fp=C0805),
 
-    # ------------------------------------------------------------------ ESP32-C3
-    P("U1", "RF_Module:ESP32-C3-WROOM-02", "ESP32-C3-WROOM-02-N4",
-      LOCAL_FP_LIB + ":ESP32-C3-WROOM-02_ThermalVia0.3",
-      {"1": "+3V3", "9": "GND", "19": "GND", "2": "EN",
-       "18": "SW_P4", "17": "SW_P3", "16": "IO2", "15": "SW_P2",
-       "3": "DATA_IN1", "4": "DATA_IN2", "5": "DATA_IN3", "6": "IO7",
-       "7": "STATUS_LED", "8": "BOOT", "10": "IO10",
-       "13": "USB_DN", "14": "USB_DP", "11": "U0RXD", "12": "U0TXD"},
-      (205.74, 140.97), mpn="ESP32-C3-WROOM-02-N4",
-      ref_at=(210.82, 115.57), val_at=(229.87, 162.56)),
-    C("C9", "10uF 10V", "+3V3", "GND", (157.48, 105.41), fp=C0805),
+    # ------------------------------------------------------------------ ESP32-C6
+    P("U1", "RF_Module:ESP32-C6-MINI-1", "ESP32-C6-MINI-1-N4",
+      LOCAL_FP_LIB + ":ESP32-C6-MINI-1_ThermalVias", U1_PINS,
+      (205.74, 137.16), mpn="ESP32-C6-MINI-1-N4",
+      desc="ESP32-C6 module, Wi-Fi 6 / BLE 5 / 802.15.4 (Thread, Zigbee), 4MB flash"),
     C("C10", "100nF", "+3V3", "GND", (170.18, 105.41)),
     R("R4", "10k", "+3V3", "EN", (240.03, 105.41)),
     C("C11", "1uF 10V", "EN", "GND", (252.73, 105.41)),
-    R("R5", "10k", "+3V3", "IO2", (262.89, 105.41)),
-    R("R6", "10k", "+3V3", "STATUS_LED", (273.05, 105.41)),
-    R("R7", "10k", "+3V3", "BOOT", (283.21, 105.41)),
+    R("R6", "10k", "+3V3", "STATUS_LED", (265.43, 105.41)),
 
     # ------------------------------------------------------------------ user I/O
-    P("SW1", "Switch:SW_Push", "LINK / RESET", "Button_Switch_THT:SW_PUSH_6mm_H5mm",
-      {"1": "BOOT", "2": "GND"}, (157.48, 203.2), rot=270, mpn="Tactile 6x6mm THT, H=5mm",
+    P("SW1", "Switch:SW_Push", "LINK / RESET", LOCAL_FP_LIB + ":SW_Push_1P1T_XKB_TS-1187A",
+      {"1": "BOOT", "2": "GND"}, (157.48, 203.2), rot=270, mpn="XKB TS-1187A-B-A-B", lcsc="C318884",
       desc="Commissioning / factory reset (GPIO9, also BOOT)"),
     R("R8", "1k", "+3V3", "LED_A", (200.66, 198.12)),
     P("D5", "Device:LED", "Green", "LED_SMD:LED_0603_1608Metric",
       {"1": "STATUS_LED", "2": "LED_A"}, (200.66, 213.36), rot=90, mpn="LED 0603 green", lcsc="C72043",
-      ref_at=(205.74, 212.09, "left"), val_at=(205.74, 214.63, "left")),
-    P("RN1", "Device:R_Pack04", "1k x4", "Resistor_SMD:R_Array_Convex_4x0603",
-      {"1": "SW_P4", "2": "SW_P3", "3": "SW_P2", "4": "GND",
-       "8": "SWR_4", "7": "SWR_3", "6": "SWR_2", "5": "SWR_1"}, (226.06, 203.2), rot=270,
-      mpn="4D03WGJ0102T5E (1k x4 0603 array)",
-      ref_at=(226.06, 194.31), val_at=(226.06, 212.09)),
-    P("SW2", LOCAL_SYM_LIB + ":SW_Slide_SP3T", "ENDPOINTS 1/2/3", SW_SLIDE_FP,
-      {"1": "SWR_1", "2": "SWR_2", "3": "SWR_3", "4": "SWR_4"}, (271.78, 203.2),
-      mpn="Same Sky SLW-156646-5A-N-D (SP3T, 4 pin, 3.2mm)",
-      desc="3-position slide switch: number of Matter endpoints"),
+      ref_at=(207.01, 212.09, "left"), val_at=(207.01, 214.63, "left")),
+    P("SW2", "Switch:SW_SP3T", "ENDPOINTS 1/2/3", LOCAL_FP_LIB + ":SW_SP3T_PCM13_EdgeSilk",
+      {"3": "GND", "1": "SW_POS1", "2": "SW_POS2", "4": "SW_POS3"}, (248.92, 203.2),
+      mpn="C&K PCM13SMTR (SP3T, pos.1 = 1-3, pos.2 = 2-3, pos.3 = 3-4)", lcsc="C221842",
+      desc="3-position slide switch, right angle: number of Matter endpoints"),
     P("J6", "Connector_Generic:Conn_01x06", "PAD NAP (mat duoi)", LOCAL_FP_LIB + ":ProgPads_1x06_P2.54mm_D1.5mm_SMD",
       {"1": "+3V3", "2": "EN", "3": "GND", "4": "BOOT", "5": "U0RXD", "6": "U0TXD"},
       (182.88, 236.22), mpn="(pads on the bottom side, nothing to mount)", in_bom=False,
@@ -154,71 +153,67 @@ PARTS = [
     # ------------------------------------------------------------------ 5 V for level shifter
     P("U3", "Regulator_Linear:AP7381-50SA-7", "AP7381-50SA-7", "Package_TO_SOT_SMD:SOT-23",
       {"1": "VLED", "2": "+5V", "3": "GND"}, (330.2, 48.26), mpn="AP7381-50SA-7",
-      desc="5V LDO, 40V input, powers the 74AHCT125 only when LED supply is present",
+      desc="5V LDO, 40V input, powers the 74AHCT541 only when LED supply is present",
       ref_at=(330.2, 40.64), val_at=(330.2, 38.1)),
     C("C12", "1uF 50V", "VLED", "GND", (312.42, 58.42), fp=C0805),
-    C("C13", "2.2uF 10V", "+5V", "GND", (347.98, 58.42)),
 
     # ------------------------------------------------------------------ level shifter + outputs
-    P("U4", "74xx:74AHCT125", "74AHCT125", "Package_SO:SOIC-14_3.9x8.7mm_P1.27mm",
-      {"2": "DATA_IN1", "1": "GND", "3": "DATA_BUF1"}, (335.28, Y_CH[0]), unit=1,
-      mpn="SN74AHCT125DR",
+    # 74AHCT541: channel 1/2/3 use buffers A2/A1/A0 (inputs and outputs line up on the PCB)
+    P("U4", "74xx:74AHCT541", "74AHCT541", "Package_SO:TSSOP-20_4.4x6.5mm_P0.65mm",
+      {"4": "DATA_IN1", "3": "DATA_IN2", "2": "DATA_IN3",
+       "16": "DATA_BUF1", "17": "DATA_BUF2", "18": "DATA_BUF3",
+       "5": "GND", "6": "GND", "7": "GND", "8": "GND", "9": "GND",
+       "15": None, "14": None, "13": None, "12": None, "11": None,
+       "1": "GND", "19": "GND", "20": "+5V", "10": "GND"},
+      (337.82, 132.08), mpn="SN74AHCT541PWR", ref_at=(344.17, 109.22, "left"),
+      val_at=(344.17, 156.21, "left")),
+    C("C13", "2.2uF 10V", "+5V", "GND", (388.62, 52.07)),
+    # 10k pull-downs: GPIO7/14/15 float after reset, keep the LED data low while booting
+    R("R9", "10k", "DATA_IN1", "GND", (309.88, 165.1)),
+    R("R10", "10k", "DATA_IN2", "GND", (320.04, 165.1)),
+    R("R11", "10k", "DATA_IN3", "GND", (330.2, 165.1)),
+    # 100 R series resistors at the outputs
+    P("RN3", "Device:R_Pack04_Split", "100 x4", RARRAY,
+      {"8": "DATA_BUF1", "1": "DATA_OUT1"}, (373.38, Y_CH[0]), rot=90, unit=1,
+      mpn="4D03WGJ0101T5E (100R x4 0603 array)",
       extra_units={
-          2: ((335.28, Y_CH[1]), 0, {"5": "DATA_IN2", "4": "GND", "6": "DATA_BUF2"}),
-          3: ((335.28, Y_CH[2]), 0, {"9": "DATA_IN3", "10": "GND", "8": "DATA_BUF3"}),
-          4: ((335.28, 172.72), 0, {"12": "GND", "13": "GND", "11": None}),
-          5: ((373.38, 52.07), 0, {"14": "+5V", "7": "GND"}),
+          2: ((373.38, Y_CH[1]), 90, {"7": "DATA_BUF2", "2": "DATA_OUT2"}),
+          3: ((373.38, Y_CH[2]), 90, {"6": "DATA_BUF3", "3": "DATA_OUT3"}),
+          4: ((373.38, 172.72), 90, {"5": None, "4": None}),
       }),
-    C("C14", "100nF", "+5V", "GND", (388.62, 52.07)),
-    R("R9", "10k", "DATA_IN1", "GND", (317.5, Y_CH[0] + 6.35)),
-    R("R10", "10k", "DATA_IN2", "GND", (317.5, Y_CH[1] + 6.35)),
-    R("R11", "10k", "DATA_IN3", "GND", (317.5, Y_CH[2] + 6.35)),
-    R("R12", "100", "DATA_BUF1", "DATA_OUT1", (360.68, Y_CH[0]), rot=90),
-    R("R13", "100", "DATA_BUF2", "DATA_OUT2", (360.68, Y_CH[1]), rot=90),
-    R("R14", "100", "DATA_BUF3", "DATA_OUT3", (360.68, Y_CH[2]), rot=90),
-    P("J2", "Connector:Screw_Terminal_01x03", "CH1 V+ D GND",
-      "TerminalBlock_Phoenix:TerminalBlock_Phoenix_MKDS-1,5-3-5.08_1x03_P5.08mm_Horizontal",
+    P("J2", "Connector:Screw_Terminal_01x03", "CH1 V+ D GND", TERM3,
       {"1": "VLED", "2": "DATA_OUT1", "3": "GND"}, (397.51, Y_CH[0]),
-      mpn="Terminal block 3P 5.08mm (KF128-3P / MKDS 1,5/3-5,08)"),
-    P("J3", "Connector:Screw_Terminal_01x03", "CH2 V+ D GND",
-      "TerminalBlock_Phoenix:TerminalBlock_Phoenix_MKDS-1,5-3-5.08_1x03_P5.08mm_Horizontal",
+      mpn="Terminal block 3P 3.5mm (Phoenix PT 1,5/3-3,5-H / KF350-3.5-3P)"),
+    P("J3", "Connector:Screw_Terminal_01x03", "CH2 V+ D GND", TERM3,
       {"1": "VLED", "2": "DATA_OUT2", "3": "GND"}, (397.51, Y_CH[1]),
-      mpn="Terminal block 3P 5.08mm (KF128-3P / MKDS 1,5/3-5,08)"),
-    P("J4", "Connector:Screw_Terminal_01x03", "CH3 V+ D GND",
-      "TerminalBlock_Phoenix:TerminalBlock_Phoenix_MKDS-1,5-3-5.08_1x03_P5.08mm_Horizontal",
+      mpn="Terminal block 3P 3.5mm (Phoenix PT 1,5/3-3,5-H / KF350-3.5-3P)"),
+    P("J4", "Connector:Screw_Terminal_01x03", "CH3 V+ D GND", TERM3,
       {"1": "VLED", "2": "DATA_OUT3", "3": "GND"}, (397.51, Y_CH[2]),
-      mpn="Terminal block 3P 5.08mm (KF128-3P / MKDS 1,5/3-5,08)"),
+      mpn="Terminal block 3P 3.5mm (Phoenix PT 1,5/3-3,5-H / KF350-3.5-3P)"),
 
     # ------------------------------------------------------------------ spare GPIO header
     P("J7", "Connector_Generic:Conn_01x05", "GPIO", "Connector_PinHeader_2.54mm:PinHeader_1x05_P2.54mm_Vertical",
-      {"1": "+3V3", "2": "IO2", "3": "IO7", "4": "IO10", "5": "GND"}, (76.2, 210.82),
+      {"1": "+3V3", "2": "IO20", "3": "IO19", "4": "IO18", "5": "GND"}, (76.2, 210.82),
       mpn="Pin header 1x5 2.54mm",
-      desc="Spare GPIOs for custom control: 3V3 IO2 IO7 IO10 GND"),
-
-    # ------------------------------------------------------------------ mechanical
-    P("H1", "Mechanical:MountingHole", "M3", "MountingHole:MountingHole_3.2mm_M3", {}, (40.64, 264.16), in_bom=False),
-    P("H2", "Mechanical:MountingHole", "M3", "MountingHole:MountingHole_3.2mm_M3", {}, (60.96, 264.16), in_bom=False),
-    P("H3", "Mechanical:MountingHole", "M3", "MountingHole:MountingHole_3.2mm_M3", {}, (81.28, 264.16), in_bom=False),
-    P("H4", "Mechanical:MountingHole", "M3", "MountingHole:MountingHole_3.2mm_M3", {}, (101.6, 264.16), in_bom=False),
+      desc="Spare GPIOs for custom control: 3V3 IO20 IO19 IO18 GND"),
 ]
 
 # Short direct wires drawn instead of two labels: (ref1, pin1, ref2, pin2, net label, label mode)
 # mode "on": label sits on the wire next to the first pin; "tail": wire continues past the
 # second pin and ends in the label.
 WIRES = [
+    ("U4", "5", "U4", "6", None, "on"),
+    ("U4", "6", "U4", "7", None, "on"),
+    ("U4", "7", "U4", "8", None, "on"),
+    ("U4", "8", "U4", "9", None, "on"),
+    ("U4", "9", "U4", "1", None, "on"),
+    ("U4", "1", "U4", "19", "GND", "on"),
     ("U2", "5", "L1", "1", "SW_NODE", "on"),
     ("L1", "2", "C6", "1", "+3V3", "on"),
-    ("U3", "2", "C13", "1", "+5V", "on"),
     ("R8", "2", "D5", "2", "LED_A", "on"),
-    ("U4", "2", "R9", "1", "DATA_IN1", "tail"),
-    ("U4", "5", "R10", "1", "DATA_IN2", "tail"),
-    ("U4", "9", "R11", "1", "DATA_IN3", "tail"),
-    ("U4", "3", "R12", "1", "DATA_BUF1", "on"),
-    ("U4", "6", "R13", "1", "DATA_BUF2", "on"),
-    ("U4", "8", "R14", "1", "DATA_BUF3", "on"),
-    ("R12", "2", "J2", "2", "DATA_OUT1", "on"),
-    ("R13", "2", "J3", "2", "DATA_OUT2", "on"),
-    ("R14", "2", "J4", "2", "DATA_OUT3", "on"),
+    ("RN3", "1", "J2", "2", "DATA_OUT1", "on"),
+    ("RN3", "2", "J3", "2", "DATA_OUT2", "on"),
+    ("RN3", "3", "J4", "2", "DATA_OUT3", "on"),
 ]
 
 # PWR_FLAGs tell ERC which nets are supplied from outside the symbol pins
@@ -231,10 +226,9 @@ BLOCKS = [
     ("NGUON 3.3V (buck AP63203)", 142.24, 20.32, 292.1, 83.82),
     ("5V CHO IC DICH MUC (chi co khi co nguon LED)", 297.18, 20.32, 405.13, 83.82),
     ("USB-C: NAP CODE / DEBUG (USB Serial/JTAG)", 15.24, 91.44, 137.16, 177.8),
-    ("ESP32-C3-WROOM-02", 142.24, 91.44, 292.1, 177.8),
+    ("ESP32-C6-MINI-1 (Wi-Fi 6 / Thread / Zigbee)", 142.24, 91.44, 292.1, 177.8),
     ("DICH MUC 3.3V -> 5V + 3 KENH WS2812", 297.18, 91.44, 405.13, 190.5),
     ("MO RONG: 3 GPIO TU DO (J7)", 15.24, 182.88, 137.16, 245.11),
-    ("LO BAT VIT M3", 15.24, 250.19, 137.16, 276.86),
     ("NUT / LED / CONG TAC 3 NAC / PAD NAP", 142.24, 182.88, 292.1, 276.86),
 ]
 
@@ -243,14 +237,17 @@ NOTES = [
      "SW1 (GPIO9 = BOOT): bam nhanh = bat/tat hoac vao che do ket noi; giu >5 s = factory reset.\n"
      "Giu SW1 trong luc cap nguon = vao che do nap ROM."),
     ((147.32, 259.08),
-     "SW2: chan 1 -> GND (qua RN1), chan 2/3/4 -> IO3/IO1/IO0 (bat pull-up noi).\n"
-     "Firmware: chan nao doc 0 la dang noi voi chan 1; neu khong co, keo lan luot 1 chan xuong 0 va doc 2 chan con lai.\n"
-     "Nac = so thu tu chan lon nhat trong cap dang noi - 1  ->  1, 2 hoac 3 endpoint Matter.\n"
-     "Dung cho cong tac SP3T co chan chung la chan 1 hoac 2, ca kieu cau truot (1-2, 2-3, 3-4)."),
+     "SW2 = C&K PCM13SMTR, chan 3 la chan chung (noi GND). Nac 1 noi 1-3, nac 2 noi 2-3, nac 3 noi 3-4.\n"
+     "Firmware: IO21/IO22/IO23 la input, bat pull-up noi; chan nao doc 0 -> so endpoint Matter = 1/2/3.\n"
+     "Khong chan nao doc 0 (dang gat giua 2 nac) -> giu gia tri cu."),
     ((20.32, 78.74),
-     "Q1 chong cam nguoc, dong tong toi da 10 A. TVS D3 kep xung qua ap.\nKhong co cau chi: dung nguon co bao ve ngan mach."),
+     "Q1 chong cam nguoc. Dong tong toi da 8 A, moi kenh toi da 5 A. TVS D3 kep xung qua ap.\n"
+     "Khong co cau chi: dung nguon co bao ve ngan mach."),
     ((302.26, 184.15),
      "DATA 5V: WS2812B (5V) va WS2811 (12V) deu nhan muc 5V."),
     ((20.32, 228.6),
-     "IO2: chan strap, R5 10k keo len. Mach ngoai khong duoc keo xuong 0\nkhi ESP khoi dong. IO10: xung thap ~5 ns luc cap nguon.\nIO7: chan GPIO thuong (MTDO)."),
+     "IO18/IO19/IO20: GPIO thuong, co pull-up yeu chi trong luc reset.\n"
+     "IO8 (LED, R6 keo len) va IO9 (nut, pull-up noi) la chan strap, khong dung cho J7."),
+    ((147.32, 152.4),
+     "IO0-IO6: de trong.\nAnten module nho ra ngoai\nmep board (khong de dong)."),
 ]

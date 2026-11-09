@@ -1,6 +1,6 @@
 (footprint "ProgPads_1x06_P2.54mm_D1.5mm_SMD"
 	(version 20241229)
-	(generator "c3_ws2812_3ch_libgen")
+	(generator "c6_ws2812_3ch_libgen")
 	(generator_version "9.0")
 	(layer "F.Cu")
 	(descr "Six 1.5 mm SMD pads, pitch 2.54 mm, for pogo pins or tacked wires (UART0 programming)")

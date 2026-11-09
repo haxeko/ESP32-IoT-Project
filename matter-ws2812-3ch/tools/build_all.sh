@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 HW=../hardware
-P=c3_ws2812_3ch
+P=c6_ws2812_3ch
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 

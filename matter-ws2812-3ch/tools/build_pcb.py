@@ -4,7 +4,7 @@
 Footprints come from the KiCad 9 libraries (and the project .pretty), nets from
 design.py, and each footprint is linked to its schematic symbol UUID, so
 "Update PCB from Schematic" and DRC schematic parity find no differences.
-Routing is done afterwards by route.py.
+Routing is done afterwards by autoroute.py.
 """
 import math
 import os
@@ -28,7 +28,8 @@ TOMM = pcbnew.ToMM
 
 NETCLASSES = {
     # name: (track, clearance, via_d, via_drill, nets)
-    "Power": (1.5, 0.3, 0.8, 0.4, ["/VIN", "/VLED"]),
+    # 0.25 mm: the gate pad of the PowerPAK MOSFET sits 0.255 mm from its source pads
+    "Power": (1.5, 0.25, 0.8, 0.4, ["/VIN", "/VLED"]),
     "Supply": (0.5, 0.2, 0.8, 0.4, ["+3V3", "/V_SYS", "/VBUS", "+5V", "/SW_NODE", "GND"]),
 }
 
@@ -65,6 +66,9 @@ def setup_rules(board):
     ds.m_HoleToHoleMin = MM(0.25)
     ds.m_CopperEdgeClearance = MM(0.4)
     ds.m_SolderMaskMinWidth = MM(0.0)
+    # every GND pad gets its own track or via from the router, the fill is extra copper:
+    # one thermal spoke is enough
+    ds.m_MinResolvedSpokes = 1
     ns = ds.m_NetSettings
     # NewBoard() reloads the existing project file: start from a clean net class list
     ns.ClearNetclassPatternAssignments()
@@ -176,7 +180,7 @@ def _hit(a, rects):
     return any(a[0] < r[2] and a[2] > r[0] and a[1] < r[3] and a[3] > r[1] for r in rects)
 
 
-HIDE_REFS = {"J1", "J2", "J3", "J4", "H1", "H2", "H3", "H4", "SW2", "J6", "J7"}
+HIDE_REFS = {"J1", "J2", "J3", "J4", "SW2", "J6", "J7"}
 
 
 def place_refs(board):
@@ -193,6 +197,15 @@ def place_refs(board):
     for d in board.GetDrawings():
         if d.GetLayer() in obst:
             obst[d.GetLayer()].append(_bb(d, 0.15))
+    # no labels on top of large parts (they would be hidden once the part is mounted)
+    bodies = {}
+    for fp in board.GetFootprints():
+        crt = fp.GetCourtyard(pcbnew.F_CrtYd if not fp.IsFlipped() else pcbnew.B_CrtYd)
+        if crt.OutlineCount():
+            bb = crt.BBox()
+            box = (TOMM(bb.GetLeft()), TOMM(bb.GetTop()), TOMM(bb.GetRight()), TOMM(bb.GetBottom()))
+            if (box[2] - box[0]) * (box[3] - box[1]) > 15.0:
+                bodies[fp.GetReference()] = (pcbnew.B_SilkS if fp.IsFlipped() else pcbnew.F_SilkS, box)
     x0, y0 = layout.ORIGIN
     inside = (x0 + 0.5, y0 + 0.5, x0 + layout.W - 0.5, y0 + layout.H - 0.5)
     fps = sorted(board.GetFootprints(), key=lambda f: -TOMM(f.GetBoundingBox().GetWidth()))
@@ -205,6 +218,12 @@ def place_refs(board):
         ref.SetTextSize(pcbnew.VECTOR2I(MM(0.8), MM(0.8)))
         ref.SetTextThickness(MM(0.12))
         ref.SetKeepUpright(True)
+        if fp.GetReference() in layout.REF_AT:
+            x, y, ang = layout.REF_AT[fp.GetReference()]
+            ref.SetTextAngle(pcbnew.EDA_ANGLE(ang, pcbnew.DEGREES_T))
+            ref.SetPosition(pt(x, y))
+            obst[layer].append(_bb(ref, 0.05))
+            continue
         crt = fp.GetCourtyard(pcbnew.F_CrtYd if not fp.IsFlipped() else pcbnew.B_CrtYd).BBox()
         l, t, r, bt = TOMM(crt.GetLeft()), TOMM(crt.GetTop()), TOMM(crt.GetRight()), TOMM(crt.GetBottom())
         cx, cy = (l + r) / 2, (t + bt) / 2
@@ -212,6 +231,16 @@ def place_refs(board):
                  (l - 0.55, cy, 90), (r + 0.55, cy, 90), (cx, t - 1.4, 0), (cx, bt + 1.4, 0)]
         if r - l > 6 and bt - t > 6:
             cands.append((cx, cy, 0))       # large parts: inside the body outline
+        # crowded areas: slide along the sides and corners, then try a bit further out
+        for d in (0.55, 1.2, 2.0):
+            for fx in (-0.5, 0.5):
+                cands.append((cx + fx * (r - l), t - d, 0))
+                cands.append((cx + fx * (r - l), bt + d, 0))
+            for fy in (-0.5, 0.5):
+                cands.append((l - d, cy + fy * (bt - t), 90))
+                cands.append((r + d, cy + fy * (bt - t), 90))
+                cands.append((l - d + 0.25, cy + fy * (bt - t), 0))
+                cands.append((r + d - 0.25, cy + fy * (bt - t), 0))
         placed = False
         for x, y, ang in cands:
             ref.SetTextAngle(pcbnew.EDA_ANGLE(ang, pcbnew.DEGREES_T))
@@ -226,6 +255,8 @@ def place_refs(board):
             if box[0] < inside[0] or box[1] < inside[1] or box[2] > inside[2] or box[3] > inside[3]:
                 continue
             if _hit(box, obst[layer]):
+                continue
+            if _hit(box, [b for r2, (ly, b) in bodies.items() if ly == layer and r2 != fp.GetReference()]):
                 continue
             obst[layer].append(box)
             placed = True
@@ -295,10 +326,10 @@ def main():
         if ref in ("J1", "J2", "J3", "J4", "Q1"):
             for pad in fp.Pads():
                 pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
-        # module GND pin 9 joins the ground fill under the module directly
+        # module GND pads (edge pads, centre pad, its vias) join the ground fill directly
         if ref == "U1":
             for pad in fp.Pads():
-                if pad.GetNumber() == "9":
+                if pad.GetNetname() == "GND":
                     pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
         # the stacked USB-C ground pads are too narrow for two thermal spokes
         if ref == "J5":
