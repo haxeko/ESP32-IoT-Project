@@ -1,0 +1,4 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "c6_ws2812_1ch")(type "KiCad")(uri "${KIPRJMOD}/c6_ws2812_1ch.pretty")(options "")(descr "Project footprints"))
+)
