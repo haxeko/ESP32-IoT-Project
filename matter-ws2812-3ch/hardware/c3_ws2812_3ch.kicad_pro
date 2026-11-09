@@ -298,50 +298,6 @@
     "netclass_patterns": [
       {
         "netclass": "Power",
-        "pattern": "VIN"
-      },
-      {
-        "netclass": "Power",
-        "pattern": "VLED"
-      },
-      {
-        "netclass": "Power",
-        "pattern": "VOUT1"
-      },
-      {
-        "netclass": "Power",
-        "pattern": "VOUT2"
-      },
-      {
-        "netclass": "Power",
-        "pattern": "VOUT3"
-      },
-      {
-        "netclass": "Supply",
-        "pattern": "+3V3"
-      },
-      {
-        "netclass": "Supply",
-        "pattern": "V_SYS"
-      },
-      {
-        "netclass": "Supply",
-        "pattern": "VBUS"
-      },
-      {
-        "netclass": "Supply",
-        "pattern": "+5V"
-      },
-      {
-        "netclass": "Supply",
-        "pattern": "SW_NODE"
-      },
-      {
-        "netclass": "Supply",
-        "pattern": "GND"
-      },
-      {
-        "netclass": "Power",
         "pattern": "/VIN"
       },
       {
@@ -349,16 +305,8 @@
         "pattern": "/VLED"
       },
       {
-        "netclass": "Power",
-        "pattern": "/VOUT1"
-      },
-      {
-        "netclass": "Power",
-        "pattern": "/VOUT2"
-      },
-      {
-        "netclass": "Power",
-        "pattern": "/VOUT3"
+        "netclass": "Supply",
+        "pattern": "+3V3"
       },
       {
         "netclass": "Supply",
@@ -370,7 +318,15 @@
       },
       {
         "netclass": "Supply",
+        "pattern": "+5V"
+      },
+      {
+        "netclass": "Supply",
         "pattern": "/SW_NODE"
+      },
+      {
+        "netclass": "Supply",
+        "pattern": "GND"
       }
     ]
   },

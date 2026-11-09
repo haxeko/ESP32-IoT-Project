@@ -32,4 +32,4 @@ AP7381-50SA-7,U3,SOT-23,1,AP7381-50SA-7,,SMD
 CH1 V+ D GND,J2,"TerminalBlock_Phoenix_MKDS-1,5-3-5.08_1x03_P5.08mm_Horizontal",1,"Terminal block 3P 5.08mm (KF128-3P / MKDS 1,5/3-5,08)",,THT
 CH2 V+ D GND,J3,"TerminalBlock_Phoenix_MKDS-1,5-3-5.08_1x03_P5.08mm_Horizontal",1,"Terminal block 3P 5.08mm (KF128-3P / MKDS 1,5/3-5,08)",,THT
 CH3 V+ D GND,J4,"TerminalBlock_Phoenix_MKDS-1,5-3-5.08_1x03_P5.08mm_Horizontal",1,"Terminal block 3P 5.08mm (KF128-3P / MKDS 1,5/3-5,08)",,THT
-5A ATM,"F1,F2,F3",Fuseholder_Blade_Mini_Keystone_3568,3,Keystone 3568 holder + mini blade (ATM) fuse 5A,,THT
+GPIO,J7,PinHeader_1x05_P2.54mm_Vertical,1,Pin header 1x5 2.54mm,,THT

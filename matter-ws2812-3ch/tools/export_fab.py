@@ -19,7 +19,7 @@ IMG = os.path.join(ROOT, "docs", "images")
 P = design.PROJECT
 PCB = os.path.join(HW, P + ".kicad_pcb")
 SCH = os.path.join(HW, P + ".kicad_sch")
-THT = {"J1", "J2", "J3", "J4", "F1", "F2", "F3", "SW1", "SW2"}
+THT = {"J1", "J2", "J3", "J4", "J7", "SW1", "SW2"}
 
 
 def run(*args):

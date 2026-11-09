@@ -136,3 +136,31 @@ int astar(int nx, int ny, const uint8_t *free0, const uint8_t *free1, const uint
     }
     return -1;
 }
+
+/* 4-connected component labelling of a mask (1 = cell belongs to a region).
+ * lab[k] = region index or -1. Returns the number of regions. */
+int label4(int nx, int ny, const uint8_t *mask, int32_t *lab, int32_t *queue) {
+    const long n = (long)nx * ny;
+    for (long k = 0; k < n; k++) lab[k] = -1;
+    int count = 0;
+    for (long s = 0; s < n; s++) {
+        if (!mask[s] || lab[s] >= 0) continue;
+        long head = 0, tail = 0;
+        queue[tail++] = (int32_t)s;
+        lab[s] = count;
+        while (head < tail) {
+            long c = queue[head++];
+            int j = (int)(c / nx), i = (int)(c % nx);
+            long nb[4] = {c - 1, c + 1, c - nx, c + nx};
+            int ok[4] = {i > 0, i < nx - 1, j > 0, j < ny - 1};
+            for (int k = 0; k < 4; k++) {
+                if (ok[k] && mask[nb[k]] && lab[nb[k]] < 0) {
+                    lab[nb[k]] = count;
+                    queue[tail++] = (int32_t)nb[k];
+                }
+            }
+        }
+        count++;
+    }
+    return count;
+}

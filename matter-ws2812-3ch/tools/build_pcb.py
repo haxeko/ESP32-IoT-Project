@@ -28,7 +28,7 @@ TOMM = pcbnew.ToMM
 
 NETCLASSES = {
     # name: (track, clearance, via_d, via_drill, nets)
-    "Power": (1.5, 0.3, 0.8, 0.4, ["/VIN", "/VLED", "/VOUT1", "/VOUT2", "/VOUT3"]),
+    "Power": (1.5, 0.3, 0.8, 0.4, ["/VIN", "/VLED"]),
     "Supply": (0.5, 0.2, 0.8, 0.4, ["+3V3", "/V_SYS", "/VBUS", "+5V", "/SW_NODE", "GND"]),
 }
 
@@ -66,6 +66,9 @@ def setup_rules(board):
     ds.m_CopperEdgeClearance = MM(0.4)
     ds.m_SolderMaskMinWidth = MM(0.0)
     ns = ds.m_NetSettings
+    # NewBoard() reloads the existing project file: start from a clean net class list
+    ns.ClearNetclassPatternAssignments()
+    ns.ClearNetclasses()
     d = ns.GetDefaultNetclass()
     d.SetTrackWidth(MM(0.25))
     d.SetClearance(MM(0.2))
@@ -173,7 +176,7 @@ def _hit(a, rects):
     return any(a[0] < r[2] and a[2] > r[0] and a[1] < r[3] and a[3] > r[1] for r in rects)
 
 
-HIDE_REFS = {"J1", "J2", "J3", "J4", "H1", "H2", "H3", "H4", "SW2", "J6"}
+HIDE_REFS = {"J1", "J2", "J3", "J4", "H1", "H2", "H3", "H4", "SW2", "J6", "J7"}
 
 
 def place_refs(board):
@@ -207,6 +210,8 @@ def place_refs(board):
         cx, cy = (l + r) / 2, (t + bt) / 2
         cands = [(cx, t - 0.55, 0), (cx, bt + 0.55, 0), (l - 0.3, cy, 0), (r + 0.3, cy, 0),
                  (l - 0.55, cy, 90), (r + 0.55, cy, 90), (cx, t - 1.4, 0), (cx, bt + 1.4, 0)]
+        if r - l > 6 and bt - t > 6:
+            cands.append((cx, cy, 0))       # large parts: inside the body outline
         placed = False
         for x, y, ang in cands:
             ref.SetTextAngle(pcbnew.EDA_ANGLE(ang, pcbnew.DEGREES_T))
@@ -287,9 +292,14 @@ def main():
                 pad.SetNet(nets[name])
 
         # high current pins connect solidly to the planes
-        if ref.startswith(("J1", "J2", "J3", "J4", "F")) or ref == "Q1":
+        if ref in ("J1", "J2", "J3", "J4", "Q1"):
             for pad in fp.Pads():
                 pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
+        # module GND pin 9 joins the ground fill under the module directly
+        if ref == "U1":
+            for pad in fp.Pads():
+                if pad.GetNumber() == "9":
+                    pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
         # the stacked USB-C ground pads are too narrow for two thermal spokes
         if ref == "J5":
             for pad in fp.Pads():

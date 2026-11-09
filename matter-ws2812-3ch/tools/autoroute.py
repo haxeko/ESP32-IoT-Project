@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Small two-layer grid router for this board (pcbnew + a C A* core).
 
-The board from build_pcb.py already has its power zones (VIN, VLED, VOUTx on F.Cu,
+The board from build_pcb.py already has its power zones (VIN, VLED on F.Cu,
 GND on both layers). This script routes every remaining connection with exact
 clearances computed from the KiCad pad/zone polygons, then refills the zones.
 GND pads on the top layer are tied to the bottom plane with a via next to the pad.
@@ -26,7 +26,7 @@ G = 0.05                    # grid pitch, mm
 MARGIN = 0.012              # polygon approximation + rounding allowance, mm
 EDGE_CLEAR = 0.4
 HW_CLASSES = (0.125, 0.2, 0.25, 0.3, 0.4, 0.5)   # track / via half widths
-POWER = {"VIN", "VLED", "VOUT1", "VOUT2", "VOUT3"}
+POWER = {"VIN", "VLED"}
 
 # net: (track width, via diameter, via drill)
 WIDTH = {
@@ -35,8 +35,11 @@ WIDTH = {
     "VLED": (0.6, 0.8, 0.4), "GND": (0.5, 0.6, 0.3), "Q1_G": (0.4, 0.6, 0.3),
 }
 DEFAULT_WIDTH = (0.25, 0.6, 0.3)
-ORDER = ["GND", "SW_NODE", "BST", "V_SYS", "STATUS_LED", "BOOT", "EN", "DATA_IN1", "DATA_IN2",
-         "DATA_IN3", "+3V3", "USB_DP", "USB_DN", "SW_P1", "SW_P2", "SW_P3", "SW_P4", "CC1", "CC2",
+# pads tied to their net by the ground fill instead of a track: the module's GND pin 9 sits
+# in the top GND copper under the module, which reaches the bottom plane through the EPAD vias
+FILL_CONNECTED = {("U1", "9")}
+ORDER = ["SW_NODE", "BST", "V_SYS", "STATUS_LED", "BOOT", "EN", "DATA_IN1", "DATA_IN2",
+         "DATA_IN3", "+3V3", "USB_DP", "USB_DN", "SW_P2", "SW_P3", "SW_P4", "CC1", "CC2",
          "VBUS", "VLED", "+5V", "Q1_G", "DATA_BUF1", "DATA_BUF2", "DATA_BUF3", "DATA_OUT1",
          "DATA_OUT2", "DATA_OUT3"]
 
@@ -120,7 +123,20 @@ class Router:
                               ctypes.c_float, ctypes.c_float, ctypes.c_float, P, P, P, ctypes.c_int,
                               ctypes.c_long]
         lib.astar.restype = ctypes.c_int
+        lib.label4.argtypes = [ctypes.c_int, ctypes.c_int, P, P, P]
+        lib.label4.restype = ctypes.c_int
         return lib
+
+    def largest_region(self, mask):
+        """Largest 4-connected region of a (ny, nx) boolean mask."""
+        m = np.ascontiguousarray(mask.astype(np.uint8))
+        lab = np.empty(self.n, dtype=np.int32)
+        queue = np.empty(self.n, dtype=np.int32)
+        cnt = self.lib.label4(self.nx, self.ny, m.ctypes.data, lab.ctypes.data, queue.ctypes.data)
+        if cnt == 0:
+            return np.zeros_like(mask, dtype=bool)
+        sizes = np.bincount(lab[lab >= 0], minlength=cnt)
+        return (lab == int(np.argmax(sizes))).reshape(self.ny, self.nx)
 
     def cell(self, x, y):
         return int(round((x - self.x0) / G)), int(round((y - self.y0) / G))
@@ -142,9 +158,9 @@ class Router:
             for L in layers:
                 self.occ[hw][L][sl][m] |= b
 
-    def add_copper(self, net, layers, sl, mask):
+    def add_copper(self, net, layers, sl, mask, tag=None):
         if net:
-            self.copper.setdefault(net, []).append((tuple(layers), sl, mask))
+            self.copper.setdefault(net, []).append((tuple(layers), sl, mask, tag))
 
     # ---------------------------------------------------------------- obstacles
     def load(self):
@@ -175,14 +191,14 @@ class Router:
                     sl, px, py = win
                     d = poly_dist(px, py, pts)
                     self.stamp(layers, self.bit.get(net, 0), d, sl, 0.3 if base(net) in POWER else 0.2)
-                    self.add_copper(net, layers, sl, d <= 0.0)
+                    self.add_copper(net, layers, sl, d <= 0.0, (fp.GetReference(), pad.GetNumber()))
                     if attr == pcbnew.PAD_ATTRIB_SMD:
                         self.novia[sl] |= d < 0.45
             if fp.GetReference() == "U1":
                 # no top-layer routing under the module body, keep the bottom under it for GND
                 c = fp.GetPosition()
                 cx, cy = MM(c.x), MM(c.y)
-                win = self.window(cx - 7.6, cy - 12.9, cx + 7.6, cy + 6.6, 0)
+                win = self.window(cx - 7.95, cy - 12.9, cx + 7.95, cy + 6.95, 0)
                 sl, px, py = win
                 self.occ_hard((0,), sl, np.ones(px.shape, dtype=bool))
                 self.cost[1][sl] = 4.0
@@ -226,7 +242,7 @@ class Router:
             self.occ[hw][1][m] |= np.uint64(1)
         self.novia |= sdf > -(EDGE_CLEAR + 0.45)
         # keep the bottom plane whole under the high current part of the board
-        self.cost[1][jj * G > 49.0] = 3.0
+        self.cost[1][jj * G > layout.HC_Y] = 3.0
 
     def occ_hard(self, layers, sl, mask):
         for hw in HW_CLASSES:
@@ -242,14 +258,19 @@ class Router:
     def components(self, net, free):
         """Connected copper groups of a net, as boolean full-size masks per layer."""
         items = []
-        for layers, sl, m in self.copper.get(net, []):
+        for layers, sl, m, tag in self.copper.get(net, []):
+            if tag in FILL_CONNECTED:
+                continue
             full = np.zeros((2, self.ny, self.nx), dtype=bool)
             for L in layers:
                 full[L][sl] = m
             items.append(full)
         if net == "GND":
+            # only the main body of the bottom plane: pockets cut off by bottom traces
+            # would leave a via (and its pad) floating
             plane = np.zeros((2, self.ny, self.nx), dtype=bool)
-            plane[1] = free[1].astype(bool)
+            fv = self.free_maps(net, 0.3)
+            plane[1] = self.largest_region(fv[1].astype(bool) & ~self.novia)
             items.append(plane)
         groups = []
         for it in items:
@@ -291,7 +312,9 @@ class Router:
                                 tree & np.stack([free[0], free[1]]).astype(bool),
                                 free, viaok, net)
             if path is None:
-                print("   !! unrouted connection on", net)
+                i0, j0, i1, j1 = self._bbox(src)
+                print("   !! unrouted connection on %s near x %.1f-%.1f y %.1f-%.1f mm" % (
+                    net, i0 * G, i1 * G, j0 * G, j1 * G))
                 self.failed.add(net)
                 continue
             self._commit(net, path, tw, vd, vdr)
@@ -416,6 +439,68 @@ class Router:
                 b.Add(v)
 
 
+def stitch_gnd(board, pitch=4.0, via_d=0.6, via_drill=0.3):
+    """GND vias on a grid wherever both layers are filled with GND, so every piece of
+    the top ground fill is tied to the bottom plane."""
+    gnd = board.FindNet("GND")
+    fills = []
+    for z in board.Zones():
+        if z.GetNetname() == "GND" and not z.GetIsRuleArea():
+            for lid in (pcbnew.F_Cu, pcbnew.B_Cu):
+                if z.IsOnLayer(lid):
+                    fills.append((lid, z.GetFilledPolysList(lid)))
+    holes = [(MM(v.GetPosition().x), MM(v.GetPosition().y)) for v in board.GetTracks()
+             if v.GetClass() == "PCB_VIA"]
+    keep_out = []
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            p = pad.GetPosition()
+            holes.append((MM(p.x), MM(p.y)))
+            bb = pad.GetBoundingBox()
+            keep_out.append((MM(bb.GetLeft()) - 0.45, MM(bb.GetTop()) - 0.45,
+                             MM(bb.GetRight()) + 0.45, MM(bb.GetBottom()) + 0.45))
+        if fp.GetReference() == "U1":     # nothing under the module body
+            bb = fp.GetCourtyard(pcbnew.F_CrtYd).BBox()
+            keep_out.append((MM(bb.GetLeft()), MM(bb.GetTop()), MM(bb.GetRight()), MM(bb.GetBottom())))
+    r = via_d / 2 + 0.05
+    ring = [(r * math.cos(k * math.pi / 4), r * math.sin(k * math.pi / 4)) for k in range(8)] + [(0, 0)]
+    x0, y0 = layout.ORIGIN
+    added = 0
+    y = 2.0
+    while y < layout.H - 1.5:
+        x = 2.0
+        while x < layout.W - 1.5:
+            ax, ay = x0 + x, y0 + y
+            ok = not any(k[0] < ax < k[2] and k[1] < ay < k[3] for k in keep_out)
+            ok = ok and all(math.hypot(ax - hx, ay - hy) > 1.0 for hx, hy in holes)
+            for lid in (pcbnew.F_Cu, pcbnew.B_Cu):
+                if not ok:
+                    break
+                polys = [ps for l, ps in fills if l == lid]
+                ok = all(any(ps.Contains(pcbnew.VECTOR2I(IU(ax + dx), IU(ay + dy))) for ps in polys)
+                         for dx, dy in ring)
+                # only stitch real plane areas: a via between two tiny pockets would just
+                # tie them to each other
+                c = pcbnew.VECTOR2I(IU(ax), IU(ay))
+                ok = ok and any(abs(ps.Outline(k).Area()) / 1e12 >= 10.0
+                                for ps in polys for k in range(ps.OutlineCount())
+                                if ps.Outline(k).PointInside(c))
+            if ok:
+                v = pcbnew.PCB_VIA(board)
+                v.SetPosition(pcbnew.VECTOR2I(IU(ax), IU(ay)))
+                v.SetViaType(pcbnew.VIATYPE_THROUGH)
+                v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+                v.SetWidth(IU(via_d))
+                v.SetDrill(IU(via_drill))
+                v.SetNet(gnd)
+                board.Add(v)
+                holes.append((ax, ay))
+                added += 1
+            x += pitch
+        y += pitch
+    return added
+
+
 def route_once(path, order):
     board = pcbnew.LoadBoard(path)
     for t in list(board.GetTracks()):
@@ -436,7 +521,8 @@ def main():
     names = {base(n): n for n in probe.bit}
     order = [names[n] for n in ORDER if n in names]
     order += sorted(n for n in probe.bit if n not in order and base(n) not in POWER
-                    and not n.startswith("unconnected-"))
+                    and not n.startswith("unconnected-") and n != "GND")
+    order.append("GND")         # last: its vias must land in the final, uncut plane
     best = None
     for k in range(passes):
         board, r = route_once(path, order)
@@ -445,12 +531,16 @@ def main():
             best = (board, r)
         if not r.failed:
             break
-        # failed nets go first next time
-        order = [n for n in order if n in r.failed] + [n for n in order if n not in r.failed]
+        # failed nets go first next time (GND always stays last)
+        sig = [n for n in order if n != "GND"]
+        order = [n for n in sig if n in r.failed] + [n for n in sig if n not in r.failed] + ["GND"]
     board, r = best
     r.apply()
     filler = pcbnew.ZONE_FILLER(board)
     filler.Fill(board.Zones())
+    n = stitch_gnd(board)
+    filler.Fill(board.Zones())
+    print("GND stitching vias:", n)
     pcbnew.SaveBoard(path, board)
     print("saved", path, "tracks:", len(board.GetTracks()), "failed:", sorted(r.failed),
           "in %.0fs" % (time.time() - t0))
