@@ -44,6 +44,7 @@ static void run(int64_t end_ms, uint32_t interval_ms, std::function<void()> step
 {
     sim_reset(end_ms);
     s_reports.clear();
+    s_stats = {};
     if (before) {
         before();
     }
@@ -91,6 +92,13 @@ int main()
     CHECK(g_sim.scd4x_commands.size() >= 3 && g_sim.scd4x_commands[0] == 0x3F86 &&
           g_sim.scd4x_commands[1] == 0x3682 && g_sim.scd4x_commands[2] == 0x21B1);
     CHECK(count_commands(0x21B1) == 1 && count_commands(0x3F86) == 1);
+    scd4x_stats_t stats;
+    scd4x_get_stats(&stats);
+    CHECK(stats.starts == 1 && stats.failed_starts == 0 && stats.failed_transfers == 0 && stats.crc_errors == 0);
+    CHECK(stats.measurements >= 18 && stats.measurements <= 20 && stats.reports == 3 && stats.invalid_reports == 0);
+    // 2 transfers for each data-ready poll, 2 more for each measurement read, 4 to start.
+    CHECK(stats.transfers == g_sim.scd4x_commands.size() + count_commands(0x3682) + count_commands(0xE4B8) +
+                                 count_commands(0xEC05));
     CHECK(sim_log_contains("CO2 sensor 123456789ABC started") && sim_log_contains("CO2=600 ppm (sensor 25 C, 50 %RH)"));
 
     // 5 s interval: every measurement is reported.
@@ -116,7 +124,7 @@ int main()
 
     // Measurements with a wrong CRC are skipped, without restarting the sensor.
     run(40000, 30000, nullptr, [] { g_sim.scd4x_corrupt = 2; });
-    CHECK(g_sim.scd4x_corrupt == 0);
+    CHECK(g_sim.scd4x_corrupt == 0 && s_stats.crc_errors == 2 && s_stats.failed_transfers == 0);
     CHECK(s_reports.size() == 1 && s_reports[0].valid && s_reports[0].co2 == 600 && count_commands(0x21B1) == 1);
 
     // Missing at boot, plugged in at 50 s: reported missing once (after
@@ -133,7 +141,8 @@ int main()
     // Unplugged from 60 s to 120 s: one failed read, then only probed;
     // reported missing once, 30 s after the last measurement, then started again.
     run(180000, 30000, [] { g_sim.scd4x_present = !(sim_ms() >= 60000 && sim_ms() < 120000); });
-    CHECK(g_sim.scd4x_unanswered == 1);
+    CHECK(g_sim.scd4x_unanswered == 1 && s_stats.failed_transfers == 1 && s_stats.starts == 2);
+    CHECK(s_stats.failed_starts >= 5 && s_stats.invalid_reports == 1);
     CHECK(invalid_reports() == 1);
     for (auto &r : s_reports) {
         CHECK(r.valid ? (r.co2 == 600 && (r.t_ms < 62000 || r.t_ms >= 120000)) : (r.t_ms >= 85000 && r.t_ms < 92000));

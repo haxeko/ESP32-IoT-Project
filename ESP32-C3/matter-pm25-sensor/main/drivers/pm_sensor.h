@@ -33,3 +33,19 @@ typedef struct {
 } pm_sensor_config_t;
 
 esp_err_t pm_sensor_init(const pm_sensor_config_t *config);
+
+// Counters since start-up, for diagnostics.
+typedef struct {
+    uint32_t rx_bytes;          // bytes received from the sensor
+    uint32_t frames;            // frames with a valid checksum
+    uint32_t checksum_errors;   // measurement frames dropped for their checksum
+    uint32_t other_frames;      // other frames dropped: command answers, false headers
+    uint32_t dropped_bytes;     // bytes dropped while looking for a frame header
+    uint32_t max_frame_gap_ms;  // longest time between two valid frames while the sensor is awake
+    uint32_t reports;           // measurements reported
+    uint32_t invalid_reports;   // "no data" reports
+    uint32_t wakeups;           // times the sensor was woken up and set up
+    uint32_t sleep_retries;     // sleep commands sent again because frames kept coming
+} pm_sensor_stats_t;
+
+void pm_sensor_get_stats(pm_sensor_stats_t *stats);

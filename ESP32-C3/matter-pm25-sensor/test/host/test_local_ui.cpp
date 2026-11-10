@@ -2,8 +2,9 @@
 // driver on a simulated I2C bus, the settings in a simulated NVS, and the
 // LEDs and the display button stubbed below. Pins of the PCB; the PCB has no
 // display button, so the button logic is tested with one added on GPIO20.
-// run.sh also builds it with CONFIG_DISPLAY_BUTTON_GPIO=-1 (the default) and
-// without the CO2 sensor (CONFIG_CO2_SENSOR_NONE).
+// run.sh also builds it with CONFIG_DISPLAY_BUTTON_GPIO=-1 (the default),
+// without the CO2 sensor (CONFIG_CO2_SENSOR_NONE) and as a diagnostics build
+// (CONFIG_APP_DIAG_OLED).
 #include "sim.h"
 
 #define CONFIG_STATUS_LED_BRIGHTNESS 50
@@ -62,6 +63,13 @@ void status_led_set(float r, float g, float b, float) { s_led.r = r; s_led.g = g
 void status_led_set_now(float r, float g, float b, float) { s_led.r = r; s_led.g = g; s_led.b = b; s_led.sets++; }
 void status_led_refresh(void) { s_led.refreshes++; }
 
+#if CONFIG_APP_DIAG_OLED
+// Diagnostics status of the bottom row, as app_diag.cpp would give it.
+#include "app_diag.h"
+static const char *s_diag_line = "N1 B0 W0 P0 S0";
+void app_diag_status_line(char *buf, size_t size) { snprintf(buf, size, "%s", s_diag_line); }
+#endif
+
 // The I2C bus module, with its TAG renamed: the test resets its bus.
 #define TAG I2C_BUS_TAG
 #include "i2c_bus.cpp"
@@ -84,6 +92,7 @@ static void run(int64_t end_ms, std::function<void()> step, std::function<void()
     s_identify_until_ms = 0;
     s_display_presses = 0;
     s_layout_toggles = 0;
+    s_stats = {};
     s_button_cb = nullptr;
     s_button_gpio = -1;
     s_bus = NULL;
@@ -93,6 +102,8 @@ static void run(int64_t end_ms, std::function<void()> step, std::function<void()
     g_sim.on_tick = step;
     i2c_bus_init(CONFIG_OLED_SDA_PIN, CONFIG_OLED_SCL_PIN);
     CHECK(local_ui_init() == ESP_OK);
+    // The OLED is left to the UI task: nothing here waits for a missing one.
+    CHECK(sim_ms() == 0 && !g_sim.panel_on && !g_sim.panel_configured);
     CHECK(CONFIG_DISPLAY_BUTTON_GPIO < 0 || (s_button_cb != nullptr && s_button_gpio == CONFIG_DISPLAY_BUTTON_GPIO));
     try {
         local_ui_task(NULL);
@@ -157,7 +168,43 @@ static void run(int64_t end_ms, std::function<void()> step, std::function<void()
     return s;
 }
 
-#if CONFIG_CO2_SENSOR_NONE
+#if CONFIG_APP_DIAG_OLED
+
+int main()
+{
+    printf("local_ui (diagnostics row):\n");
+    // The bottom row shows the diagnostics status, in both screens; the rest
+    // of the screen is as usual.
+    for (bool show_co2 : { true, false }) {
+        uint8_t first[8][128];
+        s_diag_line = "N1 B0 W0 P0 S0";
+        draw_screen(values(31, 612), show_co2);
+        memcpy(first, g_sim.oled_frame, sizeof(first));
+        s_diag_line = "N12 B7 W1 P2 S5";
+        draw_screen(values(31, 612), show_co2);
+        CHECK(memcmp(first, g_sim.oled_frame, 6 * 128) == 0);                   // rows 0..47
+        CHECK(memcmp(first[6], g_sim.oled_frame[6], 2 * 128) != 0);             // rows 48..63
+    }
+    // Also before the first PM2.5 value.
+    uint8_t before[8][128];
+    s_diag_line = "N1 B0 W0 P0 S0";
+    draw_screen(values(NAN, NAN), false);
+    memcpy(before, g_sim.oled_frame, sizeof(before));
+    s_diag_line = "N2 B1 W0 P0 S1";
+    draw_screen(values(NAN, NAN), false);
+    CHECK(memcmp(before, g_sim.oled_frame, sizeof(before)) != 0);
+    // The task draws it, and the status is refreshed with the screen.
+    run(40000, [&] {
+        if (sim_ms() == 35000) local_ui_set_pm25(31);
+        if (sim_ms() == 37000) s_diag_line = "N3 B2 W0 P0 S4";
+    });
+    CHECK(visible() && shows(values(31, NAN), true));
+
+    printf(g_failures ? "  %d failure(s)\n" : "  OK\n", g_failures);
+    return g_failures != 0;
+}
+
+#elif CONFIG_CO2_SENSOR_NONE
 
 int main()
 {
@@ -204,6 +251,10 @@ int main()
     CHECK(g_sim.oled_column == 2);
 #endif
     CHECK(g_sim.i2c_buses == 1);
+    local_ui_stats_t stats;
+    local_ui_get_stats(&stats);
+    CHECK(stats.oled_inits == 1 && stats.oled_init_failures == 0 && stats.oled_write_errors == 0 &&
+          stats.oled_frames >= 3);
 
     // Start-up: on, then stays on (setting on when never saved); LED takes the level color.
     bool on_at_30 = false;
@@ -383,6 +434,7 @@ int main()
     });
     CHECK(visible());
     CHECK(sim_log_contains("re-initializing"));
+    CHECK(s_stats.oled_write_errors == 1 && s_stats.oled_inits == 2 && s_stats.oled_init_failures >= 1);
 
     // Panel silently reset (power glitch, writes still acknowledged) while on.
     int64_t back_at = -1;
@@ -414,6 +466,14 @@ int main()
         if (sim_ms() == 35000) local_ui_set_pm25(31);
     }, [] { g_sim.i2c_bus_ok = false; });
     CHECK(!s_oled_ok && !g_sim.panel_on && s_led.fades == 1 && sim_log_contains("OLED init failed"));
+    CHECK(s_stats.oled_inits == 0 && s_stats.oled_init_failures >= 10 && s_stats.oled_frames == 0);
+
+    // OLED missing at boot (plugged in at 20 s): app_main() is not held up
+    // (checked in run()), the task keeps trying, and it comes on.
+    run(60000, [&] {
+        g_sim.oled_present = sim_ms() >= 20000;
+    }, [] { g_sim.oled_present = false; });
+    CHECK(visible() && s_stats.oled_inits == 1 && s_stats.oled_init_failures >= 3);
 
     // Identify: white blink, then back to the air quality color.
     int white = 0, dark = 0;

@@ -30,6 +30,16 @@ project(matter_pm25_sensor)
 # every build. The tag tells these files apart from those of the radar version
 # (ESP32-C3/matter-wifi/matter-pm25-sensor), which have the same model name.
 set(FIRMWARE_FILE_TAG "pcb")
+# Diagnostics builds (sdkconfig.diag and the overlays added to it) get names of their own.
+if(CONFIG_APP_DIAG)
+    string(APPEND FIRMWARE_FILE_TAG "_diag")
+    if(CONFIG_APP_DIAG_DISABLE_PM_SENSOR OR CONFIG_APP_DIAG_DISABLE_CO2_SENSOR)
+        string(APPEND FIRMWARE_FILE_TAG "_nosensor")
+    endif()
+    if(CONFIG_ESP_PHY_MAX_WIFI_TX_POWER LESS 20)
+        string(APPEND FIRMWARE_FILE_TAG "_tx${CONFIG_ESP_PHY_MAX_WIFI_TX_POWER}")
+    endif()
+endif()
 firmware_files_target(${CMAKE_CURRENT_LIST_DIR})
 
 idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-Os;-DCHIP_HAVE_CONFIG_H;-Wno-overloaded-virtual" APPEND)

@@ -209,4 +209,78 @@ menu "Button"
             use a strapping pin (GPIO2, 8, 9), the flash pins (GPIO11 to 17),
             the USB pins (GPIO18, 19) or GPIO21 (boot log output).
 
+    config FACTORY_RESET_POWER_CYCLES
+        int "Power cycles in a row that factory reset the device (0 = off)"
+        range 0 20
+        default 5
+        help
+            Powering the device on this many times in a row, each time for
+            less than 10 seconds, factory resets it. 0 turns this off (1 and
+            2 are refused: a single power glitch would do it).
+
+            The firmware cannot tell the user doing this from a supply that
+            drops out in bursts (loose plug, power bank that switches off,
+            supply too weak for the Wi-Fi peaks): with such a supply and a
+            button to reset the device, turn it off.
+
+endmenu
+
+menu "Diagnostics"
+
+    config APP_DIAG
+        bool "Commissioning and sensor diagnostics"
+        default n
+        select FREERTOS_USE_TRACE_FACILITY
+        select FREERTOS_GENERATE_RUN_TIME_STATS
+        help
+            To find why commissioning or a sensor fails. Adds to the log:
+            - the resets counted by reason (power-on, brown-out, watchdog,
+              panic...), kept in NVS across the resets themselves;
+            - each step of a commissioning (BLE advertising, BLE connection,
+              PASE, Wi-Fi, IP address, CASE, complete) with the free heap;
+            - every few seconds: heap, stack headroom and CPU share of every
+              task, UART / I2C transfer and error counters of the sensors
+              and the OLED, Wi-Fi signal.
+            Pressing the button 3 times clears the reset counters.
+
+            Costs about 5 KB of RAM. The sdkconfig.diag overlay turns it on
+            together with a console on UART0 and the Matter shell, see
+            docs/commissioning-test-plan.md.
+
+    config APP_DIAG_LOG_INTERVAL_SEC
+        int "Status log interval (seconds)"
+        depends on APP_DIAG
+        range 1 600
+        default 10
+
+    config APP_DIAG_OLED
+        bool "Reset counters and commissioning stage on the OLED"
+        depends on APP_DIAG
+        default y
+        help
+            The bottom row of the OLED shows e.g. "N3 B2 W0 P0 S4" instead of
+            the air quality level: resets counted (N), of which brown-outs
+            (B), watchdog resets (W) and panics (P), and the furthest
+            commissioning stage since boot (S: 1 BLE advertising, 2 BLE
+            connected, 3 PASE, 4 Wi-Fi, 5 IP address, 6 CASE, 7 complete).
+            Readable without a console.
+
+    config APP_DIAG_DISABLE_PM_SENSOR
+        bool "Do not start the PM sensor driver"
+        depends on APP_DIAG
+        default n
+        help
+            The sensor can stay plugged in: its UART is left alone, so it is
+            never told to sleep and its fan keeps running. Tells a fault of
+            the driver from one of the hardware (supply, radio).
+
+    config APP_DIAG_DISABLE_CO2_SENSOR
+        bool "Do not start the CO2 sensor driver"
+        depends on APP_DIAG && CO2_SENSOR_SCD4X
+        default n
+        help
+            The sensor can stay plugged in: nothing is sent to it, so it does
+            not measure (and does not draw its measurement current peaks).
+            The Matter CO2 cluster stays, with no value.
+
 endmenu

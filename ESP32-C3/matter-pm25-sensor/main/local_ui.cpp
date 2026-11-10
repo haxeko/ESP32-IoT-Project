@@ -12,7 +12,8 @@
 // - The OLED is on during start-up (until the first PM2.5 value + 5 s, at most
 //   120 s + 5 s), during a factory reset and in pairing mode. Otherwise the
 //   display button turns it on and off, and that choice is kept in NVS across
-//   restarts.
+//   restarts. The UI task initializes it, so that a missing OLED does not
+//   delay the start of Matter.
 // - It shows PM2.5 alone, or PM2.5 and CO2 side by side (with a CO2 sensor).
 //   local_ui_toggle_layout() (4 presses on the main button) switches between
 //   them, and that choice is kept in NVS too.
@@ -28,6 +29,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "app_diag.h"
 #include "drivers/button.h"
 #include "drivers/i2c_bus.h"
 #include "drivers/sh1106.h"
@@ -168,6 +170,7 @@ static bool s_oled_ok;
 static bool s_led_ok;
 static bool s_display_on = true;        // display button setting, loaded by local_ui_init()
 static bool s_show_co2;                 // PM2.5 + CO2 screen, loaded by local_ui_init()
+static local_ui_stats_t s_stats;        // written by the UI task only
 
 static int64_t now_ms()
 {
@@ -180,6 +183,11 @@ static unsigned stack_min_free(const char *name)
 {
     TaskHandle_t task = xTaskGetHandle(name);
     return task != NULL ? (unsigned)uxTaskGetStackHighWaterMark(task) : 0;
+}
+
+void local_ui_get_stats(local_ui_stats_t *stats)
+{
+    *stats = s_stats;
 }
 
 // PM2.5 thresholds (µg/m³) of the 5 levels.
@@ -344,6 +352,33 @@ static void draw_reset(local_ui_reset_t reset, int seconds_left)
     sh1106_draw_text(64, RESET_DIGIT_BASELINE - font_large.ascent, &font_large, TEXT_ALIGN_TOP_CENTER, value);
 }
 
+// Bottom row of the measurement screens. A diagnostics build shows the reset
+// counters and the commissioning stage there instead (CONFIG_APP_DIAG_OLED);
+// the LEDs still show the level.
+static const char *bottom_text(const char *text)
+{
+#if CONFIG_APP_DIAG_OLED
+    static char s_line[24];     // only used by the UI task
+    app_diag_status_line(s_line, sizeof(s_line));
+    return s_line;
+#else
+    return text;
+#endif
+}
+
+// Sends the frame buffer to the OLED.
+static esp_err_t flush_frame()
+{
+    const int64_t start_us = esp_timer_get_time();
+    const esp_err_t err = sh1106_flush();
+    const uint32_t ms = (uint32_t)((esp_timer_get_time() - start_us) / 1000);
+    s_stats.oled_frames++;
+    if (ms > s_stats.oled_max_frame_ms) {
+        s_stats.oled_max_frame_ms = ms;
+    }
+    return err;
+}
+
 // Pairing mode: the manual pairing code in groups of 4-3-4 digits, as the
 // Home app shows it. Only the 11-digit code fits (standard commissioning
 // flow, the one of this device): any other is left out.
@@ -391,7 +426,7 @@ static void draw_dual(const screen_t &screen)
     sh1106_draw_text(SH1106_WIDTH - 1 - DUAL_MARGIN, y, font, TEXT_ALIGN_TOP_RIGHT, co2);
     sh1106_draw_hline(8, 119, 47);
     sh1106_draw_text(64, 50, &font_small, TEXT_ALIGN_TOP_CENTER,
-                     screen.level >= 0 ? k_level_labels[screen.level] : "Đang đo...");
+                     bottom_text(screen.level >= 0 ? k_level_labels[screen.level] : "Đang đo..."));
 }
 
 // Fails when the OLED does not acknowledge the frame.
@@ -402,11 +437,11 @@ static esp_err_t draw_screen(const screen_t &screen, bool show_co2)
     sh1106_clear();
     if (screen.reset != LOCAL_UI_RESET_NONE) {
         draw_reset(screen.reset, screen.reset_seconds);
-        return sh1106_flush();
+        return flush_frame();
     }
     if (screen.pairing) {
         draw_pairing(screen.pairing_code);
-        return sh1106_flush();
+        return flush_frame();
     }
     if (screen.matter_connected) {
         // Centered horizontally, bottom on the baseline of the "PM2.5" header
@@ -419,7 +454,7 @@ static esp_err_t draw_screen(const screen_t &screen, bool show_co2)
     } else if (level < 0) {
         // Below the Matter icon row.
         sh1106_draw_text(64, 24, &font_medium, TEXT_ALIGN_CENTER, PM_SENSOR_NAME);
-        sh1106_draw_text(64, 47, &font_small, TEXT_ALIGN_CENTER, "Đang đo...");
+        sh1106_draw_text(64, 47, &font_small, TEXT_ALIGN_CENTER, bottom_text("Đang đo..."));
     } else {
         char value[8];
         snprintf(value, sizeof(value), "%d", (int)lroundf(pm25));
@@ -427,9 +462,9 @@ static esp_err_t draw_screen(const screen_t &screen, bool show_co2)
         sh1106_draw_text(127, 0, &font_small, TEXT_ALIGN_TOP_RIGHT, "ug/m3 ");
         sh1106_draw_text(64, 16, &font_large, TEXT_ALIGN_TOP_CENTER, value);
         sh1106_draw_hline(8, 119, 47);
-        sh1106_draw_text(64, 50, &font_small, TEXT_ALIGN_TOP_CENTER, k_level_labels[level]);
+        sh1106_draw_text(64, 50, &font_small, TEXT_ALIGN_TOP_CENTER, bottom_text(k_level_labels[level]));
     }
-    return sh1106_flush();
+    return flush_frame();
 }
 
 static bool init_oled();
@@ -441,9 +476,9 @@ static void local_ui_task(void *arg)
     int64_t startup_hold_from = -1;     // set when the start-up hold period begins
     bool display_on = s_display_on;     // display button setting
     bool show_co2 = s_show_co2;         // PM2.5 + CO2 screen
-    bool oled_on = s_oled_ok;
+    bool oled_on = false;
     int64_t last_redraw_ms = 0;
-    int64_t last_oled_retry_ms = boot_ms;
+    int64_t last_oled_retry_ms = boot_ms - OLED_RETRY_MS;   // first attempt at once
     int64_t last_status_ms = boot_ms;
     int64_t last_settings_ms = boot_ms;
     int led_level = -1;
@@ -538,7 +573,8 @@ static void local_ui_task(void *arg)
             }
         }
 
-        // The OLED did not answer at boot: keep retrying (late power-up, loose wire...).
+        // Initialize the OLED, and keep retrying while it does not answer (late
+        // power-up, loose wire...).
         if (!s_oled_ok && now - last_oled_retry_ms >= OLED_RETRY_MS) {
             last_oled_retry_ms = now;
             s_oled_ok = init_oled();
@@ -577,6 +613,7 @@ static void local_ui_task(void *arg)
                 // Loose wire or the panel lost power (and with it its settings):
                 // initialize it again instead of writing to it every second.
                 ESP_LOGW(TAG, "OLED write failed (%s), re-initializing", esp_err_to_name(err));
+                s_stats.oled_write_errors++;
                 s_oled_ok = false;
                 last_oled_retry_ms = 0;     // first retry at the next tick
             }
@@ -609,9 +646,11 @@ static bool init_oled()
 {
     esp_err_t err = sh1106_init(i2c_bus_get(), CONFIG_OLED_I2C_ADDRESS, OLED_ROTATE_180);
     if (err != ESP_OK) {
+        s_stats.oled_init_failures++;
         ESP_LOGE(TAG, "OLED init failed: %s, retrying every %d s", esp_err_to_name(err), OLED_RETRY_MS / 1000);
         return false;
     }
+    s_stats.oled_inits++;
     return true;
 }
 
@@ -629,11 +668,11 @@ esp_err_t local_ui_init(void)
 #endif
 
     // Each part is optional: a missing OLED, LED strip or button must not stop the sensor.
-    s_oled_ok = init_oled() && draw_screen(s_screen, s_show_co2) == ESP_OK && sh1106_set_power(true) == ESP_OK;
+    // The UI task initializes the OLED: its retries (up to 0.5 s, and a scan
+    // of the bus when it does not answer) would hold up app_main() here.
+    s_oled_ok = false;
 
-    esp_err_t err;
-
-    err = status_led_init(CONFIG_STATUS_LED_GPIO, CONFIG_STATUS_LED_COUNT);
+    esp_err_t err = status_led_init(CONFIG_STATUS_LED_GPIO, CONFIG_STATUS_LED_COUNT);
     s_led_ok = (err == ESP_OK);
     if (!s_led_ok) {
         ESP_LOGE(TAG, "LED init failed: %s", esp_err_to_name(err));

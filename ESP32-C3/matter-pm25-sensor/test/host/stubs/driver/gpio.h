@@ -5,6 +5,12 @@
 typedef int gpio_num_t;
 #define GPIO_IS_VALID_GPIO(gpio) ((gpio) >= 0 && (gpio) <= 21)
 enum { GPIO_MODE_INPUT = 1, GPIO_PULLUP_ENABLE = 1, GPIO_PULLDOWN_DISABLE = 0, GPIO_INTR_DISABLE = 0 };
+typedef enum { GPIO_PULLUP_ONLY, GPIO_PULLDOWN_ONLY, GPIO_FLOATING } gpio_pull_mode_t;
 typedef struct { uint64_t pin_bit_mask; int mode; int pull_up_en; int pull_down_en; int intr_type; } gpio_config_t;
 static inline esp_err_t gpio_config(const gpio_config_t *) { return ESP_OK; }
 static inline int gpio_get_level(gpio_num_t gpio) { return g_sim.gpio_level[gpio]; }
+static inline esp_err_t gpio_set_pull_mode(gpio_num_t gpio, gpio_pull_mode_t mode)
+{
+    g_sim.gpio_pullup[gpio] = mode == GPIO_PULLUP_ONLY;
+    return ESP_OK;
+}

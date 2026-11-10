@@ -61,6 +61,8 @@ Nếu luồng Matter hoặc một task của thiết bị (cảm biến PM, cả
 
 PMS5003 nối bắt chéo: TX của cảm biến vào chân nhận (RX) của ESP32, RX của cảm biến vào chân gửi (TX). Quạt PMS5003 cần nguồn **5V**, nhưng mức logic UART là 3.3V nên nối thẳng vào ESP32-C3 được. Chân SET/RESET của PMS (nếu có) để hở hoặc nối 3.3V. PMS5003 dùng UART1, log chạy qua USB.
 
+Firmware không điều khiển chân SET/RESET: nó cho PMS5003 ngủ và đánh thức bằng lệnh qua UART (đo 35 giây mỗi 5 phút, mặc định). Vì vậy **quạt chỉ chạy khoảng 35 giây sau khi cấp nguồn rồi dừng**. Quạt chạy liên tục nghĩa là lệnh ngủ không tới cảm biến (dây GPIO7 → RX cảm biến), hoặc ESP32 đang khởi động lại liên tục (mỗi lần khởi động lại đánh thức cảm biến), hoặc firmware không chạy. Nếu cảm biến vẫn gửi dữ liệu sau lệnh ngủ (lệnh bị mất, cảm biến được cắm lại lúc đang có điện), firmware gửi lại lệnh mỗi 5 giây và ghi `pm_sensor: Sensor still sends data after the sleep command`.
+
 Cảm biến CO2 nối song song với OLED trên cùng hai dây SDA và SCL: bus I2C cho nhiều thiết bị khác địa chỉ dùng chung (OLED 0x3C, SCD4x 0x62). Cấp **3.3V** cho module SCD4x: nếu cấp 5V, điện trở kéo lên trên module có thể kéo SDA/SCL lên 5V, quá mức chịu của ESP32-C3. Mỗi lần đo, SCD4x lấy dòng đỉnh khá lớn (cỡ vài trăm mA trong thời gian rất ngắn), nên dùng module có sẵn tụ lọc nguồn. Đặt cảm biến xa ESP32 và LED để nhiệt của chúng không ảnh hưởng.
 
 SCD4x tự hiệu chỉnh (ASC, bật sẵn từ nhà sản xuất): nó coi mức CO2 thấp nhất trong khoảng một tuần là 400 ppm, tức không khí ngoài trời. Phòng cần được thông gió (mở cửa) thỉnh thoảng trong tuần, nếu không số đo có thể lệch dần; vài ngày đầu sau khi lắp, số đo có thể chưa chính xác. Để tham khảo: ngoài trời khoảng 420 ppm, phòng thông thoáng thường dưới 1000 ppm, trên 1500 ppm nên mở cửa thông gió.
@@ -91,7 +93,7 @@ Mỗi lần bấm trong một chuỗi phải ngắn (dưới 0,5 giây) và các
 
 Factory reset xóa Wi-Fi và thông tin ghép nối Matter, rồi thiết bị khởi động lại và chờ ghép nối lại. Có hai cách:
 
-- **Cắm rồi rút nguồn 5 lần liên tiếp**, mỗi lần giữ điện dưới 10 giây. Ở lần cắm thứ 5, thiết bị factory reset.
+- **Cắm rồi rút nguồn 5 lần liên tiếp**, mỗi lần giữ điện dưới 10 giây. Ở lần cắm thứ 5, thiết bị factory reset. Firmware không phân biệt được việc này với một nguồn chập chờn (giắc lỏng, sạc dự phòng tự ngắt, nguồn yếu làm chip khởi động lại liên tục): khi đã có nút nhấn, có thể tắt cách này bằng `menuconfig` → *Button* → *Power cycles in a row that factory reset the device* = `0`.
 - **Nút nhấn** (GPIO10, `menuconfig` → *Button*):
   1. Giữ nút. Sau 1 giây màn hình sáng, hiện **ĐẶT LẠI THIẾT BỊ** và đếm ngược 4, 3, 2, 1.
   2. Khi màn hình hiện số **0**, buông nút. Màn hình hiện *Đang đặt lại...* rồi thiết bị khởi động lại.
@@ -101,6 +103,19 @@ Factory reset xóa Wi-Fi và thông tin ghép nối Matter, rồi thiết bị k
 - Nếu phân vùng NVS không dùng được (hết trang trống, hoặc do bản ESP-IDF mới hơn ghi), firmware tự xóa nó khi khởi động. Kết quả giống factory reset: phải ghép nối lại.
 
 > **Log và nạp firmware:** log chạy qua **USB-Serial-JTAG** có sẵn trên chip (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`). Nạp firmware và xem log qua **cổng USB native** của ESP32-C3 (SuperMini chỉ có cổng này).
+>
+> Trên PCB mà cổng USB **chỉ cấp nguồn** (D+/D- không nối), log này không ra đâu cả (ESP-IDF bỏ dữ liệu khi không có máy tính đọc). Khi đó dùng bản chẩn đoán bên dưới, có console ở **UART0** (TX GPIO21, RX GPIO20, 115200 baud), hoặc đổi hẳn console trong `sdkconfig.defaults` (`CONFIG_ESP_CONSOLE_UART_DEFAULT=y`). Dòng khởi động của ROM (`rst:0x.. (...),boot:0x..`) thì luôn ra UART0.
+
+### Chẩn đoán (ghép nối thất bại, cảm biến lỗi)
+
+Bản build chẩn đoán (`CONFIG_APP_DIAG`, mặc định tắt) thêm vào log: số lần reset theo nguyên nhân (cấp nguồn, sụt áp, watchdog, panic..., lưu trong NVS), từng bước của quá trình ghép nối kèm RAM trống, và mỗi 10 giây: RAM, stack còn trống và % CPU của từng task, bộ đếm truyền/lỗi UART và I2C của cảm biến và màn hình, cường độ Wi-Fi. Dòng dưới cùng của OLED hiện tóm tắt (ví dụ `N3 B2 W0 P0 S4`), đọc được khi không có console. Bấm nút 3 lần để xóa bộ đếm reset.
+
+```bash
+idf.py -B build_diag -D SDKCONFIG=build_diag/sdkconfig \
+       -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.diag" build
+```
+
+`sdkconfig.diag` bật `CONFIG_APP_DIAG`, đưa console ra UART0, bật các lệnh `matter ...` trên console và tắt factory reset bằng 5 lần cấp nguồn. Thêm `;sdkconfig.diag.nosensor` (không chạy driver cảm biến) hoặc `;sdkconfig.diag.lowtx` (công suất phát thấp nhất) cho các phép thử loại trừ. File tạo ra có thêm `_diag` trong tên. Kịch bản kiểm tra từng trường hợp và cách đọc kết quả: [docs/commissioning-test-plan.md](docs/commissioning-test-plan.md).
 
 ## Phần mềm
 
@@ -189,6 +204,16 @@ File update chỉ ghi vùng chọn phân vùng OTA và firmware, nên vẫn ch�
 | Tùy chọn | Mặc định | Ý nghĩa |
 |---|---|---|
 | Button GPIO | `10` | Chân nối nút chính (nút nối xuống GND): giữ 5 giây factory reset, bấm đúp chờ ghép nối, bấm 4 lần đổi kiểu màn hình. `-1` = không có nút |
+| Power cycles in a row that factory reset the device | `5` | Số lần cấp nguồn liên tiếp (mỗi lần dưới 10 giây) để factory reset. `0` = tắt cách này |
+
+*Diagnostics* (xem [Chẩn đoán](#chẩn-đoán-ghép-nối-thất-bại-cảm-biến-lỗi)):
+
+| Tùy chọn | Mặc định | Ý nghĩa |
+|---|---|---|
+| Commissioning and sensor diagnostics | tắt | Bật log chẩn đoán (`CONFIG_APP_DIAG`), tốn khoảng 5 KB RAM |
+| Status log interval | 10 s | Chu kỳ in trạng thái |
+| Reset counters and commissioning stage on the OLED | bật | Dòng dưới cùng của OLED hiện bộ đếm reset và bước ghép nối |
+| Do not start the PM sensor driver / CO2 sensor driver | tắt | Cảm biến vẫn cắm nhưng firmware không dùng tới: tách lỗi driver khỏi lỗi phần cứng |
 
 ### Thông tin thiết bị và phiên bản firmware
 
@@ -271,12 +296,12 @@ test/host/run.sh
 
 | Test | Kiểm tra |
 |---|---|
-| `test_pm_sensor.cpp` (đo theo chu kỳ và đo liên tục) | Ghép khung PMS5003 bị chia nhỏ, nhiễu, khung trả lời lệnh; bỏ 30 giây khởi động; báo mất dữ liệu; gửi lại lệnh cấu hình khi cảm biến im lặng |
+| `test_pm_sensor.cpp` (đo theo chu kỳ và đo liên tục) | Ghép khung PMS5003 bị chia nhỏ, nhiễu, khung trả lời lệnh; bỏ 30 giây khởi động; báo mất dữ liệu; gửi lại lệnh cấu hình khi cảm biến im lặng; gửi lại lệnh ngủ khi cảm biến vẫn gửi dữ liệu (mất lệnh, cắm lại cảm biến, đứt dây TX); bộ đếm khung/lỗi checksum; điện trở kéo lên ở chân RX |
 | `test_button.cpp` | Hai nút chạy độc lập, chống dội nút, thời gian giữ, nút bị kẹt, chân trùng; đếm số lần bấm (1, 2, 4), bấm cách quá xa, bấm giữ lâu không tính là bấm |
 | `test_scd4x.cpp` | SCD4x giả lập theo datasheet: thứ tự lệnh khi khởi động, CRC, chờ đủ thời gian lệnh, trung bình theo khoảng báo cáo, bỏ mẫu 0 ppm và mẫu sai CRC; thiếu cảm biến lúc khởi động, rút ra cắm lại, reset do nguồn, cảm biến không đo |
-| `test_local_ui.cpp` (có nút, không có nút, không có CO2) | OLED lúc khởi động, kiểu PM2.5 + CO2 (hai số luôn cùng cỡ chữ) và chỉ PM2.5, đổi kiểu và lưu lựa chọn, `--` khi thiếu số, màn hình chờ ghép nối (bật màn hình khi đang tắt, màn reset được ưu tiên), nút màn hình bật/tắt và lưu lựa chọn, nhấn trong lúc khởi động, nhấn hai lần liền, màn reset khi màn hình đang tắt, rút/cắm OLED, OLED mất nguồn âm thầm, không tạo được bus I2C, LED theo mức không khí, Identify |
+| `test_local_ui.cpp` (có nút, không có nút, không có CO2, bản chẩn đoán) | OLED được khởi tạo trong task (không giữ chân `app_main`, kể cả khi thiếu OLED), dòng chẩn đoán trên OLED, bộ đếm lỗi OLED, OLED lúc khởi động, kiểu PM2.5 + CO2 (hai số luôn cùng cỡ chữ) và chỉ PM2.5, đổi kiểu và lưu lựa chọn, `--` khi thiếu số, màn hình chờ ghép nối (bật màn hình khi đang tắt, màn reset được ưu tiên), nút màn hình bật/tắt và lưu lựa chọn, nhấn trong lúc khởi động, nhấn hai lần liền, màn reset khi màn hình đang tắt, rút/cắm OLED, OLED mất nguồn âm thầm, không tạo được bus I2C, LED theo mức không khí, Identify |
 
-Phần Matter, Wi-Fi và BLE vẫn phải thử trên thiết bị thật.
+Phần Matter, Wi-Fi và BLE vẫn phải thử trên thiết bị thật, theo [docs/commissioning-test-plan.md](docs/commissioning-test-plan.md).
 
 ## Đổi font màn hình
 
@@ -294,9 +319,13 @@ matter-pm25-sensor/
 ├── CMakeLists.txt
 ├── partitions.csv
 ├── sdkconfig.defaults
+├── sdkconfig.diag            # Bản chẩn đoán: thêm vào sau sdkconfig.defaults (+ .nosensor, .lowtx)
+├── docs/
+│   └── commissioning-test-plan.md # Kịch bản kiểm tra ghép nối theo từng trường hợp
 ├── main/
 │   ├── chip_project_config.h # Tên/loại thiết bị khi dò tìm ghép nối
 │   ├── app_main.cpp          # Matter node, endpoint Air Quality Sensor (PM2.5, CO2), nút nhấn, chờ ghép nối, factory reset
+│   ├── app_diag.cpp          # Chẩn đoán (CONFIG_APP_DIAG): bộ đếm reset, các bước ghép nối, RAM/stack/CPU
 │   ├── device_info.cpp       # Manufacturer / Model / Hardware (Basic Information)
 │   ├── local_ui.cpp          # Logic màn hình / LED / nút màn hình chạy tại chỗ
 │   ├── Kconfig.projbuild     # Cấu hình chân và tham số

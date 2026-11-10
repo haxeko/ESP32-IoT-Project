@@ -9,6 +9,7 @@
 // UART driver for Plantower PMS5003/PMS7003/PMSA003 and Nova Fitness SDS011.
 // Both sensors stream frames at 9600 8N1 in their default (active) mode.
 
+#include <driver/gpio.h>
 #include <driver/uart.h>
 #include <esp_log.h>
 #include <esp_task_wdt.h>
@@ -42,11 +43,22 @@ static const char *TAG = "pm_sensor";
 #define DUTY_CYCLE              1
 #define DUTY_SAMPLE_MS          5000
 #define DUTY_PERIOD_MS          ((CONFIG_PM_SENSOR_PMS_PERIOD_SEC < 60 ? 60 : CONFIG_PM_SENSOR_PMS_PERIOD_SEC) * 1000)
+// A sleeping sensor sends nothing. Frames that still come this long after the
+// sleep command mean it did not take it (command lost on the wire, sensor
+// plugged in or restarted meanwhile): the command is sent again, this often.
+#define SLEEP_RETRY_MS          5000
 #else
 #define DUTY_CYCLE              0
 #endif
 
 static const uint8_t k_frame_header[] = { 0x42, 0x4D };
+
+// A frame with another length is not a measurement: the answer to a command
+// (4 bytes) or noise that looked like a header.
+static bool is_measurement_frame(const uint8_t *f)
+{
+    return ((f[2] << 8) | f[3]) == FRAME_LEN - 4;
+}
 
 static void send_command(uint8_t cmd, uint16_t data)
 {
@@ -104,6 +116,11 @@ static bool parse_frame(const uint8_t *f, pm_sensor_data_t *out)
 
 static const uint8_t k_frame_header[] = { 0xAA, 0xC0 };
 
+static bool is_measurement_frame(const uint8_t *f)
+{
+    return f[FRAME_LEN - 1] == 0xAB;
+}
+
 static void send_command(uint8_t cmd, uint8_t set, uint8_t value)
 {
     // AA B4 DATA1..DATA13 FF FF CHECKSUM AB; FF FF addresses all devices.
@@ -151,6 +168,13 @@ static bool parse_frame(const uint8_t *f, pm_sensor_data_t *out)
 #endif
 
 static pm_sensor_config_t s_config;
+// Written by the sensor task only; read by pm_sensor_get_stats() from any task.
+static pm_sensor_stats_t s_stats;
+
+void pm_sensor_get_stats(pm_sensor_stats_t *stats)
+{
+    *stats = s_stats;
+}
 
 // Running average of the samples received since the last report.
 typedef struct {
@@ -171,12 +195,14 @@ static void report_average(pm_accumulator_t *acc)
         .pm10 = roundf(acc->pm10 / acc->count),
     };
     *acc = {};
+    s_stats.reports++;
     ESP_LOGI(TAG, "PM1.0=%.0f PM2.5=%.0f PM10=%.0f ug/m3", data.pm1_0, data.pm2_5, data.pm10);
     s_config.cb(&data, s_config.user_data);
 }
 
 static void report_invalid()
 {
+    s_stats.invalid_reports++;
     ESP_LOGW(TAG, "No data from sensor, check wiring (RX=GPIO%d, TX=GPIO%d)", s_config.rx_pin, s_config.tx_pin);
     pm_sensor_data_t data = { .valid = false, .pm1_0 = NAN, .pm2_5 = NAN, .pm10 = NAN };
     s_config.cb(&data, s_config.user_data);
@@ -191,8 +217,11 @@ static void pm_sensor_task(void *arg)
 
     // Start of the current measurement (power-up, or wake-up in duty cycle mode).
     int64_t cycle_start_ms = esp_timer_get_time() / 1000;
+    int64_t last_frame_ms = -1;     // last valid frame since the sensor woke up, -1 = none yet
 #if DUTY_CYCLE
     bool sleeping = false;
+    int64_t sleep_sent_ms = 0;      // last sleep command
+    uint32_t sleep_retries = 0;     // of the current sleep period
 #else
     int64_t last_report_ms = cycle_start_ms;
     int64_t last_sample_ms = cycle_start_ms;
@@ -201,6 +230,7 @@ static void pm_sensor_task(void *arg)
 #endif
 
     sensor_setup();
+    s_stats.wakeups++;
 
     // Restart the device if this task ever stops (stale values are worse).
     esp_task_wdt_add(NULL);
@@ -210,10 +240,14 @@ static void pm_sensor_task(void *arg)
         int len = uart_read_bytes(PM_SENSOR_UART_NUM, rx, sizeof(rx), pdMS_TO_TICKS(200));
         int64_t now_ms = esp_timer_get_time() / 1000;
 
+        if (len > 0) {
+            s_stats.rx_bytes += len;
+        }
         for (int i = 0; i < len; i++) {
             uint8_t b = rx[i];
             if (frame_pos < sizeof(k_frame_header) && b != k_frame_header[frame_pos]) {
                 // Resynchronize: this byte may be the start of a new header.
+                s_stats.dropped_bytes += frame_pos + (b == k_frame_header[0] ? 0 : 1);
                 frame_pos = (b == k_frame_header[0]) ? 1 : 0;
                 if (frame_pos) {
                     frame[0] = b;
@@ -228,11 +262,28 @@ static void pm_sensor_task(void *arg)
 
             pm_sensor_data_t sample;
             if (!parse_frame(frame, &sample)) {
+                if (is_measurement_frame(frame)) {
+                    s_stats.checksum_errors++;
+                } else {
+                    s_stats.other_frames++;
+                }
                 ESP_LOGD(TAG, "Invalid frame");
                 continue;
             }
+            s_stats.frames++;
 #if DUTY_CYCLE
             if (sleeping) {
+                // Still awake: the fan would run until the next period.
+                if (now_ms - sleep_sent_ms >= SLEEP_RETRY_MS) {
+                    sleep_sent_ms = now_ms;
+                    s_stats.sleep_retries++;
+                    // Logged for the first one, then once a minute.
+                    if (sleep_retries++ % (60000 / SLEEP_RETRY_MS) == 0) {
+                        ESP_LOGW(TAG, "Sensor still sends data after the sleep command, sending it again "
+                                 "(if this repeats, check TX=GPIO%d to the sensor RX)", s_config.tx_pin);
+                    }
+                    sensor_sleep();
+                }
                 continue;
             }
 #else
@@ -243,6 +294,10 @@ static void pm_sensor_task(void *arg)
             }
             last_sample_ms = now_ms;
 #endif
+            if (last_frame_ms >= 0 && now_ms - last_frame_ms > s_stats.max_frame_gap_ms) {
+                s_stats.max_frame_gap_ms = (uint32_t)(now_ms - last_frame_ms);
+            }
+            last_frame_ms = now_ms;
             if (now_ms - cycle_start_ms < WARMUP_MS) {
                 continue;
             }
@@ -262,10 +317,14 @@ static void pm_sensor_task(void *arg)
             }
             sensor_sleep();
             sleeping = true;
+            sleep_sent_ms = now_ms;
+            sleep_retries = 0;
         } else if (sleeping && now_ms - cycle_start_ms >= DUTY_PERIOD_MS) {
             cycle_start_ms = now_ms;
             sleeping = false;
+            last_frame_ms = -1;
             sensor_setup();
+            s_stats.wakeups++;
         }
 #else
         if (now_ms - last_report_ms < s_config.report_interval_ms) {
@@ -285,7 +344,9 @@ static void pm_sensor_task(void *arg)
             // sending the setup commands while it is silent.
             if (now_ms - last_setup_ms >= DATA_TIMEOUT_MS) {
                 last_setup_ms = now_ms;
+                last_frame_ms = -1;
                 sensor_setup();
+                s_stats.wakeups++;
             }
         }
 #endif
@@ -315,6 +376,11 @@ esp_err_t pm_sensor_init(const pm_sensor_config_t *config)
     if (err == ESP_OK) {
         err = uart_set_pin(PM_SENSOR_UART_NUM, config->tx_pin, config->rx_pin, UART_PIN_NO_CHANGE,
                            UART_PIN_NO_CHANGE);
+    }
+    if (err == ESP_OK) {
+        // uart_set_pin() leaves the RX pad without a pull: with the sensor
+        // unplugged it would float and receive noise.
+        err = gpio_set_pull_mode((gpio_num_t)config->rx_pin, GPIO_PULLUP_ONLY);
     }
     if (err == ESP_OK &&
         xTaskCreate(pm_sensor_task, "pm_sensor", PM_SENSOR_TASK_STACK, NULL, PM_SENSOR_TASK_PRIO, NULL) != pdPASS) {

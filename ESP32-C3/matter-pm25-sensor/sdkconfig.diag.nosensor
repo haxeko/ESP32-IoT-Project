@@ -1,0 +1,6 @@
+# Test case F, added after sdkconfig.diag: the sensors stay plugged in, but
+# their drivers are not started.
+#   idf.py -B build_diag_nosensor -D SDKCONFIG=build_diag_nosensor/sdkconfig \
+#          -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.diag;sdkconfig.diag.nosensor" build
+CONFIG_APP_DIAG_DISABLE_PM_SENSOR=y
+CONFIG_APP_DIAG_DISABLE_CO2_SENSOR=y

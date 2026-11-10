@@ -33,6 +33,11 @@ int sim_uart_read(void *buf, uint32_t len, int timeout_ms)
     if (sim_ms() >= g_sim.end_ms) {
         throw SimEnd();
     }
+    // A sleeping PMS5003 sends nothing.
+    while (g_sim.pms_asleep && g_sim.uart_next < g_sim.uart_rx.size() &&
+           g_sim.uart_rx[g_sim.uart_next].t_ms <= sim_ms() + timeout_ms) {
+        g_sim.uart_next++;
+    }
     if (g_sim.uart_next < g_sim.uart_rx.size() && g_sim.uart_rx[g_sim.uart_next].t_ms <= sim_ms() + timeout_ms) {
         SimChunk &chunk = g_sim.uart_rx[g_sim.uart_next];
         if (chunk.t_ms > sim_ms()) {
@@ -59,6 +64,16 @@ int sim_uart_write(const void *buf, size_t len)
         s += hex;
     }
     g_sim.uart_tx.push_back(s);
+    const uint8_t *b = (const uint8_t *)buf;
+    if (len == 7 && b[0] == 0x42 && b[1] == 0x4D && b[2] == 0xE4) {    // PMS5003 sleep / wake-up
+        if (b[4] != 0) {
+            g_sim.pms_asleep = false;
+        } else if (g_sim.pms_ignore_sleeps > 0) {
+            g_sim.pms_ignore_sleeps--;
+        } else {
+            g_sim.pms_asleep = true;
+        }
+    }
     return (int)len;
 }
 

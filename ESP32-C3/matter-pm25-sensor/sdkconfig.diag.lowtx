@@ -1,0 +1,7 @@
+# Test case G, added after sdkconfig.diag: lowest radio power, so the lowest
+# current peaks (Wi-Fi 10 dBm instead of 20, BLE 0 dBm instead of +9). Keep
+# the phone and the Wi-Fi router within a few meters.
+#   idf.py -B build_diag_lowtx -D SDKCONFIG=build_diag_lowtx/sdkconfig \
+#          -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.diag;sdkconfig.diag.lowtx" build
+CONFIG_ESP_PHY_MAX_WIFI_TX_POWER=10
+CONFIG_BT_CTRL_DFT_TX_POWER_LEVEL_N0=y

@@ -30,3 +30,18 @@ typedef struct {
 // Sensirion SCD40 / SCD41 CO2 sensor at I2C address 0x62. A sensor that does
 // not answer (yet) is retried in the background.
 esp_err_t scd4x_init(const scd4x_config_t *config);
+
+// Counters since start-up, for diagnostics.
+typedef struct {
+    uint32_t transfers;         // I2C transfers (a command, or the read of its response)
+    uint32_t failed_transfers;  // transfers without an answer (NACK, timeout)
+    uint32_t max_transfer_us;   // longest transfer, waiting for the bus included
+    uint32_t crc_errors;        // responses dropped for their CRC
+    uint32_t measurements;      // measurements read
+    uint32_t starts;            // times the periodic measurement was started (1 = at boot only)
+    uint32_t failed_starts;     // start attempts while the sensor did not answer
+    uint32_t reports;           // values reported
+    uint32_t invalid_reports;   // "sensor missing" reports
+} scd4x_stats_t;
+
+void scd4x_get_stats(scd4x_stats_t *stats);

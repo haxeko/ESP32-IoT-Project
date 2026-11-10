@@ -34,6 +34,10 @@ struct Sim {
     std::vector<SimChunk> uart_rx;              // bytes the UART receives
     size_t uart_next = 0;
     std::vector<std::string> uart_tx;           // "<ms> <hex bytes>" of each write
+    // PMS5003 on the UART: asleep after its sleep command (42 4D E4 00 00) until
+    // its wake-up command (42 4D E4 00 01); what it would send meanwhile is lost.
+    bool pms_asleep = false;
+    int pms_ignore_sleeps = 0;                  // sleep commands it still misses
     bool i2c_bus_ok = true;                     // false: the I2C bus cannot be created
     int i2c_buses = 0;                          // I2C buses created
     bool oled_present = true;                   // false: I2C writes fail (unplugged)
@@ -57,6 +61,7 @@ struct Sim {
     int scd4x_probes = 0;                       // probes of its address
     int scd4x_violations = 0;                   // command or read too early, read without a command...
     std::vector<int> gpio_level = std::vector<int>(22, 1);     // per GPIO, 0 = button pressed
+    std::vector<bool> gpio_pullup = std::vector<bool>(22, false);  // pull-up set with gpio_set_pull_mode()
     std::vector<SimTimer> timers;               // esp_timers created, in order
     std::map<std::string, uint8_t> nvs;         // "<namespace>/<key>" -> u8 value
     int nvs_writes = 0;

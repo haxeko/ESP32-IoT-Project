@@ -15,7 +15,8 @@
 // indicator and the button that turns the OLED on and off
 // (CONFIG_DISPLAY_BUTTON_GPIO). The OLED shows PM2.5 alone, or PM2.5 and CO2
 // side by side when there is a CO2 sensor (CONFIG_CO2_SENSOR_SCD4X). The I2C
-// bus of the OLED (i2c_bus.h) must be initialized first.
+// bus of the OLED (i2c_bus.h) must be initialized first. Does not wait for
+// the OLED: the UI task initializes it, and keeps trying while it is missing.
 esp_err_t local_ui_init(void);
 
 // Air quality level shown on the OLED and LEDs, from PM2.5 in µg/m³:
@@ -62,3 +63,14 @@ void local_ui_set_pairing(const char *code);
 // again. Can be called from any task.
 #define LOCAL_UI_IDENTIFY_FOREVER   UINT32_MAX
 void local_ui_identify(uint32_t duration_ms);
+
+// OLED counters since start-up, for diagnostics.
+typedef struct {
+    uint32_t oled_frames;           // frames sent to the OLED
+    uint32_t oled_max_frame_ms;     // longest frame transfer, waiting for the I2C bus included
+    uint32_t oled_write_errors;     // frames or commands the OLED did not take (it is initialized again)
+    uint32_t oled_inits;            // times the OLED was initialized (1 = at boot only)
+    uint32_t oled_init_failures;    // attempts while the OLED did not answer
+} local_ui_stats_t;
+
+void local_ui_get_stats(local_ui_stats_t *stats);

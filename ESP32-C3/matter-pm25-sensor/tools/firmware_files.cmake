@@ -61,5 +61,6 @@ if(NOT changes STREQUAL "" AND NOT VERSION MATCHES "-dev$")
                     "them, or run 'idf.py reconfigure' to mark this build ${VERSION}-dev.")
 endif()
 
-message(STATUS "Firmware ${VERSION}: build/firmware/${NAME}_merged.bin (new device, flash at 0x0), "
+file(RELATIVE_PATH out_dir_name "${PROJECT_DIR}" "${out_dir}")
+message(STATUS "Firmware ${VERSION}: ${out_dir_name}/${NAME}_merged.bin (new device, flash at 0x0), "
                "${NAME}_update.bin (keeps pairing, flash at ${update_offset})")

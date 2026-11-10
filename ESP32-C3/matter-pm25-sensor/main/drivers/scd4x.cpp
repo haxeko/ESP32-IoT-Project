@@ -27,7 +27,9 @@ static const char *TAG = "scd4x";
 // Slower than the OLED (400 kHz): more margin with weak pull-ups.
 #define SCD4X_I2C_FREQ_HZ       100000
 #define SCD4X_I2C_TIMEOUT_MS    100
-#define SCD4X_TASK_STACK        3072
+// As the other sensor task: the deepest path is an I2C error logged from
+// inside the I2C driver.
+#define SCD4X_TASK_STACK        4096
 #define SCD4X_TASK_PRIO         5
 
 #define CMD_START_PERIODIC      0x21B1
@@ -54,6 +56,27 @@ static const char *TAG = "scd4x";
 
 static scd4x_config_t s_config;
 static i2c_master_dev_handle_t s_dev;
+// Written by the sensor task only; read by scd4x_get_stats() from any task.
+static scd4x_stats_t s_stats;
+
+void scd4x_get_stats(scd4x_stats_t *stats)
+{
+    *stats = s_stats;
+}
+
+// Counts an I2C transfer that started at start_us and ended with err.
+static esp_err_t count_transfer(int64_t start_us, esp_err_t err)
+{
+    const uint32_t us = (uint32_t)(esp_timer_get_time() - start_us);
+    s_stats.transfers++;
+    if (us > s_stats.max_transfer_us) {
+        s_stats.max_transfer_us = us;
+    }
+    if (err != ESP_OK) {
+        s_stats.failed_transfers++;
+    }
+    return err;
+}
 
 static int64_t now_ms()
 {
@@ -83,7 +106,8 @@ static uint8_t crc8(const uint8_t *data, size_t len)
 static esp_err_t send_command(uint16_t cmd)
 {
     const uint8_t buf[2] = { (uint8_t)(cmd >> 8), (uint8_t)cmd };
-    return i2c_master_transmit(s_dev, buf, sizeof(buf), SCD4X_I2C_TIMEOUT_MS);
+    const int64_t start_us = esp_timer_get_time();
+    return count_transfer(start_us, i2c_master_transmit(s_dev, buf, sizeof(buf), SCD4X_I2C_TIMEOUT_MS));
 }
 
 // Sends cmd and reads its response: count words (at most 3), each checked
@@ -99,13 +123,15 @@ static esp_err_t read_words(uint16_t cmd, uint16_t *words, size_t count)
         return err;
     }
     wait_ms(CMD_EXEC_MS);
-    err = i2c_master_receive(s_dev, buf, 3 * count, SCD4X_I2C_TIMEOUT_MS);
+    const int64_t start_us = esp_timer_get_time();
+    err = count_transfer(start_us, i2c_master_receive(s_dev, buf, 3 * count, SCD4X_I2C_TIMEOUT_MS));
     if (err != ESP_OK) {
         return err;
     }
     for (size_t i = 0; i < count; i++) {
         const uint8_t *word = &buf[3 * i];
         if (crc8(word, 2) != word[2]) {
+            s_stats.crc_errors++;
             return ESP_ERR_INVALID_CRC;
         }
         words[i] = (uint16_t)((word[0] << 8) | word[1]);
@@ -178,11 +204,13 @@ static void report_average(co2_accumulator_t *acc)
     ESP_LOGI(TAG, "CO2=%d ppm (sensor %d C, %d %%RH)", (int)data.co2_ppm, (int)lroundf(acc->temperature),
              (int)lroundf(acc->humidity));
     *acc = {};
+    s_stats.reports++;
     s_config.cb(&data, s_config.user_data);
 }
 
 static void report_invalid()
 {
+    s_stats.invalid_reports++;
     ESP_LOGW(TAG, "No measurement from the CO2 sensor (I2C 0x%02X), check its wiring and power", SCD4X_I2C_ADDRESS);
     const scd4x_data_t data = { .valid = false, .co2_ppm = NAN };
     s_config.cb(&data, s_config.user_data);
@@ -214,10 +242,14 @@ static void scd4x_task(void *arg)
                 measuring = true;
                 start_failed = false;
                 started_ms = now_ms();      // the first measurement comes 5 s later
-            } else if (!start_failed) {
-                start_failed = true;
-                ESP_LOGW(TAG, "CO2 sensor not answering (%s), retrying every %d s", esp_err_to_name(err),
-                         START_RETRY_MS / 1000);
+                s_stats.starts++;
+            } else {
+                s_stats.failed_starts++;
+                if (!start_failed) {
+                    start_failed = true;
+                    ESP_LOGW(TAG, "CO2 sensor not answering (%s), retrying every %d s", esp_err_to_name(err),
+                             START_RETRY_MS / 1000);
+                }
             }
         } else if (measuring) {
             uint16_t co2;
@@ -225,6 +257,7 @@ static void scd4x_task(void *arg)
             const esp_err_t err = read_measurement(&co2, &temperature, &humidity);
             // 0 ppm is an invalid sample: Sensirion's own driver skips it.
             if (err == ESP_OK && co2 > 0) {
+                s_stats.measurements++;
                 acc.co2_sum += co2;
                 acc.count++;
                 acc.temperature = temperature;

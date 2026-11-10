@@ -1,0 +1,22 @@
+# Diagnostics build: added on top of sdkconfig.defaults with
+#   idf.py -B build_diag -D SDKCONFIG=build_diag/sdkconfig \
+#          -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.diag" build
+# See docs/commissioning-test-plan.md.
+
+# Resets counted by reason, steps of a commissioning, heap / stack / CPU of
+# every task, sensor and OLED transfer counters; a short status on the bottom
+# row of the OLED.
+CONFIG_APP_DIAG=y
+
+# Console on UART0 (TX = GPIO21, RX = GPIO20, 115200 baud): the USB port of
+# the PCB only powers it. The log is also copied to the USB port, for a board
+# whose USB data lines are connected.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
+
+# "matter ..." commands on that console.
+CONFIG_ENABLE_CHIP_SHELL=y
+
+# A supply that drops out several times in a row must not factory reset the
+# device in the middle of a test.
+CONFIG_FACTORY_RESET_POWER_CYCLES=0

@@ -1,6 +1,6 @@
-// Host test of main/drivers/pm_sensor.cpp with a PMS5003 on a simulated UART.
-// Built twice by run.sh: PERIOD=300 (duty cycle, the default) and PERIOD=0
-// (continuous measurement).
+// Host test of main/drivers/pm_sensor.cpp with a PMS5003 on a simulated UART
+// (sim.cpp: it stops sending while asleep). Built twice by run.sh: PERIOD=300
+// (duty cycle, the default) and PERIOD=0 (continuous measurement).
 #include "sim.h"
 #include <stdlib.h>
 
@@ -51,12 +51,16 @@ static void feed(int64_t end_ms, std::vector<std::pair<int64_t, int64_t>> powere
     }
 }
 
-static void run(int64_t end_ms)
+// step() runs each time the driver waits, e.g. to restart the sensor.
+static void run(int64_t end_ms, std::function<void()> step = nullptr)
 {
     s_reports.clear();
+    s_stats = {};
+    g_sim.on_tick = step;
     pm_sensor_config_t config = { .rx_pin = 20, .tx_pin = 21, .report_interval_ms = 10000, .cb = on_report,
                                   .user_data = NULL };
     CHECK(pm_sensor_init(&config) == ESP_OK);
+    CHECK(g_sim.gpio_pullup[20] && !g_sim.gpio_pullup[21]);     // RX does not float without the sensor
     try {
         pm_sensor_task(NULL);
     } catch (SimEnd &) {
@@ -90,6 +94,53 @@ int main()
     CHECK(s_reports.size() >= 2 && s_reports[1].valid && s_reports[1].t_ms >= 335000 && s_reports[1].t_ms < 335500);
     CHECK(count_tx("42 4D E4 00 00") == 2);      // sleep after each report
     CHECK(count_tx("42 4D E4 00 01") == 2);      // wake at boot and at 300 s
+    pm_sensor_stats_t stats;
+    pm_sensor_get_stats(&stats);
+    CHECK(stats.reports == 2 && stats.invalid_reports == 0 && stats.wakeups == 2 && stats.sleep_retries == 0);
+    CHECK(stats.frames == 70 && stats.rx_bytes == 70 * 32 && stats.checksum_errors == 0 && stats.other_frames == 0 &&
+          stats.dropped_bytes == 0);
+    CHECK(stats.max_frame_gap_ms >= 1000 && stats.max_frame_gap_ms < 1300);     // not the 265 s asleep
+
+    // The sensor misses the sleep command (lost on the wire): its frames keep
+    // coming, so the command is sent again 5 s later, and then it sleeps.
+    sim_reset(300000);
+    feed(300000, { { 0, 1 << 30 } }, 20);
+    g_sim.pms_ignore_sleeps = 1;
+    run(300000);
+    CHECK(count_tx("42 4D E4 00 00") == 2 && g_sim.pms_asleep);
+    CHECK(s_stats.sleep_retries == 1 && sim_log_contains("still sends data after the sleep command"));
+    CHECK(s_reports.size() == 1 && s_reports[0].valid);
+
+    // The sensor is plugged in again (awake, fan on) at 100 s, while the
+    // driver has it asleep: put to sleep within seconds, not at the next
+    // period, and nothing is reported from it.
+    sim_reset(300000);
+    feed(300000, { { 0, 1 << 30 } }, 20);
+    int64_t asleep_again_ms = -1;
+    run(300000, [&] {
+        if (sim_ms() >= 100000 && sim_ms() < 100200) g_sim.pms_asleep = false;
+        if (sim_ms() > 100200 && asleep_again_ms < 0 && g_sim.pms_asleep) asleep_again_ms = sim_ms();
+    });
+    CHECK(asleep_again_ms > 100200 && asleep_again_ms < 108000);
+    CHECK(count_tx("42 4D E4 00 00") == 2 && s_stats.sleep_retries == 1 && s_reports.size() == 1);
+
+    // The sensor never takes the command (TX wire broken): sent again every
+    // 5 s, logged once a minute, and the measurements go on. What it sends
+    // while it should sleep (77) stays out of them.
+    sim_reset(400000);
+    for (int64_t t = 500; t < 400000; t += 1000) {
+        const bool sampled = (t >= 30000 && t < 35000) || (t >= 330000 && t < 335000);
+        g_sim.uart_rx.push_back({ t, pms_frame(sampled ? 20 : 77) });
+    }
+    g_sim.pms_ignore_sleeps = 1000;
+    run(400000);
+    CHECK(s_stats.sleep_retries >= 60 && s_stats.sleep_retries <= 66);
+    int logged = 0;
+    for (const std::string &line : g_sim.log) {
+        logged += line.find("still sends data") != std::string::npos;
+    }
+    CHECK(logged >= 5 && logged <= 7);
+    CHECK(s_reports.size() == 2 && s_reports[0].pm2_5 == 20 && s_reports[1].valid && s_reports[1].pm2_5 == 20);
 
     // Silent sensor: invalid report once per period.
     sim_reset(70000);
@@ -112,6 +163,21 @@ int main()
         g_sim.uart_rx.push_back({ t + 50, std::vector<uint8_t>(f.begin() + 7, f.end()) });
     }
     run(40000);
+    CHECK(s_reports.size() == 1 && s_reports[0].valid && s_reports[0].pm2_5 == 40);
+    // The command answers are not counted as checksum errors, the false headers as dropped bytes.
+    CHECK(s_stats.checksum_errors == 0 && s_stats.other_frames >= 5 && s_stats.dropped_bytes > 0);
+
+    // A frame with a wrong checksum is dropped and counted.
+    sim_reset(40000);
+    for (int64_t t = 500; t < 40000; t += 1000) {
+        std::vector<uint8_t> f = pms_frame(t < 30500 ? 99 : 40);
+        if (t == 32500) {
+            f[10] ^= 0x01;      // PM1.0 changed on the wire
+        }
+        g_sim.uart_rx.push_back({ t, f });
+    }
+    run(40000);
+    CHECK(s_stats.checksum_errors == 1 && s_stats.other_frames == 0 && s_stats.frames == 34);
     CHECK(s_reports.size() == 1 && s_reports[0].valid && s_reports[0].pm2_5 == 40);
 #else
     printf("pm_sensor, continuous:\n");

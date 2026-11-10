@@ -12,7 +12,8 @@
 # build writes the flash files named with it into build/firmware/.
 
 # What goes into the firmware, relative to the project directory.
-set(FIRMWARE_SOURCE_PATHS main CMakeLists.txt sdkconfig.defaults partitions.csv)
+set(FIRMWARE_SOURCE_PATHS main CMakeLists.txt sdkconfig.defaults sdkconfig.diag sdkconfig.diag.nosensor
+    sdkconfig.diag.lowtx partitions.csv)
 
 # Sets <out_var> to the uncommitted changes of the firmware sources ("git
 # status" lines), or to an empty string when there are none or no git.

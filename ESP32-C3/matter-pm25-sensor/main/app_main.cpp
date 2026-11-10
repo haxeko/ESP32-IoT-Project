@@ -23,6 +23,9 @@
 #include <esp_event.h>
 #include <esp_log.h>
 #include <esp_matter.h>
+#if CONFIG_ENABLE_CHIP_SHELL
+#include <esp_matter_console.h>
+#endif
 #include <esp_system.h>
 #include <esp_task_wdt.h>
 #include <esp_timer.h>
@@ -35,6 +38,7 @@
 #include <math.h>
 
 // drivers implemented by this example
+#include <app_diag.h>
 #include <device_info.h>
 #include <drivers/button.h>
 #include <drivers/i2c_bus.h>
@@ -55,9 +59,12 @@ static constexpr float kPmMaxMeasuredValue = 1000.0f;
 static constexpr float kCo2MaxMeasuredValue = 40000.0f;
 
 // Factory reset by powering the device on kFactoryResetBootCount times in a
-// row, each time for less than kFactoryResetWindowUs...
-static constexpr uint8_t kFactoryResetBootCount = 5;
+// row, each time for less than kFactoryResetWindowUs (0 = this way is off: a
+// supply that drops out in bursts looks the same as a user doing it)...
+static constexpr uint8_t kFactoryResetBootCount = CONFIG_FACTORY_RESET_POWER_CYCLES;
 static constexpr uint64_t kFactoryResetWindowUs = 10 * 1000 * 1000;
+static_assert(CONFIG_FACTORY_RESET_POWER_CYCLES == 0 || CONFIG_FACTORY_RESET_POWER_CYCLES >= 3,
+              "Fewer than 3 power cycles would factory reset the device on a single power glitch");
 static constexpr char kNvsNamespace[] = "app";
 static constexpr char kNvsBootCountKey[] = "boot_count";
 
@@ -72,6 +79,8 @@ static constexpr uint32_t kResetButtonHoldMs = 5000;
 static constexpr uint16_t kPairingWindowSeconds = 300;
 static constexpr int kPairingClicks = 2;
 static constexpr int kLayoutClicks = 4;
+// Diagnostics build (CONFIG_APP_DIAG) only, pressed 3 times: clears the reset counters.
+static constexpr int kDiagClearClicks = 3;
 
 #if CONFIG_BUTTON_GPIO >= 0
 static_assert(CONFIG_BUTTON_GPIO != CONFIG_PM_SENSOR_UART_RX_PIN &&
@@ -88,18 +97,6 @@ static_assert(CONFIG_BUTTON_GPIO != 2 && CONFIG_BUTTON_GPIO != 8 && CONFIG_BUTTO
               "Button: GPIO2/8/9 are strapping pins, GPIO11-17 flash, GPIO18-19 USB");
 #endif
 #endif
-
-// Names of the esp_reset_reason_t values, in their order, for the boot log: a
-// watchdog, panic or brown-out reset points at a problem to look into.
-static const char *const k_reset_reasons[] = {
-    "unknown", "power-on", "external pin", "software", "panic", "interrupt watchdog", "task watchdog",
-    "other watchdog", "deep sleep", "brown-out", "SDIO", "USB", "JTAG", "eFuse error", "power glitch", "CPU lock-up",
-};
-
-static const char *reset_reason_name(esp_reset_reason_t reason)
-{
-    return (size_t)reason < std::size(k_reset_reasons) ? k_reset_reasons[reason] : "?";
-}
 
 // Logs why the Wi-Fi connection was lost (wifi_err_reason_t: e.g. 2 = auth
 // expired, 15 = 4-way handshake timeout, 200 = beacon timeout, 201 = AP not
@@ -278,12 +275,19 @@ static void button_cb(const button_event_t *event, void *user_data)
         } else if (event->clicks == kLayoutClicks) {
             local_ui_toggle_layout();
         }
+#if CONFIG_APP_DIAG
+        else if (event->clicks == kDiagClearClicks) {
+            app_diag_clear();
+        }
+#endif
         break;
     }
 }
 #endif
 
-static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data)
+// Not registered, so unused, when the diagnostics leave the sensor driver out
+// (CONFIG_APP_DIAG_DISABLE_PM_SENSOR).
+[[maybe_unused]] static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data)
 {
     pm_sensor_data_t d = *data;
 
@@ -313,7 +317,8 @@ static void pm_sensor_notification(const pm_sensor_data_t *data, void *user_data
 }
 
 #if CONFIG_CO2_SENSOR_SCD4X
-static void co2_sensor_notification(const scd4x_data_t *data, void *user_data)
+// Unused with CONFIG_APP_DIAG_DISABLE_CO2_SENSOR, as pm_sensor_notification().
+[[maybe_unused]] static void co2_sensor_notification(const scd4x_data_t *data, void *user_data)
 {
     const float co2 = data->valid ? data->co2_ppm : NAN;
     local_ui_set_co2(co2);
@@ -398,6 +403,7 @@ static endpoint_t *create_air_quality_sensor(node_t *node)
     return endpoint;
 }
 
+#if CONFIG_FACTORY_RESET_POWER_CYCLES > 0
 static void save_boot_count(uint8_t count)
 {
     nvs_handle_t handle;
@@ -407,6 +413,7 @@ static void save_boot_count(uint8_t count)
         nvs_close(handle);
     }
 }
+#endif
 
 // Counts quick power cycles. Returns true when a factory reset was requested.
 // Only power-on resets count, so crashes, OTA updates or flashing never
@@ -414,6 +421,7 @@ static void save_boot_count(uint8_t count)
 // unplug/replug can cause one) neither counts nor clears it.
 static bool check_factory_reset_boot_count()
 {
+#if CONFIG_FACTORY_RESET_POWER_CYCLES > 0
     const esp_reset_reason_t reason = esp_reset_reason();
     if (reason != ESP_RST_POWERON && reason != ESP_RST_BROWNOUT) {
         save_boot_count(0);
@@ -445,6 +453,7 @@ static bool check_factory_reset_boot_count()
     if (esp_timer_create(&args, &timer) == ESP_OK) {
         esp_timer_start_once(timer, kFactoryResetWindowUs);
     }
+#endif
     return false;
 }
 
@@ -494,8 +503,95 @@ static void matter_status_timer_cb(void *arg)
     });
 }
 
+#if CONFIG_APP_DIAG
+// Diagnostics: the steps of a commissioning, to see where an attempt stops.
+// The Matter stack logs more detail around each of them.
+static void diag_matter_event(const ChipDeviceEvent *event)
+{
+    using namespace chip::DeviceLayer;
+    switch (event->Type) {
+    case DeviceEventType::kCHIPoBLEAdvertisingChange:
+        if (event->CHIPoBLEAdvertisingChange.Result == kActivity_Started) {
+            app_diag_event("BLE advertising started", APP_DIAG_STAGE_BLE_ADVERTISING);
+        } else if (event->CHIPoBLEAdvertisingChange.Result == kActivity_Stopped) {
+            app_diag_event("BLE advertising stopped", APP_DIAG_STAGE_NONE);
+        }
+        break;
+    case DeviceEventType::kCHIPoBLEConnectionEstablished:
+        app_diag_event("BLE connection from the commissioner", APP_DIAG_STAGE_BLE_CONNECTED);
+        break;
+    case DeviceEventType::kCHIPoBLEConnectionClosed:
+        app_diag_event("BLE connection closed", APP_DIAG_STAGE_NONE);
+        break;
+    case DeviceEventType::kCommissioningWindowOpened:
+        app_diag_event("Commissioning window opened", APP_DIAG_STAGE_NONE);
+        break;
+    case DeviceEventType::kCommissioningWindowClosed:
+        app_diag_event("Commissioning window closed", APP_DIAG_STAGE_NONE);
+        break;
+    case DeviceEventType::kCommissioningSessionStarted:
+        app_diag_event("Commissioning session started (PASE done)", APP_DIAG_STAGE_PASE);
+        break;
+    case DeviceEventType::kCommissioningSessionStopped:
+        app_diag_event("Commissioning session stopped", APP_DIAG_STAGE_NONE);
+        break;
+    case DeviceEventType::kSecureSessionEstablished:
+        if (event->SecureSessionEstablished.SecureSessionType == 2) {      // chip::Transport::SecureSession::Type::kCASE
+            app_diag_event("CASE session established", APP_DIAG_STAGE_CASE);
+        }
+        break;
+    case DeviceEventType::kWiFiConnectivityChange:
+        if (event->WiFiConnectivityChange.Result == kConnectivity_Established) {
+            app_diag_event("Wi-Fi connected", APP_DIAG_STAGE_WIFI_CONNECTED);
+        } else if (event->WiFiConnectivityChange.Result == kConnectivity_Lost) {
+            app_diag_event("Wi-Fi connection lost", APP_DIAG_STAGE_NONE);
+        }
+        break;
+    case DeviceEventType::kInterfaceIpAddressChanged:
+        switch (event->InterfaceIpAddressChanged.Type) {
+        case InterfaceIpChangeType::kIpV4_Assigned:
+            app_diag_event("IPv4 address assigned", APP_DIAG_STAGE_IP);
+            break;
+        case InterfaceIpChangeType::kIpV6_Assigned:
+            app_diag_event("IPv6 address assigned", APP_DIAG_STAGE_IP);
+            break;
+        case InterfaceIpChangeType::kIpV4_Lost:
+            app_diag_event("IPv4 address lost", APP_DIAG_STAGE_NONE);
+            break;
+        case InterfaceIpChangeType::kIpV6_Lost:
+            app_diag_event("IPv6 address lost", APP_DIAG_STAGE_NONE);
+            break;
+        }
+        break;
+    case DeviceEventType::kCommissioningComplete:
+        app_diag_event("Commissioning complete", APP_DIAG_STAGE_COMMISSIONED);
+        break;
+    case DeviceEventType::kFailSafeTimerExpired:
+        app_diag_event("Fail-safe timer expired: the commissioning failed", APP_DIAG_STAGE_NONE);
+        break;
+    case DeviceEventType::kFabricCommitted:
+        app_diag_event("Fabric committed", APP_DIAG_STAGE_NONE);
+        break;
+    case DeviceEventType::kFabricRemoved:
+        app_diag_event("Fabric removed", APP_DIAG_STAGE_NONE);
+        break;
+    case DeviceEventType::kBLEDeinitialized:
+        app_diag_event("BLE deinitialized", APP_DIAG_STAGE_NONE);
+        break;
+    case DeviceEventType::kServerReady:
+        app_diag_event("Matter server ready", APP_DIAG_STAGE_NONE);
+        break;
+    default:
+        break;
+    }
+}
+#endif
+
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
+#if CONFIG_APP_DIAG
+    diag_matter_event(event);
+#endif
     switch (event->Type) {
     case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
         ESP_LOGI(TAG, "Commissioning complete");
@@ -643,7 +739,9 @@ extern "C" void app_main()
 
     ESP_LOGI(TAG, "%s %s, firmware %s", CONFIG_DEVICE_VENDOR_NAME, CONFIG_DEVICE_PRODUCT_NAME,
              esp_app_get_description()->version);
-    ESP_LOGI(TAG, "Reset reason: %s (%d)", reset_reason_name(esp_reset_reason()), esp_reset_reason());
+    // A watchdog, panic or brown-out reset points at a problem to look into.
+    ESP_LOGI(TAG, "Reset reason: %s (%d)", app_diag_reset_reason(), esp_reset_reason());
+    app_diag_init();
 
     const bool factory_reset_requested = check_factory_reset_boot_count();
 
@@ -655,6 +753,9 @@ extern "C" void app_main()
         ESP_LOGE(TAG, "Failed to start local UI: %s", esp_err_to_name(err));
     }
 
+#if CONFIG_APP_DIAG_DISABLE_PM_SENSOR
+    ESP_LOGW(TAG, "Diagnostics: the PM sensor driver is not started");
+#else
     pm_sensor_config_t pm_config = {
         .rx_pin = CONFIG_PM_SENSOR_UART_RX_PIN,
         .tx_pin = CONFIG_PM_SENSOR_UART_TX_PIN,
@@ -666,8 +767,11 @@ extern "C" void app_main()
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize PM sensor driver: %s", esp_err_to_name(err));
     }
+#endif
 
-#if CONFIG_CO2_SENSOR_SCD4X
+#if CONFIG_APP_DIAG_DISABLE_CO2_SENSOR
+    ESP_LOGW(TAG, "Diagnostics: the CO2 sensor driver is not started");
+#elif CONFIG_CO2_SENSOR_SCD4X
     scd4x_config_t co2_config = {
         .bus = i2c_bus_get(),
         .report_interval_ms = CONFIG_CO2_SENSOR_REPORT_INTERVAL_SEC * 1000,
@@ -684,6 +788,16 @@ extern "C" void app_main()
     if (start_matter() != ESP_OK) {
         ESP_LOGE(TAG, "Matter is not running; the device keeps working locally");
     }
+#if CONFIG_ENABLE_CHIP_SHELL
+    else {
+        // "matter ..." commands on the console (diagnostics builds, sdkconfig.diag).
+        esp_matter::console::diagnostics_register_commands();
+        esp_matter::console::wifi_register_commands();
+        esp_matter::console::factoryreset_register_commands();
+        esp_matter::console::init();
+    }
+#endif
+    app_diag_start();
 
     /* Factory reset, once Matter has started or failed to */
     if (factory_reset_requested) {
@@ -694,5 +808,9 @@ extern "C" void app_main()
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize the button: %s", esp_err_to_name(err));
     }
+#endif
+#if CONFIG_APP_DIAG
+    // This task ends here: its stack headroom is not in the periodic status.
+    ESP_LOGI(TAG, "main task stack min free: %u", (unsigned)uxTaskGetStackHighWaterMark(NULL));
 #endif
 }

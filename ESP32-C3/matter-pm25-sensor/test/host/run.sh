@@ -22,9 +22,12 @@ $CXX $FLAGS -DCONFIG_DISPLAY_BUTTON_GPIO=-1 -o "$OUT/local_ui_no_button" test_lo
     "$MAIN/drivers/sh1106.cpp" sim.cpp "$OUT/fonts.o"
 $CXX $FLAGS -DCONFIG_CO2_SENSOR_NONE=1 -o "$OUT/local_ui_no_co2" test_local_ui.cpp \
     "$MAIN/drivers/sh1106.cpp" sim.cpp "$OUT/fonts.o"
+$CXX $FLAGS -DCONFIG_APP_DIAG=1 -DCONFIG_APP_DIAG_OLED=1 -o "$OUT/local_ui_diag" test_local_ui.cpp \
+    "$MAIN/drivers/sh1106.cpp" sim.cpp "$OUT/fonts.o"
 
 status=0
-for t in pm_duty pm_continuous button scd4x local_ui local_ui_ssd1306 local_ui_no_button local_ui_no_co2; do
+for t in pm_duty pm_continuous button scd4x local_ui local_ui_ssd1306 local_ui_no_button local_ui_no_co2 \
+    local_ui_diag; do
     "$OUT/$t" || status=1
 done
 [ $status -eq 0 ] && echo "All host tests passed" || echo "Host tests FAILED"
