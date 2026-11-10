@@ -8,15 +8,18 @@ Mục tiêu: tìm xem lỗi "cắm PMS5003 + SCD40 thì quạt chạy liên tụ
 
 | File | Dùng cho | Khác bản thường |
 |---|---|---|
-| `haxeko_pm5003_pcb_diag_v<ver>_esp32c3_update.bin` | Case A–E, H | Bật chẩn đoán (`CONFIG_APP_DIAG`), console ra UART0, có lệnh `matter ...`, tắt factory reset bằng 5 lần cấp nguồn |
+| `haxeko_pm5003_pcb_diag_v<ver>_esp32c3_update.bin` | Case A–E (kể cả D2), H | Bật chẩn đoán (`CONFIG_APP_DIAG`), console ra UART0, có lệnh `matter ...`, tắt factory reset bằng 5 lần cấp nguồn |
 | `haxeko_pm5003_pcb_diag_nosensor_v<ver>_esp32c3_update.bin` | Case F | Như trên + không chạy driver PMS5003 và SCD40 |
 | `haxeko_pm5003_pcb_diag_tx10_v<ver>_esp32c3_update.bin` | Case G | Như trên + Wi-Fi 10 dBm (thay vì 20), BLE 0 dBm (thay vì +9) |
+| `haxeko_pm5003_pcb_diag_bod4_v<ver>_esp32c3_update.bin` | Case I | Như bản diag + reset do sụt áp ngay từ khoảng **2,92 V** (mức 4) thay vì 2,51 V (mức 7, mặc định) |
 
 Nạp file `_update.bin` ở địa chỉ `0x1D000`: giữ nguyên bootloader, bảng phân vùng và NVS (ghép nối, bộ đếm chẩn đoán). Bảng phân vùng của bản chẩn đoán giống hệt bản thường. Bootloader cũ được giữ lại nên các dòng log của bootloader (`I (..) boot: ...`) vẫn ra cổng USB chứ không ra UART0; dòng của ROM và toàn bộ log của firmware thì có trên UART0. Xong việc, nạp lại `haxeko_pm5003_pcb_v<ver>_esp32c3_update.bin` (bản thường) cũng ở `0x1D000`.
 
 ```bash
 esptool.py --chip esp32c3 -p /dev/ttyUSB0 -b 460800 write_flash 0x1d000 haxeko_pm5003_pcb_diag_v<ver>_esp32c3_update.bin
 ```
+
+Nạp qua UART0 (cùng bộ chuyển USB-UART dùng làm console bên dưới): chip phải ở chế độ nạp, tức GPIO9 ở mức thấp lúc cấp nguồn hoặc reset.
 
 Tự build:
 
@@ -25,6 +28,7 @@ idf.py -B build_diag -D SDKCONFIG=build_diag/sdkconfig \
        -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.diag" build
 # case F: thêm ;sdkconfig.diag.nosensor   (thư mục build_diag_nosensor)
 # case G: thêm ;sdkconfig.diag.lowtx      (thư mục build_diag_lowtx)
+# case I: thêm ;sdkconfig.diag.bod        (thư mục build_diag_bod)
 ```
 
 Bản chẩn đoán tốn thêm khoảng 10 KB RAM (khoảng 3 KB tĩnh, còn lại là stack của task ghi log và của shell, bộ đệm UART0). Log ra UART0 cũng chậm hơn log bị bỏ đi ở cổng USB không nối, nên các bước ghép nối chạy chậm hơn bản thường một chút. Nếu **case A cũng lỗi với bản chẩn đoán** mà bản thường thì không, xem dòng `heap: ... min=`: đó là thiếu RAM do chính bản chẩn đoán, không phải lỗi đang tìm.
@@ -95,6 +99,7 @@ Làm đúng thứ tự, mỗi case **3 lần**:
 | F | Có | Có | **diag_nosensor** | Loại trừ driver cảm biến của firmware |
 | G | Có | Có | **diag_tx10** | Giảm dòng đỉnh phát sóng: loại trừ nguồn 3.3 V lúc phát Wi-Fi/BLE. Để điện thoại và router trong vòng vài mét |
 | H | Có, **nối dây dài ≥ 15 cm, đặt xa module** | Có, đặt xa module | diag | Vẫn tải điện như D nhưng vỏ kim loại và dây không nằm cạnh anten: loại trừ che/nhiễu anten |
+| I | Có | Có | **diag_bod4** | "Vôn kế" không cần oscilloscope: module cần tối thiểu 3,0 V, bản này reset (và đếm `B`) ngay khi 3.3 V tụt dưới khoảng 2,92 V. Làm khi D lỗi mà `B` của bản diag không tăng; chạy thêm A với bản này để so sánh |
 
 Lưu ý khi đọc case F: driver tắt nên **SCD40 không đo** (không có xung dòng 175–205 mA mỗi 5 giây), **quạt PMS5003 chạy liên tục** (tải 5 V lớn hơn bình thường) và **LED không sáng** (không có số PM2.5). F tách được lỗi phần mềm của driver, nhưng tải điện cũng khác D.
 
@@ -113,7 +118,7 @@ Thử nhanh không cần ứng dụng (console, bản diag): `matter esp wifi co
 | Bản diag | `app_diag: resets: total=3 power-on=1 brown-out=2 watchdog=0 panic=0 software=0 other=0 \| last: brown-out` |
 | Trước khi reset | `Brownout detector was triggered`; `task_wdt: Task watchdog got triggered. The following tasks/users did not reset the watchdog in time:` + tên task; `Guru Meditation Error` / `Stack protection fault` + bản ghi thanh ghi |
 
-- **`brown-out` tăng**: điện áp 3.3 V tụt dưới 2,51 V (ngưỡng mặc định của ESP-IDF). Lỗi nguồn.
+- **`brown-out` tăng**: điện áp 3.3 V tụt dưới khoảng 2,51 V (ngưỡng mặc định của ESP-IDF; khoảng 2,92 V với bản `diag_bod4`). Các ngưỡng là ước lượng, lệch đôi chút giữa các chip. Lỗi nguồn.
 - **`power-on` tăng mà không ai rút điện**: điện áp tụt sâu hơn nữa, hoặc nguồn 5 V bị ngắt. Lỗi nguồn.
 - **`watchdog` hoặc `panic` tăng**: lỗi firmware. Gửi lại toàn bộ log quanh thời điểm đó (tên task trong dòng `task_wdt`, địa chỉ `MEPC`/`RA`).
 - `software` tăng 1 sau factory reset hoặc OTA: bình thường.
@@ -246,11 +251,13 @@ matter esp factoryreset
 | Dừng ở `S3`, có `Wi-Fi disconnected: reason 201/15/205/2` | Không vào được Wi-Fi: sóng hoặc sụt áp khi phát (cũng có thể sai mật khẩu, mạng 5 GHz) | So với A cùng mạng; `matter esp wifi connect`; case G, H |
 | Dừng ở `S4`–`S5` | Đã có mạng nhưng controller không tìm thấy thiết bị (mDNS/IPv6 của mạng) | Không liên quan cảm biến nếu A cũng vậy |
 | D lỗi, **D2 được** (quạt đã dừng mới ghép) | Tải hoặc nhiễu của PMS5003 lúc quạt chạy | E để tách nguồn 5 V với nhiễu/che anten (H) |
-| Quạt không bao giờ dừng, `N` tăng dần | Chip reset lặp lại trước khi kịp gửi lệnh ngủ (35 giây sau mỗi lần khởi động) | Loại reset trong dòng `resets:` cho biết vì sao |
-| Quạt không bao giờ dừng, `N` đứng yên | Lệnh ngủ không tới cảm biến (`pm: sleep_retry` tăng) | Dây GPIO7 → RX cảm biến |
+| Quạt không bao giờ dừng, `N` tăng dần. Không cần bản diag cũng thấy: màn hình cứ quay lại màn hình khởi động, không bao giờ hiện số PM2.5, LED không sáng | Chip reset lặp lại trước khi kịp gửi lệnh ngủ (35 giây sau mỗi lần khởi động) | Loại reset trong dòng `resets:` cho biết vì sao |
+| Quạt không bao giờ dừng, `N` đứng yên, màn hình vẫn hiện số PM2.5 và LED sáng | Lệnh ngủ không tới cảm biến (`pm: sleep_retry` tăng) | Dây GPIO7 → RX cảm biến |
 | D lỗi, **E được** | Sụt áp phía 5 V do PMS5003 | Sửa đường 5 V (mục 10) |
 | D và E lỗi, **G được** | Dòng đỉnh khi phát sóng vượt khả năng mạch 3.3 V | LDO, tụ (mục 10) |
 | D, E, G lỗi, **H được** | Anten bị che hoặc nhiễu bởi cảm biến/dây | Bố trí lại, xem mục 10 |
+| D lỗi với `B` = 0, **I có `B` tăng** (và A với bản bod4 thì không) | Nguồn 3.3 V tụt xuống khoảng 2,5–2,9 V khi cắm cảm biến: dưới mức tối thiểu của module nhưng chưa tới ngưỡng reset mặc định, nên bản thường không reset mà chỉ lỗi sóng/ghép nối | LDO, tụ (mục 10) |
+| D lỗi, **I không có `B`** | 3.3 V không tụt dưới khoảng 2,9 V: ít khả năng là nguồn 3.3 V | Sóng (H), đấu dây (B, C) |
 | D lỗi, **F được**, không có reset | Driver cảm biến, hoặc dòng đo của SCD40 (F không cho SCD40 đo) | Tách bằng B và C; gửi log `pm:`/`co2:`/`tasks` |
 | B được, **C lỗi** | SCD40: dòng đỉnh trên 3.3 V, dây/điện trở kéo lên I2C, thứ tự chân giắc | Đo 3.3 V khi cắm SCD40; `co2:` và `oled:` |
 | **B lỗi**, C được | PMS5003: tải 5 V, nhiễu quạt, vỏ kim loại gần anten | E, H |

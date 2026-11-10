@@ -13,7 +13,7 @@
 
 # What goes into the firmware, relative to the project directory.
 set(FIRMWARE_SOURCE_PATHS main CMakeLists.txt sdkconfig.defaults sdkconfig.diag sdkconfig.diag.nosensor
-    sdkconfig.diag.lowtx partitions.csv)
+    sdkconfig.diag.lowtx sdkconfig.diag.bod partitions.csv)
 
 # Sets <out_var> to the uncommitted changes of the firmware sources ("git
 # status" lines), or to an empty string when there are none or no git.

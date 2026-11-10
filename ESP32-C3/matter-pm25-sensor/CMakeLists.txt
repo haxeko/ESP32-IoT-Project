@@ -39,6 +39,10 @@ if(CONFIG_APP_DIAG)
     if(CONFIG_ESP_PHY_MAX_WIFI_TX_POWER LESS 20)
         string(APPEND FIRMWARE_FILE_TAG "_tx${CONFIG_ESP_PHY_MAX_WIFI_TX_POWER}")
     endif()
+    # Brown-out level 7 (2.51 V) is the default; a lower number is a higher voltage.
+    if(CONFIG_ESP_BROWNOUT_DET_LVL LESS 7)
+        string(APPEND FIRMWARE_FILE_TAG "_bod${CONFIG_ESP_BROWNOUT_DET_LVL}")
+    endif()
 endif()
 firmware_files_target(${CMAKE_CURRENT_LIST_DIR})
 

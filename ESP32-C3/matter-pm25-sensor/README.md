@@ -115,7 +115,7 @@ idf.py -B build_diag -D SDKCONFIG=build_diag/sdkconfig \
        -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.diag" build
 ```
 
-`sdkconfig.diag` bật `CONFIG_APP_DIAG`, đưa console ra UART0, bật các lệnh `matter ...` trên console và tắt factory reset bằng 5 lần cấp nguồn. Thêm `;sdkconfig.diag.nosensor` (không chạy driver cảm biến) hoặc `;sdkconfig.diag.lowtx` (công suất phát thấp nhất) cho các phép thử loại trừ. File tạo ra có thêm `_diag` trong tên. Kịch bản kiểm tra từng trường hợp và cách đọc kết quả: [docs/commissioning-test-plan.md](docs/commissioning-test-plan.md).
+`sdkconfig.diag` bật `CONFIG_APP_DIAG`, đưa console ra UART0, bật các lệnh `matter ...` trên console và tắt factory reset bằng 5 lần cấp nguồn. Thêm `;sdkconfig.diag.nosensor` (không chạy driver cảm biến), `;sdkconfig.diag.lowtx` (công suất phát thấp nhất) hoặc `;sdkconfig.diag.bod` (reset do sụt áp ngay từ khoảng 2,92 V thay vì 2,51 V, để thấy nguồn 3.3 V tụt mà không cần oscilloscope) cho các phép thử loại trừ. File tạo ra có thêm `_diag` trong tên. Kịch bản kiểm tra từng trường hợp và cách đọc kết quả: [docs/commissioning-test-plan.md](docs/commissioning-test-plan.md).
 
 ## Phần mềm
 
@@ -319,7 +319,7 @@ matter-pm25-sensor/
 ├── CMakeLists.txt
 ├── partitions.csv
 ├── sdkconfig.defaults
-├── sdkconfig.diag            # Bản chẩn đoán: thêm vào sau sdkconfig.defaults (+ .nosensor, .lowtx)
+├── sdkconfig.diag            # Bản chẩn đoán: thêm vào sau sdkconfig.defaults (+ .nosensor, .lowtx, .bod)
 ├── docs/
 │   └── commissioning-test-plan.md # Kịch bản kiểm tra ghép nối theo từng trường hợp
 ├── main/

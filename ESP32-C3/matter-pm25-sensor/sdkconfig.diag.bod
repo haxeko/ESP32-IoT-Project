@@ -1,0 +1,8 @@
+# Test case I, added after sdkconfig.diag: the brown-out detector resets the
+# chip at about 2.92 V instead of 2.51 V. The module needs at least 3.0 V, so
+# a brown-out count ("B" on the OLED) that grows with this build shows that
+# the 3.3 V rail dips below it, without an oscilloscope. The levels are
+# approximate and vary a little from chip to chip (ESP-IDF Kconfig).
+#   idf.py -B build_diag_bod -D SDKCONFIG=build_diag_bod/sdkconfig \
+#          -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.diag;sdkconfig.diag.bod" build
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_4=y
