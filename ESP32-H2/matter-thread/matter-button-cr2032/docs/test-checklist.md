@@ -156,6 +156,12 @@ Mạng có 1 Border Router (trường hợp xấu nhất). PPK2 ghi liên tục 
 | J6 | Parent khởi động lại nhanh (router quên child) | re-attach trong ≤ 190 s (SIT) nhờ child supervision | |
 | J7 | Có 2 Border Router, tắt 1 | nút chuyển parent, không gián đoạn quá 1 phút | |
 | J8 | Tắt BR, rồi tháo/lắp pin nút (khởi động khi không có mạng) | sau 30 phút vẫn có `Thread detached for too long: paused`; nhấn nút sau > 60 s thì thử attach lại | |
+| J9 | **Gửi lại, Thread tạm dừng:** tắt BR 40 phút, bật lại, đợi 5 phút, nhấn 1 lần | log `Press: Thread DETACHED`, `Thread resumed (button)`, `Gesture not delivered (Thread detached)`, rồi `Gesture sent again (press, count 1)`; automation chạy **đúng một lần**, trễ ≤ 30 s | |
+| J10 | **Gửi lại, subscription lệch pha:** giữ BR chạy, khởi động lại riêng hub Apple (hoặc tắt Wi-Fi của nó vài phút) tới khi Home báo "Không phản hồi", nhấn 1 lần | log `Press: Thread attached, 1 subscription(s) established`, `SUB terminated`, `Gesture not delivered (subscription closed before the report was acknowledged` hoặc `subscription being set up` hoặc `no subscription)`, `SUB established`, `Gesture sent again`, `Gesture acknowledged by a controller`; automation chạy **đúng một lần** | |
+| J11 | Như J9 / J10 nhưng nhấn 2 lần cách nhau ~2 s trước khi có `Gesture sent again` | log `The gesture that waited is replaced by this one`; chỉ **một** hành động | |
+| J12 | Như J9 nhưng để BR tắt (không có subscription trong 30 s) | `Gesture dropped: no subscription within 30 s`; không hành động nào chạy muộn sau đó | |
+| J13 | Bình thường, có mạng: nhấn 1 lần, nhấn đúp, giữ lâu, mỗi loại 20 lần | mỗi cử chỉ có `Gesture acknowledged by a controller` trong ~1 s; không có dòng `Gesture not delivered` / `sent again`; mỗi cử chỉ đúng một hành động (hồi quy mục D) | |
+| J14 | Home Assistant là controller duy nhất: lặp lại J9 | ghi lại số lần trigger chạy; nếu 2 lần thì đặt `SWITCH_REPLAY_WINDOW_S=0` cho HA | |
 
 ## K. Nhiều nút
 

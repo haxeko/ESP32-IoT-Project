@@ -108,6 +108,23 @@ menu "Matter Switch"
             the reporting engine for an immediate report after each event (the subscription's
             min interval still applies).
 
+    config SWITCH_REPLAY_WINDOW_S
+        int "Send an undelivered gesture again when a controller subscribes within (s, 0 = off)"
+        depends on SWITCH_MULTI_PRESS && SWITCH_FORCE_EVENT_DELIVERY
+        range 0 120
+        default 30
+        help
+            Switch events reach only the subscriptions established when they are generated. After an outage
+            (Thread detached or paused, subscription dropped) the first press would only bring the controller
+            back: Apple Home ignores the events it then reads in the priming report (historical). With this
+            option a gesture made with no Thread link or no subscription, or whose subscription is closed
+            before a controller acknowledged the report (refused, timed out), is generated again as new events
+            once a controller has subscribed, if that happens within this time. The event controllers act on
+            (MultiPressComplete, LongPress) is held back while a subscription is being set up, and a gesture a
+            controller acknowledged is never sent again. The ICD stays in Active mode (200 ms polls) while a
+            gesture waits. A newer gesture replaces a waiting one. Logic and its host test:
+            main/gesture_replay.h.
+
 endmenu
 
 menu "Power and Thread"
@@ -148,7 +165,7 @@ menu "Power and Thread"
             OpenThread retries to attach with a backoff up to 20 min (each attempt ~2 s of RX at
             25 mA). After THREAD_DETACHED_PAUSE_MIN without a parent Thread is paused and retried
             every THREAD_RETRY_MIN_MIN, doubling up to THREAD_RETRY_MAX_MIN. A button press retries
-            at once (the press is reported once attached, if the subscription survived).
+            at once (the press is sent again once a controller has subscribed, SWITCH_REPLAY_WINDOW_S).
 
     config THREAD_DETACHED_PAUSE_MIN
         int "Detached time before pausing Thread (min)"

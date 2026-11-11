@@ -637,6 +637,35 @@ Nhấn ngắn mở lại cửa sổ ghép nối BLE (15 phút); giữ 10 s / 20 
 
 Mỗi subscription chỉ có một report đang chờ xác nhận; thiết bị nhận xác nhận ở lần poll nhanh kế tiếp (200 ms). Muốn "nhấn một lần" < 300 ms tính từ lúc nhấn: đặt `SWITCH_MULTI_PRESS = n` (mất nhấn đúp; Apple/HA dùng `InitialPress`/`ShortRelease`), hoặc giảm `BUTTON_MULTI_PRESS_WINDOW_MS` xuống 200–250 ms (nhấn đúp phải nhanh hơn).
 
+### 6.7 Gửi lại cử chỉ chưa tới được controller (`main/gesture_replay.cpp`, thuần C++17)
+
+Phân tích đầy đủ: review ngày 2026-11-11 (hiện tượng: để lâu, lần bấm đầu chỉ làm thiết bị "kết nối lại", lần bấm thứ hai mới có tác dụng).
+
+**Vì sao mất lần bấm đầu.** Sự kiện Switch chỉ tới các subscription **đã thiết lập** lúc nó được phát. Khi không có (Thread detached hoặc đang tạm dừng, controller đã bỏ subscription, một report keep-alive bị mất), sự kiện chỉ nằm trong bộ đệm. Controller đọc nó trong priming report của lần subscribe kế tiếp, và Matter.framework của Apple đánh dấu sự kiện trong priming report là **lịch sử** (`MTREventIsHistoricalKey`): không automation nào chạy. Lần bấm đó chỉ kéo controller về: Apple subscribe lại ngay khi nhận một report cho subscription nó không còn giữ (`ReadClient::OnUnsolicitedMessageFromPublisher`), hoặc lần bấm bật lại Thread (`power_on_user_activity()`).
+
+**Cách xử lý.** Sự kiện mà controller dùng để chạy hành động ("sự kiện quyết định": `MultiPressComplete` cho nhấn 1 lần / nhấn đúp, `LongPress` cho giữ lâu) được xét ngay trước khi phát:
+
+| Lúc đó | Làm gì |
+|---|---|
+| Có subscription đã thiết lập, Thread attached | phát ngay, rồi theo dõi report mang sự kiện đó. Controller xác nhận report (`StatusResponse` Success): cử chỉ **đã tới nơi**, không bao giờ gửi lại. Subscription cuối cùng bị đóng **trước khi** có xác nhận (report bị từ chối bằng `InvalidSubscription`, report hết giờ, controller thay subscription): cử chỉ chuyển sang chờ |
+| Có subscription đang được thiết lập (priming), hoặc vừa thiết lập dưới 5 s mà còn message chưa được xác nhận | **giữ lại**, chưa phát: phát lúc này thì sự kiện có thể rơi vào priming report (lịch sử) hoặc ngay sau nó (thật), không biết trước được. Cử chỉ chờ |
+| Không ai nghe (không Thread, không subscription) | phát ngay (sẽ thành lịch sử), cử chỉ chờ |
+
+Cử chỉ đang chờ được phát lại **cả chuỗi, như sự kiện mới**, sớm nhất 400 ms sau khi một subscription thiết lập xong và chỉ khi không còn exchange nào mở (`ExchangeManager::GetNumActiveExchanges() == 0`), nếu việc đó xảy ra trong `SWITCH_REPLAY_WINDOW_S` = 30 s kể từ lúc cử chỉ kết thúc; quá hạn thì bỏ (log `Gesture dropped`). Điều kiện exchange là để report không vượt lên trước `SubscribeResponse`: nếu bản đầu của `SubscribeResponse` bị mất, MRP gửi lại sau khoảng 2 s; report tới trước nó sẽ bị controller từ chối (controller chưa biết subscription), thiết bị đóng subscription, còn controller sau đó lại coi là đã subscribe xong, và mọi lần bấm mất cho tới khi controller tự phát hiện (tới 1 giờ). Trong lúc chờ, ICD được giữ ở Active mode (poll 200 ms) để yêu cầu CASE / subscribe của controller không bị parent giữ tới 15 s.
+
+"Đã xác nhận" được đọc từ hai bộ đếm của SDK, không suy ra từ thời gian: không còn subscription nào có dữ liệu chưa gửi (`InteractionModelEngine::GetNumDirtySubscriptions() == 0`; sau mỗi sự kiện, `SWITCH_FORCE_EVENT_DELIVERY` đánh dấu mọi subscription là còn dữ liệu cho tới khi report của nó được gửi) và không còn report nào chờ `StatusResponse` (`reporting::Engine::GetNumReportsInFlight() == 0`). Report bị từ chối hoặc hết giờ thì SDK đóng subscription ngay trong cùng lần xử lý, nên firmware luôn thấy "subscription đóng" trước khi kịp thấy hai bộ đếm về 0. Firmware xem hai bộ đếm mỗi 100 ms (timer của CHIP, không bật radio) cho tới khi có kết quả. Vì vậy tính năng cần cả `SWITCH_FORCE_EVENT_DELIVERY=y`.
+
+Nhờ vậy mỗi cử chỉ tới controller dưới dạng sự kiện thật **nhiều nhất một lần**:
+
+- cử chỉ mới thay thế cử chỉ đang chờ (bấm lại vì sốt ruột chỉ cho một hành động);
+- không gửi lại khi còn controller khác đang subscribe (sự kiện không tách theo fabric: gửi lại sẽ tới controller khoẻ lần thứ hai);
+- cử chỉ đã được một controller xác nhận thì không gửi lại, kể cả khi subscription bị đóng hay thay ngay sau đó;
+- giữ 10 s / 20 s (mở cửa sổ ghép nối, factory reset) và chuỗi vượt `MultiPressMax` không bao giờ được gửi lại.
+
+Giới hạn: hành động có thể tới trễ vài giây (tối đa 30 s); khi controller không subscribe lại trong 30 s (Thread vừa attach lại mà controller chưa biết, hub thật sự tắt) thì lần bấm vẫn mất; trường hợp hiếm controller đã nhận report nhưng mọi xác nhận của nó đều mất trên đường về rồi nó subscribe lại trong 30 s thì hành động chạy hai lần. Home Assistant: chưa kiểm chứng nó có chạy trigger cho sự kiện trong priming report hay không; nếu có thì sẽ thấy hai lần kích hoạt, khi đó đặt `SWITCH_REPLAY_WINDOW_S=0`. Tính năng cần `SWITCH_MULTI_PRESS=y` và `SWITCH_FORCE_EVENT_DELIVERY=y` (đều là mặc định).
+
+Log: `switch: Press: Thread attached|DETACHED, N subscription(s) established` ở mỗi lần bấm; `Gesture acknowledged by a controller` khi report được xác nhận; `Gesture not delivered (<lý do>): sent again if a controller subscribes within 30 s`; `Gesture sent again (press|long press, count N) X ms after it ended`; `Gesture dropped: no subscription within 30 s`.
+
 ---
 
 ## 7. Firmware
@@ -664,6 +693,7 @@ matter-button-cr2032/
 │   ├── button_fsm.h/.cpp           máy trạng thái cử chỉ (thuần C++17, có host test)
 │   ├── button.h/.cpp               driver nút: ngắt mức + EXT1, debounce theo hạn, task
 │   ├── switch_events.h/.cpp        cử chỉ → sự kiện Matter Switch, ghép nối, factory reset
+│   ├── gesture_replay.h/.cpp       gửi lại cử chỉ chưa tới được controller (thuần C++17, có host test; mục 6.7)
 │   ├── power.h/.cpp                esp_pm, công suất phát, child timeout/supervision, chính sách mất mạng, LIT/SIT
 │   ├── battery.h/.cpp              đo pin, đo điện trở trong, cluster Power Source, boot guard, lưu giá trị đã báo (NVS)
 │   ├── battery_report.h/.cpp       khi nào % pin tăng/giảm (thuần C++17, có host test)
@@ -728,6 +758,7 @@ Matter OTA Requestor, hỏi provider **1 lần/ngày** (`APP_OTA_QUERY_INTERVAL_
 | `BUTTON_INTERNAL_PULLUP` | n | dùng kéo lên trong ~45 kΩ (khi không lắp R6) |
 | *Matter Switch* `SWITCH_MULTI_PRESS` / `SWITCH_MULTI_PRESS_MAX` | y / 2 | nhấn đúp |
 | `SWITCH_FORCE_EVENT_DELIVERY` | y | gửi sự kiện ngay cả tới subscriber không đặt cờ urgent |
+| `SWITCH_REPLAY_WINDOW_S` | 30 | gửi lại cử chỉ chưa tới được controller khi có subscription mới trong khoảng này (0 = tắt; mục 6.7) |
 | *Power and Thread* `APP_LIGHT_SLEEP` | y | tắt chỉ khi debug với console |
 | `THREAD_TX_POWER_DBM` | 0 | công suất phát 802.15.4 |
 | `THREAD_PAUSE_WHEN_DETACHED`, `THREAD_DETACHED_PAUSE_MIN`, `THREAD_RETRY_MIN_MIN`, `THREAD_RETRY_MAX_MIN`, `THREAD_RETRY_ATTACH_WINDOW_S`, `THREAD_KICK_AFTER_S` | y, 30, 30, 240, 20, 60 | chính sách mất mạng (mục 5.5) |
@@ -750,6 +781,8 @@ Matter OTA Requestor, hỏi provider **1 lần/ngày** (`APP_OTA_QUERY_INTERVAL_
 ```bash
 test/host/run.sh      # g++ -std=gnu++17 -Wall -Wextra -Werror; 17 kịch bản: đơn, đúp, ba, giữ, 999 ms, giữ 12/25/45 s,
                       # nhiễu, nhả sát mốc 1 s, poll trễ, nút đang giữ lúc khởi động, tắt nhấn đúp, ...
+                      # + gửi lại cử chỉ (gesture_replay): không ai nghe, đang priming, report bị từ chối / hết giờ,
+                      #   đã xác nhận thì không gửi lại, hết hạn, cử chỉ mới thay cử chỉ chờ, giữ lâu
                       # + cách báo % pin: giữ giá trị đã lưu, tăng báo ngay, giảm sau 3 lần đo thấp liên tiếp
 ```
 
@@ -967,7 +1000,7 @@ py tools\battery_model.py --breakdown
 | 8 | Controller đặt subscription max interval ngắn | keep-alive dày hơn, tốn pin | xem `id_diag: SUB established … max …`; ICD giới hạn max interval theo IdleModeDuration khi controller cho phép | checklist C |
 | 9 | Link 0 dBm yếu (vỏ, kim loại, xa router) | poll lỗi, re-attach thường xuyên, tốn pin | bo 29,8 × 23,9 mm (cả cụm dưới 30 × 30 mm) đặt pin cách anten 3,4 mm (đánh đổi kích thước): đo RSSI/LQI trước; nếu yếu, dùng bố trí 25 × 27 mm (6,5 mm) hoặc 30 × 38 mm (~16 mm); thêm router Thread cắm điện gần; tăng `THREAD_TX_POWER_DBM` từng bước (3–6 dBm) | checklist C, L |
 | 10 | Mất Border Router lâu | nút offline; tốn pin cho re-attach | tạm dừng Thread sau 30 phút, thử lại 30 phút → 4 giờ, nhấn nút thử ngay; nên có ≥ 2 Border Router/router | checklist J |
-| 11 | Sự kiện nhấn khi mất mạng bị mất | automation không chạy | giới hạn của Matter (không lưu-và-chuyển); LED báo pin yếu; khuyến nghị nhiều Border Router | checklist J |
+| 11 | Sự kiện nhấn khi mất mạng hoặc mất subscription bị mất (Apple coi sự kiện đọc lại là lịch sử) | automation không chạy; lần bấm đầu sau sự cố chỉ "kết nối lại" | gửi lại cử chỉ khi controller subscribe lại trong 30 s (mục 6.7); quá 30 s vẫn mất; khuyến nghị nhiều Border Router | checklist J9–J12, host test |
 | 12 | Độ trễ "nhấn một lần" > 300 ms do cửa sổ nhấn đúp | automation chậm ~0,35 s | giảm `BUTTON_MULTI_PRESS_WINDOW_MS`, hoặc tắt nhấn đúp | checklist E |
 | 13 | Nút bị đè liên tục (trong túi, dưới vật nặng) | phát `LongPress`; nếu đủ 20 s rồi nhả thì factory reset | giữ > 40 s thì huỷ thao tác bảo trì; chip vẫn ngủ khi đang giữ (chỉ 3,3 µA qua R6) | host test, checklist D |
 | 14 | Giữ 10/20 s cũng phát `LongPress`/`LongRelease` | automation "giữ" chạy khi bảo trì | ghi chú cho người dùng; có thể tắt bằng `BUTTON_PAIRING_HOLD_MS = 0` / `RESET_HOLD_MS = 0` (còn factory reset lúc lắp pin) | checklist D |

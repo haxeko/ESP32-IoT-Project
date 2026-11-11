@@ -190,6 +190,7 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
         break;
 
     case chip::DeviceLayer::DeviceEventType::kServerReady:
+        switch_events_on_server_ready(); // after identity_diag_on_event(): chained in front of its subscription log
         if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
             // The SDK opened the boot commissioning window (BLE and network)
             setup_code_print(false);

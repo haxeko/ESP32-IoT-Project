@@ -15,6 +15,9 @@
  *   more presses than MultiPressMax: MultiPressComplete(1, 0)
  * With the AS feature only the first InitialPress and MultiPressComplete are sent for a multi-press sequence.
  *
+ * A gesture nobody could receive (no Thread link, no subscription, report refused) is sent again when a controller
+ * subscribes within CONFIG_SWITCH_REPLAY_WINDOW_S (gesture_replay.h).
+ *
  * Not commissioned: a short press (re)opens the BLE commissioning window instead.
  * Hold 10 s then release: open a commissioning window (Thread/DNS-SD if commissioned, for a second controller).
  * Hold 20 s then release: factory reset. Held > 40 s: cancelled (stuck button).
@@ -27,6 +30,9 @@
 
 /** Create the Generic Switch endpoint (Identify + Switch). Before esp_matter::start(). Returns its id or 0. */
 uint16_t switch_events_create_endpoint(esp_matter::node_t *node);
+
+/** kServerReady (CHIP task): hooks the subscription callbacks used to send an undelivered gesture again. */
+void switch_events_on_server_ready(void);
 
 /** Button task callback (button_init()). */
 void switch_events_on_button(const ButtonEventInfo &event);
