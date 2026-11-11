@@ -1,0 +1,25 @@
+References,Qty,Value,Footprint,Side,Part / note
+C1,1,10uF,C_0805_2012Metric,top,MLCC X5R 16 V+
+C2,1,1uF,C_0603_1608Metric,top,"MLCC X7R 16 V, LDO input"
+C3,1,10uF,C_0805_2012Metric,top,"MLCC X5R/X7R 10 V+, LDO output"
+C4,1,10uF,C_0805_2012Metric,top,MLCC X5R/X7R 10 V+
+C5 C7,2,100nF,C_0603_1608Metric,top,MLCC X7R 16 V
+C6,1,1uF,C_0603_1608Metric,top,MLCC X7R 16 V
+D1,1,SMF5.0A,D_SOD-123F,top,"SMF5.0A unidirectional TVS, SOD-123F"
+D2,1,ESD 3.3V,D_SOD-323,top,"bidirectional ESD TVS 3.3 V, SOD-323 (e.g. PESD3V3L1BA)"
+D3,1,LED green,LED_0603_1608Metric,top,"0603 green LED, Vf ~2 V"
+F1,1,PTC 0.5A,Fuse_1206_3216Metric,top,"PTC resettable fuse 1206, Ihold 0.5 A, >= 6 V"
+J1,1,USB-C,USB_C_Receptacle_HRO_TYPE-C-31-M-12,top,HRO TYPE-C-31-M-12 16P USB-C receptacle
+J2,1,REED,"TerminalBlock_Phoenix_PT-1,5-2-3.5-H_1x02_P3.50mm_Horizontal",top,"2P screw terminal, 3.5 mm pitch (e.g. KF350-3.5-2P / Phoenix PT 1,5/2-3,5-H), hand soldered"
+R1 R2,2,5.1k,R_0603_1608Metric,top,1% 0603
+R3 R4 R5,3,10k,R_0603_1608Metric,top,1% 0603
+R6 R8,2,1k,R_0603_1608Metric,top,1% 0603
+R7,1,10k,R_0603_1608Metric,top,"1% 0603, wetting current for the reed switch"
+R9 R10,2,22,R_0603_1608Metric,top,1% 0603
+SW1,1,RESET,SW_Push_1P1T_XKB_TS-1187A,top,XKB TS-1187A-B-A-B 5.1 x 5.1 mm SMD tact
+SW2,1,BOOT,SW_Push_1P1T_XKB_TS-1187A,top,XKB TS-1187A-B-A-B 5.1 x 5.1 mm SMD tact
+U1,1,ESP32-H2-MINI-1-N4,ESP32-H2-MINI-1,top,"Espressif ESP32-H2-MINI-1-N4 (4 MB flash, PCB antenna)"
+U2,1,AP2112K-3.3,SOT-23-5,top,"Diodes AP2112K-3.3TRG1, 600 mA (alt: ME6211C33M5G, same pinout)"
+U3,1,USBLC6-2SC6,SOT-23-6,top,"ST USBLC6-2SC6 USB ESD array, SOT-23-6"
+H1 H2,2,M2 mounting hole,MountingHole_2.2mm_M2,-,"NPTH, no part"
+TP1 TP2 TP3 TP4,4,test pad,TestPoint_Pad_D1.5mm,bottom,"bare copper pads 3V3 GND TX0 RX0, no part"

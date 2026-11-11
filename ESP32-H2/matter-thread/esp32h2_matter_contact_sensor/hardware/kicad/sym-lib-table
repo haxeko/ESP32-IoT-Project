@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "h2_contact")(type "KiCad")(uri "${KIPRJMOD}/h2_contact.kicad_sym")(options "")(descr "Project symbols"))
+)

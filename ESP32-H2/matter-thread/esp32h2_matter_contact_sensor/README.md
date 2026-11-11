@@ -7,6 +7,8 @@ Firmware ESP-IDF + ESP-Matter chính thức cho board **ESP32-H2 Mini** (ESP32-H
 - Đổi trạng thái cửa → báo cáo ngay cho controller đã subscribe (ngay khi min interval của subscription cho phép), không cần polling.
 - Mất điện / rút USB / mất Border Router: tự vào lại mạng Thread với fabric và Thread credentials lưu trong flash, đọc lại trạng thái cửa thật lúc khởi động.
 
+**PCB riêng:** [`hardware/`](hardware/README.md) là bo 26 × 46 mm cho firmware này (ESP32-H2-MINI-1-N4, USB-C, domino cho reed switch, nút BOOT/RESET, LED GPIO5), kèm Gerber, BOM, CPL cho JLCPCB. Chân khớp giá trị mặc định ở mục 2; với bo này nên bật `STATUS_LED_ENABLE` (LED ở GPIO5).
+
 Mục lục: [1. Phiên bản SDK](#1-phiên-bản-sdk-và-nguồn-tương-thích) · [2. Phần cứng, đấu dây](#2-phần-cứng-nguồn-usb-và-đấu-dây) · [3. Cấu trúc dự án](#3-cấu-trúc-dự-án) · [4. Cài đặt, build, nạp](#4-cài-đặt-môi-trường-build-và-nạp) · [5. Commission](#5-commission) · [6. Kế hoạch kiểm thử](#6-kế-hoạch-kiểm-thử) · [7. Luồng cập nhật và phục hồi](#7-luồng-cập-nhật-trạng-thái-và-luồng-phục-hồi-kết-nối) · [8. Kconfig Thread/BLE](#8-giải-thích-kconfig-thread-ble-và-nguồn-usb) · [9. Thread không attach](#9-chẩn-đoán-khi-thread-không-attach) · [10. Sản xuất hàng loạt](#10-trước-khi-sản-xuất-hàng-loạt) · [11. Đã/chưa xác minh](#11-những-gì-đã-và-chưa-được-xác-minh)
 
 ---
@@ -114,6 +116,7 @@ ESP32-H2/matter-thread/esp32h2_matter_contact_sensor/
     ├── reset_button.cpp
     ├── status_led.h            # LED trạng thái tuỳ chọn (thêm so với cây yêu cầu)
     └── status_led.cpp
+hardware/                       # PCB riêng (KiCad 7): kicad/, fab/ (Gerber, BOM, CPL), tools/gen/, README.md
 ```
 
 Điều chỉnh so với cây thư mục yêu cầu: thêm `status_led.h/.cpp` để LED (tuỳ chọn) tách khỏi logic Matter và hai driver; thêm `.gitignore`. Không có `main/idf_component.yml`: example gốc chỉ cần file này cho `esp_bsp_generic` (nút), dự án này dùng driver nút riêng. Các component phụ thuộc của esp-matter (`cjson`, `esp_secure_cert_mgr`, `mdns`...) do Component Manager tự tải lúc build đầu tiên (cần Internet).
